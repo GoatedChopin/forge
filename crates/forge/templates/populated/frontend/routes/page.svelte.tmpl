@@ -1,0 +1,828 @@
+<script lang="ts">
+  import { subscribe, mutate, action } from "@forge/svelte";
+  import {
+    getUsers,
+    createUser,
+    updateUser,
+    deleteUser,
+    getAppStats,
+    getBitcoinPrice,
+    createExportUsersJob,
+    createAccountVerificationWorkflow,
+  } from "$lib/forge";
+  import type { User, GetBitcoinPriceOutput } from "$lib/forge/types";
+  import { onMount, onDestroy } from "svelte";
+
+  const ACTIVE_JOB_KEY = "forge_active_job_id";
+  const ACTIVE_WORKFLOW_KEY = "forge_active_workflow_id";
+  const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8080";
+
+  const users = subscribe(getUsers, {});
+  const stats = subscribe(getAppStats, {});
+
+  let name = $state("");
+  let email = $state("");
+  let isSubmitting = $state(false);
+  let selectedUser = $state<User | null>(null);
+
+  // Edit user state
+  let editingUser = $state<User | null>(null);
+  let editName = $state("");
+  let editEmail = $state("");
+  let isEditing = $state(false);
+
+  // Delete confirmation popover state
+  let deletePopoverUserId = $state<string | null>(null);
+
+  // Action state
+  let actionResult = $state<GetBitcoinPriceOutput | null>(null);
+  let actionError = $state<string | null>(null);
+  let isActionRunning = $state(false);
+
+  const exportUsersJob = createExportUsersJob();
+  const verifyAccountWorkflow = createAccountVerificationWorkflow();
+
+  onMount(() => {
+    const savedJobId = localStorage.getItem(ACTIVE_JOB_KEY);
+    if (savedJobId) {
+      exportUsersJob.resume(savedJobId, () => {
+        // Clear stale job ID from localStorage
+        localStorage.removeItem(ACTIVE_JOB_KEY);
+      });
+    }
+
+    const savedWorkflowId = localStorage.getItem(ACTIVE_WORKFLOW_KEY);
+    if (savedWorkflowId) {
+      verifyAccountWorkflow.resume(savedWorkflowId, () => {
+        // Clear stale workflow ID from localStorage
+        localStorage.removeItem(ACTIVE_WORKFLOW_KEY);
+      });
+    }
+  });
+
+  onDestroy(() => {
+    exportUsersJob.cleanup();
+    verifyAccountWorkflow.cleanup();
+  });
+
+  async function handleCreateUser(e: Event) {
+    e.preventDefault();
+    if (!name || !email) return;
+
+    isSubmitting = true;
+    try {
+      await mutate(createUser, { name, email });
+      name = "";
+      email = "";
+    } catch (err) {
+      console.error("Failed to create user:", err);
+    }
+    isSubmitting = false;
+  }
+
+  function showDeletePopover(id: string) {
+    deletePopoverUserId = id;
+  }
+
+  function hideDeletePopover() {
+    deletePopoverUserId = null;
+  }
+
+  async function confirmDeleteUser(id: string) {
+    hideDeletePopover();
+    await mutate(deleteUser, { id });
+    if (selectedUser?.id === id) selectedUser = null;
+  }
+
+  async function startExportJob() {
+    try {
+      const jobId = await exportUsersJob.start({ format: "csv" });
+      localStorage.setItem(ACTIVE_JOB_KEY, jobId);
+    } catch (err) {
+      console.error("Failed to start job:", err);
+    }
+  }
+
+  async function startVerificationWorkflow() {
+    try {
+      const workflowId = await verifyAccountWorkflow.start({
+        user_id: selectedUser?.id || "demo-user",
+        email: selectedUser?.email || "demo@example.com",
+      });
+      localStorage.setItem(ACTIVE_WORKFLOW_KEY, workflowId);
+    } catch (err) {
+      console.error("Failed to start workflow:", err);
+    }
+  }
+
+  async function handleGetBitcoinPrice() {
+    isActionRunning = true;
+    actionResult = null;
+    actionError = null;
+
+    try {
+      const result = await action(getBitcoinPrice, {
+        input: { currency: "usd" },
+      });
+      actionResult = result;
+    } catch (err) {
+      actionError = err instanceof Error ? err.message : "Action failed";
+    }
+    isActionRunning = false;
+  }
+
+  function formatPrice(price: number): string {
+    return price.toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  }
+
+  function formatChange(change: number): string {
+    const sign = change >= 0 ? "+" : "";
+    return `${sign}${change.toFixed(2)}%`;
+  }
+
+  function startEditUser(user: User) {
+    editingUser = user;
+    editName = user.name;
+    editEmail = user.email;
+    selectedUser = user;
+  }
+
+  async function handleUpdateUser(e: Event) {
+    e.preventDefault();
+    if (!editingUser || !editName || !editEmail) return;
+
+    isEditing = true;
+    try {
+      await mutate(updateUser, {
+        id: editingUser.id,
+        name: editName,
+        email: editEmail,
+      });
+      editingUser = null;
+      editName = "";
+      editEmail = "";
+    } catch (err) {
+      console.error("Failed to update user:", err);
+    }
+    isEditing = false;
+  }
+
+  function cancelEdit() {
+    editingUser = null;
+    editName = "";
+    editEmail = "";
+  }
+
+  function formatTime(timestamp: string) {
+    if (!timestamp) return "-";
+    const date = new Date(timestamp);
+    return date.toLocaleTimeString();
+  }
+
+  function isHeartbeatLate(timestamp: string): boolean {
+    if (!timestamp) return false;
+    const heartbeatTime = new Date(timestamp).getTime();
+    const now = Date.now();
+    // Consider late if more than 90 seconds old (cron runs every 60s)
+    return now - heartbeatTime > 90000;
+  }
+
+  function stepIcon(status: string) {
+    switch (status) {
+      case "completed":
+        return "\u2713";
+      case "running":
+        return "\u25B6";
+      case "failed":
+        return "\u2717";
+      default:
+        return "\u25CB";
+    }
+  }
+</script>
+
+<main>
+  <h1>Forge</h1>
+  <p class="subtitle">
+    Backend: <a href={apiUrl + "/health"} target="_blank">{apiUrl}</a> |
+    Dashboard:
+    <a href={apiUrl + "/_dashboard"} target="_blank">/_dashboard</a>
+  </p>
+
+  <section class="card status-panel">
+    <h2>System Health <span class="badge live">cron + subscribe</span></h2>
+    <p class="hint">Auto-updates every minute via scheduled heartbeat</p>
+
+    {#if $stats.loading}
+      <p>Loading stats...</p>
+    {:else if $stats.data}
+      <div class="stats-grid">
+        <div class="stat-item">
+          <span class="stat-label">Last Heartbeat</span>
+          <span class="stat-value"
+            >{formatTime($stats.data.heartbeat || "")}</span
+          >
+          {#if isHeartbeatLate($stats.data.heartbeat || "")}
+            <span class="late-warning">⚠ Late</span>
+          {/if}
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Total Users</span>
+          <span class="stat-value">{$stats.data.user_count || "0"}</span>
+        </div>
+      </div>
+    {:else}
+      <p class="muted">
+        Stats will appear after first cron run (up to 1 minute)
+      </p>
+    {/if}
+  </section>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Export to CSV <span class="badge">job</span></h2>
+      <p class="hint">Background job with real-time progress tracking</p>
+
+      {#if $exportUsersJob}
+        <div class="progress-container">
+          <div class="progress-bar">
+            <div
+              class="progress-fill"
+              style="width: {$exportUsersJob.progress_percent || 0}%"
+            ></div>
+          </div>
+          <p class="progress-text">
+            {$exportUsersJob.progress_percent || 0}% - {$exportUsersJob.progress_message ||
+              $exportUsersJob.status}
+          </p>
+          {#if $exportUsersJob.status === "retry"}
+            <p class="retry-info">⟳ Retrying (job will retry on failure)</p>
+          {/if}
+          {#if $exportUsersJob.status === "completed" || $exportUsersJob.status === "failed" || $exportUsersJob.status === "pending"}
+            <button onclick={startExportJob} class="mt-sm">Start New Job</button
+            >
+          {/if}
+        </div>
+      {:else}
+        <button onclick={startExportJob}>Start Export Job</button>
+      {/if}
+    </section>
+
+    <section class="card">
+      <h2>Verify Account <span class="badge">workflow</span></h2>
+      <p class="hint">Multi-step verification with automatic recovery</p>
+
+      {#if $verifyAccountWorkflow}
+        <div class="steps-list">
+          {#each $verifyAccountWorkflow.steps as step}
+            <div class="step-item {step.status}">
+              <span class="step-icon">{stepIcon(step.status)}</span>
+              <span class="step-name">{step.name}</span>
+              <span class="step-status">{step.status}</span>
+            </div>
+          {/each}
+        </div>
+        {#if $verifyAccountWorkflow.status === "completed" || $verifyAccountWorkflow.status === "failed" || $verifyAccountWorkflow.status === "compensated"}
+          <button onclick={startVerificationWorkflow} class="mt-sm"
+            >Start New Workflow</button
+          >
+        {/if}
+      {:else}
+        <button onclick={startVerificationWorkflow}>Start Verification</button>
+      {/if}
+    </section>
+  </div>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Bitcoin Price <span class="badge">action</span></h2>
+      <p class="hint">Live price from CoinGecko API (external API call)</p>
+
+      {#if isActionRunning}
+        <p>Fetching Bitcoin price...</p>
+      {:else if actionResult}
+        <div class="action-result success">
+          <div class="price-display">
+            <span class="price-value"
+              >${formatPrice(actionResult.price_usd)}</span
+            >
+            <span
+              class="price-change"
+              class:positive={actionResult.change_24h >= 0}
+              class:negative={actionResult.change_24h < 0}
+            >
+              {formatChange(actionResult.change_24h)} (24h)
+            </span>
+          </div>
+          <div class="price-other">
+            <span>€{formatPrice(actionResult.price_eur)}</span>
+            <span>£{formatPrice(actionResult.price_gbp)}</span>
+          </div>
+          <button class="small mt-sm" onclick={handleGetBitcoinPrice}
+            >Refresh</button
+          >
+        </div>
+      {:else if actionError}
+        <div class="action-result error">
+          <p>✗ Failed: {actionError}</p>
+          <button class="small mt-sm" onclick={() => (actionError = null)}
+            >Retry</button
+          >
+        </div>
+      {:else}
+        <button onclick={handleGetBitcoinPrice}>Get Bitcoin Price</button>
+      {/if}
+    </section>
+
+    <section class="card">
+      <h2>Edit User <span class="badge">mutate</span></h2>
+      {#if editingUser}
+        <form onsubmit={handleUpdateUser}>
+          <input
+            type="text"
+            placeholder="Name"
+            bind:value={editName}
+            required
+          />
+          <input
+            type="email"
+            placeholder="Email"
+            bind:value={editEmail}
+            required
+          />
+          <div class="button-group">
+            <button type="submit" disabled={isEditing}>
+              {isEditing ? "Saving..." : "Save"}
+            </button>
+            <button type="button" class="secondary" onclick={cancelEdit}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      {:else}
+        <p class="muted">Click "Edit" on a user below to modify</p>
+      {/if}
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>Create User <span class="badge">mutate</span></h2>
+    <form onsubmit={handleCreateUser}>
+      <input type="text" placeholder="Name" bind:value={name} required />
+      <input type="email" placeholder="Email" bind:value={email} required />
+      <button type="submit" disabled={isSubmitting}>
+        {isSubmitting ? "Creating..." : "Create"}
+      </button>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>User Directory <span class="badge live">subscribe</span></h2>
+    <p class="hint">Live-updating list - changes appear instantly</p>
+
+    {#if $users.loading}
+      <p>Loading...</p>
+    {:else if $users.error}
+      <p class="error">Error: {$users.error.message}</p>
+    {:else if !$users.data || $users.data.length === 0}
+      <p class="muted">No users yet. Create one above!</p>
+    {:else}
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each $users.data as user (user.id)}
+            <tr>
+              <td>{user.name}</td>
+              <td>{user.email}</td>
+              <td class="actions-cell">
+                <button class="small" onclick={() => startEditUser(user)}>
+                  Edit
+                </button>
+                <div class="delete-wrapper">
+                  <button
+                    class="small danger"
+                    onclick={() => showDeletePopover(user.id)}
+                  >
+                    Delete
+                  </button>
+                  {#if deletePopoverUserId === user.id}
+                    <div class="delete-popover">
+                      <p>Delete this user?</p>
+                      <div class="popover-buttons">
+                        <button
+                          class="small danger"
+                          onclick={() => confirmDeleteUser(user.id)}
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          class="small secondary"
+                          onclick={hideDeletePopover}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  {/if}
+                </div>
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    {/if}
+  </section>
+</main>
+
+<style>
+  main {
+    max-width: 56rem;
+    margin: 0 auto;
+    padding: 2rem;
+    font-family:
+      system-ui,
+      -apple-system,
+      sans-serif;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+
+  h1 {
+    margin: 0;
+  }
+
+  h2 {
+    margin: 0 0 0.75rem;
+    font-size: 1.1rem;
+  }
+
+  .subtitle {
+    margin: -1rem 0 0;
+    color: #666;
+  }
+
+  .subtitle a {
+    color: #0066cc;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+  }
+
+  .card {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 1.25rem;
+  }
+
+  .status-panel {
+    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+    border-color: #bae6fd;
+  }
+
+  .stats-grid {
+    display: flex;
+    gap: 2rem;
+  }
+
+  .stat-item {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .stat-label {
+    font-size: 0.8rem;
+    color: #666;
+  }
+
+  .stat-value {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #0369a1;
+  }
+
+  .stat-hint {
+    font-size: 0.75rem;
+    color: #666;
+    font-style: italic;
+  }
+
+  .late-warning {
+    font-size: 0.75rem;
+    color: #dc2626;
+  }
+
+  .badge {
+    font-size: 0.7rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    background: #e5e5e5;
+    color: #666;
+    font-weight: normal;
+    vertical-align: middle;
+  }
+
+  .badge.live {
+    background: #dcfce7;
+    color: #166534;
+  }
+
+  .hint {
+    font-size: 0.85rem;
+    color: #666;
+    margin: 0 0 1rem;
+  }
+
+  .muted {
+    color: #999;
+    font-style: italic;
+  }
+
+  form {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  input {
+    flex: 1;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 0.95rem;
+  }
+
+  button {
+    padding: 0.5rem 1rem;
+    background: #0066cc;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.95rem;
+  }
+
+  button:hover:not(:disabled) {
+    background: #0055aa;
+  }
+
+  button:disabled {
+    background: #999;
+    cursor: not-allowed;
+  }
+
+  button.secondary {
+    background: #666;
+  }
+
+  button.secondary:hover {
+    background: #555;
+  }
+
+  button.small {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.85rem;
+  }
+
+  button.danger {
+    background: #dc2626;
+  }
+
+  button.danger:hover {
+    background: #b91c1c;
+  }
+
+  .mt-sm {
+    margin-top: 0.5rem;
+  }
+
+  .progress-bar {
+    height: 1.25rem;
+    background: #e5e5e5;
+    border-radius: 0.625rem;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #0066cc, #00aaff);
+    transition: width 0.3s ease;
+  }
+
+  .progress-text {
+    font-size: 0.85rem;
+    color: #666;
+    margin: 0.5rem 0 0;
+  }
+
+  .retry-info {
+    font-size: 0.85rem;
+    color: #d97706;
+    margin: 0.25rem 0 0;
+  }
+
+  .steps-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .step-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem;
+    background: #f5f5f5;
+    border-radius: 4px;
+  }
+
+  .step-item.completed {
+    background: #dcfce7;
+  }
+
+  .step-item.running {
+    background: #dbeafe;
+  }
+
+  .step-item.failed {
+    background: #fee2e2;
+  }
+
+  .step-icon {
+    width: 1.25rem;
+    text-align: center;
+    font-weight: bold;
+  }
+
+  .step-item.completed .step-icon {
+    color: #166534;
+  }
+
+  .step-item.running .step-icon {
+    color: #1d4ed8;
+  }
+
+  .step-item.failed .step-icon {
+    color: #dc2626;
+  }
+
+  .step-name {
+    flex: 1;
+  }
+
+  .step-status {
+    font-size: 0.75rem;
+    color: #666;
+    text-transform: uppercase;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  th,
+  td {
+    text-align: left;
+    padding: 0.75rem;
+    border-bottom: 1px solid #eee;
+  }
+
+  th {
+    font-weight: 600;
+    color: #555;
+  }
+
+  .error {
+    color: #dc2626;
+  }
+
+  .action-result {
+    padding: 0.75rem;
+    border-radius: 4px;
+  }
+
+  .action-result.success {
+    background: #dcfce7;
+    color: #166534;
+  }
+
+  .action-result.error {
+    background: #fee2e2;
+    color: #dc2626;
+  }
+
+  .action-result p {
+    margin: 0.25rem 0;
+  }
+
+  .action-result .small {
+    font-size: 0.75rem;
+    color: #666;
+  }
+
+  .action-result button {
+    background: #fff;
+    color: #333;
+    border: 1px solid #ccc;
+  }
+
+  .action-result button:hover:not(:disabled) {
+    background: #f5f5f5;
+  }
+
+  .price-display {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .price-value {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #166534;
+  }
+
+  .price-change {
+    font-size: 0.9rem;
+    font-weight: 500;
+  }
+
+  .price-change.positive {
+    color: #166534;
+  }
+
+  .price-change.negative {
+    color: #dc2626;
+  }
+
+  .price-other {
+    display: flex;
+    gap: 1rem;
+    font-size: 0.9rem;
+    color: #555;
+  }
+
+  .button-group {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .actions-cell {
+    position: relative;
+  }
+
+  .delete-wrapper {
+    display: inline-block;
+    position: relative;
+  }
+
+  .delete-popover {
+    position: absolute;
+    right: 0;
+    top: 100%;
+    margin-top: 4px;
+    background: white;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    padding: 0.75rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 100;
+    min-width: 140px;
+  }
+
+  .delete-popover p {
+    margin: 0 0 0.5rem;
+    font-size: 0.9rem;
+    white-space: nowrap;
+  }
+
+  .popover-buttons {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  @media (max-width: 600px) {
+    .grid {
+      grid-template-columns: 1fr;
+    }
+
+    .stats-grid {
+      flex-direction: column;
+      gap: 1rem;
+    }
+  }
+</style>

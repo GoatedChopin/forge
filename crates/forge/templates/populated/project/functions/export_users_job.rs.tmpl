@@ -1,0 +1,188 @@
+use crate::schema::User;
+use forgex::prelude::*;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportUsersInput {
+    pub format: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportUsersOutput {
+    pub user_count: usize,
+    pub data: String,
+    pub format: String,
+}
+
+/// Background job demonstrating:
+/// - Retry with exponential backoff
+/// - Idempotency guarantee
+/// - Progress reporting with ctx.progress()
+/// - Heartbeat for long-running jobs with ctx.heartbeat()
+/// - Retry detection with ctx.is_retry() and ctx.is_last_attempt()
+/// - Priority levels (low, normal, high, critical, background)
+/// - Worker capability targeting (general, gpu, high_cpu)
+#[forgex::job]
+#[timeout = "10m"]
+#[priority = "low"]
+#[retry(max_attempts = 3, backoff = "exponential")]
+#[idempotent]
+#[worker_capability = "general"]
+pub async fn export_users(ctx: &JobContext, input: ExportUsersInput) -> Result<ExportUsersOutput> {
+    use std::time::Duration;
+
+    // Log retry information with context
+    if ctx.is_retry() {
+        tracing::warn!(
+            job_id = %ctx.job_id,
+            attempt = ctx.attempt,
+            max_attempts = ctx.max_attempts,
+            is_last = ctx.is_last_attempt(),
+            "Retrying export job"
+        );
+
+        // On last attempt, maybe try a different strategy
+        if ctx.is_last_attempt() {
+            tracing::error!(job_id = %ctx.job_id, "Final attempt - will not retry after this");
+        }
+    }
+
+    tracing::info!(
+        job_id = %ctx.job_id,
+        format = %input.format,
+        "Starting user export"
+    );
+
+    let _ = ctx.progress(0, "Initializing export...");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Send heartbeat to indicate job is still alive
+    // Important for long-running jobs to prevent timeout
+    ctx.heartbeat().await?;
+
+    let _ = ctx.progress(10, "Preparing database query...");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    let _ = ctx.progress(25, "Connecting to database...");
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    ctx.heartbeat().await?;
+
+    let _ = ctx.progress(40, "Fetching users...");
+    let users: Vec<User> =
+        sqlx::query_as::<_, User>("SELECT * FROM users ORDER BY created_at DESC")
+            .fetch_all(ctx.db())
+            .await?;
+
+    // Send another heartbeat after database operation
+    ctx.heartbeat().await?;
+
+    let total = users.len();
+    let _ = ctx.progress(60, format!("Found {} users, formatting...", total));
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Format data based on requested format
+    let data = match input.format.as_str() {
+        "json" => {
+            serde_json::to_string_pretty(&users).map_err(|e| ForgeError::Job(e.to_string()))?
+        }
+        _ => {
+            let mut csv = String::from("id,email,name,role,created_at\n");
+            for (i, user) in users.iter().enumerate() {
+                csv.push_str(&format!(
+                    "{},{},{},{:?},{}\n",
+                    user.id, user.email, user.name, user.role, user.created_at
+                ));
+
+                // Update progress during large exports
+                if i > 0 && i % 100 == 0 {
+                    let progress = 60 + (i * 30 / total.max(1)) as u8;
+                    let _ = ctx.progress(progress, format!("Formatted {}/{} users", i, total));
+                    ctx.heartbeat().await?;
+                }
+            }
+            csv
+        }
+    };
+
+    let _ = ctx.progress(95, "Finalizing...");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    let _ = ctx.progress(100, format!("Exported {} users", total));
+
+    tracing::info!(
+        job_id = %ctx.job_id,
+        user_count = total,
+        format = %input.format,
+        "Export completed"
+    );
+
+    Ok(ExportUsersOutput {
+        user_count: total,
+        data,
+        format: input.format,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Job test contexts track retry state, progress updates, and heartbeats
+    // for verifying job behavior across attempts.
+
+    #[tokio::test]
+    async fn test_first_attempt() {
+        let ctx = TestJobContext::builder("export_users").build();
+
+        assert_eq!(ctx.job_type, "export_users");
+        assert_eq!(ctx.attempt, 1);
+        assert!(!ctx.is_retry());
+    }
+
+    #[tokio::test]
+    async fn test_retry_detection() {
+        let ctx = TestJobContext::builder("export_users")
+            .as_retry(3)
+            .with_max_attempts(5)
+            .build();
+
+        assert!(ctx.is_retry());
+        assert_eq!(ctx.attempt, 3);
+        assert!(!ctx.is_last_attempt());
+    }
+
+    #[tokio::test]
+    async fn test_last_attempt() {
+        let ctx = TestJobContext::builder("export_users")
+            .as_last_attempt()
+            .build();
+
+        assert!(ctx.is_retry());
+        assert!(ctx.is_last_attempt());
+    }
+
+    #[tokio::test]
+    async fn test_progress_updates() {
+        let ctx = TestJobContext::builder("export_users").build();
+
+        ctx.progress(25, "Processing batch 1").unwrap();
+        ctx.progress(50, "Processing batch 2").unwrap();
+        ctx.progress(100, "Complete").unwrap();
+
+        let updates = ctx.progress_updates();
+        assert_eq!(updates.len(), 3);
+        assert_eq!(updates[0].percent, 25);
+        assert_eq!(updates[0].message, "Processing batch 1");
+        assert_eq!(updates[2].percent, 100);
+    }
+
+    #[tokio::test]
+    async fn test_job_with_http_mock() {
+        let ctx = TestJobContext::builder("sync_external_data")
+            .mock_http_json("https://api.example.com/data", serde_json::json!({
+                "items": [1, 2, 3]
+            }))
+            .build();
+
+        ctx.http().assert_not_called("https://api.example.com/*");
+    }
+}
