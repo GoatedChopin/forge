@@ -11,10 +11,10 @@ const config: Config = {
     v4: true,
   },
 
-  url: 'https://forge.dev',
-  baseUrl: '/',
+  url: 'https://isala404.github.io',
+  baseUrl: '/forge/',
 
-  organizationName: 'forge',
+  organizationName: 'isala404',
   projectName: 'forge',
 
   onBrokenLinks: 'throw',
@@ -70,7 +70,7 @@ const config: Config = {
           position: 'left',
         },
         {
-          href: 'https://github.com/forge/forge',
+          href: 'https://github.com/isala404/forge',
           label: 'GitHub',
           position: 'right',
         },
@@ -122,7 +122,7 @@ const config: Config = {
             },
             {
               label: 'GitHub',
-              href: 'https://github.com/forge/forge',
+              href: 'https://github.com/isala404/forge',
             },
           ],
         },
