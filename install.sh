@@ -90,7 +90,8 @@ get_latest_release_url() {
     local _arch="$1"
     local _release_url _asset_url
 
-    _release_url="https://api.github.com/repos/$REPO/releases/latest"
+    # Use /releases endpoint (not /releases/latest) to include prereleases
+    _release_url="https://api.github.com/repos/$REPO/releases"
 
     _asset_url=$(curl -fsSL "$_release_url" | grep "browser_download_url" | grep "$_arch" | grep ".tar.gz\"" | grep -v ".sha256" | head -1 | cut -d '"' -f 4)
 
