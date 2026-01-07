@@ -37,7 +37,7 @@ const FUNCTIONS_VERIFICATION_WORKFLOW: &str =
     include_str!("../../templates/populated/project/functions/account_verification_workflow.rs.tmpl");
 const FUNCTIONS_GET_BITCOIN_PRICE_ACTION: &str =
     include_str!("../../templates/populated/project/functions/get_bitcoin_price_action.rs.tmpl");
-const CLAUDE_MD: &str = include_str!("../../templates/populated/project/CLAUDE.md.tmpl");
+const CLAUDE_MD: &str = include_str!("../../templates/populated/project/AGENTS.md.tmpl");
 
 // Populated frontend templates (default)
 const FRONTEND_PACKAGE_JSON: &str =
@@ -87,7 +87,7 @@ const EMPTY_MIGRATION_INITIAL: &str =
 const EMPTY_SCHEMA_MOD: &str = include_str!("../../templates/empty/project/schema/mod.rs.tmpl");
 const EMPTY_FUNCTIONS_MOD: &str =
     include_str!("../../templates/empty/project/functions/mod.rs.tmpl");
-const EMPTY_CLAUDE_MD: &str = include_str!("../../templates/empty/project/CLAUDE.md.tmpl");
+const EMPTY_CLAUDE_MD: &str = include_str!("../../templates/empty/project/AGENTS.md.tmpl");
 
 // Empty frontend templates (for --empty flag)
 const EMPTY_FRONTEND_PACKAGE_JSON: &str =
