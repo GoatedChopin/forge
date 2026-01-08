@@ -115,7 +115,6 @@ pub enum GeneratorError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use forge_core::schema::FieldAttribute;
     use forge_core::schema::RustType;
     use forge_core::schema::{FieldDef, TableDef};
 
@@ -124,15 +123,14 @@ mod tests {
         let generator = MigrationGenerator::new("/tmp/migrations");
 
         let mut table = TableDef::new("users", "User");
-        let mut id_field = FieldDef::new("id", RustType::Uuid);
-        id_field.attributes.push(FieldAttribute::Id);
-        table.fields.push(id_field);
+        table.fields.push(FieldDef::new("id", RustType::Uuid));
 
         let migration = generator.generate(&[table], &[]).unwrap();
 
         assert!(migration.is_some());
         let m = migration.unwrap();
         assert!(m.name.contains("users"));
-        assert!(m.sql.contains("CREATE TABLE"));
+        // Note: Actual CREATE TABLE SQL should come from manual migrations
+        assert!(m.sql.contains("Create table users"));
     }
 }

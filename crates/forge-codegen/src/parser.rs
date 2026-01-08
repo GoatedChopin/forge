@@ -119,37 +119,6 @@ fn parse_field(name: String, ty: &syn::Type, attrs: &[Attribute]) -> FieldDef {
     let mut field = FieldDef::new(&name, rust_type);
     field.column_name = to_snake_case(&name);
     field.doc = get_doc_comment(attrs);
-
-    // Parse field attributes
-    for attr in attrs {
-        let path = attr.path();
-        if path.is_ident("id") {
-            field
-                .attributes
-                .push(forge_core::schema::FieldAttribute::Id);
-        } else if path.is_ident("indexed") {
-            field
-                .attributes
-                .push(forge_core::schema::FieldAttribute::Indexed);
-        } else if path.is_ident("unique") {
-            field
-                .attributes
-                .push(forge_core::schema::FieldAttribute::Unique);
-        } else if path.is_ident("encrypted") {
-            field
-                .attributes
-                .push(forge_core::schema::FieldAttribute::Encrypted);
-        } else if path.is_ident("updated_at") {
-            field
-                .attributes
-                .push(forge_core::schema::FieldAttribute::UpdatedAt);
-        } else if path.is_ident("default") {
-            if let Some(value) = get_attribute_string_value(attr) {
-                field.default = Some(value);
-            }
-        }
-    }
-
     field
 }
 

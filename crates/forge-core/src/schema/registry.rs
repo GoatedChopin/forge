@@ -208,7 +208,7 @@ pub fn global_registry() -> &'static SchemaRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::field::{FieldAttribute, FieldDef};
+    use crate::schema::field::FieldDef;
     use crate::schema::model::TableDef;
     use crate::schema::types::RustType;
 
@@ -217,9 +217,7 @@ mod tests {
         let registry = SchemaRegistry::new();
 
         let mut table = TableDef::new("users", "User");
-        let mut id_field = FieldDef::new("id", RustType::Uuid);
-        id_field.attributes.push(FieldAttribute::Id);
-        table.fields.push(id_field);
+        table.fields.push(FieldDef::new("id", RustType::Uuid));
 
         registry.register_table(table.clone());
 

@@ -1,3 +1,11 @@
+Improved scaffold templates with Docker Compose workflow and renamed CLAUDE.md to AGENTS.md.
+- `templates/empty/project/README.md.tmpl`: Minimal README with Docker Compose first, manual setup, single binary build, testing
+- `templates/empty/project/docker-compose.yml.tmpl`: Added env_file directive, upgraded to postgres:18
+- `templates/empty/project/env.tmpl`: All defaults (DATABASE_URL via localhost, server, frontend, postgres vars)
+- `templates/empty/project/AGENTS.md.tmpl`: Added Running section with docker compose and exec commands
+- `templates/populated/project/*`: Same updates to populated templates
+- `crates/forge/src/cli/new.rs`: Renamed CLAUDE_MD → AGENTS_MD, output file CLAUDE.md → AGENTS.md
+
 Fixed {{project_name}} template variable not being replaced.
 - `crates/forge/src/cli/new.rs`: Added `"project_name" => name` to template_vars! in create_project() and create_frontend()
 
@@ -577,3 +585,16 @@ Implemented --empty flag for scaffolding (creates projects without example code)
 - docs/docs/cli/index.mdx: Added --empty flag documentation, both project structure examples
 - docs/docs/quick-start.mdx: Added tip about --empty flag
 - docs/docs/frontend/setup.mdx: Added scaffolding options explanation
+
+Removed unused schema field attributes (migrations are source of truth).
+- Package name clarified: `forgex` (crate), `forge` (CLI)
+- crates/forge-macros/src/model.rs: Removed all field attribute parsing (#[id], #[indexed], #[unique], etc.)
+- crates/forge-macros/src/lib.rs: Updated doc comments to use #[forgex::]
+- crates/forge-core/src/schema/field.rs: Removed FieldAttribute enum, FieldType enum, attributes/default fields from FieldDef
+- crates/forge-core/src/schema/model.rs: Removed to_create_table_sql(), primary_key(), indexed_fields(), unique_fields()
+- crates/forge-core/src/schema/mod.rs: Simplified exports (only FieldDef from field module)
+- crates/forge-codegen/src/parser.rs: Simplified parse_field() to not parse attributes
+- crates/forge-runtime/src/migrations/diff.rs: Updated to not use removed to_create_table_sql()/field.default
+- crates/forge-runtime/src/migrations/generator.rs: Fixed tests for removed FieldAttribute
+- crates/forge/src/cli/add.rs: Updated model template to not include field attributes
+- AGENTS.md.tmpl: Simplified schema section (migrations are source of truth, not attributes)

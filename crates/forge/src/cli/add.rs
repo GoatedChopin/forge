@@ -94,16 +94,10 @@ fn add_model(name: &str) -> Result<()> {
 /// {pascal_name} model.
 #[forgex::model]
 pub struct {pascal_name} {{
-    #[id]
     pub id: Uuid,
-
     // Add your fields here
     // pub name: String,
-
-    #[default = "now()"]
     pub created_at: Timestamp,
-
-    #[updated_at]
     pub updated_at: Timestamp,
 }}
 "#

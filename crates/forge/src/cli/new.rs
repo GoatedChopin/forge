@@ -23,8 +23,7 @@ const MIGRATION_INITIAL: &str =
     include_str!("../../templates/populated/project/migrations/0001_initial.sql.tmpl");
 const SCHEMA_MOD: &str = include_str!("../../templates/populated/project/schema/mod.rs.tmpl");
 const SCHEMA_USER: &str = include_str!("../../templates/populated/project/schema/user.rs.tmpl");
-const FUNCTIONS_MOD: &str =
-    include_str!("../../templates/populated/project/functions/mod.rs.tmpl");
+const FUNCTIONS_MOD: &str = include_str!("../../templates/populated/project/functions/mod.rs.tmpl");
 const FUNCTIONS_USERS: &str =
     include_str!("../../templates/populated/project/functions/users.rs.tmpl");
 const FUNCTIONS_APP_STATS: &str =
@@ -33,11 +32,12 @@ const FUNCTIONS_EXPORT_USERS_JOB: &str =
     include_str!("../../templates/populated/project/functions/export_users_job.rs.tmpl");
 const FUNCTIONS_HEARTBEAT_CRON: &str =
     include_str!("../../templates/populated/project/functions/heartbeat_stats_cron.rs.tmpl");
-const FUNCTIONS_VERIFICATION_WORKFLOW: &str =
-    include_str!("../../templates/populated/project/functions/account_verification_workflow.rs.tmpl");
+const FUNCTIONS_VERIFICATION_WORKFLOW: &str = include_str!(
+    "../../templates/populated/project/functions/account_verification_workflow.rs.tmpl"
+);
 const FUNCTIONS_GET_BITCOIN_PRICE_ACTION: &str =
     include_str!("../../templates/populated/project/functions/get_bitcoin_price_action.rs.tmpl");
-const CLAUDE_MD: &str = include_str!("../../templates/populated/project/AGENTS.md.tmpl");
+const AGENTS_MD: &str = include_str!("../../templates/populated/project/AGENTS.md.tmpl");
 const RAILWAY_JSON: &str = include_str!("../../templates/populated/project/railway.json.tmpl");
 const RENDER_YAML: &str = include_str!("../../templates/populated/project/render.yaml.tmpl");
 const FLY_TOML: &str = include_str!("../../templates/populated/project/fly.toml.tmpl");
@@ -51,8 +51,7 @@ const FRONTEND_VITE_CONFIG: &str =
     include_str!("../../templates/populated/frontend/vite.config.ts.tmpl");
 const FRONTEND_TSCONFIG: &str =
     include_str!("../../templates/populated/frontend/tsconfig.json.tmpl");
-const FRONTEND_APP_HTML: &str =
-    include_str!("../../templates/populated/frontend/app.html.tmpl");
+const FRONTEND_APP_HTML: &str = include_str!("../../templates/populated/frontend/app.html.tmpl");
 const FRONTEND_ENV_EXAMPLE: &str = include_str!("../../templates/populated/frontend/env.tmpl");
 const FRONTEND_LAYOUT_SVELTE: &str =
     include_str!("../../templates/populated/frontend/routes/layout.svelte.tmpl");
@@ -90,8 +89,9 @@ const EMPTY_MIGRATION_INITIAL: &str =
 const EMPTY_SCHEMA_MOD: &str = include_str!("../../templates/empty/project/schema/mod.rs.tmpl");
 const EMPTY_FUNCTIONS_MOD: &str =
     include_str!("../../templates/empty/project/functions/mod.rs.tmpl");
-const EMPTY_CLAUDE_MD: &str = include_str!("../../templates/empty/project/AGENTS.md.tmpl");
-const EMPTY_RAILWAY_JSON: &str = include_str!("../../templates/populated/project/railway.json.tmpl");
+const EMPTY_AGENTS_MD: &str = include_str!("../../templates/empty/project/AGENTS.md.tmpl");
+const EMPTY_RAILWAY_JSON: &str =
+    include_str!("../../templates/populated/project/railway.json.tmpl");
 const EMPTY_RENDER_YAML: &str = include_str!("../../templates/populated/project/render.yaml.tmpl");
 const EMPTY_FLY_TOML: &str = include_str!("../../templates/populated/project/fly.toml.tmpl");
 
@@ -104,10 +104,8 @@ const EMPTY_FRONTEND_VITE_CONFIG: &str =
     include_str!("../../templates/empty/frontend/vite.config.ts.tmpl");
 const EMPTY_FRONTEND_TSCONFIG: &str =
     include_str!("../../templates/empty/frontend/tsconfig.json.tmpl");
-const EMPTY_FRONTEND_APP_HTML: &str =
-    include_str!("../../templates/empty/frontend/app.html.tmpl");
-const EMPTY_FRONTEND_ENV_EXAMPLE: &str =
-    include_str!("../../templates/empty/frontend/env.tmpl");
+const EMPTY_FRONTEND_APP_HTML: &str = include_str!("../../templates/empty/frontend/app.html.tmpl");
+const EMPTY_FRONTEND_ENV_EXAMPLE: &str = include_str!("../../templates/empty/frontend/env.tmpl");
 const EMPTY_FRONTEND_LAYOUT_SVELTE: &str =
     include_str!("../../templates/empty/frontend/routes/layout.svelte.tmpl");
 const EMPTY_FRONTEND_LAYOUT_TS: &str =
@@ -168,7 +166,11 @@ impl NewCommand {
         println!();
         println!("{}", style("Next steps:").bold());
         println!();
-        println!("  {} {}", style("1.").dim(), style(format!("cd {}", project_dir)).cyan());
+        println!(
+            "  {} {}",
+            style("1.").dim(),
+            style(format!("cd {}", project_dir)).cyan()
+        );
         println!("  {} {}", style("2.").dim(), style("forge check").cyan());
         println!("     Verify your project setup and database connection");
         println!();
@@ -180,9 +182,18 @@ impl NewCommand {
         }
         println!();
         println!("{}", style("Useful commands:").bold());
-        println!("  {}  Regenerate TypeScript types", style("forge generate").dim());
-        println!("  {}   Check migration status", style("forge migrate status").dim());
-        println!("  {}   Add new components", style("forge add <type> <name>").dim());
+        println!(
+            "  {}  Regenerate TypeScript types",
+            style("forge generate").dim()
+        );
+        println!(
+            "  {}   Check migration status",
+            style("forge migrate status").dim()
+        );
+        println!(
+            "  {}   Add new components",
+            style("forge add <type> <name>").dim()
+        );
         println!();
         println!("{}", style("Documentation:").bold());
         println!("  https://tryforge.dev/docs");
@@ -211,6 +222,7 @@ pub fn create_project(dir: &Path, name: &str, minimal: bool, empty: bool) -> Res
         fs::write(dir.join("build.rs"), EMPTY_BUILD_RS)?;
         fs::write(dir.join(".gitignore"), EMPTY_GITIGNORE)?;
         fs::write(dir.join(".env"), render(EMPTY_ENV, &vars))?;
+        fs::write(dir.join(".env.example"), render(EMPTY_ENV, &vars))?;
         fs::write(dir.join("Dockerfile"), render(EMPTY_DOCKERFILE, &vars))?;
         fs::write(
             dir.join("docker-compose.yml"),
@@ -225,7 +237,7 @@ pub fn create_project(dir: &Path, name: &str, minimal: bool, empty: bool) -> Res
         )?;
         fs::write(dir.join("src/schema/mod.rs"), EMPTY_SCHEMA_MOD)?;
         fs::write(dir.join("src/functions/mod.rs"), EMPTY_FUNCTIONS_MOD)?;
-        fs::write(dir.join("CLAUDE.md"), EMPTY_CLAUDE_MD)?;
+        fs::write(dir.join("AGENTS.md"), EMPTY_AGENTS_MD)?;
         fs::write(dir.join("railway.json"), render(EMPTY_RAILWAY_JSON, &vars))?;
         fs::write(dir.join("render.yaml"), render(EMPTY_RENDER_YAML, &vars))?;
         fs::write(dir.join("fly.toml"), render(EMPTY_FLY_TOML, &vars))?;
@@ -266,7 +278,7 @@ pub fn create_project(dir: &Path, name: &str, minimal: bool, empty: bool) -> Res
             dir.join("src/functions/get_bitcoin_price_action.rs"),
             FUNCTIONS_GET_BITCOIN_PRICE_ACTION,
         )?;
-        fs::write(dir.join("CLAUDE.md"), CLAUDE_MD)?;
+        fs::write(dir.join("AGENTS.md"), AGENTS_MD)?;
         fs::write(dir.join("railway.json"), render(RAILWAY_JSON, &vars))?;
         fs::write(dir.join("render.yaml"), render(RENDER_YAML, &vars))?;
         fs::write(dir.join("fly.toml"), render(FLY_TOML, &vars))?;
@@ -306,6 +318,10 @@ fn create_frontend(dir: &Path, name: &str, empty: bool) -> Result<()> {
         fs::write(frontend_dir.join("tsconfig.json"), EMPTY_FRONTEND_TSCONFIG)?;
         fs::write(frontend_dir.join("src/app.html"), EMPTY_FRONTEND_APP_HTML)?;
         fs::write(frontend_dir.join(".env"), EMPTY_FRONTEND_ENV_EXAMPLE)?;
+        fs::write(
+            frontend_dir.join(".env.example"),
+            EMPTY_FRONTEND_ENV_EXAMPLE,
+        )?;
         fs::write(
             frontend_dir.join(".prettierignore"),
             EMPTY_FRONTEND_PRETTIERIGNORE,
@@ -353,6 +369,7 @@ fn create_frontend(dir: &Path, name: &str, empty: bool) -> Result<()> {
         fs::write(frontend_dir.join("tsconfig.json"), FRONTEND_TSCONFIG)?;
         fs::write(frontend_dir.join("src/app.html"), FRONTEND_APP_HTML)?;
         fs::write(frontend_dir.join(".env"), FRONTEND_ENV_EXAMPLE)?;
+        fs::write(frontend_dir.join(".env.example"), FRONTEND_ENV_EXAMPLE)?;
         fs::write(
             frontend_dir.join(".prettierignore"),
             FRONTEND_PRETTIERIGNORE,
@@ -421,7 +438,7 @@ mod tests {
         assert!(path.join("docker-compose.yml").exists());
         assert!(path.join(".dockerignore").exists());
         assert!(path.join("README.md").exists());
-        assert!(path.join("CLAUDE.md").exists());
+        assert!(path.join("AGENTS.md").exists());
     }
 
     #[test]
@@ -433,7 +450,7 @@ mod tests {
         create_project(&path, "test-minimal", true, false).unwrap();
 
         assert!(path.join("Cargo.toml").exists());
-        assert!(path.join("CLAUDE.md").exists());
+        assert!(path.join("AGENTS.md").exists());
         assert!(!path.join("frontend").exists());
     }
 
@@ -452,18 +469,16 @@ mod tests {
         assert!(path.join("src/schema/mod.rs").exists());
         assert!(path.join("src/functions/mod.rs").exists());
         assert!(path.join("migrations/0001_initial.sql").exists());
-        assert!(path.join("CLAUDE.md").exists());
+        assert!(path.join("AGENTS.md").exists());
 
         // Example files should NOT exist
         assert!(!path.join("src/schema/user.rs").exists());
         assert!(!path.join("src/functions/users.rs").exists());
         assert!(!path.join("src/functions/export_users_job.rs").exists());
         assert!(!path.join("src/functions/heartbeat_stats_cron.rs").exists());
-        assert!(
-            !path
-                .join("src/functions/account_verification_workflow.rs")
-                .exists()
-        );
+        assert!(!path
+            .join("src/functions/account_verification_workflow.rs")
+            .exists());
 
         // Frontend should still exist (not minimal)
         assert!(path.join("frontend/package.json").exists());
@@ -485,7 +500,7 @@ mod tests {
         assert!(path.join("src/main.rs").exists());
         assert!(path.join("src/schema/mod.rs").exists());
         assert!(path.join("src/functions/mod.rs").exists());
-        assert!(path.join("CLAUDE.md").exists());
+        assert!(path.join("AGENTS.md").exists());
 
         // Example files should NOT exist
         assert!(!path.join("src/schema/user.rs").exists());

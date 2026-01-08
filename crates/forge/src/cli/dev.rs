@@ -122,10 +122,7 @@ impl DevCommand {
                 println!("  {} Frontend dependencies installed", style("✓").green());
             }
 
-            println!(
-                "  {} Frontend: http://localhost:5173",
-                style("→").cyan()
-            );
+            println!("  {} Frontend: http://localhost:5173", style("→").cyan());
 
             let frontend_handle = start_frontend().await?;
             handles.push(("frontend", frontend_handle));
@@ -219,7 +216,10 @@ async fn start_backend_watch(port: u16) -> Result<tokio::process::Child> {
             "-w",
             "Cargo.toml",
         ])
-        .env("RUST_LOG", std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string()))
+        .env(
+            "RUST_LOG",
+            std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string()),
+        )
         .spawn()?;
 
     Ok(child)
@@ -228,7 +228,10 @@ async fn start_backend_watch(port: u16) -> Result<tokio::process::Child> {
 async fn start_backend(port: u16) -> Result<tokio::process::Child> {
     let child = Command::new("cargo")
         .args(["run", "--", "--port", &port.to_string()])
-        .env("RUST_LOG", std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string()))
+        .env(
+            "RUST_LOG",
+            std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string()),
+        )
         .spawn()?;
 
     Ok(child)
@@ -246,16 +249,12 @@ async fn start_frontend() -> Result<tokio::process::Child> {
 fn open_browser(url: &str) -> Result<()> {
     #[cfg(target_os = "macos")]
     {
-        std::process::Command::new("open")
-            .arg(url)
-            .spawn()?;
+        std::process::Command::new("open").arg(url).spawn()?;
     }
 
     #[cfg(target_os = "linux")]
     {
-        std::process::Command::new("xdg-open")
-            .arg(url)
-            .spawn()?;
+        std::process::Command::new("xdg-open").arg(url).spawn()?;
     }
 
     #[cfg(target_os = "windows")]

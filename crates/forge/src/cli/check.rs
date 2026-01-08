@@ -21,10 +21,7 @@ impl CheckCommand {
     /// Execute the check command.
     pub async fn execute(self) -> Result<()> {
         println!();
-        println!(
-            "{} Checking FORGE project...",
-            style("🔍").cyan()
-        );
+        println!("{} Checking FORGE project...", style("🔍").cyan());
         println!();
 
         let mut all_passed = true;
@@ -92,7 +89,7 @@ impl CheckCommand {
             // Count migrations
             let count = std::fs::read_dir(migrations_dir)?
                 .filter_map(|e| e.ok())
-                .filter(|e| e.path().extension().map_or(false, |ext| ext == "sql"))
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "sql"))
                 .count();
             println!("    {} {} migration file(s) found", style("→").dim(), count);
         } else {
@@ -148,15 +145,29 @@ impl CheckCommand {
 
                                 if self.db {
                                     println!();
-                                    println!("  {} Checking database connection...", style("⋯").cyan());
+                                    println!(
+                                        "  {} Checking database connection...",
+                                        style("⋯").cyan()
+                                    );
 
                                     match check_database_connection(url).await {
                                         Ok(version) => {
-                                            println!("  {} Database connection successful", style("✓").green());
-                                            println!("    {} PostgreSQL {}", style("→").dim(), version);
+                                            println!(
+                                                "  {} Database connection successful",
+                                                style("✓").green()
+                                            );
+                                            println!(
+                                                "    {} PostgreSQL {}",
+                                                style("→").dim(),
+                                                version
+                                            );
                                         }
                                         Err(e) => {
-                                            println!("  {} Database connection failed: {}", style("✗").red(), e);
+                                            println!(
+                                                "  {} Database connection failed: {}",
+                                                style("✗").red(),
+                                                e
+                                            );
                                             all_passed = false;
                                         }
                                     }
@@ -189,7 +200,10 @@ impl CheckCommand {
             if node_modules.exists() {
                 println!("  {} frontend dependencies installed", style("✓").green());
             } else {
-                println!("  {} frontend dependencies not installed", style("⚠").yellow());
+                println!(
+                    "  {} frontend dependencies not installed",
+                    style("⚠").yellow()
+                );
                 warnings.push("Run 'cd frontend && bun install' to install dependencies");
             }
         }
@@ -197,14 +211,14 @@ impl CheckCommand {
         // Summary
         println!();
         if all_passed && warnings.is_empty() {
-            println!(
-                "{} All checks passed! Ready to run.",
-                style("✅").green()
-            );
+            println!("{} All checks passed! Ready to run.", style("✅").green());
             println!();
             println!("Next steps:");
             println!("  {} Start development", style("forge dev").cyan());
-            println!("  {} Check migrations", style("forge migrate status").cyan());
+            println!(
+                "  {} Check migrations",
+                style("forge migrate status").cyan()
+            );
         } else if all_passed {
             println!(
                 "{} Checks passed with {} warning(s)",
@@ -250,9 +264,7 @@ async fn check_database_connection(url: &str) -> Result<String> {
         .connect(url)
         .await?;
 
-    let row = sqlx::query("SELECT version()")
-        .fetch_one(&pool)
-        .await?;
+    let row = sqlx::query("SELECT version()").fetch_one(&pool).await?;
 
     let version_str: String = row.get(0);
 

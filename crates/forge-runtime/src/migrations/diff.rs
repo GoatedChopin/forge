@@ -26,11 +26,12 @@ impl SchemaDiff {
             match db_table {
                 None => {
                     // Table doesn't exist, create it
+                    // Note: Actual SQL should come from migrations, this is just for diff detection
                     entries.push(DiffEntry {
                         action: DiffAction::CreateTable,
                         table_name: rust_table.name.clone(),
                         details: format!("Create table {}", rust_table.name),
-                        sql: rust_table.to_create_table_sql(),
+                        sql: format!("-- Create table {} (see migrations)", rust_table.name),
                     });
                 }
                 Some(db) => {
@@ -119,22 +120,15 @@ impl SchemaDiff {
         );
 
         if !field.nullable {
-            if let Some(ref default) = field.default {
-                sql.push_str(&format!(" NOT NULL DEFAULT {}", default));
-            } else {
-                // For non-nullable columns without default, we need a default value
-                let default_val =
-                    match field.sql_type {
-                        forge_core::schema::SqlType::Varchar(_)
-                        | forge_core::schema::SqlType::Text => "''",
-                        forge_core::schema::SqlType::Integer
-                        | forge_core::schema::SqlType::BigInt => "0",
-                        forge_core::schema::SqlType::Boolean => "false",
-                        forge_core::schema::SqlType::Timestamptz => "NOW()",
-                        _ => "NULL",
-                    };
-                sql.push_str(&format!(" NOT NULL DEFAULT {}", default_val));
-            }
+            // For non-nullable columns, provide a sensible default
+            let default_val = match field.sql_type {
+                forge_core::schema::SqlType::Varchar(_) | forge_core::schema::SqlType::Text => "''",
+                forge_core::schema::SqlType::Integer | forge_core::schema::SqlType::BigInt => "0",
+                forge_core::schema::SqlType::Boolean => "false",
+                forge_core::schema::SqlType::Timestamptz => "NOW()",
+                _ => "NULL",
+            };
+            sql.push_str(&format!(" NOT NULL DEFAULT {}", default_val));
         }
 
         sql.push(';');
@@ -204,7 +198,6 @@ pub struct DatabaseColumn {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use forge_core::schema::FieldAttribute;
     use forge_core::schema::RustType;
     use forge_core::schema::{FieldDef, TableDef};
 
@@ -217,9 +210,7 @@ mod tests {
     #[test]
     fn test_create_table_diff() {
         let mut table = TableDef::new("users", "User");
-        let mut id_field = FieldDef::new("id", RustType::Uuid);
-        id_field.attributes.push(FieldAttribute::Id);
-        table.fields.push(id_field);
+        table.fields.push(FieldDef::new("id", RustType::Uuid));
 
         let diff = SchemaDiff::from_comparison(&[table], &[]);
 
@@ -230,10 +221,10 @@ mod tests {
     #[test]
     fn test_add_column_diff() {
         let mut rust_table = TableDef::new("users", "User");
-        let id_field = FieldDef::new("id", RustType::Uuid);
-        let email_field = FieldDef::new("email", RustType::String);
-        rust_table.fields.push(id_field);
-        rust_table.fields.push(email_field);
+        rust_table.fields.push(FieldDef::new("id", RustType::Uuid));
+        rust_table
+            .fields
+            .push(FieldDef::new("email", RustType::String));
 
         let db_table = DatabaseTable {
             name: "users".to_string(),

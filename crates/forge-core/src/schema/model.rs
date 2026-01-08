@@ -62,64 +62,6 @@ impl TableDef {
         }
     }
 
-    /// Get the primary key field.
-    pub fn primary_key(&self) -> Option<&FieldDef> {
-        self.fields.iter().find(|f| f.is_primary_key())
-    }
-
-    /// Get all indexed fields.
-    pub fn indexed_fields(&self) -> Vec<&FieldDef> {
-        self.fields.iter().filter(|f| f.is_indexed()).collect()
-    }
-
-    /// Get all unique fields.
-    pub fn unique_fields(&self) -> Vec<&FieldDef> {
-        self.fields.iter().filter(|f| f.is_unique()).collect()
-    }
-
-    /// Generate CREATE TABLE SQL.
-    pub fn to_create_table_sql(&self) -> String {
-        let table_name = self.qualified_name();
-        let columns: Vec<String> = self.fields.iter().map(|f| f.to_sql_column()).collect();
-
-        let mut sql = format!(
-            "CREATE TABLE {} (\n    {}\n);\n",
-            table_name,
-            columns.join(",\n    ")
-        );
-
-        // Add individual field indexes
-        for field in self.indexed_fields() {
-            if !field.is_primary_key() && !field.is_unique() {
-                // For soft delete tables, add partial index excluding deleted rows
-                if self.soft_delete && field.column_name != "deleted_at" {
-                    sql.push_str(&format!(
-                        "\nCREATE INDEX idx_{}_{} ON {}({}) WHERE deleted_at IS NULL;",
-                        self.name, field.column_name, table_name, field.column_name
-                    ));
-                } else {
-                    sql.push_str(&format!(
-                        "\nCREATE INDEX idx_{}_{} ON {}({});",
-                        self.name, field.column_name, table_name, field.column_name
-                    ));
-                }
-            }
-        }
-
-        // Add composite indexes
-        for idx in &self.composite_indexes {
-            sql.push_str(&format!("\n{}", idx.to_sql(&self.name)));
-        }
-
-        // Add change tracking trigger
-        sql.push_str(&format!(
-            "\n\nCREATE TRIGGER {}_notify_changes\n    AFTER INSERT OR UPDATE OR DELETE ON {}\n    FOR EACH ROW EXECUTE FUNCTION forge_notify_change();",
-            self.name, table_name
-        ));
-
-        sql
-    }
-
     /// Generate TypeScript interface.
     pub fn to_typescript_interface(&self) -> String {
         let fields: Vec<String> = self.fields.iter().map(|f| f.to_typescript()).collect();
@@ -259,56 +201,21 @@ pub enum RelationType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::field::FieldAttribute;
     use crate::schema::types::RustType;
 
     #[test]
     fn test_table_def_basic() {
         let mut table = TableDef::new("users", "User");
-
-        let mut id_field = FieldDef::new("id", RustType::Uuid);
-        id_field.attributes.push(FieldAttribute::Id);
-        table.fields.push(id_field);
-
-        let mut email_field = FieldDef::new("email", RustType::String);
-        email_field.attributes.push(FieldAttribute::Indexed);
-        email_field.attributes.push(FieldAttribute::Unique);
-        table.fields.push(email_field);
-
-        let name_field = FieldDef::new("name", RustType::String);
-        table.fields.push(name_field);
-
-        assert_eq!(table.primary_key().unwrap().name, "id");
-        assert_eq!(table.indexed_fields().len(), 1);
-        assert_eq!(table.unique_fields().len(), 1);
-    }
-
-    #[test]
-    fn test_table_to_sql() {
-        let mut table = TableDef::new("users", "User");
-
-        let mut id_field = FieldDef::new("id", RustType::Uuid);
-        id_field.attributes.push(FieldAttribute::Id);
-        table.fields.push(id_field);
-
-        let email_field = FieldDef::new("email", RustType::String);
-        table.fields.push(email_field);
-
-        let sql = table.to_create_table_sql();
-        assert!(sql.contains("CREATE TABLE users"));
-        assert!(sql.contains("id UUID PRIMARY KEY"));
-        assert!(sql.contains("email VARCHAR(255) NOT NULL"));
+        table.fields.push(FieldDef::new("id", RustType::Uuid));
+        table.fields.push(FieldDef::new("email", RustType::String));
+        assert_eq!(table.fields.len(), 2);
     }
 
     #[test]
     fn test_table_to_typescript() {
         let mut table = TableDef::new("users", "User");
-
-        let id_field = FieldDef::new("id", RustType::Uuid);
-        table.fields.push(id_field);
-
-        let email_field = FieldDef::new("email", RustType::String);
-        table.fields.push(email_field);
+        table.fields.push(FieldDef::new("id", RustType::Uuid));
+        table.fields.push(FieldDef::new("email", RustType::String));
 
         let ts = table.to_typescript_interface();
         assert!(ts.contains("export interface User"));
