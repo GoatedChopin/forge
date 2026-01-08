@@ -11,13 +11,13 @@ The `forge` CLI tool helps you create, develop, and manage FORGE projects.
 ## Installation
 
 ```bash
-# Install from cargo
-cargo install forge-cli
+# Quick install (recommended)
+curl -fsSL https://tryforge.dev/install.sh | sh
 
 # Or build from source
-git clone https://github.com/forge/forge
+git clone https://github.com/isala404/forge
 cd forge
-cargo install --path crates/forge-cli
+cargo install --path crates/forge
 ```
 
 ## Commands Overview
@@ -25,6 +25,8 @@ cargo install --path crates/forge-cli
 | Command | Description |
 |---------|-------------|
 | `forge new` | Create a new project |
+| `forge check` | Validate project setup |
+| `forge dev` | Start development environment |
 | `forge add` | Add a function |
 | `forge generate` | Generate TypeScript types |
 | `forge migrate` | Run database migrations |
@@ -113,6 +115,104 @@ my-app/
     │   ├── routes/+page.svelte  # Starter page
     │   └── lib/forge/           # Minimal types
     └── ...
+```
+
+## forge check
+
+Validate your project setup and dependencies.
+
+```bash
+forge check [options]
+```
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `-c, --config` | `forge.toml` | Path to configuration file |
+| `--db` | `true` | Check database connectivity |
+
+**What it checks:**
+
+1. **Configuration** - `forge.toml` exists and is valid TOML
+2. **Directory structure** - Required directories exist (`src/schema/`, `src/functions/`, `migrations/`)
+3. **Environment** - `.env` file and `DATABASE_URL` variable
+4. **Database** - PostgreSQL connection and version (optional)
+5. **Frontend** - `package.json` and dependencies (if frontend exists)
+
+**Example output:**
+
+```
+🔍 Checking FORGE project...
+
+  ✓ forge.toml found
+  ✓ forge.toml is valid TOML
+  ✓ [project] section found
+  ✓ [database] section found
+  ✓ src/schema/ directory exists
+  ✓ src/functions/ directory exists
+  ✓ migrations/ directory exists
+    → 3 migration file(s) found
+  ✓ .env file found
+  ✓ DATABASE_URL is set
+    → postgres://user:****@localhost/myapp
+
+  ⋯ Checking database connection...
+  ✓ Database connection successful
+    → PostgreSQL 16.1
+
+✅ All checks passed! Ready to run.
+
+Next steps:
+  forge dev            Start development
+  forge migrate status Check migrations
+```
+
+## forge dev
+
+Start the full development environment (backend + frontend) with hot reload.
+
+```bash
+forge dev [options]
+```
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `-p, --port` | `8080` | Backend HTTP port |
+| `--backend-only` | `false` | Only start backend |
+| `--frontend-only` | `false` | Only start frontend |
+| `--no-open` | `false` | Don't open browser |
+
+**Examples:**
+
+```bash
+# Start everything (backend + frontend + open browser)
+forge dev
+
+# Start only backend on port 3000
+forge dev --backend-only --port 3000
+
+# Start only frontend
+forge dev --frontend-only
+
+# Start without opening browser
+forge dev --no-open
+```
+
+**Output:**
+
+```
+🔧 Starting FORGE development environment...
+
+Backend starting on http://localhost:8080
+Frontend starting on http://localhost:5173
+
+📊 Dashboard: http://localhost:8080/_dashboard
+🌐 App: http://localhost:5173
+
+Press Ctrl+C to stop all services
 ```
 
 ## forge add

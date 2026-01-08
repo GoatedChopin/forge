@@ -1,12 +1,86 @@
 ---
 sidebar_position: 8
 title: Deployment
-description: Deploy FORGE applications with Docker and Kubernetes
+description: Deploy FORGE applications with Docker, Railway, Render, Fly.io, and Kubernetes
 ---
 
 # Deployment
 
 FORGE applications are single binaries that include everything needed to run your application. This makes deployment straightforward.
+
+## Quick Deploy (One-Click)
+
+Scaffolded projects include configuration files for instant deployment to popular platforms.
+
+### Railway
+
+Railway provides instant PostgreSQL and simple deploys.
+
+1. Click: **Deploy on Railway**
+2. Railway auto-detects the Dockerfile
+3. Add PostgreSQL from the Railway dashboard
+4. Set `DATABASE_URL` environment variable
+
+```bash
+# Or deploy via CLI
+railway login
+railway init
+railway add postgres
+railway up
+```
+
+### Render
+
+Render Blueprint deploys your app with PostgreSQL in one click.
+
+1. Push to GitHub
+2. Connect repo to Render
+3. Use the `render.yaml` blueprint
+4. Render provisions the database automatically
+
+```yaml title="render.yaml (included in project)"
+services:
+  - type: web
+    name: my-app
+    runtime: docker
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: my-app-db
+          property: connectionString
+
+databases:
+  - name: my-app-db
+    plan: starter
+```
+
+### Fly.io
+
+Fly.io runs apps globally at edge locations.
+
+```bash
+# First time setup
+fly launch
+fly postgres create
+fly secrets set DATABASE_URL=...
+
+# Deploy
+fly deploy
+```
+
+The included `fly.toml` configures auto-scaling and health checks.
+
+### Cost Comparison (Estimated Monthly)
+
+| Platform | App | PostgreSQL | Total |
+|----------|-----|------------|-------|
+| Railway | ~$5 | ~$5 | ~$10 |
+| Render | $7 | $7 | ~$14 |
+| Fly.io | ~$5 | ~$10 | ~$15 |
+| DigitalOcean | $5 | $15 | ~$20 |
+
+*All support hobby tiers with free credits for getting started.*
 
 ## Docker
 

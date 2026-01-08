@@ -1,0 +1,217 @@
+---
+sidebar_position: 1
+title: FORGE vs. Supabase
+description: Detailed comparison between FORGE and Supabase for backend development
+---
+
+# FORGE vs. Supabase
+
+Both FORGE and Supabase are PostgreSQL-first platforms, but they take fundamentally different approaches.
+
+## Architecture Comparison
+
+| Aspect | FORGE | Supabase |
+|--------|-------|----------|
+| **Core Model** | Application framework | Database-as-a-Service |
+| **Backend Code** | Rust with proc macros | Edge Functions (Deno) |
+| **Deployment** | Single binary | Hosted platform + Docker |
+| **Database** | PostgreSQL | PostgreSQL |
+| **API Layer** | Type-safe Rust functions | PostgREST auto-generated |
+
+## Philosophy
+
+### FORGE: Code-First
+
+FORGE treats your backend as **code** - you write Rust functions with full type safety, compile-time checks, and IDE support.
+
+```rust
+#[forge::query]
+pub async fn get_user(ctx: &QueryContext, id: Uuid) -> Result<User> {
+    // Full IDE support, type checking, refactoring
+    let user = sqlx::query_as!(User, "SELECT * FROM users WHERE id = $1", id)
+        .fetch_optional(ctx.db())
+        .await?
+        .ok_or(ForgeError::NotFound("User not found".into()))?;
+
+    Ok(user)
+}
+```
+
+### Supabase: Database-First
+
+Supabase auto-generates APIs from your database schema. You write SQL and let PostgREST handle the API.
+
+```javascript
+// Client-side - queries go directly to database via PostgREST
+const { data, error } = await supabase
+  .from('users')
+  .select('*')
+  .eq('id', userId);
+```
+
+## Feature Comparison
+
+### Background Processing
+
+| Feature | FORGE | Supabase |
+|---------|-------|----------|
+| Background Jobs | Built-in with retries, progress | Edge Functions (limited) |
+| Cron Jobs | Built-in `#[forge::cron]` | pg_cron extension |
+| Workflows | Built-in with compensation | None |
+| Job Dashboard | Built-in | None |
+
+**FORGE:**
+```rust
+#[forge::job]
+#[retry(max_attempts = 5, backoff = "exponential")]
+pub async fn send_email(ctx: &JobContext, input: EmailInput) -> Result<()> {
+    ctx.progress(0, "Sending...")?;
+    send_via_smtp(&input).await?;
+    ctx.progress(100, "Sent!")?;
+    Ok(())
+}
+```
+
+**Supabase:** Requires external services (Inngest, Trigger.dev) or pg_cron for scheduling.
+
+### Real-time
+
+| Feature | FORGE | Supabase |
+|---------|-------|----------|
+| Mechanism | PostgreSQL NOTIFY | Logical replication |
+| Granularity | Custom events | Row-level changes |
+| Server Push | WebSocket | WebSocket |
+| Filtering | Custom logic | RLS policies |
+
+**FORGE:**
+```rust
+#[forge::mutation]
+pub async fn create_post(ctx: &MutationContext, input: PostInput) -> Result<Post> {
+    let post = create_post_in_db(ctx.db(), &input).await?;
+
+    // Broadcast to subscribers
+    ctx.broadcast("posts:created", &post).await?;
+
+    Ok(post)
+}
+```
+
+**Supabase:**
+```javascript
+supabase
+  .channel('posts')
+  .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'posts' },
+    payload => console.log('New post:', payload))
+  .subscribe();
+```
+
+### Type Safety
+
+| Aspect | FORGE | Supabase |
+|--------|-------|----------|
+| Backend Types | Rust (compile-time) | None (raw SQL) |
+| Frontend Types | Generated TypeScript | Generated TypeScript |
+| API Contract | Rust -> TS codegen | Database -> TS codegen |
+| Refactoring | Compiler-assisted | Manual |
+
+**FORGE advantage:** When you refactor a query, the Rust compiler catches breaking changes immediately. Supabase requires runtime testing.
+
+### Self-Hosting
+
+| Aspect | FORGE | Supabase |
+|--------|-------|----------|
+| Complexity | Single binary | 10+ Docker containers |
+| RAM Minimum | ~50MB | ~4GB |
+| Dependencies | PostgreSQL only | PostgreSQL, Kong, GoTrue, PostgREST, Storage API... |
+| Updates | Binary replacement | Orchestrated container updates |
+
+**FORGE:**
+```bash
+# Deploy anywhere
+./my-app  # Single binary with everything included
+```
+
+**Supabase self-hosted:**
+```yaml
+# docker-compose.yml - 10+ services
+services:
+  kong:
+  auth:
+  rest:
+  realtime:
+  storage:
+  meta:
+  postgres:
+  # ... more services
+```
+
+## When to Choose FORGE
+
+Choose FORGE when:
+
+1. **You want type-safe backend code** - Rust catches errors at compile time
+2. **You need background processing** - Built-in jobs, crons, and workflows
+3. **You want simple self-hosting** - Single binary, no orchestration
+4. **You value performance** - Rust is 10-100x faster than JS/Deno
+5. **You want predictable costs** - No per-request pricing
+6. **You need complex business logic** - Full programming language, not just SQL
+
+## When to Choose Supabase
+
+Choose Supabase when:
+
+1. **You want managed hosting** - Zero ops, instant scaling
+2. **Your team knows SQL better than Rust** - Database-first approach
+3. **You need rapid prototyping** - Auto-generated APIs from schema
+4. **You want a visual dashboard** - Built-in table editor, SQL editor
+5. **You need S3-compatible storage** - Built-in file storage
+6. **You prefer JavaScript/TypeScript** - Deno Edge Functions
+
+## Cost Comparison
+
+### Small Project (10K users)
+
+| Platform | Monthly Cost |
+|----------|--------------|
+| FORGE on Railway | ~$10 |
+| Supabase Free | $0 |
+| Supabase Pro | $25 |
+
+### Medium Project (100K users)
+
+| Platform | Monthly Cost |
+|----------|--------------|
+| FORGE on Railway | ~$30-50 |
+| Supabase Pro | $25 + usage |
+| Supabase Team | $599 + usage |
+
+### Large Project (1M+ users)
+
+| Platform | Monthly Cost |
+|----------|--------------|
+| FORGE on dedicated | ~$200-500 |
+| Supabase Enterprise | $$$$ (contact sales) |
+
+**Note:** FORGE costs scale linearly with resources. Supabase costs scale with usage (requests, storage, bandwidth).
+
+## Migration Path
+
+Moving from Supabase to FORGE? Here's the high-level process:
+
+1. **Export your schema** - `pg_dump --schema-only`
+2. **Create FORGE models** - Convert tables to Rust structs
+3. **Rewrite queries** - PostgREST calls become Rust functions
+4. **Migrate Edge Functions** - Deno functions become FORGE jobs/actions
+5. **Update frontend** - Replace Supabase client with FORGE client
+6. **Migrate data** - Standard PostgreSQL migration
+
+See [Migrating from Supabase](/guides/migrate-from-supabase) for detailed steps.
+
+## Summary
+
+| You should use... | If you value... |
+|-------------------|-----------------|
+| **FORGE** | Type safety, self-hosting simplicity, background processing, Rust performance |
+| **Supabase** | Managed hosting, rapid prototyping, SQL-first development, visual tools |
+
+Both are excellent choices. FORGE is better for teams that want full control and type safety. Supabase is better for teams that want managed infrastructure and rapid development.

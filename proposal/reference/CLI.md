@@ -21,7 +21,7 @@ Why? CLI authentication is annoying to manage. The dashboard uses your app's exi
 ## Installation
 
 ```bash
-curl -fsSL https://forge.dev/install.sh | sh
+curl -fsSL https://tryforge.dev/install.sh | sh
 ```
 
 ---

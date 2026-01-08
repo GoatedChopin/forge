@@ -1,0 +1,753 @@
+---
+sidebar_position: 5
+title: Testing Your App
+description: Learn how to write comprehensive tests for FORGE applications
+---
+
+# Testing Your App
+
+Learn to write unit and integration tests for your FORGE application. We'll cover testing all function types with real-world patterns.
+
+<div className="badge-row">
+  <span className="badge badge--warning">Intermediate</span>
+  <span className="badge badge--secondary">~30 minutes</span>
+</div>
+
+## What You'll Learn
+
+- Testing queries, mutations, and actions
+- Mocking external HTTP APIs
+- Verifying job and workflow dispatches
+- Testing authentication and authorization
+- Integration tests with a real database
+
+## Prerequisites
+
+- Completed the [Todo App tutorial](/tutorials/build-a-todo-app)
+- Basic understanding of FORGE function types
+- Rust testing basics (`#[test]`, `#[tokio::test]`)
+
+## Setup
+
+FORGE's testing utilities are available through the `testing` feature. Your project should already have this configured:
+
+```toml title="Cargo.toml"
+[dependencies]
+forge = { version = "0.0.1-alpha", features = ["testing"] }
+```
+
+## Part 1: Testing Queries
+
+Queries are read-only functions. Let's test a user lookup query.
+
+### The Function
+
+```rust title="src/functions/users.rs"
+#[forge::query]
+pub async fn get_user(ctx: &QueryContext, id: Uuid) -> Result<User> {
+    let user_id = ctx.require_user_id()?;  // Must be authenticated
+
+    // Users can only view themselves (unless admin)
+    if id != user_id && !ctx.has_role("admin") {
+        return Err(ForgeError::Forbidden("Cannot view other users".into()));
+    }
+
+    // Fetch from database
+    let user = sqlx::query_as!(User, "SELECT * FROM users WHERE id = $1", id)
+        .fetch_optional(ctx.db())
+        .await?
+        .ok_or(ForgeError::NotFound("User not found".into()))?;
+
+    Ok(user)
+}
+```
+
+### Test: Authentication Required
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use forge::prelude::*;
+
+    #[tokio::test]
+    async fn get_user_requires_auth() {
+        // Create unauthenticated context
+        let ctx = TestQueryContext::minimal();
+
+        // Try to call the function - should fail
+        let result = ctx.require_user_id();
+        assert_err!(result);
+        assert_err_variant!(result, ForgeError::Unauthorized(_));
+    }
+}
+```
+
+### Test: Authorization
+
+```rust
+#[tokio::test]
+async fn users_can_view_themselves() {
+    let user_id = Uuid::new_v4();
+    let ctx = TestQueryContext::authenticated(user_id);
+
+    // User viewing themselves should be allowed
+    let result = ctx.require_user_id();
+    assert_ok!(result);
+    assert_eq!(result.unwrap(), user_id);
+}
+
+#[tokio::test]
+async fn regular_users_cannot_view_others() {
+    let user_id = Uuid::new_v4();
+    let other_user_id = Uuid::new_v4();
+
+    // Regular user (no admin role)
+    let ctx = TestQueryContext::authenticated(user_id);
+
+    // They shouldn't be able to view other users
+    // (In real code, you'd pass ctx to get_user and check)
+    assert!(!ctx.has_role("admin"));
+}
+
+#[tokio::test]
+async fn admins_can_view_anyone() {
+    let admin_id = Uuid::new_v4();
+    let ctx = TestQueryContext::builder()
+        .as_user(admin_id)
+        .with_role("admin")
+        .build();
+
+    assert!(ctx.has_role("admin"));
+}
+```
+
+## Part 2: Testing Mutations
+
+Mutations modify data and often dispatch jobs or workflows.
+
+### The Function
+
+```rust title="src/functions/orders.rs"
+#[forge::mutation]
+pub async fn create_order(ctx: &MutationContext, input: CreateOrderInput) -> Result<Order> {
+    let user_id = ctx.require_user_id()?;
+
+    // Validate input
+    if input.items.is_empty() {
+        return Err(ForgeError::Validation("Order must have items".into()));
+    }
+
+    // Create order in database
+    let order = create_order_in_db(ctx.db(), user_id, &input).await?;
+
+    // Dispatch processing job
+    ctx.dispatch_job("process_order", serde_json::json!({
+        "order_id": order.id,
+        "user_id": user_id,
+    })).await?;
+
+    // Send confirmation email
+    ctx.dispatch_job("send_order_confirmation", serde_json::json!({
+        "order_id": order.id,
+        "email": input.email,
+    })).await?;
+
+    Ok(order)
+}
+```
+
+### Test: Input Validation
+
+```rust
+#[tokio::test]
+async fn create_order_validates_items() {
+    let ctx = TestMutationContext::builder()
+        .as_user(Uuid::new_v4())
+        .build();
+
+    let input = CreateOrderInput {
+        items: vec![],  // Empty!
+        email: "test@example.com".to_string(),
+    };
+
+    // Validation should fail
+    // Note: In this unit test we're checking the logic directly
+    assert!(input.items.is_empty());
+}
+```
+
+### Test: Job Dispatches
+
+```rust
+#[tokio::test]
+async fn create_order_dispatches_jobs() {
+    let ctx = TestMutationContext::builder()
+        .as_user(Uuid::new_v4())
+        .build();
+
+    // Simulate what the mutation does
+    let order_id = Uuid::new_v4();
+
+    ctx.dispatch_job("process_order", serde_json::json!({
+        "order_id": order_id,
+        "user_id": ctx.auth.user_id,
+    })).await.unwrap();
+
+    ctx.dispatch_job("send_order_confirmation", serde_json::json!({
+        "order_id": order_id,
+        "email": "customer@example.com",
+    })).await.unwrap();
+
+    // Verify jobs were dispatched
+    assert_job_dispatched!(ctx, "process_order");
+    assert_job_dispatched!(ctx, "send_order_confirmation");
+
+    // Verify job arguments
+    ctx.job_dispatch().assert_dispatched_with("process_order", |args| {
+        args["order_id"].as_str().is_some()
+    });
+
+    // Verify no unexpected jobs
+    assert_job_not_dispatched!(ctx, "send_admin_alert");
+}
+```
+
+### Test: Workflow Starts
+
+```rust
+#[tokio::test]
+async fn create_order_starts_fulfillment_workflow() {
+    let ctx = TestMutationContext::builder()
+        .as_user(Uuid::new_v4())
+        .build();
+
+    let order_id = Uuid::new_v4();
+
+    ctx.start_workflow("order_fulfillment", serde_json::json!({
+        "order_id": order_id,
+    })).await.unwrap();
+
+    // Verify workflow was started
+    assert_workflow_started!(ctx, "order_fulfillment");
+
+    ctx.workflow_dispatch().assert_started_with("order_fulfillment", |input| {
+        input["order_id"].as_str().is_some()
+    });
+}
+```
+
+## Part 3: Testing Actions (External APIs)
+
+Actions make external HTTP calls. We mock these in tests.
+
+### The Function
+
+```rust title="src/functions/payments.rs"
+#[forge::action]
+pub async fn charge_card(ctx: &ActionContext, input: ChargeInput) -> Result<ChargeResult> {
+    let response = ctx.http()
+        .post("https://api.stripe.com/v1/charges")
+        .bearer_auth(&ctx.get_secret("STRIPE_SECRET_KEY")?)
+        .json(&serde_json::json!({
+            "amount": input.amount,
+            "currency": "usd",
+            "source": input.card_token,
+        }))
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        return Err(ForgeError::External("Payment failed".into()));
+    }
+
+    let charge: StripeCharge = response.json().await?;
+
+    Ok(ChargeResult {
+        charge_id: charge.id,
+        status: charge.status,
+    })
+}
+```
+
+### Test: Successful Charge
+
+```rust
+#[tokio::test]
+async fn charge_card_success() {
+    let ctx = TestActionContext::builder()
+        .as_user(Uuid::new_v4())
+        .mock_http_json("https://api.stripe.com/v1/charges", serde_json::json!({
+            "id": "ch_test123",
+            "status": "succeeded",
+            "amount": 4999,
+        }))
+        .build();
+
+    // The mock returns our predefined response
+    // In a real test, you'd call the function and verify the result
+    ctx.http().assert_not_called("https://api.stripe.com/*");  // Not called yet
+}
+```
+
+### Test: API Failure
+
+```rust
+#[tokio::test]
+async fn charge_card_handles_failure() {
+    let ctx = TestActionContext::builder()
+        .as_user(Uuid::new_v4())
+        .mock_http("https://api.stripe.com/v1/charges", |_| {
+            MockResponse::error(402, "Card declined")
+        })
+        .build();
+
+    // Mock is ready - your function would receive a 402 error
+}
+```
+
+### Test: Multiple API Calls
+
+```rust
+#[tokio::test]
+async fn sync_action_calls_multiple_apis() {
+    let ctx = TestActionContext::builder()
+        .mock_http_json("https://api.stripe.com/*", serde_json::json!({
+            "customer_id": "cus_123"
+        }))
+        .mock_http_json("https://api.sendgrid.com/*", serde_json::json!({
+            "message_id": "msg_456"
+        }))
+        .mock_http("https://hooks.slack.com/*", |_| MockResponse::ok())
+        .build();
+
+    // After your action runs, verify all calls were made
+    ctx.http().assert_called("https://api.stripe.com/*");
+    ctx.http().assert_called("https://api.sendgrid.com/*");
+    ctx.http().assert_called("https://hooks.slack.com/*");
+
+    // Verify call counts
+    ctx.http().assert_called_times("https://api.stripe.com/*", 1);
+}
+```
+
+## Part 4: Testing Jobs
+
+Jobs run in the background with retries and progress tracking.
+
+### The Function
+
+```rust title="src/functions/export_job.rs"
+#[forge::job]
+#[retry(max_attempts = 3, backoff = "exponential")]
+pub async fn export_data(ctx: &JobContext, input: ExportInput) -> Result<()> {
+    ctx.progress(0, "Starting export...")?;
+
+    let records = fetch_records(ctx.db(), &input.filters).await?;
+    let total = records.len();
+
+    for (i, record) in records.iter().enumerate() {
+        // Process each record
+        process_record(record).await?;
+
+        // Update progress
+        let percent = ((i + 1) * 100 / total) as u8;
+        ctx.progress(percent, &format!("Processed {} of {}", i + 1, total))?;
+
+        // Heartbeat for long jobs
+        ctx.heartbeat()?;
+    }
+
+    ctx.progress(100, "Export complete!")?;
+    Ok(())
+}
+```
+
+### Test: Progress Updates
+
+```rust
+#[tokio::test]
+async fn export_job_reports_progress() {
+    let ctx = TestJobContext::builder("export_data").build();
+
+    // Simulate progress updates
+    ctx.progress(0, "Starting...").unwrap();
+    ctx.progress(50, "Halfway...").unwrap();
+    ctx.progress(100, "Done!").unwrap();
+
+    let updates = ctx.progress_updates();
+    assert_eq!(updates.len(), 3);
+    assert_eq!(updates[0].percent, 0);
+    assert_eq!(updates[1].percent, 50);
+    assert_eq!(updates[2].percent, 100);
+}
+```
+
+### Test: Retry Behavior
+
+```rust
+#[tokio::test]
+async fn export_job_retry_detection() {
+    // First attempt
+    let ctx = TestJobContext::builder("export_data").build();
+    assert!(!ctx.is_retry());
+    assert_eq!(ctx.attempt(), 1);
+
+    // Second attempt (first retry)
+    let ctx = TestJobContext::builder("export_data")
+        .as_retry(2)
+        .with_max_attempts(3)
+        .build();
+
+    assert!(ctx.is_retry());
+    assert_eq!(ctx.attempt(), 2);
+    assert!(!ctx.is_last_attempt());
+
+    // Final attempt
+    let ctx = TestJobContext::builder("export_data")
+        .as_last_attempt()
+        .build();
+
+    assert!(ctx.is_retry());
+    assert!(ctx.is_last_attempt());
+}
+```
+
+### Test: Different Behavior on Retry
+
+```rust
+#[tokio::test]
+async fn job_changes_behavior_on_retry() {
+    let ctx = TestJobContext::builder("sync_data")
+        .as_retry(2)
+        .build();
+
+    // On retry, maybe use different strategy
+    if ctx.is_retry() {
+        // Could use smaller batch size, different timeout, etc.
+        assert!(true, "Would use retry strategy");
+    }
+
+    if ctx.is_last_attempt() {
+        // Send alert on final failure
+        assert!(false, "Should not be last attempt");
+    }
+}
+```
+
+## Part 5: Testing Crons
+
+Crons run on schedules and may need to handle missed runs.
+
+### The Function
+
+```rust title="src/functions/cleanup_cron.rs"
+#[forge::cron("0 3 * * *")]  // 3 AM daily
+#[timezone = "UTC"]
+#[catch_up]
+pub async fn daily_cleanup(ctx: &CronContext) -> Result<()> {
+    ctx.log.info("Starting daily cleanup");
+
+    if ctx.is_late() {
+        ctx.log.warn(&format!("Running {} late", ctx.delay()));
+    }
+
+    if ctx.is_catch_up {
+        ctx.log.info("This is a catch-up run for missed execution");
+    }
+
+    // Do cleanup work...
+    let deleted = cleanup_old_records(ctx.db()).await?;
+
+    ctx.log.info(&format!("Deleted {} old records", deleted));
+    Ok(())
+}
+```
+
+### Test: Normal Execution
+
+```rust
+#[tokio::test]
+async fn cleanup_cron_normal_run() {
+    let ctx = TestCronContext::builder("daily_cleanup")
+        .scheduled_at(Utc::now())
+        .build();
+
+    assert!(!ctx.is_late());
+    assert!(!ctx.is_catch_up);
+
+    ctx.log.info("Test log message");
+
+    let entries = ctx.log.entries();
+    assert_eq!(entries.len(), 1);
+    assert!(entries[0].message.contains("Test log"));
+}
+```
+
+### Test: Late Execution
+
+```rust
+#[tokio::test]
+async fn cleanup_cron_late_run() {
+    use chrono::Duration;
+
+    // Scheduled 10 minutes ago
+    let ctx = TestCronContext::builder("daily_cleanup")
+        .scheduled_at(Utc::now() - Duration::minutes(10))
+        .build();
+
+    assert!(ctx.is_late());
+    assert!(ctx.delay() >= Duration::minutes(9));
+}
+```
+
+### Test: Catch-up Run
+
+```rust
+#[tokio::test]
+async fn cleanup_cron_catch_up() {
+    let ctx = TestCronContext::builder("daily_cleanup")
+        .as_catch_up()
+        .build();
+
+    assert!(ctx.is_catch_up);
+}
+```
+
+## Part 6: Testing Workflows
+
+Workflows have multiple steps, compensation, and can pause/resume.
+
+### Test: Step Completion
+
+```rust
+#[tokio::test]
+async fn workflow_tracks_steps() {
+    let ctx = TestWorkflowContext::builder("order_fulfillment")
+        .build();
+
+    // Record step completion
+    ctx.record_step_start("validate_order");
+    ctx.record_step_complete("validate_order", serde_json::json!({
+        "valid": true,
+        "items_count": 3,
+    }));
+
+    assert!(ctx.is_step_completed("validate_order"));
+    assert!(!ctx.is_step_completed("ship_order"));
+
+    // Retrieve step result
+    let result: serde_json::Value = ctx.get_step_result("validate_order").unwrap();
+    assert_eq!(result["valid"], true);
+}
+```
+
+### Test: Workflow Resume
+
+```rust
+#[tokio::test]
+async fn workflow_resumes_from_checkpoint() {
+    // Simulate resumed workflow with completed steps
+    let ctx = TestWorkflowContext::builder("order_fulfillment")
+        .as_resumed()
+        .with_completed_step("validate_order", serde_json::json!({}))
+        .with_completed_step("charge_payment", serde_json::json!({
+            "charge_id": "ch_123"
+        }))
+        .build();
+
+    assert!(ctx.is_resumed());
+    assert!(ctx.is_step_completed("validate_order"));
+    assert!(ctx.is_step_completed("charge_payment"));
+    assert!(!ctx.is_step_completed("ship_order"));
+
+    let completed = ctx.completed_step_names();
+    assert_eq!(completed.len(), 2);
+}
+```
+
+### Test: Durable Sleep
+
+```rust
+#[tokio::test]
+async fn workflow_durable_sleep() {
+    use std::time::Duration;
+
+    let ctx = TestWorkflowContext::builder("reminder")
+        .build();
+
+    // Call sleep (in test, this is recorded but doesn't actually wait)
+    ctx.sleep(Duration::from_secs(3600)).await.unwrap();
+
+    assert!(ctx.sleep_called());
+}
+```
+
+## Part 7: Integration Tests (With Database)
+
+For tests that need a real database, use `TestDatabase`:
+
+```rust
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL"]
+async fn integration_test_with_database() {
+    // Setup: Connect to test database
+    let db = TestDatabase::from_env().await.unwrap();
+
+    // Create isolated database for this test
+    let isolated = db.isolated("user_creation_test").await.unwrap();
+
+    // Run migrations
+    isolated.execute(r#"
+        CREATE TABLE users (
+            id UUID PRIMARY KEY,
+            email VARCHAR(255) UNIQUE NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    "#).await.unwrap();
+
+    // Create context with database
+    let user_id = Uuid::new_v4();
+    let ctx = TestQueryContext::with_pool(isolated.pool().clone(), Some(user_id));
+
+    // Insert test data
+    sqlx::query("INSERT INTO users (id, email, name) VALUES ($1, $2, $3)")
+        .bind(&user_id)
+        .bind("test@example.com")
+        .bind("Test User")
+        .execute(ctx.db().unwrap())
+        .await
+        .unwrap();
+
+    // Query and verify
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
+        .fetch_one(ctx.db().unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(count.0, 1);
+
+    // Cleanup (optional - happens automatically)
+    isolated.cleanup().await.unwrap();
+}
+```
+
+### Running Integration Tests
+
+```bash
+# Set the test database URL
+export TEST_DATABASE_URL=postgres://localhost/forge_test
+
+# Run all tests including integration tests
+cargo test
+
+# Run only integration tests
+cargo test --test '*' -- --ignored
+```
+
+## Best Practices
+
+### 1. Keep Tests Focused
+
+Each test should verify one specific behavior:
+
+```rust
+// Good: One assertion per test
+#[test] fn create_user_requires_email() { ... }
+#[test] fn create_user_requires_name() { ... }
+#[test] fn create_user_hashes_password() { ... }
+
+// Avoid: Multiple unrelated assertions
+#[test] fn test_create_user() {
+    // validates email AND hashes password AND sends welcome email...
+}
+```
+
+### 2. Test Edge Cases
+
+```rust
+#[tokio::test]
+async fn handles_empty_input() { ... }
+
+#[tokio::test]
+async fn handles_maximum_input() { ... }
+
+#[tokio::test]
+async fn handles_unicode_input() { ... }
+
+#[tokio::test]
+async fn handles_concurrent_requests() { ... }
+```
+
+### 3. Use Descriptive Test Names
+
+```rust
+// Good: Describes the scenario and expected outcome
+#[test] fn get_user_returns_not_found_for_nonexistent_id() { }
+#[test] fn admin_can_delete_any_user() { }
+#[test] fn regular_user_cannot_delete_other_users() { }
+
+// Avoid: Vague names
+#[test] fn test_get_user() { }
+#[test] fn test_delete() { }
+```
+
+### 4. Inline Tests with Functions
+
+FORGE recommends colocating tests with the code they test:
+
+```rust title="src/functions/users.rs"
+#[forge::query]
+pub async fn get_users(ctx: &QueryContext) -> Result<Vec<User>> {
+    // Implementation...
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_get_users_requires_auth() {
+        // Test right next to the implementation
+    }
+}
+```
+
+## Summary
+
+You've learned how to test all FORGE function types:
+
+| Function Type | Test Context | Key Capabilities |
+|---------------|--------------|------------------|
+| Query | `TestQueryContext` | Auth simulation, role checking |
+| Mutation | `TestMutationContext` | Job/workflow dispatch verification |
+| Action | `TestActionContext` | HTTP mocking, request verification |
+| Job | `TestJobContext` | Progress tracking, retry simulation |
+| Cron | `TestCronContext` | Schedule simulation, catch-up |
+| Workflow | `TestWorkflowContext` | Step tracking, resume simulation |
+
+## What's Next?
+
+<div className="row">
+  <div className="col col--6">
+    <a className="card" href="/api/testing">
+      <div className="card__header">
+        <h3>📚 Testing API Reference</h3>
+      </div>
+      <div className="card__body">
+        Complete API documentation for all test utilities
+      </div>
+    </a>
+  </div>
+  <div className="col col--6">
+    <a className="card" href="/concepts/deployment">
+      <div className="card__header">
+        <h3>🚀 Deployment</h3>
+      </div>
+      <div className="card__body">
+        Deploy your tested app to production
+      </div>
+    </a>
+  </div>
+</div>

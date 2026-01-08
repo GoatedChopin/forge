@@ -1,0 +1,336 @@
+---
+sidebar_position: 4
+title: FORGE vs. Convex
+description: Detailed comparison between FORGE and Convex
+---
+
+# FORGE vs. Convex
+
+Convex is a TypeScript-first backend platform. FORGE is a Rust-first framework. Both focus on developer experience but take different approaches.
+
+## Architecture Comparison
+
+| Aspect | FORGE | Convex |
+|--------|-------|--------|
+| **Language** | Rust | TypeScript |
+| **Database** | PostgreSQL | Proprietary (document-based) |
+| **Hosting** | Self-hosted | Managed only |
+| **Type Safety** | Rust (compile-time) | TypeScript (runtime) |
+| **Real-time** | PostgreSQL NOTIFY | Native (CRDT-based) |
+| **Pricing** | Resource-based | Usage-based |
+
+## Philosophy
+
+### FORGE: Own Your Stack
+
+FORGE gives you a **complete framework** you own and control. Deploy anywhere, use PostgreSQL (30 years of reliability), extend with standard tools.
+
+```rust
+#[forge::mutation]
+pub async fn create_task(ctx: &MutationContext, input: TaskInput) -> Result<Task> {
+    // Compile-time type checking
+    let user_id = ctx.require_user_id()?;
+
+    // Standard PostgreSQL
+    let task = sqlx::query_as!(Task, r#"
+        INSERT INTO tasks (user_id, title, completed)
+        VALUES ($1, $2, false)
+        RETURNING *
+    "#, user_id, input.title)
+    .fetch_one(ctx.db())
+    .await?;
+
+    Ok(task)
+}
+```
+
+### Convex: Developer-First Platform
+
+Convex provides a **managed platform** with TypeScript everywhere. No database setup, automatic real-time, but you're on their infrastructure.
+
+```typescript
+// Convex mutation
+export const createTask = mutation({
+  args: { title: v.string() },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    return await ctx.db.insert("tasks", {
+      userId: identity?.subject,
+      title: args.title,
+      completed: false,
+    });
+  },
+});
+```
+
+## Feature Comparison
+
+### Database & Queries
+
+| Feature | FORGE | Convex |
+|---------|-------|--------|
+| Database | PostgreSQL | Proprietary document DB |
+| Query Language | SQL | JavaScript (custom) |
+| Joins | Native SQL JOINs | Manual (reactive queries) |
+| Transactions | Full ACID | Automatic (single mutation) |
+| Indexes | Standard PostgreSQL | Automatic + custom |
+| Data Migration | Standard pg tools | Convex migrations |
+
+**FORGE:**
+```rust
+// Standard SQL - 30 years of tooling
+let tasks = sqlx::query_as!(Task, r#"
+    SELECT t.*, u.name as user_name
+    FROM tasks t
+    JOIN users u ON u.id = t.user_id
+    WHERE t.completed = false
+    ORDER BY t.created_at DESC
+"#)
+.fetch_all(ctx.db())
+.await?;
+```
+
+**Convex:**
+```typescript
+// Custom query language
+export const getTasks = query({
+  handler: async (ctx) => {
+    const tasks = await ctx.db.query("tasks")
+      .filter(q => q.eq(q.field("completed"), false))
+      .order("desc")
+      .collect();
+
+    // Manual "join" - each query is reactive
+    return Promise.all(tasks.map(async (task) => ({
+      ...task,
+      user: await ctx.db.get(task.userId),
+    })));
+  },
+});
+```
+
+### Real-time
+
+| Feature | FORGE | Convex |
+|---------|-------|--------|
+| Mechanism | PostgreSQL NOTIFY + WebSocket | Native (built-in) |
+| Granularity | Custom events | Query-level |
+| Latency | ~10-50ms | ~50-100ms |
+| Offline Support | Manual | Automatic |
+| Optimistic Updates | Manual | Automatic |
+
+**Convex advantage:** Real-time is deeply integrated. Queries automatically update when data changes.
+
+**FORGE advantage:** More control over what triggers updates. Lower latency with NOTIFY.
+
+### Background Processing
+
+| Feature | FORGE | Convex |
+|---------|-------|--------|
+| Background Jobs | Built-in | Actions (limited) |
+| Cron Jobs | Built-in | Scheduled functions |
+| Workflows | Built-in with compensation | None |
+| Long-running | Hours/days | 10 min timeout |
+| Progress Tracking | Built-in | Manual |
+| Retries | Automatic | Manual |
+
+**FORGE:**
+```rust
+#[forge::workflow]
+#[timeout = "2h"]
+pub async fn process_order(ctx: &WorkflowContext, input: OrderInput) -> Result<Order> {
+    let payment = ctx.step("charge_card")
+        .run(|| charge_card(&input.card))
+        .compensate(|payment| refund(&payment.id))
+        .await?;
+
+    ctx.step("ship_order")
+        .run(|| create_shipment(&input))
+        .await?;
+
+    Ok(order)
+}
+```
+
+**Convex:**
+```typescript
+// Actions have 10 min timeout, no built-in compensation
+export const processOrder = action({
+  handler: async (ctx, args) => {
+    const payment = await chargeCard(args.card);
+    // If this fails, manual rollback needed
+    await createShipment(args);
+    return { success: true };
+  },
+});
+```
+
+### Type Safety
+
+| Aspect | FORGE | Convex |
+|--------|-------|--------|
+| Language | Rust (strong) | TypeScript (medium) |
+| Compile-time checks | Yes | Partial |
+| Runtime errors | Rare | Possible |
+| Schema validation | Rust types | Convex validators |
+| Refactoring | Compiler-assisted | IDE-assisted |
+
+**FORGE advantage:** Rust catches more errors at compile time. No `undefined is not a function`.
+
+**Convex advantage:** TypeScript is more familiar to most developers. Same language frontend and backend.
+
+### Hosting & Control
+
+| Aspect | FORGE | Convex |
+|--------|-------|--------|
+| Self-hosting | Yes (native) | No |
+| Cloud options | Any (Railway, Fly, etc.) | Convex only |
+| Data location | Your choice | Convex servers |
+| Data export | pg_dump | Convex export |
+| Vendor lock-in | None | High |
+
+**FORGE:**
+```bash
+# Deploy anywhere
+railway up
+fly deploy
+docker run ...
+./my-app  # Even bare metal
+```
+
+**Convex:**
+```bash
+# Convex platform only
+npx convex deploy
+```
+
+### Pricing
+
+| Tier | FORGE (Railway) | Convex |
+|------|-----------------|--------|
+| Hobby | ~$10/month | Free (limited) |
+| Starter | ~$20/month | $25/month |
+| Growth | ~$50/month | Usage-based |
+| Scale | ~$200/month | Contact sales |
+
+**FORGE:** Predictable resource-based pricing. You pay for servers.
+
+**Convex:** Usage-based. Can be cheaper at low scale, more expensive at high scale.
+
+## When to Choose FORGE
+
+Choose FORGE when:
+
+1. **You want PostgreSQL** - Standard SQL, 30 years of reliability, easy migration
+2. **You need workflows** - Multi-step processes with automatic compensation
+3. **You want self-hosting** - Full control over infrastructure and data
+4. **You prefer Rust** - Maximum performance, compile-time safety
+5. **You have complex queries** - SQL JOINs, aggregations, window functions
+6. **You need predictable costs** - Resource-based, not usage-based
+
+## When to Choose Convex
+
+Choose Convex when:
+
+1. **You want TypeScript everywhere** - Same language frontend and backend
+2. **You need automatic real-time** - Built-in reactivity is excellent
+3. **You want zero-ops** - Fully managed, no infrastructure
+4. **You're building quickly** - Fast iteration, automatic scaling
+5. **You prefer document model** - Flexible schema, no migrations
+6. **You're okay with vendor lock-in** - Convex is the only option
+
+## Code Comparison
+
+### Full CRUD Example
+
+**FORGE:**
+```rust
+// src/functions/tasks.rs
+use forge::prelude::*;
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Task {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub title: String,
+    pub completed: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+#[forge::query]
+pub async fn list_tasks(ctx: &QueryContext) -> Result<Vec<Task>> {
+    let user_id = ctx.require_user_id()?;
+    sqlx::query_as!(Task, "SELECT * FROM tasks WHERE user_id = $1", user_id)
+        .fetch_all(ctx.db())
+        .await
+        .map_err(Into::into)
+}
+
+#[forge::mutation]
+pub async fn create_task(ctx: &MutationContext, title: String) -> Result<Task> {
+    let user_id = ctx.require_user_id()?;
+    sqlx::query_as!(Task,
+        "INSERT INTO tasks (id, user_id, title) VALUES ($1, $2, $3) RETURNING *",
+        Uuid::new_v4(), user_id, title)
+        .fetch_one(ctx.db())
+        .await
+        .map_err(Into::into)
+}
+
+#[forge::mutation]
+pub async fn toggle_task(ctx: &MutationContext, id: Uuid) -> Result<Task> {
+    let user_id = ctx.require_user_id()?;
+    sqlx::query_as!(Task,
+        "UPDATE tasks SET completed = NOT completed WHERE id = $1 AND user_id = $2 RETURNING *",
+        id, user_id)
+        .fetch_one(ctx.db())
+        .await
+        .map_err(Into::into)
+}
+```
+
+**Convex:**
+```typescript
+// convex/tasks.ts
+import { query, mutation } from "./_generated/server";
+import { v } from "convex/values";
+
+export const list = query({
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    return await ctx.db
+      .query("tasks")
+      .filter(q => q.eq(q.field("userId"), identity?.subject))
+      .collect();
+  },
+});
+
+export const create = mutation({
+  args: { title: v.string() },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    return await ctx.db.insert("tasks", {
+      userId: identity?.subject,
+      title: args.title,
+      completed: false,
+    });
+  },
+});
+
+export const toggle = mutation({
+  args: { id: v.id("tasks") },
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.id);
+    await ctx.db.patch(args.id, { completed: !task?.completed });
+  },
+});
+```
+
+## Summary
+
+| You should use... | If you value... |
+|-------------------|-----------------|
+| **FORGE** | PostgreSQL, self-hosting, workflows, Rust, predictable costs |
+| **Convex** | TypeScript, automatic real-time, zero-ops, rapid development |
+
+**TL;DR:** Convex is excellent for TypeScript teams who want automatic real-time and don't mind vendor lock-in. FORGE is for teams who want PostgreSQL's power, self-hosting options, and proper background processing.

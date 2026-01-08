@@ -1,4 +1,6 @@
 mod add;
+mod check;
+mod dev;
 mod generate;
 mod migrate;
 mod new;
@@ -7,6 +9,8 @@ mod runtime_generator;
 mod template;
 
 pub use add::AddCommand;
+pub use check::CheckCommand;
+pub use dev::DevCommand;
 pub use generate::GenerateCommand;
 pub use migrate::MigrateCommand;
 pub use new::NewCommand;
@@ -15,10 +19,35 @@ pub use run::RunCommand;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-/// FORGE - The Rust Full-Stack Framework
+const ABOUT: &str = r#"FORGE - The Full-Stack Framework for the Impatient
+
+Everything you need in one binary. No Redis, no Kafka, just PostgreSQL.
+
+Quick Start:
+  forge new my-app     Create a new project
+  cd my-app
+  forge dev            Start development environment
+
+Learn more: https://tryforge.dev/docs"#;
+
+const AFTER_HELP: &str = r#"Examples:
+  forge new my-saas              Create a full-stack project
+  forge new api --minimal        Create backend-only project
+  forge new starter --empty      Create empty scaffolding
+  forge check                    Validate project setup
+  forge dev                      Start backend + frontend
+  forge add model User           Add a new data model
+  forge add query get_users      Add a new query function
+  forge generate                 Regenerate TypeScript types
+  forge migrate status           Check migration status
+
+Dashboard: http://localhost:8080/_dashboard (when running)"#;
+
+/// FORGE - The Full-Stack Framework for the Impatient
 #[derive(Parser)]
 #[command(name = "forge")]
-#[command(author, version, about, long_about = None)]
+#[command(author, version)]
+#[command(about = ABOUT, long_about = None, after_help = AFTER_HELP)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
@@ -27,22 +56,28 @@ pub struct Cli {
 /// CLI commands.
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Create a new FORGE project.
+    /// Create a new FORGE project
     New(NewCommand),
 
-    /// Initialize FORGE in an existing directory.
+    /// Initialize FORGE in an existing directory
     Init(InitCommand),
 
-    /// Add a new component (model, query, mutation, etc.).
+    /// Validate project setup and dependencies
+    Check(CheckCommand),
+
+    /// Start development environment (backend + frontend)
+    Dev(DevCommand),
+
+    /// Add a new component (model, query, mutation, etc.)
     Add(AddCommand),
 
-    /// Generate TypeScript client code.
+    /// Generate TypeScript client code
     Generate(GenerateCommand),
 
-    /// Run the FORGE server.
+    /// Run the FORGE server
     Run(RunCommand),
 
-    /// Manage database migrations.
+    /// Manage database migrations
     Migrate(MigrateCommand),
 }
 
@@ -68,6 +103,8 @@ impl Cli {
         match self.command {
             Commands::New(cmd) => cmd.execute().await,
             Commands::Init(cmd) => init_project(cmd).await,
+            Commands::Check(cmd) => cmd.execute().await,
+            Commands::Dev(cmd) => cmd.execute().await,
             Commands::Add(cmd) => cmd.execute().await,
             Commands::Generate(cmd) => cmd.execute().await,
             Commands::Run(cmd) => cmd.execute().await,

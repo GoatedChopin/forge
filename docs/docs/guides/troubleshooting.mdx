@@ -1,0 +1,426 @@
+---
+sidebar_position: 1
+title: Troubleshooting
+description: Common issues and solutions when using FORGE
+---
+
+# Troubleshooting
+
+Common issues and their solutions when working with FORGE.
+
+## Installation Issues
+
+### `cargo install forge-cli` fails
+
+**Error:** `error: could not find crate 'forge-cli'`
+
+**Solution:** The crate is named `forgex`:
+
+```bash
+cargo install forgex
+```
+
+### Binary not found after install
+
+**Error:** `forge: command not found`
+
+**Solution:** Ensure Cargo's bin directory is in your PATH:
+
+```bash
+# Add to ~/.bashrc or ~/.zshrc
+export PATH="$HOME/.cargo/bin:$PATH"
+
+# Reload shell
+source ~/.bashrc  # or ~/.zshrc
+```
+
+## Database Issues
+
+### Cannot connect to PostgreSQL
+
+**Error:** `error connecting to server: Connection refused`
+
+**Solutions:**
+
+1. **Check PostgreSQL is running:**
+   ```bash
+   # macOS
+   brew services list | grep postgresql
+
+   # Linux
+   systemctl status postgresql
+
+   # Docker
+   docker ps | grep postgres
+   ```
+
+2. **Check DATABASE_URL format:**
+   ```bash
+   # Correct format
+   DATABASE_URL=postgres://user:password@localhost:5432/dbname
+
+   # Common mistakes
+   DATABASE_URL=postgresql://...  # Use 'postgres://' not 'postgresql://'
+   DATABASE_URL=postgres://localhost/dbname  # Missing user:password
+   ```
+
+3. **Check .env is loaded:**
+   ```bash
+   # FORGE loads .env automatically, but verify:
+   cat .env | grep DATABASE_URL
+   ```
+
+### Migration fails
+
+**Error:** `relation "forge_jobs" already exists`
+
+**Solution:** The FORGE system tables may have been partially created. Drop and recreate:
+
+```sql
+-- Connect to your database
+DROP TABLE IF EXISTS forge_job_runs CASCADE;
+DROP TABLE IF EXISTS forge_jobs CASCADE;
+DROP TABLE IF EXISTS forge_workflows CASCADE;
+DROP TABLE IF EXISTS forge_workflow_steps CASCADE;
+-- Then run migrations again
+```
+
+**Error:** `permission denied for table users`
+
+**Solution:** Grant permissions to your database user:
+
+```sql
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO your_user;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO your_user;
+```
+
+### Connection pool exhausted
+
+**Error:** `pool exhausted: no available connections`
+
+**Solutions:**
+
+1. **Increase pool size** in `forge.toml`:
+   ```toml
+   [database]
+   max_connections = 20  # Increase from default
+   ```
+
+2. **Check for connection leaks** - ensure all queries use `ctx.db()` and don't hold connections.
+
+3. **Check PostgreSQL max connections:**
+   ```sql
+   SHOW max_connections;  -- Default is often 100
+   ```
+
+## Compilation Issues
+
+### Proc macro errors
+
+**Error:** `cannot find attribute 'forge::query' in this scope`
+
+**Solution:** Ensure you have the correct imports:
+
+```rust
+// At the top of your file
+use forge::prelude::*;
+
+// Or explicitly
+use forge_macros::query;
+```
+
+### Type mismatch in queries
+
+**Error:** `the trait 'FromRow' is not implemented for 'MyStruct'`
+
+**Solution:** Derive `FromRow` on your struct:
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct MyStruct {
+    pub id: Uuid,
+    pub name: String,
+}
+```
+
+### Missing serde derives
+
+**Error:** `the trait 'Serialize' is not implemented`
+
+**Solution:** Add serde derives to structs used in API:
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MyInput {
+    pub field: String,
+}
+```
+
+## Runtime Issues
+
+### Functions not registered
+
+**Symptom:** API returns 404 for your functions
+
+**Solutions:**
+
+1. **Check function is exported in mod.rs:**
+   ```rust
+   // src/functions/mod.rs
+   mod users;
+   pub use users::*;  // Make sure to re-export!
+   ```
+
+2. **Check main.rs registration:**
+   ```rust
+   Forge::builder()
+       .query(get_users)      // Register each function
+       .mutation(create_user)
+       .build()
+   ```
+
+### Authentication not working
+
+**Error:** `401 Unauthorized` on all requests
+
+**Solutions:**
+
+1. **Check JWT secret is set:**
+   ```bash
+   # In .env
+   FORGE_JWT_SECRET=your-secret-key-at-least-32-chars
+   ```
+
+2. **Check token is passed correctly:**
+   ```typescript
+   // Frontend
+   const client = createForgeClient({
+     baseUrl: 'http://localhost:8080',
+     token: localStorage.getItem('token'),  // Ensure token is set
+   });
+   ```
+
+3. **Check token format:**
+   ```bash
+   # Token should be in Authorization header
+   curl -H "Authorization: Bearer <token>" http://localhost:8080/api/query/get_users
+   ```
+
+### Jobs not running
+
+**Symptom:** Jobs dispatched but never execute
+
+**Solutions:**
+
+1. **Check worker is enabled:**
+   ```toml
+   # forge.toml
+   [worker]
+   enabled = true
+   count = 2
+   ```
+
+2. **Check job is registered:**
+   ```rust
+   Forge::builder()
+       .job(send_email)  // Must register job
+       .build()
+   ```
+
+3. **Check database for stuck jobs:**
+   ```sql
+   SELECT * FROM forge_jobs
+   WHERE status = 'pending'
+   ORDER BY created_at DESC
+   LIMIT 10;
+   ```
+
+### Cron jobs not triggering
+
+**Symptom:** Cron scheduled but doesn't run
+
+**Solutions:**
+
+1. **Check scheduler is enabled:**
+   ```toml
+   # forge.toml
+   [scheduler]
+   enabled = true
+   ```
+
+2. **Check cron syntax:**
+   ```rust
+   #[forge::cron("0 9 * * *")]  // Standard cron format
+   // NOT: "9 * * * *" (wrong order)
+   ```
+
+3. **Check timezone:**
+   ```rust
+   #[forge::cron("0 9 * * *")]
+   #[timezone = "America/New_York"]  // Be explicit about timezone
+   pub async fn my_cron(ctx: &CronContext) -> Result<()> { ... }
+   ```
+
+## Frontend Issues
+
+### Type generation fails
+
+**Error:** `forge generate` produces no output
+
+**Solutions:**
+
+1. **Check Rust compiles:**
+   ```bash
+   cargo check  # Fix any errors first
+   ```
+
+2. **Check structs have correct derives:**
+   ```rust
+   #[derive(Debug, Clone, Serialize, Deserialize)]  // All four needed
+   pub struct MyType { ... }
+   ```
+
+### Real-time not connecting
+
+**Symptom:** Subscriptions don't receive updates
+
+**Solutions:**
+
+1. **Check WebSocket URL:**
+   ```typescript
+   const client = createForgeClient({
+     baseUrl: 'http://localhost:8080',
+     wsUrl: 'ws://localhost:8080',  // Must be ws:// not http://
+   });
+   ```
+
+2. **Check browser console** for WebSocket errors.
+
+3. **Check server logs** for connection attempts.
+
+### CORS errors
+
+**Error:** `Access-Control-Allow-Origin` error in browser
+
+**Solution:** Configure CORS in `forge.toml`:
+
+```toml
+[gateway]
+cors_origins = ["http://localhost:5173", "https://yourdomain.com"]
+```
+
+## Performance Issues
+
+### Slow queries
+
+**Solutions:**
+
+1. **Add database indexes:**
+   ```sql
+   -- Check for missing indexes
+   EXPLAIN ANALYZE SELECT * FROM users WHERE email = 'test@example.com';
+
+   -- Add index if needed
+   CREATE INDEX idx_users_email ON users(email);
+   ```
+
+2. **Use query caching** for frequently accessed data.
+
+3. **Paginate large results:**
+   ```rust
+   #[forge::query]
+   pub async fn list_users(ctx: &QueryContext, page: i64) -> Result<Vec<User>> {
+       let limit = 50;
+       let offset = page * limit;
+       sqlx::query_as!(User,
+           "SELECT * FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+           limit, offset)
+           .fetch_all(ctx.db())
+           .await
+           .map_err(Into::into)
+   }
+   ```
+
+### High memory usage
+
+**Solutions:**
+
+1. **Reduce worker count:**
+   ```toml
+   [worker]
+   count = 2  # Lower if memory constrained
+   ```
+
+2. **Reduce connection pool:**
+   ```toml
+   [database]
+   max_connections = 5  # Lower if memory constrained
+   ```
+
+### Jobs timing out
+
+**Error:** `job exceeded maximum runtime`
+
+**Solutions:**
+
+1. **Increase timeout:**
+   ```rust
+   #[forge::job]
+   #[timeout = "30m"]  // Increase from default
+   pub async fn long_job(ctx: &JobContext, input: Input) -> Result<()> { ... }
+   ```
+
+2. **Add heartbeats for very long jobs:**
+   ```rust
+   for item in large_batch {
+       process(item).await?;
+       ctx.heartbeat()?;  // Prevents timeout detection
+   }
+   ```
+
+## Debug Tips
+
+### Enable debug logging
+
+```bash
+# Set log level
+RUST_LOG=debug cargo run
+
+# Or in .env
+RUST_LOG=forge=debug,sqlx=info
+```
+
+### Check FORGE dashboard
+
+Visit `http://localhost:8080/_dashboard` to see:
+- Running jobs and their status
+- Cron job schedules
+- Workflow executions
+- System metrics
+
+### Inspect database directly
+
+```sql
+-- Check pending jobs
+SELECT * FROM forge_jobs WHERE status = 'pending';
+
+-- Check failed jobs
+SELECT * FROM forge_job_runs WHERE status = 'failed' ORDER BY finished_at DESC;
+
+-- Check workflow status
+SELECT * FROM forge_workflows WHERE status != 'completed';
+```
+
+## Getting Help
+
+If you're still stuck:
+
+1. **Check the [API Reference](/api)** for correct usage
+2. **Search [GitHub Issues](https://github.com/isala404/forge/issues)** for similar problems
+3. **Join our [Discord](https://discord.gg/forge)** for community support
+4. **File an issue** with:
+   - FORGE version (`forge --version`)
+   - Rust version (`rustc --version`)
+   - PostgreSQL version
+   - Minimal reproduction steps
+   - Full error message and stack trace

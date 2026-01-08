@@ -27,8 +27,11 @@ docker --version
 ## Step 1: Install FORGE CLI
 
 ```bash
-# Install from source (the only way for now)
-git clone https://github.com/forge/forge.git
+# Quick install (recommended)
+curl -fsSL https://tryforge.dev/install.sh | sh
+
+# Or build from source
+git clone https://github.com/isala404/forge.git
 cd forge
 cargo install --path crates/forge
 ```

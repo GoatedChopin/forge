@@ -1,0 +1,262 @@
+---
+sidebar_position: 2
+title: FORGE vs. Firebase
+description: Detailed comparison between FORGE and Google Firebase
+---
+
+# FORGE vs. Firebase
+
+Firebase is Google's Backend-as-a-Service platform. FORGE is a self-hosted Rust framework. Here's how they compare.
+
+## Architecture Comparison
+
+| Aspect | FORGE | Firebase |
+|--------|-------|----------|
+| **Vendor** | Open-source | Google Cloud |
+| **Database** | PostgreSQL | Firestore / Realtime DB |
+| **Backend Code** | Rust functions | Cloud Functions (Node.js) |
+| **Deployment** | Self-hosted | Google Cloud only |
+| **Pricing** | Resource-based | Usage-based (pay-per-request) |
+
+## Key Differences
+
+### 1. Database Model
+
+**FORGE: Relational (PostgreSQL)**
+```rust
+// Type-safe SQL queries
+#[forge::query]
+pub async fn get_user_orders(ctx: &QueryContext, user_id: Uuid) -> Result<Vec<Order>> {
+    sqlx::query_as!(Order, r#"
+        SELECT o.* FROM orders o
+        JOIN users u ON u.id = o.user_id
+        WHERE u.id = $1
+        ORDER BY o.created_at DESC
+    "#, user_id)
+    .fetch_all(ctx.db())
+    .await
+    .map_err(Into::into)
+}
+```
+
+**Firebase: Document (NoSQL)**
+```javascript
+// Document-based queries
+const orders = await db.collection('orders')
+  .where('userId', '==', userId)
+  .orderBy('createdAt', 'desc')
+  .get();
+```
+
+**Why it matters:**
+- PostgreSQL: JOINs, transactions, ACID guarantees, 30+ years of reliability
+- Firestore: Flexible schema, auto-scaling, but limited query capabilities
+
+### 2. Pricing Model
+
+| Scenario | FORGE (Railway) | Firebase |
+|----------|-----------------|----------|
+| 10K reads/day | ~$5/month | Free tier |
+| 100K reads/day | ~$10/month | ~$25/month |
+| 1M reads/day | ~$30/month | ~$200/month |
+| 10M reads/day | ~$100/month | ~$2,000/month |
+
+**FORGE advantage:** Predictable costs. You pay for server resources, not per-operation.
+
+**Firebase gotcha:** A single user refreshing a page can trigger dozens of reads. Costs can spike unexpectedly.
+
+### 3. Background Processing
+
+| Feature | FORGE | Firebase |
+|---------|-------|----------|
+| Jobs | Built-in | Cloud Functions |
+| Cron | Built-in | Cloud Scheduler |
+| Workflows | Built-in | Cloud Workflows ($$$) |
+| Retries | Automatic | Manual configuration |
+| Progress | Built-in | Custom implementation |
+| Cold starts | None | Yes (seconds) |
+
+**FORGE:**
+```rust
+#[forge::job]
+#[retry(max_attempts = 3)]
+pub async fn process_video(ctx: &JobContext, input: VideoInput) -> Result<()> {
+    ctx.progress(0, "Downloading...")?;
+    download_video(&input.url).await?;
+
+    ctx.progress(50, "Processing...")?;
+    transcode_video(&input.id).await?;
+
+    ctx.progress(100, "Complete")?;
+    Ok(())
+}
+
+#[forge::cron("0 3 * * *")]  // 3 AM daily
+pub async fn cleanup_temp(ctx: &CronContext) -> Result<()> {
+    cleanup_temp_files(ctx.db()).await
+}
+```
+
+**Firebase:**
+```javascript
+// Cloud Function - cold starts can take seconds
+exports.processVideo = functions.firestore
+  .document('videos/{videoId}')
+  .onCreate(async (snap, context) => {
+    // No built-in progress tracking
+    // Manual retry logic required
+    await downloadVideo(snap.data().url);
+    await transcodeVideo(snap.id);
+  });
+```
+
+### 4. Vendor Lock-in
+
+| Aspect | FORGE | Firebase |
+|--------|-------|----------|
+| Database migration | Standard PostgreSQL | Complex export |
+| Code portability | Standard Rust | Firebase-specific |
+| Alternative hosting | Any cloud/VPS | None |
+| Data ownership | Full | Google-managed |
+
+**FORGE:** Your data is in PostgreSQL. Export with `pg_dump`. Move anywhere.
+
+**Firebase:** Firestore uses proprietary format. Migration requires custom scripts and restructuring.
+
+### 5. Local Development
+
+**FORGE:**
+```bash
+# Full local development
+docker run -d --name pg postgres:16-alpine
+forge dev
+# Everything works locally
+```
+
+**Firebase:**
+```bash
+# Emulator suite - not full parity
+firebase emulators:start
+# Some features behave differently locally
+```
+
+### 6. Real-time
+
+| Feature | FORGE | Firebase |
+|---------|-------|----------|
+| Mechanism | PostgreSQL NOTIFY | Proprietary |
+| Latency | ~10-50ms | ~100-500ms |
+| Custom events | Yes | Limited |
+| Filtering | Server-side logic | Security rules |
+
+**FORGE:**
+```rust
+// Server broadcasts custom event
+ctx.broadcast("game:move", &GameMove { player, position }).await?;
+```
+
+```typescript
+// Frontend subscribes
+forge.subscribe("game:move", (move) => {
+  updateBoard(move);
+});
+```
+
+**Firebase:**
+```javascript
+// Client listens to document changes
+db.collection('games').doc(gameId)
+  .onSnapshot((doc) => {
+    updateBoard(doc.data());
+  });
+```
+
+## Feature Matrix
+
+| Feature | FORGE | Firebase |
+|---------|-------|----------|
+| SQL Database | PostgreSQL | - |
+| NoSQL Database | - | Firestore, RTDB |
+| Authentication | JWT (built-in) | Firebase Auth |
+| File Storage | Bring your own (S3/R2) | Cloud Storage |
+| Hosting | Self-hosted | Firebase Hosting |
+| Functions | Rust (fast, no cold start) | Node.js (cold starts) |
+| Background Jobs | Built-in | Cloud Functions |
+| Cron Jobs | Built-in | Cloud Scheduler |
+| Workflows | Built-in (with compensation) | Cloud Workflows ($$$) |
+| Analytics | Bring your own | Firebase Analytics |
+| Push Notifications | Bring your own | FCM |
+| Machine Learning | Bring your own | Firebase ML |
+
+## When to Choose FORGE
+
+Choose FORGE when:
+
+1. **You need relational data** - PostgreSQL with JOINs, transactions, complex queries
+2. **You want predictable costs** - No per-request pricing surprises
+3. **You need advanced background processing** - Workflows, compensation, progress tracking
+4. **You value data ownership** - Full PostgreSQL control, easy migration
+5. **You want zero cold starts** - Rust binary is always warm
+6. **You prefer open-source** - No vendor lock-in
+
+## When to Choose Firebase
+
+Choose Firebase when:
+
+1. **You're building a mobile app** - Excellent SDKs, offline support
+2. **You want zero-ops** - Fully managed, auto-scaling
+3. **You need NoSQL flexibility** - Schemaless, document-based
+4. **You're in the Google ecosystem** - GCP integration, Analytics
+5. **You need push notifications** - FCM is excellent
+6. **You're prototyping quickly** - Fast setup, generous free tier
+
+## Cost Calculator
+
+### Startup (10K MAU)
+
+| Component | FORGE | Firebase |
+|-----------|-------|----------|
+| Database | ~$7 (Railway) | Firestore free tier |
+| Functions | Included | Cloud Functions free tier |
+| Bandwidth | Included | 10GB free, then ~$0.12/GB |
+| **Total** | **~$10/month** | **$0-25/month** |
+
+### Growth (100K MAU)
+
+| Component | FORGE | Firebase |
+|-----------|-------|----------|
+| Database | ~$20 (Railway) | ~$50-100 (Firestore) |
+| Functions | Included | ~$50-100 (invocations) |
+| Bandwidth | Included | ~$50 |
+| **Total** | **~$30/month** | **~$150-250/month** |
+
+### Scale (1M MAU)
+
+| Component | FORGE | Firebase |
+|-----------|-------|----------|
+| Database | ~$100 (dedicated) | ~$500-1000 (Firestore) |
+| Functions | Included | ~$500-1000 |
+| Bandwidth | Included | ~$500 |
+| **Total** | **~$150/month** | **~$1,500-2,500/month** |
+
+## Migration Path
+
+Moving from Firebase to FORGE:
+
+1. **Schema Design** - Convert Firestore collections to PostgreSQL tables
+2. **Data Export** - Use Firebase export tools, transform to SQL
+3. **Authentication** - Firebase JWT → FORGE JWT (or keep Firebase Auth)
+4. **Cloud Functions** - Rewrite as FORGE functions/jobs
+5. **Realtime listeners** - Convert to FORGE subscriptions
+6. **Frontend SDK** - Replace Firebase SDK with FORGE client
+
+See [Migrating from Firebase](/guides/migrate-from-firebase) for detailed steps.
+
+## Summary
+
+| You should use... | If you need... |
+|-------------------|----------------|
+| **FORGE** | Relational data, predictable costs, background processing, data ownership |
+| **Firebase** | Mobile-first, zero-ops, NoSQL flexibility, Google ecosystem |
+
+FORGE is for teams that want full control over their stack. Firebase is for teams that want Google to handle infrastructure.

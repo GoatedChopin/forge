@@ -1,18 +1,18 @@
-import {themes as prismThemes} from 'prism-react-renderer';
-import type {Config} from '@docusaurus/types';
+import { themes as prismThemes } from 'prism-react-renderer';
+import type { Config } from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
   title: 'FORGE',
   tagline: 'From Schema to Ship in a Single Day',
-  favicon: 'img/favicon.ico',
+  favicon: 'img/favicon.svg',
 
   future: {
     v4: true,
   },
 
-  url: 'https://isala404.github.io',
-  baseUrl: '/forge/',
+  url: 'https://tryforge.dev',
+  baseUrl: '/docs/',
 
   organizationName: 'isala404',
   projectName: 'forge',
@@ -50,7 +50,7 @@ const config: Config = {
       title: 'FORGE',
       logo: {
         alt: 'FORGE Logo',
-        src: 'img/logo.svg',
+        src: '/img/logo.png',
       },
       items: [
         {

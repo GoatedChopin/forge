@@ -214,7 +214,7 @@ Deploy one node for development. Deploy 100 nodes for production. **Same binary,
 
 ```bash
 # Install FORGE CLI (scaffolding only)
-curl -fsSL https://forge.dev/install.sh | sh
+curl -fsSL https://tryforge.dev/install.sh | sh
 
 # Create new project
 forge new my-saas

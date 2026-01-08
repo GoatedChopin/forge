@@ -38,6 +38,7 @@ const sidebars: SidebarsConfig = {
         'tutorials/user-authentication',
         'tutorials/background-jobs',
         'tutorials/realtime-updates',
+        'tutorials/testing',
       ],
     },
     {
@@ -69,6 +70,7 @@ const sidebars: SidebarsConfig = {
       collapsed: true,
       items: [
         'api/index',
+        'api/configuration',
         'api/query-context',
         'api/mutation-context',
         'api/action-context',
@@ -81,6 +83,42 @@ const sidebars: SidebarsConfig = {
       type: 'doc',
       id: 'cli/index',
       label: 'CLI Reference',
+    },
+    {
+      type: 'category',
+      label: 'Advanced',
+      collapsed: true,
+      items: [
+        'concepts/deployment',
+        'concepts/observability',
+        'concepts/cluster',
+        'concepts/multi-tenancy',
+        'concepts/rate-limiting',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Compare',
+      collapsed: true,
+      items: [
+        'compare/index',
+        'compare/supabase',
+        'compare/firebase',
+        'compare/pocketbase',
+        'compare/convex',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Guides',
+      collapsed: true,
+      items: [
+        'guides/index',
+        'guides/troubleshooting',
+        'guides/migrate-from-supabase',
+        'guides/migrate-from-firebase',
+        'guides/migrate-from-node',
+      ],
     },
   ],
 };

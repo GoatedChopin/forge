@@ -38,6 +38,9 @@ const FUNCTIONS_VERIFICATION_WORKFLOW: &str =
 const FUNCTIONS_GET_BITCOIN_PRICE_ACTION: &str =
     include_str!("../../templates/populated/project/functions/get_bitcoin_price_action.rs.tmpl");
 const CLAUDE_MD: &str = include_str!("../../templates/populated/project/AGENTS.md.tmpl");
+const RAILWAY_JSON: &str = include_str!("../../templates/populated/project/railway.json.tmpl");
+const RENDER_YAML: &str = include_str!("../../templates/populated/project/render.yaml.tmpl");
+const FLY_TOML: &str = include_str!("../../templates/populated/project/fly.toml.tmpl");
 
 // Populated frontend templates (default)
 const FRONTEND_PACKAGE_JSON: &str =
@@ -88,6 +91,9 @@ const EMPTY_SCHEMA_MOD: &str = include_str!("../../templates/empty/project/schem
 const EMPTY_FUNCTIONS_MOD: &str =
     include_str!("../../templates/empty/project/functions/mod.rs.tmpl");
 const EMPTY_CLAUDE_MD: &str = include_str!("../../templates/empty/project/AGENTS.md.tmpl");
+const EMPTY_RAILWAY_JSON: &str = include_str!("../../templates/populated/project/railway.json.tmpl");
+const EMPTY_RENDER_YAML: &str = include_str!("../../templates/populated/project/render.yaml.tmpl");
+const EMPTY_FLY_TOML: &str = include_str!("../../templates/populated/project/fly.toml.tmpl");
 
 // Empty frontend templates (for --empty flag)
 const EMPTY_FRONTEND_PACKAGE_JSON: &str =
@@ -160,15 +166,29 @@ impl NewCommand {
             style(&self.name).cyan()
         );
         println!();
-        println!("Next steps:");
-        println!("  {} {}", style("cd").dim(), project_dir);
-        println!("  {} to start the server", style("cargo run").dim());
-        if !self.minimal {
-            println!(
-                "  {} to start the frontend",
-                style("cd frontend && bun dev").dim()
-            );
+        println!("{}", style("Next steps:").bold());
+        println!();
+        println!("  {} {}", style("1.").dim(), style(format!("cd {}", project_dir)).cyan());
+        println!("  {} {}", style("2.").dim(), style("forge check").cyan());
+        println!("     Verify your project setup and database connection");
+        println!();
+        println!("  {} {}", style("3.").dim(), style("forge dev").cyan());
+        if self.minimal {
+            println!("     Start the backend server with hot reload");
+        } else {
+            println!("     Start backend + frontend with hot reload");
         }
+        println!();
+        println!("{}", style("Useful commands:").bold());
+        println!("  {}  Regenerate TypeScript types", style("forge generate").dim());
+        println!("  {}   Check migration status", style("forge migrate status").dim());
+        println!("  {}   Add new components", style("forge add <type> <name>").dim());
+        println!();
+        println!("{}", style("Documentation:").bold());
+        println!("  https://tryforge.dev/docs");
+        println!();
+        println!("{}", style("Dashboard (when running):").bold());
+        println!("  http://localhost:8080/_dashboard");
         println!();
 
         Ok(())
@@ -206,6 +226,9 @@ pub fn create_project(dir: &Path, name: &str, minimal: bool, empty: bool) -> Res
         fs::write(dir.join("src/schema/mod.rs"), EMPTY_SCHEMA_MOD)?;
         fs::write(dir.join("src/functions/mod.rs"), EMPTY_FUNCTIONS_MOD)?;
         fs::write(dir.join("CLAUDE.md"), EMPTY_CLAUDE_MD)?;
+        fs::write(dir.join("railway.json"), render(EMPTY_RAILWAY_JSON, &vars))?;
+        fs::write(dir.join("render.yaml"), render(EMPTY_RENDER_YAML, &vars))?;
+        fs::write(dir.join("fly.toml"), render(EMPTY_FLY_TOML, &vars))?;
     } else {
         // Populated templates - full example code
         fs::write(dir.join("Cargo.toml"), render(CARGO_TOML, &vars))?;
@@ -244,6 +267,9 @@ pub fn create_project(dir: &Path, name: &str, minimal: bool, empty: bool) -> Res
             FUNCTIONS_GET_BITCOIN_PRICE_ACTION,
         )?;
         fs::write(dir.join("CLAUDE.md"), CLAUDE_MD)?;
+        fs::write(dir.join("railway.json"), render(RAILWAY_JSON, &vars))?;
+        fs::write(dir.join("render.yaml"), render(RENDER_YAML, &vars))?;
+        fs::write(dir.join("fly.toml"), render(FLY_TOML, &vars))?;
     }
 
     // Create frontend if not minimal
