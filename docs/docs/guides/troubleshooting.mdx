@@ -14,10 +14,11 @@ Common issues and their solutions when working with FORGE.
 
 **Error:** `error: could not find crate 'forge-cli'`
 
-**Solution:** The crate is named `forgex`:
+**Solution:** The crate is named `forgex` (but you import it as `forge`):
 
 ```bash
 cargo install forgex
+# Then in your code: use forge::prelude::*;
 ```
 
 ### Binary not found after install

@@ -13,7 +13,7 @@ mod workflow;
 ///
 /// # Example
 /// ```ignore
-/// #[forgex::model]
+/// #[forge::model]
 /// pub struct User {
 ///     pub id: Uuid,
 ///     pub email: String,
@@ -30,7 +30,7 @@ pub fn model(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// # Example
 /// ```ignore
-/// #[forgex::forge_enum]
+/// #[forge::forge_enum]
 /// pub enum ProjectStatus {
 ///     Draft,
 ///     Active,
@@ -53,12 +53,12 @@ pub fn forge_enum(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// # Example
 /// ```ignore
-/// #[forgex::query]
+/// #[forge::query]
 /// pub async fn get_user(ctx: &QueryContext, user_id: Uuid) -> Result<User> {
 ///     // ...
 /// }
 ///
-/// #[forgex::query(cache = "5m", require_auth)]
+/// #[forge::query(cache = "5m", require_auth)]
 /// pub async fn get_profile(ctx: &QueryContext) -> Result<Profile> {
 ///     let user_id = ctx.require_user_id()?;
 ///     // ...
@@ -80,7 +80,7 @@ pub fn query(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// # Example
 /// ```ignore
-/// #[forgex::mutation]
+/// #[forge::mutation]
 /// pub async fn create_project(ctx: &MutationContext, input: CreateProjectInput) -> Result<Project> {
 ///     let user_id = ctx.require_user_id()?;
 ///     // ...
@@ -102,7 +102,7 @@ pub fn mutation(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// # Example
 /// ```ignore
-/// #[forgex::action(timeout = 60)]
+/// #[forge::action(timeout = 60)]
 /// pub async fn sync_with_stripe(ctx: &ActionContext, user_id: Uuid) -> Result<SyncResult> {
 ///     let customer = ctx.http().get("https://api.stripe.com/...").await?;
 ///     // ...
@@ -125,7 +125,7 @@ pub fn action(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// # Example
 /// ```ignore
-/// #[forgex::job]
+/// #[forge::job]
 /// #[timeout = "30m"]
 /// #[priority = "high"]
 /// pub async fn send_welcome_email(ctx: &JobContext, input: SendEmailInput) -> Result<()> {
@@ -148,7 +148,7 @@ pub fn job(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// # Example
 /// ```ignore
-/// #[forgex::cron("0 0 * * *")]
+/// #[forge::cron("0 0 * * *")]
 /// #[timezone = "UTC"]
 /// #[catch_up]
 /// pub async fn daily_cleanup(ctx: &CronContext) -> Result<()> {
@@ -170,7 +170,7 @@ pub fn cron(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// # Example
 /// ```ignore
-/// #[forgex::workflow]
+/// #[forge::workflow]
 /// #[version = 1]
 /// pub async fn user_onboarding(ctx: &WorkflowContext, input: OnboardingInput) -> Result<OnboardingResult> {
 ///     let user = ctx.step("create_user", || async { /* ... */ }).await?;

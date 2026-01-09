@@ -92,10 +92,11 @@ jobs:
         run: |
           VERSION="${{ inputs.version }}"
 
-          # Update forgex version in scaffold templates (used when users create new projects)
+          # Update forge version in scaffold templates (used when users create new projects)
+          # Format: forge = { version = "X.X.X", package = "forgex" }
           for template in crates/forge/templates/*/project/Cargo.toml.tmpl; do
             if [ -f "$template" ]; then
-              sed -i "s/forgex = { version = \"[^\"]*\"/forgex = { version = \"$VERSION\"/g" "$template"
+              sed -i "s/forge = { version = \"[^\"]*\"/forge = { version = \"$VERSION\"/g" "$template"
             fi
           done
 
@@ -125,7 +126,7 @@ jobs:
 
           echo ""
           echo "=== Scaffold template versions ==="
-          grep "forgex = { version" crates/forge/templates/*/project/Cargo.toml.tmpl || true
+          grep "forge = { version" crates/forge/templates/*/project/Cargo.toml.tmpl || true
 
           echo ""
           echo "=== docs/package.json version ==="

@@ -1,3 +1,21 @@
+Added git init and project name extraction to CLI scaffolding.
+- crates/forge/src/cli/new.rs: Added extract_project_name() to handle paths like "path/to/my-app" → "my-app"
+- crates/forge/src/cli/new.rs: Added is_inside_git_repo() using `git rev-parse --git-dir` to detect parent repos
+- crates/forge/src/cli/new.rs: Added init_git_repo() to init and commit only when not inside existing repo
+- crates/forge/src/cli/mod.rs: Updated init_project() with same git init and project name logic
+- Tests added for extract_project_name covering paths, trailing slashes, and simple names
+
+Changed library name from forgex to forge while keeping package name as forgex on crates.io.
+- crates/forge/Cargo.toml: Changed [lib] name from "forgex" to "forge"
+- All proc macros (model, query, mutation, action, job, cron, workflow) now generate forge::forge_core:: paths
+- crates/forge-macros/src/lib.rs: Doc comments now use #[forge::] instead of #[forgex::]
+- crates/forge/src/cli/run.rs, add.rs: Changed imports/templates to use forge:: paths
+- All templates updated: use forge::prelude::*, #[forge::model], etc.
+- templates/*/Cargo.toml.tmpl: Changed to forge = { version = "...", package = "forgex" }
+- Documentation updated (README.md, docs/*.mdx)
+- MEMORIES.md: Updated naming conventions
+- Users now: `cargo install forgex` then `use forge::prelude::*;`
+
 Added scaffold template version sync to release workflow.
 - `crates/forge/templates/populated/project/Cargo.toml.tmpl`: Fixed forgex version from 0.1 to 0.0.2-alpha
 - `crates/forge/templates/empty/project/Cargo.toml.tmpl`: Same fix
@@ -603,6 +621,15 @@ Fixed workflow step status race condition on resume from durable sleep.
 Updated documentation for testing and workflow APIs.
 - docs/docs/api/testing.mdx: Added has_role() and claim() methods to TestQueryContext table
 - docs/docs/api/workflow-context.mdx: Added is_step_started(), record_step_start(), record_step_complete(), record_step_complete_async() methods with examples
+
+Rewrote README.md as compelling product narrative instead of feature list.
+- Opens with pain point (infrastructure complexity) not features
+- Shows code examples that demonstrate value, not API reference
+- Links to external resources explaining PostgreSQL SKIP LOCKED/LISTEN NOTIFY patterns
+- Honest comparison table vs Supabase/Firebase/PocketBase/Temporal
+- Includes "Who's this for" and "Who's this NOT for" sections
+- Transparent about alpha status and current limitations
+- No deployment instructions, no repetitive content
 
 Added CLAUDE.md agent guide to all scaffolded projects.
 - `crates/forge/templates/populated/project/CLAUDE.md.tmpl`: World-class agent guide for FORGE development

@@ -1,6 +1,6 @@
 # FORGE Agent Guide
 
-PostgreSQL-only infrastructure. **Package: `forgex`** (not `forge`). [Full docs](https://tryforge.dev/docs) | `forge --help` | `forge.toml` for config.
+PostgreSQL-only infrastructure. **Package: `forgex`** (import as `forge`). [Full docs](https://tryforge.dev/docs) | `forge --help` | `forge.toml` for config.
 
 ## Run
 
@@ -28,12 +28,12 @@ ctx.db()                          ctx.require_user_id()?
 ctx.dispatch_job(name, args)      ctx.start_workflow(name, input)
 
 // Attributes (see docs for full options)
-#[forgex::query]                  // + cache="30s", public, rate_limit(...)
-#[forgex::mutation]               // + timeout=30, require_role("admin")
-#[forgex::action]                 // + timeout=60
-#[forgex::job]                    // + #[retry(...)], #[priority], #[idempotent]
-#[forgex::cron("0 * * * *")]      // + #[timezone], #[catch_up]
-#[forgex::workflow]               // + #[version], #[timeout]
+#[forge::query]                  // + cache="30s", public, rate_limit(...)
+#[forge::mutation]               // + timeout=30, require_role("admin")
+#[forge::action]                 // + timeout=60
+#[forge::job]                    // + #[retry(...)], #[priority], #[idempotent]
+#[forge::cron("0 * * * *")]      // + #[timezone], #[catch_up]
+#[forge::workflow]               // + #[version], #[timeout]
 
 // Job: ctx.progress(50, "msg")?; ctx.heartbeat().await?;
 // Cron: ctx.log.info("msg", json!({...}));
@@ -55,10 +55,10 @@ ctx.dispatch_job(name, args)      ctx.start_workflow(name, input)
 ## Schema
 
 ```rust
-#[forgex::model]
+#[forge::model]
 pub struct Task { pub id: Uuid, pub status: TaskStatus, pub created_at: DateTime<Utc> }
 
-#[forgex::forge_enum]
+#[forge::forge_enum]
 pub enum TaskStatus { Pending, InProgress, Completed }
 ```
 Generates TypeScript types. DB uses sqlx. Schema (indexes, constraints) → migrations.
@@ -67,7 +67,7 @@ Generates TypeScript types. DB uses sqlx. Schema (indexes, constraints) → migr
 
 ```
 src/main.rs              # ForgeBuilder, registrations
-src/schema/              # #[forgex::model]
+src/schema/              # #[forge::model]
 src/functions/           # One file per function (queries, mutations, jobs, crons, workflows)
 frontend/src/lib/forge/  # Generated (forge generate)
 ```
@@ -77,8 +77,8 @@ frontend/src/lib/forge/  # Generated (forge generate)
 ## Auth
 
 ```rust
-#[forgex::query(public)]                    // No auth
-#[forgex::mutation(require_role("admin"))]  // Role required
+#[forge::query(public)]                    // No auth
+#[forge::mutation(require_role("admin"))]  // Role required
 ctx.require_user_id()?                      // Uuid or error
 ctx.auth.user_id()                          // Option<Uuid>
 ctx.auth.has_role("x")                      // bool
@@ -122,6 +122,6 @@ Idiomatic Rust | Testability (inject via context) | Fail fast (`require_*`) | Sm
 
 ## Advanced (see docs)
 
-- **Rate Limiting:** `#[forgex::query(rate_limit(requests=100, per="1m", key="user"))]`
+- **Rate Limiting:** `#[forge::query(rate_limit(requests=100, per="1m", key="user"))]`
 - **Multi-Tenancy:** `ctx.tenant_id()`, `ctx.require_tenant()`
 - **Clustering:** `forge.toml` → `[node]` roles, worker_capabilities

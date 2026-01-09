@@ -10,7 +10,7 @@ keywords = ["framework", "postgresql", "full-stack", "cli"]
 categories = ["web-programming", "command-line-utilities"]
 
 [lib]
-name = "forgex"
+name = "forge"
 path = "src/lib.rs"
 
 [[bin]]

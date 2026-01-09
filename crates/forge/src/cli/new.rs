@@ -3,9 +3,76 @@ use clap::Parser;
 use console::style;
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 use super::template::render;
 use crate::template_vars;
+
+/// Extract project name from a path (last segment only).
+/// Handles: "my-app", "path/to/my-app", "./my-app", "../my-app"
+pub(super) fn extract_project_name(input: &str) -> String {
+    Path::new(input)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(input)
+        .to_string()
+}
+
+/// Check if git is available on the system.
+fn is_git_available() -> bool {
+    Command::new("git")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Check if the directory is inside an existing git repository.
+fn is_inside_git_repo(dir: &Path) -> bool {
+    Command::new("git")
+        .args(["rev-parse", "--git-dir"])
+        .current_dir(dir)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Initialize git repository and create initial commit.
+/// Skips if directory is already inside a git repository.
+fn init_git_repo(dir: &Path) -> Result<()> {
+    // Skip if already inside a git repo (parent or current)
+    if is_inside_git_repo(dir) {
+        return Ok(());
+    }
+
+    // git init
+    let init = Command::new("git")
+        .args(["init"])
+        .current_dir(dir)
+        .output()?;
+
+    if !init.status.success() {
+        return Ok(()); // Silently skip if init fails
+    }
+
+    // git add .
+    let add = Command::new("git")
+        .args(["add", "."])
+        .current_dir(dir)
+        .output()?;
+
+    if !add.status.success() {
+        return Ok(());
+    }
+
+    // git commit
+    let _ = Command::new("git")
+        .args(["commit", "-m", "Initialize project with Forge"])
+        .current_dir(dir)
+        .output()?;
+
+    Ok(())
+}
 
 // Populated project templates (default)
 const CARGO_TOML: &str = include_str!("../../templates/populated/project/Cargo.toml.tmpl");
@@ -211,6 +278,8 @@ impl NewCommand {
             std::process::exit(1);
         }
 
+        // Extract just the project name from paths like "path/to/my-app"
+        let project_name = extract_project_name(&self.name);
         let project_dir = self.output.as_ref().unwrap_or(&self.name);
         let path = Path::new(project_dir);
 
@@ -219,13 +288,18 @@ impl NewCommand {
         }
 
         fs::create_dir_all(path)?;
-        create_project(path, &self.name, self.demo)?;
+        create_project(path, &project_name, self.demo)?;
+
+        // Initialize git repository if git is available
+        if is_git_available() {
+            init_git_repo(path)?;
+        }
 
         println!();
         println!(
             "{} Created new FORGE project: {}",
             style("✅").green(),
-            style(&self.name).cyan()
+            style(&project_name).cyan()
         );
         println!();
         println!("{}", style("Next steps:").bold());
@@ -471,6 +545,23 @@ fn create_frontend(dir: &Path, name: &str, demo: bool) -> Result<()> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn test_extract_project_name() {
+        // Simple name
+        assert_eq!(extract_project_name("my-app"), "my-app");
+
+        // Path with slashes
+        assert_eq!(extract_project_name("path/to/my-app"), "my-app");
+        assert_eq!(extract_project_name("./my-app"), "my-app");
+        assert_eq!(extract_project_name("../my-app"), "my-app");
+
+        // Absolute path
+        assert_eq!(extract_project_name("/home/user/projects/my-app"), "my-app");
+
+        // Trailing slash (edge case)
+        assert_eq!(extract_project_name("my-app/"), "my-app");
+    }
 
     #[test]
     fn test_create_demo_project() {

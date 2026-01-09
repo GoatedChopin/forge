@@ -3,7 +3,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{parse_macro_input, spanned::Spanned, Data, DeriveInput, Fields, Meta};
 
-/// Expand the #[forgex::model] macro.
+/// Expand the #[forge::model] macro.
 ///
 /// Generates:
 /// - Struct with Debug, Clone, Serialize, Deserialize derives
@@ -48,8 +48,8 @@ fn expand_model_impl(_attr: TokenStream2, input: DeriveInput) -> syn::Result<Tok
 
             quote! {
                 {
-                    let rust_type = forgex::forge_core::schema::RustType::from_type_string(#type_str);
-                    let mut field = forgex::forge_core::schema::FieldDef::new(#name, rust_type);
+                    let rust_type = forge::forge_core::schema::RustType::from_type_string(#type_str);
+                    let mut field = forge::forge_core::schema::FieldDef::new(#name, rust_type);
                     field.column_name = #column_name.to_string();
                     field
                 }
@@ -64,11 +64,11 @@ fn expand_model_impl(_attr: TokenStream2, input: DeriveInput) -> syn::Result<Tok
             #fields
         }
 
-        impl forgex::forge_core::schema::ModelMeta for #struct_name {
+        impl forge::forge_core::schema::ModelMeta for #struct_name {
             const TABLE_NAME: &'static str = #table_name;
 
-            fn table_def() -> forgex::forge_core::schema::TableDef {
-                let mut table = forgex::forge_core::schema::TableDef::new(#table_name, stringify!(#struct_name));
+            fn table_def() -> forge::forge_core::schema::TableDef {
+                let mut table = forge::forge_core::schema::TableDef::new(#table_name, stringify!(#struct_name));
                 table.fields = vec![
                     #(#field_tokens),*
                 ];

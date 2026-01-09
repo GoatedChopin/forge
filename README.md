@@ -1,97 +1,166 @@
 # FORGE
 
-**The Full-Stack Framework for the Impatient**
+**Stop Assembling. Start Building.**
 
-Everything you need in one binary. No Redis, no Kafka, no message queues - just PostgreSQL.
+You didn't sign up to be a distributed systems engineer. You signed up to build products.
+
+Yet here you are, wiring up Redis for caching, Kafka for events, BullMQ for jobs, a separate cron daemon, and praying they all stay in sync. Your `docker-compose.yml` has more services than your app has features.
+
+FORGE compiles your entire backend into **one binary**: API, jobs, crons, workflows, real-time subscriptions. The only dependency? PostgreSQL. That's it.
+
+```bash
+curl -fsSL https://tryforge.dev/install.sh | sh
+forge new my-app --demo && cd my-app
+cargo run
+```
 
 [![Crates.io](https://img.shields.io/crates/v/forgex.svg)](https://crates.io/crates/forgex)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Documentation](https://img.shields.io/badge/docs-tryforge.dev-blue)](https://tryforge.dev/docs)
+[![Docs](https://img.shields.io/badge/docs-tryforge.dev-blue)](https://tryforge.dev/docs)
 
-## What is FORGE?
+---
 
-FORGE is a Rust full-stack framework that compiles your entire backend into a single binary. One process handles API gateway, background jobs, cron scheduling, and durable workflows - all powered by PostgreSQL.
+## The Problem
+
+Modern backend development has become infrastructure theater:
+
+```
+Your Typical Stack                    What You Actually Need
+───────────────────                   ────────────────────────
+API Server (Express/FastAPI)          Handle HTTP requests
+Redis                                 Remember things temporarily
+Kafka/RabbitMQ                        Process things later
+BullMQ/Celery                         Run background jobs
+Cron daemon                           Do things on schedule
+WebSocket server                      Push updates to clients
+Prometheus + Grafana                  Know what's happening
+```
+
+Seven systems. Seven failure points. Seven things to deploy, monitor, and debug at 3 AM.
+
+PostgreSQL already does all of this. [SKIP LOCKED](https://www.inferable.ai/blog/posts/postgres-skip-locked) for job queues. [LISTEN/NOTIFY](https://neon.com/guides/pub-sub-listen-notify) for pub/sub. Advisory locks for coordination. You just need a framework that uses them properly.
+
+---
+
+## What FORGE Actually Does
+
+### 1. Queries and Mutations (Your API)
 
 ```rust
-#[forge::mutation]
-pub async fn create_order(ctx: &MutationContext, input: OrderInput) -> Result<Order> {
-    let user_id = ctx.require_user_id()?;
-
-    // Create order in database
-    let order = create_order_in_db(ctx.db(), user_id, &input).await?;
-
-    // Dispatch background job
-    ctx.dispatch_job("process_order", json!({ "order_id": order.id })).await?;
-
-    Ok(order)
+#[forge::query(cache = "30s")]
+pub async fn get_user(ctx: &QueryContext, id: Uuid) -> Result<User> {
+    sqlx::query_as("SELECT * FROM users WHERE id = $1")
+        .bind(id)
+        .fetch_one(ctx.db())
+        .await
+        .map_err(Into::into)
 }
 
+#[forge::mutation]
+pub async fn create_user(ctx: &MutationContext, input: CreateUser) -> Result<User> {
+    let user = sqlx::query_as("INSERT INTO users (email) VALUES ($1) RETURNING *")
+        .bind(&input.email)
+        .fetch_one(ctx.db())
+        .await?;
+
+    // Dispatch a background job
+    ctx.dispatch_job("send_welcome_email", json!({ "user_id": user.id })).await?;
+
+    Ok(user)
+}
+```
+
+These become `/rpc/get_user` and `/rpc/create_user` automatically. A fully typed TypeScript client is generated. Call `api.get_user()` and get autocomplete, type checking, and error handling. No routing. No fetch wrappers. No manual type definitions.
+
+### 2. Background Jobs (Things That Take Time)
+
+```rust
 #[forge::job]
-#[retry(max_attempts = 3)]
-pub async fn process_order(ctx: &JobContext, input: ProcessInput) -> Result<()> {
-    ctx.progress(50, "Processing...")?;
-    process_payment(&input.order_id).await?;
-    ctx.progress(100, "Complete")?;
+#[retry(max_attempts = 3, backoff = "exponential")]
+pub async fn send_welcome_email(ctx: &JobContext, input: EmailInput) -> Result<()> {
+    ctx.progress(0, "Starting...")?;
+
+    let user = fetch_user(ctx.db(), input.user_id).await?;
+    send_email(&user.email, "Welcome!").await?;
+
+    ctx.progress(100, "Sent")?;
     Ok(())
 }
+```
 
+Jobs are persisted in PostgreSQL, survive restarts, retry with backoff, and report progress in real-time. No Redis. No separate worker process.
+
+### 3. Scheduled Tasks (Cron Without the Daemon)
+
+```rust
 #[forge::cron("0 9 * * *")]  // 9 AM daily
-pub async fn daily_report(ctx: &CronContext) -> Result<()> {
-    generate_and_send_report(ctx.db()).await
+#[timezone = "America/New_York"]
+pub async fn daily_digest(ctx: &CronContext) -> Result<()> {
+    if ctx.is_late() {
+        ctx.log.warn("Running late", json!({ "delay": ctx.delay() }));
+    }
+
+    generate_and_send_digest(ctx.db()).await
 }
 ```
 
-## Why FORGE?
+Cron scheduling with timezone support, catch-up for missed runs, and structured logging. Runs in the same process.
 
-| Traditional Stack | FORGE |
-|-------------------|-------|
-| API Server + Redis + Kafka + Celery + Cron daemon | **Single binary** |
-| Multiple deployment configs | **One `forge run`** |
-| N+1 failure points | **PostgreSQL only** |
-| Complex local dev setup | **`forge dev`** |
+### 4. Durable Workflows (Multi-Step Processes That Don't Break)
 
-### Key Features
+```rust
+#[forge::workflow]
+#[version = 1]  // Bump when changing step order. In-flight workflows keep their original version.
+#[timeout = "60d"]
+pub async fn free_trial_flow(ctx: &WorkflowContext, user: User) -> Result<()> {
+    // Each step can define compensation (rollback) logic
+    ctx.step("start_trial")
+        .run(|| activate_trial(&user))
+        .compensate(|_| deactivate_trial(&user))
+        .await?;
 
-- **Single Binary** - API gateway + workers + scheduler in one process
-- **Type-Safe** - Rust proc macros with full IDE support
-- **Background Jobs** - Built-in with retries, progress tracking, dashboard
-- **Cron Jobs** - Built-in scheduler with timezone support
-- **Durable Workflows** - Multi-step processes with automatic compensation (saga pattern)
-- **Real-time** - PostgreSQL LISTEN/NOTIFY via WebSocket
-- **TypeScript Codegen** - Auto-generated frontend types
-- **Self-hosted** - Deploy anywhere: Railway, Render, Fly.io, or bare metal
+    ctx.step("send_welcome").run(|| send_email(&user, "Welcome!")).await?;
 
-## Quick Start
+    ctx.sleep(Duration::from_days(45)).await;  // 45 days. Survives deployments.
 
-```bash
-# Install
-curl -fsSL https://tryforge.dev/install.sh | sh
-# Or: cargo install forgex
+    ctx.step("trial_ending").run(|| send_email(&user, "3 days left!")).await?;
 
-# Create project
-forge new my-app
-cd my-app
+    ctx.sleep(Duration::from_days(3)).await;
 
-# Start development
-forge dev
-
-# Open http://localhost:8080
+    ctx.step("convert_or_expire").run(|| end_trial(&user)).await?;
+    Ok(())
+    // If any step fails, previous steps compensate in reverse order
+}
 ```
 
-**That's it.** No Docker compose with 10 services. No "install Redis first". Just PostgreSQL.
+Deploy new code, restart servers, scale up or down. The workflow picks up right where it left off. Sleep for 45 days, and it just works. Compensation (rollback) runs automatically if later steps fail. This is durable execution without running a separate orchestration cluster.
 
-## Documentation
+### 5. Real-Time Subscriptions (Live Data, No Extra Work)
 
-- **[Quick Start](https://tryforge.dev/docs/quick-start)** - Get running in 5 minutes
-- **[Tutorials](https://tryforge.dev/docs/tutorials)** - Learn by building
-- **[API Reference](https://tryforge.dev/docs/api)** - Complete API docs
-- **[Compare](https://tryforge.dev/docs/compare)** - FORGE vs Supabase, Firebase, PocketBase
+```svelte
+<script lang="ts">
+  import { subscribe } from '$lib/forge';
 
-## Architecture
+  // This auto-updates when data changes. Any client, anywhere.
+  const users = subscribe('list_users', {});
+</script>
+
+{#each $users.data ?? [] as user}
+  <div>{user.email}</div>
+{/each}
+```
+
+Under the hood: PostgreSQL triggers fire NOTIFY on data changes → FORGE re-runs the query → WebSocket pushes the diff to subscribed clients.
+
+No WebSocket code. No manual cache invalidation. Just reactive queries.
+
+---
+
+## The Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Single FORGE Binary                       │
+│                     forge run                               │
 ├─────────────┬─────────────┬─────────────┬──────────────────┤
 │   Gateway   │   Workers   │  Scheduler  │    Dashboard     │
 │  (HTTP/WS)  │   (Jobs)    │   (Cron)    │   (Built-in)     │
@@ -101,119 +170,139 @@ forge dev
                             │
                      ┌──────▼──────┐
                      │ PostgreSQL  │
-                     │  (Only DB)  │
                      └─────────────┘
 ```
 
-## Feature Matrix
+One process. Multiple goroutines handle different concerns:
 
-| Feature | Status | Description |
-|---------|--------|-------------|
-| Queries | ✅ | Read-only database functions |
-| Mutations | ✅ | Write operations with job dispatch |
-| Actions | ✅ | Webhook handlers for external services |
-| Background Jobs | ✅ | Async processing with retries |
-| Cron Jobs | ✅ | Scheduled tasks with timezone |
-| Workflows | ✅ | Durable multi-step with compensation |
-| Real-time | ✅ | PostgreSQL NOTIFY subscriptions |
-| Dashboard | ✅ | Built-in job/workflow monitoring |
-| TypeScript Codegen | ✅ | Auto-generated frontend types |
-| Multi-tenancy | ✅ | Built-in tenant isolation |
-| Rate Limiting | ✅ | Per-user/tenant rate limits |
+- **Gateway**: HTTP/WebSocket server (built on [Axum](https://github.com/tokio-rs/axum))
+- **Workers**: Pull jobs from PostgreSQL using `SKIP LOCKED`
+- **Scheduler**: Leader-elected cron runner (advisory locks prevent duplicate runs)
+- **Dashboard**: Built-in UI for monitoring jobs, workflows, and metrics
 
-## Comparison
-
-| | FORGE | Supabase | Firebase | PocketBase |
-|--|-------|----------|----------|------------|
-| Database | PostgreSQL | PostgreSQL | Firestore | SQLite |
-| Backend Code | Rust | Edge Functions | Cloud Functions | Go/JS |
-| Background Jobs | Built-in | External | Cloud Functions | None |
-| Workflows | Built-in | None | None | None |
-| Self-hosted | Simple | Complex | No | Simple |
-| Vendor lock-in | None | Low | High | None |
-
-[See detailed comparisons →](https://tryforge.dev/docs/compare)
-
-## Example: E-Commerce Order Flow
-
-```rust
-#[forge::workflow]
-#[timeout = "30m"]
-pub async fn process_order(ctx: &WorkflowContext, input: OrderInput) -> Result<Order> {
-    // Step 1: Reserve inventory (with compensation)
-    let reservation = ctx.step("reserve_inventory")
-        .run(|| reserve_items(&input.items))
-        .compensate(|r| release_items(r))
-        .await?;
-
-    // Step 2: Charge payment (with compensation)
-    let payment = ctx.step("charge_payment")
-        .run(|| charge_card(&input.payment))
-        .compensate(|p| refund(p.id))
-        .await?;
-
-    // Step 3: Create shipment
-    let shipment = ctx.step("create_shipment")
-        .run(|| ship_order(&input))
-        .await?;
-
-    // If any step fails, compensations run automatically in reverse!
-
-    Ok(Order { id: input.id, status: "processing" })
-}
-```
-
-## Deploy in 60 Seconds
-
-### Railway
-```bash
-railway init
-railway add postgres
-railway up
-```
-
-### Render
-Push to GitHub → Connect repo → Use included `render.yaml`
-
-### Fly.io
-```bash
-fly launch
-fly postgres create
-fly deploy
-```
-
-### Docker
-```bash
-docker build -t my-app .
-docker run -e DATABASE_URL=postgres://... my-app
-```
-
-## Community
-
-- **[Discord](https://discord.gg/forge)** - Chat with the community
-- **[GitHub Discussions](https://github.com/isala404/forge/discussions)** - Ask questions
-- **[Twitter](https://twitter.com/forgex_dev)** - Updates and announcements
-
-## Contributing
-
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-```bash
-# Clone and build
-git clone https://github.com/isala404/forge
-cd forge
-cargo build
-
-# Run tests
-cargo test
-```
-
-## License
-
-MIT License - see [LICENSE](LICENSE) for details.
+Scale horizontally by running multiple instances. They coordinate through PostgreSQL. No service mesh, no gossip protocol, no Redis cluster.
 
 ---
 
-**Built with Rust.** PostgreSQL only. Ship faster.
+## Type Safety, End to End
 
-[Get Started →](https://tryforge.dev/docs/quick-start)
+FORGE generates TypeScript types from your Rust models:
+
+```rust
+// Rust: your source of truth
+#[forge::model]
+pub struct User {
+    pub id: Uuid,
+    pub email: String,
+    pub role: UserRole,
+    pub created_at: DateTime<Utc>,
+}
+
+#[forge::model]
+pub enum UserRole {
+    Admin,
+    Member,
+    Guest,
+}
+```
+
+```typescript
+// TypeScript: generated automatically
+export interface User {
+  id: string;
+  email: string;
+  role: UserRole;
+  created_at: string;
+}
+
+export type UserRole = 'Admin' | 'Member' | 'Guest';
+
+// API client is also generated
+import { api } from '$lib/forge';
+const user = await api.get_user({ id: '...' });  // Fully typed
+```
+
+If your Rust code compiles, your frontend types are correct. This eliminates an entire class of "worked in dev, broke in prod" bugs.
+
+---
+
+## Why Not Just Use...
+
+| | FORGE | Supabase | Firebase | PocketBase |
+|--|:-----:|:--------:|:--------:|:----------:|
+| **Background Jobs** | Built-in | External | Cloud Functions | ❌ |
+| **Durable Workflows** | Built-in | ❌ | ❌ | ❌ |
+| **Cron Scheduling** | Built-in | External | Cloud Scheduler | ❌ |
+| **Query Caching** | Built-in | ❌ | ❌ | ❌ |
+| **Rate Limiting** | Built-in | ❌ | ❌ | ❌ |
+| **Real-time** | Built-in | Built-in | Built-in | ❌ |
+| **Full Type Safety** | Rust → TS | Partial | ❌ | ❌ |
+| **Self-Hosted** | One binary | Complex | ❌ | One binary |
+| **Vendor Lock-in** | None | Low | High | None |
+| **Database** | PostgreSQL | PostgreSQL | Firestore | SQLite |
+
+**vs. Temporal/Inngest**: FORGE workflows are simpler (no separate service) but less feature-complete. If you need advanced workflow features (versioning, signals, child workflows), use Temporal. If you need "good enough" workflows without the operational overhead, use FORGE.
+
+**vs. Node.js + BullMQ + etc.**: FORGE trades ecosystem breadth for operational simplicity. You get fewer npm packages but also fewer 3 AM pages about Redis running out of memory.
+
+---
+
+## Getting Started
+
+```bash
+# Install
+curl -fsSL https://tryforge.dev/install.sh | sh
+# Or: cargo install forgex
+
+# Create a project
+forge new my-app --demo
+
+# Run it
+cd my-app
+cargo run
+# → API at http://localhost:8080
+# → Dashboard at http://localhost:8080/_dashboard
+```
+
+The `--demo` flag scaffolds a working app with examples of queries, mutations, jobs, crons, and workflows. Or use `--minimal` for a clean slate.
+
+[**Read the docs →**](https://tryforge.dev/docs)
+
+---
+
+## Who's This For
+
+FORGE is opinionated. It's designed for:
+
+- **Solo developers and small teams** building SaaS products who don't want to manage infrastructure
+- **Teams who value reliability**: no null pointer exceptions, no "undefined is not a function", errors caught at compile time
+- **Anyone tired of gluing together** 7 different services for basic backend functionality
+
+Probably not the right fit if:
+
+- You have a dedicated platform team and need fine-grained control over each component
+- You're building for millions of concurrent users (FORGE targets ~100k MAU comfortably)
+- You need deep integration with cloud-native services (Lambda, DynamoDB, Pub/Sub)
+
+---
+
+## Status
+
+FORGE is in **alpha**. The API is stabilizing but may change. It's been used in production for small projects, but you should evaluate it yourself before betting your company on it.
+
+We're actively working on these. [Contributions welcome](CONTRIBUTING.md).
+
+---
+
+## License
+
+MIT. Do whatever you want.
+
+---
+
+<p align="center">
+  <strong>PostgreSQL is enough.</strong><br>
+  <a href="https://tryforge.dev/docs/quick-start">Get Started</a> ·
+  <a href="https://tryforge.dev/docs">Documentation</a> ·
+  <a href="https://github.com/isala404/forge/discussions">Discussions</a>
+</p>

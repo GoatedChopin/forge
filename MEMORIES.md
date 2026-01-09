@@ -39,9 +39,9 @@ Crates
 
 Key Patterns
 
-- Package name: `forgex` (crate), `forge` (CLI binary)
-- Proc macros use forgex::forge_core:: paths (re-exported)
-- #[forgex::model] only generates struct + ModelMeta for TypeScript codegen (no schema attributes)
+- Package name: `forgex` (crates.io), library name: `forge` (imports), CLI binary: `forge`
+- Proc macros use forge::forge_core:: paths (re-exported)
+- #[forge::model] only generates struct + ModelMeta for TypeScript codegen (no schema attributes)
 - Migrations are source of truth (not schema attributes) - indexes, constraints, defaults in SQL
 - User functions take &QueryContext, &MutationContext (references)
 - axum 0.7+ routes: {param} not :param
@@ -138,7 +138,7 @@ CLI Scaffolding
 Template Features Demonstrated
 
 Schema:
-- #[forgex::model] for struct + TypeScript codegen (no field attributes)
+- #[forge::model] for struct + TypeScript codegen (no field attributes)
 - Enum: sqlx::Type with #[sqlx(type_name, rename_all)]
 - #[default] for default enum variant
 - All indexes, constraints, defaults defined in migrations (source of truth)

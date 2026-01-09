@@ -3,7 +3,7 @@ use clap::Parser;
 use console::style;
 use tracing::info;
 
-use forgex::Forge;
+use forge::Forge;
 
 /// Run the FORGE server.
 #[derive(Parser)]

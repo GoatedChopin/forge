@@ -134,7 +134,7 @@ function CodeExample(): JSX.Element {
           <div className="col col--6">
             <Heading as="h4">Define your data</Heading>
             <pre className={styles.codeBlock}>
-{`#[forgex::model]
+{`#[forge::model]
 pub struct Task {
     pub id: Uuid,
     pub title: String,

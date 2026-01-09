@@ -138,15 +138,46 @@ async fn init_project(cmd: InitCommand) -> Result<()> {
     }
 
     let current_dir = std::env::current_dir()?;
-    let name = cmd.name.unwrap_or_else(|| {
-        current_dir
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("forge-app")
-            .to_string()
-    });
+    let name = cmd
+        .name
+        .map(|n| new::extract_project_name(&n))
+        .unwrap_or_else(|| {
+            current_dir
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("forge-app")
+                .to_string()
+        });
 
     new::create_project(&current_dir, &name, cmd.demo)?;
+
+    // Initialize git repository if git is available and not already inside a repo
+    let is_inside_repo = std::process::Command::new("git")
+        .args(["rev-parse", "--git-dir"])
+        .current_dir(&current_dir)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if !is_inside_repo {
+        if let Ok(output) = std::process::Command::new("git").arg("--version").output() {
+            if output.status.success() {
+                let _ = std::process::Command::new("git")
+                    .args(["init"])
+                    .current_dir(&current_dir)
+                    .output();
+                let _ = std::process::Command::new("git")
+                    .args(["add", "."])
+                    .current_dir(&current_dir)
+                    .output();
+                let _ = std::process::Command::new("git")
+                    .args(["commit", "-m", "Initialize project with Forge"])
+                    .current_dir(&current_dir)
+                    .output();
+            }
+        }
+    }
+
     println!("✅ Initialized FORGE project: {}", name);
     Ok(())
 }

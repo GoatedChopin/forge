@@ -48,7 +48,8 @@ impl Database {
             {
                 return Err(ForgeError::Database(
                     "Embedded PostgreSQL requires the 'embedded-db' feature. \
-                    Build with: cargo build --features embedded-db".to_string()
+                    Build with: cargo build --features embedded-db"
+                        .to_string(),
                 ));
             }
         } else {
