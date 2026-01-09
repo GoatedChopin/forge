@@ -1,13 +1,10 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
-      tag:
-        description: 'Tag to release (e.g., v0.0.1-alpha)'
+      version:
+        description: "Version to release (e.g., 0.0.3-alpha)"
         required: true
         type: string
 
@@ -19,8 +16,126 @@ env:
   BINARY_NAME: forge
 
 jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Build (dry-run)
+        run: cargo build --release
+
+      - name: Run tests
+        run: cargo test --all-features
+
+  bump-versions:
+    name: Bump Versions
+    needs: validate
+    runs-on: ubuntu-latest
+    outputs:
+      commit_sha: ${{ steps.commit.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-edit
+        run: cargo install cargo-edit --features vendored-openssl
+
+      - name: Update workspace version
+        run: |
+          VERSION="${{ inputs.version }}"
+          echo "Updating to version: $VERSION"
+
+          # Update workspace version using cargo-set-version
+          cargo set-version --workspace "$VERSION"
+
+      - name: Update internal crate dependencies
+        run: |
+          VERSION="${{ inputs.version }}"
+
+          # Update internal dependency versions in each crate's Cargo.toml
+          # These are the path dependencies that also specify a version
+          for crate_dir in crates/forge crates/forge-runtime crates/forge-codegen; do
+            if [ -f "$crate_dir/Cargo.toml" ]; then
+              sed -i "s/forge-core = { version = \"[^\"]*\"/forge-core = { version = \"$VERSION\"/g" "$crate_dir/Cargo.toml"
+              sed -i "s/forge-macros = { version = \"[^\"]*\"/forge-macros = { version = \"$VERSION\"/g" "$crate_dir/Cargo.toml"
+              sed -i "s/forge-runtime = { version = \"[^\"]*\"/forge-runtime = { version = \"$VERSION\"/g" "$crate_dir/Cargo.toml"
+              sed -i "s/forge-codegen = { version = \"[^\"]*\"/forge-codegen = { version = \"$VERSION\"/g" "$crate_dir/Cargo.toml"
+            fi
+          done
+
+      - name: Update docs version
+        run: |
+          VERSION="${{ inputs.version }}"
+
+          # Update docs/package.json
+          if [ -f "docs/package.json" ]; then
+            jq --arg v "$VERSION" '.version = $v' docs/package.json > docs/package.json.tmp
+            mv docs/package.json.tmp docs/package.json
+          fi
+
+          # Update hardcoded versions in documentation
+          find docs -name "*.mdx" -o -name "*.md" | xargs -I {} sed -i "s/forge = { version = \"[^\"]*\"/forge = { version = \"$VERSION\"/g" {} 2>/dev/null || true
+          find docs -name "*.mdx" -o -name "*.md" | xargs -I {} sed -i "s/forgex = { version = \"[^\"]*\"/forgex = { version = \"$VERSION\"/g" {} 2>/dev/null || true
+
+      - name: Verify changes
+        run: |
+          echo "=== Cargo.toml workspace version ==="
+          grep -A1 "\[workspace.package\]" Cargo.toml | grep version
+
+          echo ""
+          echo "=== Internal dependencies ==="
+          grep -r "forge-core = { version" crates/*/Cargo.toml || true
+          grep -r "forge-runtime = { version" crates/*/Cargo.toml || true
+
+          echo ""
+          echo "=== docs/package.json version ==="
+          jq '.version' docs/package.json 2>/dev/null || echo "docs/package.json not found"
+
+      - name: Commit version bump
+        id: commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          else
+            git commit -m "Bump version to ${{ inputs.version }}"
+            git push origin main
+            echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          fi
+
   build:
     name: Build ${{ matrix.target }}
+    needs: bump-versions
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -41,6 +156,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump-versions.outputs.commit_sha }}
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -78,24 +195,26 @@ jobs:
 
   release:
     name: Create Release
-    needs: build
+    needs: [bump-versions, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump-versions.outputs.commit_sha }}
+
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          TAG="v${{ inputs.version }}"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-
-      - name: Get version
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=${{ inputs.tag }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-          fi
 
       - name: Create checksums
         run: |
@@ -111,31 +230,35 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.version }}
-          name: Release ${{ steps.version.outputs.version }}
+          tag_name: v${{ inputs.version }}
+          name: Release v${{ inputs.version }}
           draft: false
-          prerelease: ${{ contains(steps.version.outputs.version, 'alpha') || contains(steps.version.outputs.version, 'beta') || contains(steps.version.outputs.version, 'rc') }}
+          prerelease: ${{ contains(inputs.version, 'alpha') || contains(inputs.version, 'beta') || contains(inputs.version, 'rc') }}
           generate_release_notes: true
           files: |
             artifacts/**/*
 
   publish-crates:
     name: Publish to crates.io
-    needs: release
+    needs: [bump-versions, release]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump-versions.outputs.commit_sha }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # Publish in dependency order with delays for crates.io index to update
+      # forge-macros (no deps) -> forge-core (deps: macros) -> forge-runtime (deps: core) -> forge-codegen (deps: core) -> forgex (deps: all)
       - name: Publish forge-macros
         run: cargo publish -p forge-macros --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
         continue-on-error: true
 
       - name: Publish forge-core
         run: |
-          sleep 30
+          sleep 30  # Wait for crates.io index to update
           cargo publish -p forge-core --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
         continue-on-error: true
 

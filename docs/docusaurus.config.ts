@@ -12,7 +12,7 @@ const config: Config = {
   },
 
   url: 'https://tryforge.dev',
-  baseUrl: '/docs/',
+  baseUrl: '/',
 
   organizationName: 'isala404',
   projectName: 'forge',

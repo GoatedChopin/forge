@@ -9,8 +9,8 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy manifests
-COPY Cargo.toml Cargo.lock ./
+# Copy manifests (Cargo.lock generated during build if missing)
+COPY Cargo.toml ./
 
 # Create dummy main to cache dependencies
 RUN mkdir -p src && \
@@ -18,10 +18,8 @@ RUN mkdir -p src && \
     cargo build --release && \
     rm -rf src
 
-# Copy source code
+# Copy source code and migrations
 COPY src ./src
-COPY schema ./schema
-COPY functions ./functions
 COPY migrations ./migrations
 
 # Build the application

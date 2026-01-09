@@ -11,6 +11,17 @@ Tooling
 - CLI install: cargo install --path crates/forge
 - Docs: cd website && bun run start (Docusaurus 3.9.2)
 
+Release Process
+- Trigger: workflow_dispatch in GitHub Actions (Actions → Release → Run workflow)
+- Input: version (e.g., "0.0.3-alpha")
+- Flow: validate → bump-versions → build → release → publish-crates
+- Validation: fmt check, clippy, release build, tests (must pass before version bump)
+- Version updates: Cargo.toml workspace, internal deps, docs/package.json, docs/*.mdx
+- Commits directly to main (no version branches)
+- Auto-creates git tag v{version} and GitHub release
+- Publishes to crates.io in dependency order with 30s delays (index update time)
+- Main crate (forgex) uses root README.md for crates.io
+
 Architecture
 
 - Single binary: gateway + functions + workers + scheduler

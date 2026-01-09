@@ -9,6 +9,8 @@ services:
       - "8080:8080"
     env_file:
       - .env
+    environment:
+      - DATABASE_URL=postgres://postgres:forge@db:5432/{{project_name}}
     volumes:
       - .:/app
       - cargo_cache:/app/.cargo
@@ -32,7 +34,7 @@ services:
       - backend
 
   db:
-    image: postgres:18
+    image: postgres:17
     env_file:
       - .env
     ports:

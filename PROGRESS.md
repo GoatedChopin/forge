@@ -1,3 +1,24 @@
+Implemented workflow_dispatch release pipeline with pre-validation.
+- `.github/workflows/release.yml`: Rewrote from tag-triggered to workflow_dispatch
+- Input: version (string, e.g., "0.0.3-alpha")
+- Jobs: validate → bump-versions → build → release → publish-crates
+- Validate job: cargo fmt --check, clippy -D warnings, build --release, test (fails fast before any changes)
+- Bump-versions job: cargo-edit for workspace, sed for internal deps, jq for docs/package.json
+- Commits directly to main, auto-creates tag and GitHub release
+- 30s delays between crate publishes for crates.io index propagation
+- `crates/forge/Cargo.toml`: Added readme = "../../README.md" for crates.io
+
+Released v0.0.2-alpha with version bump and crates.io publishing.
+- Root `Cargo.toml`: Updated workspace version to 0.0.2-alpha
+- Internal crate dependencies: Updated to 0.0.2-alpha
+- GitHub Release created with binaries for linux, macOS (x86/arm), and Windows
+- Published all crates to crates.io: forge-macros, forge-core, forge-runtime, forge-codegen, forgex
+
+Fixed docs and Docker templates for scaffolded projects.
+- `docs/docusaurus.config.ts`: Changed baseUrl from '/docs/' to '/' to fix baseUrl mismatch warning
+- `templates/empty/project/Dockerfile.tmpl`: Removed non-existent schema/functions COPY, made Cargo.lock optional
+- `templates/empty/project/docker-compose.yml.tmpl`: Added DATABASE_URL override for Docker networking, downgraded postgres to 17 (18 has volume mount breaking changes)
+
 Improved scaffold templates with Docker Compose workflow and renamed CLAUDE.md to AGENTS.md.
 - `templates/empty/project/README.md.tmpl`: Minimal README with Docker Compose first, manual setup, single binary build, testing
 - `templates/empty/project/docker-compose.yml.tmpl`: Added env_file directive, upgraded to postgres:18

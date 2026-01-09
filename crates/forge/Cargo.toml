@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+readme = "../../README.md"
 description = "CLI and runtime for the Forge full-stack framework"
 keywords = ["framework", "postgresql", "full-stack", "cli"]
 categories = ["web-programming", "command-line-utilities"]
@@ -17,10 +18,10 @@ name = "forge"
 path = "src/main.rs"
 
 [dependencies]
-forge-core = { version = "0.0.1-alpha", path = "../forge-core" }
-forge-runtime = { version = "0.0.1-alpha", path = "../forge-runtime" }
-forge-codegen = { version = "0.0.1-alpha", path = "../forge-codegen" }
-forge-macros = { version = "0.0.1-alpha", path = "../forge-macros" }
+forge-core = { version = "0.0.2-alpha", path = "../forge-core" }
+forge-runtime = { version = "0.0.2-alpha", path = "../forge-runtime" }
+forge-codegen = { version = "0.0.2-alpha", path = "../forge-codegen" }
+forge-macros = { version = "0.0.2-alpha", path = "../forge-macros" }
 
 tokio = { workspace = true }
 tokio-util = "0.7"
