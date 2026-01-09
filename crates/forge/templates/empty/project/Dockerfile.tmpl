@@ -1,5 +1,23 @@
-# Build stage
-FROM rust:1.92-bookworm as builder
+# Frontend build stage
+FROM oven/bun:1 AS frontend-builder
+
+WORKDIR /app/frontend
+
+# Copy frontend files including local @forge/svelte dependency
+COPY frontend/package.json frontend/bun.lockb* frontend/bun.lock* ./
+COPY frontend/.forge ./.forge
+
+# Install dependencies
+RUN bun install --frozen-lockfile || bun install
+
+# Copy frontend source
+COPY frontend ./
+
+# Build frontend
+RUN bun run build
+
+# Backend build stage
+FROM rust:1.92-bookworm AS builder
 
 WORKDIR /app
 
@@ -12,17 +30,20 @@ RUN apt-get update && apt-get install -y \
 # Copy manifests (Cargo.lock generated during build if missing)
 COPY Cargo.toml ./
 
-# Create dummy main to cache dependencies
+# Create dummy main to cache dependencies (without embedded-frontend)
 RUN mkdir -p src && \
     echo "fn main() {}" > src/main.rs && \
-    cargo build --release && \
+    cargo build --release --no-default-features && \
     rm -rf src
 
 # Copy source code and migrations
 COPY src ./src
 COPY migrations ./migrations
 
-# Build the application
+# Copy frontend build output
+COPY --from=frontend-builder /app/frontend/build ./frontend/build
+
+# Build the application with embedded frontend
 RUN touch src/main.rs && cargo build --release
 
 # Runtime stage
