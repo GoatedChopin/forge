@@ -4,7 +4,22 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabaseConfig {
     /// Primary database connection URL.
+    /// Can be empty if `embedded = true`.
+    #[serde(default)]
     pub url: String,
+
+    /// Use embedded PostgreSQL (zero external dependencies).
+    /// When true, starts a bundled PostgreSQL instance automatically.
+    /// Great for development and small production deployments.
+    /// Requires the `embedded-db` feature.
+    #[serde(default)]
+    pub embedded: bool,
+
+    /// Data directory for embedded PostgreSQL.
+    /// Only used when `embedded = true`.
+    /// Defaults to `.forge/postgres` in the current directory.
+    #[serde(default)]
+    pub data_dir: Option<String>,
 
     /// Connection pool size.
     #[serde(default = "default_pool_size")]
@@ -35,6 +50,8 @@ impl Default for DatabaseConfig {
     fn default() -> Self {
         Self {
             url: String::new(),
+            embedded: false,
+            data_dir: None,
             pool_size: default_pool_size(),
             pool_timeout_secs: default_pool_timeout(),
             statement_timeout_secs: default_statement_timeout(),

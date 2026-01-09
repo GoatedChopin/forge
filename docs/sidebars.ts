@@ -30,19 +30,6 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
-      label: 'Tutorials',
-      collapsed: false,
-      items: [
-        'tutorials/index',
-        'tutorials/build-a-todo-app',
-        'tutorials/user-authentication',
-        'tutorials/background-jobs',
-        'tutorials/realtime-updates',
-        'tutorials/testing',
-      ],
-    },
-    {
-      type: 'category',
       label: 'Background Processing',
       collapsed: true,
       items: [

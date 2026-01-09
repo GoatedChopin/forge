@@ -1,3 +1,21 @@
+Added scaffold template version sync to release workflow.
+- `crates/forge/templates/populated/project/Cargo.toml.tmpl`: Fixed forgex version from 0.1 to 0.0.2-alpha
+- `crates/forge/templates/empty/project/Cargo.toml.tmpl`: Same fix
+- `.github/workflows/release.yml`: Added "Update scaffold template versions" step to bump forgex version in all Cargo.toml.tmpl files
+- `docs/tutorials/testing.mdx`: Fixed wrong crate name (forge → forgex) and version (0.0.1-alpha → 0.0.2-alpha)
+- Scaffolded projects now use the correct version matching the release
+
+Restructured docs site to separate landing page, docs, tutorials, and blog.
+- `docs/docusaurus.config.ts`: Changed docs routeBasePath from '/' to '/docs', enabled blog at '/blog', added tutorials plugin at '/tutorials'
+- `docs/src/pages/index.tsx`: New React landing page with hero, features, code examples, CTA sections
+- `docs/src/pages/index.module.css`: Landing page styles
+- `docs/tutorials/`: Moved from docs/docs/tutorials/ as standalone plugin with separate sidebar
+- `docs/sidebarsTutorials.ts`: New sidebar config for tutorials plugin
+- `docs/blog/`: New blog directory with welcome post and authors.yml
+- `docs/sidebars.ts`: Removed tutorials category (now separate plugin)
+- Updated all internal links in 40+ mdx files to use /docs/ prefix
+- Routes: / (landing), /docs (documentation), /tutorials (tutorials), /blog (blog)
+
 Implemented workflow_dispatch release pipeline with pre-validation.
 - `.github/workflows/release.yml`: Rewrote from tag-triggered to workflow_dispatch
 - Input: version (string, e.g., "0.0.3-alpha")
@@ -619,3 +637,50 @@ Removed unused schema field attributes (migrations are source of truth).
 - crates/forge-runtime/src/migrations/generator.rs: Fixed tests for removed FieldAttribute
 - crates/forge/src/cli/add.rs: Updated model template to not include field attributes
 - AGENTS.md.tmpl: Simplified schema section (migrations are source of truth, not attributes)
+
+Refactored CLI to require --demo or --minimal template mode for forge new/init.
+- Removed --minimal (no-frontend) option, renamed --empty to --minimal
+- Added --demo flag for full demo project with examples
+- One of --demo or --minimal is now required (shows help if neither provided)
+- Both modes always include frontend
+- crates/forge/src/cli/new.rs: Updated NewCommand, create_project(dir, name, demo) signature
+- crates/forge/src/cli/mod.rs: Updated InitCommand, ABOUT/AFTER_HELP constants
+- docs/docs/cli/index.mdx: Updated forge new documentation with new flags
+- docs/docs/quick-start.mdx: Updated to use forge new --demo
+- docs/docs/frontend/setup.mdx: Updated scaffolding options
+
+Removed obsolete root frontend/ directory.
+- Was original @forge/svelte development location, superseded by crates/forge/templates/runtime/
+- Code had drifted (missing ConnectionStatusStore, reset(), job/workflow trackers)
+- Runtime now embedded in CLI templates, generated to .forge/svelte/ in scaffolded projects
+
+Simplified feature flags and added embedded PostgreSQL for zero-dependency deployments.
+- Testing utilities always available (no feature flag needed)
+- crates/forge-core/Cargo.toml: postgresql_embedded always included for testing
+- crates/forge-core/src/lib.rs: Removed cfg guard from testing module
+- crates/forge-core/src/testing/db.rs: Removed cfg guard from embedded() method
+- crates/forge-core/src/config/database.rs: Added `embedded: bool` option for production embedded Postgres
+- crates/forge-runtime/Cargo.toml: Added postgresql_embedded dependency
+- crates/forge-runtime/src/db/pool.rs: Added embedded Postgres startup logic in Database::from_config()
+- crates/forge/Cargo.toml: Removed features section entirely
+- crates/forge/src/lib.rs: Removed cfg guard from testing macro re-exports
+- crates/forge/src/runtime.rs: Removed cfg guards from prelude testing exports
+- templates/*/Cargo.toml.tmpl: Added embedded-frontend feature (default enabled, opt-out available)
+- templates/*/main.rs.tmpl: cfg guards for embedded-frontend feature
+- templates/*/README.md.tmpl: Added deployment options section with embedded Postgres docs
+- docs/docs/concepts/deployment.mdx: Added zero-dependency deployment section
+- docs/docs/api/testing.mdx: Updated to show embedded() as recommended approach
+- docs/tutorials/testing.mdx: Removed testing feature mention
+
+Refactored embedded-db as optional feature to reduce compile time and binary size.
+- crates/forge-core/Cargo.toml: postgresql_embedded optional with embedded-db feature
+- crates/forge-core/src/testing/db.rs: embedded() method gated behind #[cfg(feature = "embedded-db")]
+- crates/forge-runtime/Cargo.toml: postgresql_embedded optional with embedded-db feature
+- crates/forge-runtime/src/db/pool.rs: Embedded Postgres startup gated, clear error when feature missing
+- crates/forge-core/src/config/database.rs: Added data_dir option for embedded Postgres data location
+- crates/forge/Cargo.toml: Added embedded-db feature passthrough to forge-core and forge-runtime
+- crates/forge/src/lib.rs: Removed testing assertion macro re-exports (import from forge_core::testing)
+- crates/forge/src/runtime.rs: Removed testing utilities from prelude
+- templates/empty/project/README.md.tmpl: Simplified, removed Deployment/Feature sections, points to docs
+- templates/empty/project/AGENTS.md.tmpl: Updated testing section with embedded-db info
+- Usage: cargo test --features embedded-db (optional, not required for all tests)

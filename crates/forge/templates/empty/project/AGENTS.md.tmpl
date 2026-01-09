@@ -5,8 +5,7 @@ PostgreSQL-only infrastructure. **Package: `forgex`** (not `forge`). [Full docs]
 ## Run
 
 ```bash
-# Copy .env files if missing
-cp -n .env.example .env 2>/dev/null; cp -n frontend/.env.example frontend/.env 2>/dev/null
+[ -f .env ] || cp .env.example .env; [ -f frontend/.env ] || cp frontend/.env.example frontend/.env
 docker compose up --build  # Starts backend, frontend, postgres
 ```
 
@@ -62,14 +61,14 @@ pub struct Task { pub id: Uuid, pub status: TaskStatus, pub created_at: DateTime
 #[forgex::forge_enum]
 pub enum TaskStatus { Pending, InProgress, Completed }
 ```
-Generates TypeScript types. DB schema (indexes, constraints) → migrations.
+Generates TypeScript types. DB uses sqlx. Schema (indexes, constraints) → migrations.
 
 ## Structure
 
 ```
 src/main.rs              # ForgeBuilder, registrations
 src/schema/              # #[forgex::model]
-src/functions/           # Queries, mutations, jobs, crons, workflows
+src/functions/           # One file per function (queries, mutations, jobs, crons, workflows)
 frontend/src/lib/forge/  # Generated (forge generate)
 ```
 
@@ -98,18 +97,28 @@ const job = createJobTracker<Args>('type', apiUrl); job.start({...});
 
 ## Testing
 
+```bash
+cargo test --features embedded-db  # Uses embedded PostgreSQL (recommended)
+TEST_DATABASE_URL=postgres://... cargo test  # Uses external database
+```
+
 ```rust
+// Import testing utilities directly from forge_core
+use forge_core::testing::{TestQueryContext, TestMutationContext, TestDatabase};
+use forge_core::{assert_ok, assert_err, assert_job_dispatched};
+
 let ctx = TestQueryContext::authenticated(user_id);
 let ctx = TestQueryContext::builder().as_user(id).with_role("admin").build();
 let ctx = TestActionContext::builder().mock_http_json("url/*", json!({...})).build();
+let db = TestDatabase::embedded().await?;  // Requires embedded-db feature
 assert_job_dispatched!(ctx, "name"); assert_workflow_started!(ctx, "name");
 ```
 
 ## Code Quality
 
-Testability (inject via context) | Fail fast (`require_*`) | Small functions (<30 lines) | No premature abstraction | Design out edge cases | Structured logging | Comments explain why
+Idiomatic Rust | Testability (inject via context) | Fail fast (`require_*`) | Small functions (<30 lines) | No premature abstraction | Design out edge cases | Structured logging | Comments explain why
 
-**After changes:** `cargo clippy -- -D warnings` | `bun lint && bun format`
+**Always use CLI:** `forge add <type> <name>` to generate functions. **Always run after changes:** Run `cargo clippy -- -D warnings && cargo test --features embedded-db && bun lint && bun format` to verify.
 
 ## Advanced (see docs)
 

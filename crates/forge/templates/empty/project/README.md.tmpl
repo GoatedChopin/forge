@@ -4,9 +4,12 @@ A full-stack application built with [FORGE](https://tryforge.dev) - PostgreSQL i
 
 ## What is FORGE?
 
-FORGE handles the hard parts full stack engineering so you can focus on business logic:
+FORGE handles the hard parts of full-stack engineering so you can focus on business logic:
 
 - **Auth & Sessions** - JWT validation, role-based access, multi-tenancy
+- **Smart Caching** - Query-level caching with rate limiting out of the box
+- **Transactional Safety** - Atomic writes with automatic rollback on failure
+- **End-to-End Type Safety** - Backend types flow directly to your frontend
 - **Background Jobs** - Retries, progress tracking, worker capabilities
 - **Cron Scheduling** - Timezone-aware, catch-up runs, leader-only execution
 - **Durable Workflows** - Multi-step processes that survive restarts
@@ -45,21 +48,24 @@ cd frontend && bun install && bun dev
 Single binary (backend + embedded frontend):
 ```bash
 cd frontend && bun install && bun run build && cd ..
-cargo build --release --features embedded-frontend
-```
-
-Backend only:
-```bash
 cargo build --release
 ```
 
 ## Test
 
 ```bash
-cargo test
+# Run tests with embedded PostgreSQL (recommended)
+cargo test --features embedded-db
+
+# Or with external database
+TEST_DATABASE_URL=postgres://localhost/test cargo test
 ```
 
-Tests use mock contexts - no database needed. See `src/functions/` for examples.
+See `src/functions/` for test examples.
+
+## Deployment
+
+For deployment options (Docker, Railway, Fly.io, embedded PostgreSQL, etc.), see the [Deployment Guide](https://tryforge.dev/docs/concepts/deployment).
 
 ## Project Structure
 

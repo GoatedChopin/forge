@@ -58,7 +58,7 @@ pub async fn send_welcome_email(ctx: &JobContext, input: EmailInput) -> Result<(
 }
 ```
 
-[Learn more about Jobs →](/background/jobs)
+[Learn more about Jobs →](/docs/background/jobs)
 
 ## Crons
 
@@ -75,7 +75,7 @@ pub async fn nightly_cleanup(ctx: &CronContext) -> Result<()> {
 }
 ```
 
-[Learn more about Crons →](/background/crons)
+[Learn more about Crons →](/docs/background/crons)
 
 ## Workflows
 
@@ -104,7 +104,7 @@ pub async fn process_order(ctx: &WorkflowContext, order: Order) -> Result<()> {
 
 If any step fails, compensation runs in reverse order automatically.
 
-[Learn more about Workflows →](/background/workflows)
+[Learn more about Workflows →](/docs/background/workflows)
 
 ## Architecture
 

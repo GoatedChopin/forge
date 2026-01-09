@@ -43,9 +43,9 @@ hostname = "0.4"
 reqwest = { version = "0.12", features = ["json"] }
 axum = { workspace = true }
 
-[dev-dependencies]
-tempfile = "3"
-
 [features]
 default = []
-testing = ["forge-core/testing"]
+embedded-db = ["forge-core/embedded-db", "forge-runtime/embedded-db"]
+
+[dev-dependencies]
+tempfile = "3"

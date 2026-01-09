@@ -9,14 +9,15 @@ Tooling
 - Lint: cargo clippy | Format: cargo fmt
 - Dev: ./dev.sh [setup|start|db|logs|clean|all]
 - CLI install: cargo install --path crates/forge
-- Docs: cd website && bun run start (Docusaurus 3.9.2)
+- Docs: cd docs && bun run start (Docusaurus 3.9.2)
+- Site routes: / (landing), /docs (documentation), /tutorials (separate plugin), /blog
 
 Release Process
 - Trigger: workflow_dispatch in GitHub Actions (Actions → Release → Run workflow)
 - Input: version (e.g., "0.0.3-alpha")
 - Flow: validate → bump-versions → build → release → publish-crates
 - Validation: fmt check, clippy, release build, tests (must pass before version bump)
-- Version updates: Cargo.toml workspace, internal deps, docs/package.json, docs/*.mdx
+- Version updates: Cargo.toml workspace, internal deps, scaffold templates, docs/package.json, docs/*.mdx
 - Commits directly to main (no version branches)
 - Auto-creates git tag v{version} and GitHub release
 - Publishes to crates.io in dependency order with 30s delays (index update time)
@@ -127,11 +128,12 @@ CLI Scaffolding
 - include_str!() embeds templates at compile time
 - Directories: empty/ (project/, frontend/), populated/ (project/, frontend/), runtime/
 - new.rs must include_str! and fs::write for each template file
-- Single binary: `cargo build --features embedded-frontend` embeds frontend via rust-embed
-- Flags: --minimal (no frontend), --empty (no example code)
-- Empty templates in empty/ subdirs: schema_mod.rs, functions_mod.rs, main.rs, 0001_initial.sql, page.svelte, types.ts, api.ts
-- create_project(dir, name, minimal, empty) signature
-- CLAUDE.md included in all scaffolded projects (agent guide for coding assistants)
+- Single binary: `cargo build --release` embeds frontend via rust-embed (default, opt-out with --no-default-features)
+- Embedded PostgreSQL: `database.embedded = true` in forge.toml for zero-dependency deployment
+- Flags: --demo (full examples) or --minimal (clean scaffolding), one is required
+- Both modes include frontend, no backend-only option
+- create_project(dir, name, demo) signature - demo=true uses populated/, demo=false uses empty/
+- AGENTS.md included in all scaffolded projects (agent guide for coding assistants)
 
 Template Features Demonstrated
 
@@ -188,10 +190,11 @@ Testing:
 - Assertion macros: assert_ok!, assert_err!, assert_err_variant!, assert_job_dispatched!, assert_workflow_started!, assert_http_called!
 - Helper functions: assert_json_matches(), error_contains(), validation_error_for_field()
 - TestDatabase: EXPLICIT config required (from_url, from_env, embedded) - never auto-reads .env
+- TestDatabase.embedded() requires embedded-db feature: cargo test --features embedded-db
 - TestDatabase.from_env() uses TEST_DATABASE_URL (not DATABASE_URL) for safety
 - Tests are inline with function files (#[cfg(test)] mod tests), not separate files
-- Feature flag: forge = { features = ["testing"] } in dev-dependencies
-- Macros re-exported at forge crate root and in prelude
+- Testing utilities: import from forge_core::testing (not in prelude)
+- Assertion macros: forge_core::{assert_ok, assert_err, assert_job_dispatched, ...}
 
 Config (forge.toml):
 - [project], [database], [gateway], [observability] sections

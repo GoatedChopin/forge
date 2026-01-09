@@ -38,9 +38,6 @@ const FUNCTIONS_VERIFICATION_WORKFLOW: &str = include_str!(
 const FUNCTIONS_GET_BITCOIN_PRICE_ACTION: &str =
     include_str!("../../templates/populated/project/functions/get_bitcoin_price_action.rs.tmpl");
 const AGENTS_MD: &str = include_str!("../../templates/populated/project/AGENTS.md.tmpl");
-const RAILWAY_JSON: &str = include_str!("../../templates/populated/project/railway.json.tmpl");
-const RENDER_YAML: &str = include_str!("../../templates/populated/project/render.yaml.tmpl");
-const FLY_TOML: &str = include_str!("../../templates/populated/project/fly.toml.tmpl");
 
 // Populated frontend templates (default)
 const FRONTEND_PACKAGE_JSON: &str =
@@ -90,10 +87,6 @@ const EMPTY_SCHEMA_MOD: &str = include_str!("../../templates/empty/project/schem
 const EMPTY_FUNCTIONS_MOD: &str =
     include_str!("../../templates/empty/project/functions/mod.rs.tmpl");
 const EMPTY_AGENTS_MD: &str = include_str!("../../templates/empty/project/AGENTS.md.tmpl");
-const EMPTY_RAILWAY_JSON: &str =
-    include_str!("../../templates/populated/project/railway.json.tmpl");
-const EMPTY_RENDER_YAML: &str = include_str!("../../templates/populated/project/render.yaml.tmpl");
-const EMPTY_FLY_TOML: &str = include_str!("../../templates/populated/project/fly.toml.tmpl");
 
 // Empty frontend templates (for --empty flag)
 const EMPTY_FRONTEND_PACKAGE_JSON: &str =
@@ -127,26 +120,97 @@ const EMPTY_FRONTEND_ESLINT_CONFIG: &str =
 
 /// Create a new FORGE project.
 #[derive(Parser)]
+#[command(after_help = NEW_AFTER_HELP)]
 pub struct NewCommand {
     /// Project name.
     pub name: String,
 
-    /// Use minimal template (no frontend).
-    #[arg(long)]
-    pub minimal: bool,
+    /// Create a full demo project with example code.
+    ///
+    /// Includes: User CRUD, background jobs, cron tasks, workflows,
+    /// external API actions, and a complete frontend demo UI.
+    /// Perfect for learning FORGE or starting with working examples.
+    #[arg(long, conflicts_with = "minimal")]
+    pub demo: bool,
 
-    /// Use empty template (no example code, just scaffolding).
-    #[arg(long)]
-    pub empty: bool,
+    /// Create a clean project with minimal scaffolding.
+    ///
+    /// Includes: Empty schema, functions, and migrations directories
+    /// with commented examples. Frontend has a starter page.
+    /// Perfect for experienced developers starting fresh.
+    #[arg(long, conflicts_with = "demo")]
+    pub minimal: bool,
 
     /// Output directory (defaults to project name).
     #[arg(short, long)]
     pub output: Option<String>,
 }
 
+const NEW_AFTER_HELP: &str = r#"TEMPLATE MODES:
+  You must choose one of --demo or --minimal:
+
+  --demo      Full demo project with working examples
+              - User model with CRUD operations
+              - Background job (export users)
+              - Cron task (heartbeat stats)
+              - Durable workflow (account verification)
+              - External API action (Bitcoin price)
+              - Complete frontend demo UI
+
+  --minimal   Clean slate with just the structure
+              - Empty schema/ and functions/ directories
+              - Commented examples showing patterns
+              - Starter frontend page
+              - Ready for your own code
+
+EXAMPLES:
+  forge new my-app --demo       Learn FORGE with working examples
+  forge new my-app --minimal    Start fresh with clean scaffolding"#;
+
 impl NewCommand {
     /// Execute the new project command.
     pub async fn execute(self) -> Result<()> {
+        // Require either --demo or --minimal
+        if !self.demo && !self.minimal {
+            eprintln!(
+                "{}",
+                style("Error: You must specify a template mode")
+                    .red()
+                    .bold()
+            );
+            eprintln!();
+            eprintln!("Choose one of:");
+            eprintln!();
+            eprintln!(
+                "  {} {}",
+                style("--demo").cyan().bold(),
+                style("Full demo project with working examples").dim()
+            );
+            eprintln!("          User CRUD, jobs, crons, workflows, actions, and demo UI");
+            eprintln!();
+            eprintln!(
+                "  {} {}",
+                style("--minimal").cyan().bold(),
+                style("Clean slate with just the structure").dim()
+            );
+            eprintln!("          Empty directories with commented examples, starter frontend");
+            eprintln!();
+            eprintln!("Examples:");
+            eprintln!(
+                "  {} {}",
+                style("forge new my-app --demo").green(),
+                style("# Learn FORGE with examples").dim()
+            );
+            eprintln!(
+                "  {} {}",
+                style("forge new my-app --minimal").green(),
+                style("# Start fresh").dim()
+            );
+            eprintln!();
+            eprintln!("Run {} for more details", style("forge new --help").cyan());
+            std::process::exit(1);
+        }
+
         let project_dir = self.output.as_ref().unwrap_or(&self.name);
         let path = Path::new(project_dir);
 
@@ -155,7 +219,7 @@ impl NewCommand {
         }
 
         fs::create_dir_all(path)?;
-        create_project(path, &self.name, self.minimal, self.empty)?;
+        create_project(path, &self.name, self.demo)?;
 
         println!();
         println!(
@@ -175,11 +239,7 @@ impl NewCommand {
         println!("     Verify your project setup and database connection");
         println!();
         println!("  {} {}", style("3.").dim(), style("forge dev").cyan());
-        if self.minimal {
-            println!("     Start the backend server with hot reload");
-        } else {
-            println!("     Start backend + frontend with hot reload");
-        }
+        println!("     Start backend + frontend with hot reload");
         println!();
         println!("{}", style("Useful commands:").bold());
         println!(
@@ -207,7 +267,10 @@ impl NewCommand {
 }
 
 /// Create project files in the given directory.
-pub fn create_project(dir: &Path, name: &str, minimal: bool, empty: bool) -> Result<()> {
+///
+/// - `demo = true`: Full demo project with example code
+/// - `demo = false`: Minimal scaffolding without example code
+pub fn create_project(dir: &Path, name: &str, demo: bool) -> Result<()> {
     let vars = template_vars!("name" => name, "project_name" => name);
 
     // Create directory structure
@@ -215,34 +278,8 @@ pub fn create_project(dir: &Path, name: &str, minimal: bool, empty: bool) -> Res
     fs::create_dir_all(dir.join("src/functions"))?;
     fs::create_dir_all(dir.join("migrations"))?;
 
-    if empty {
-        // Empty templates - minimal scaffolding without example code
-        fs::write(dir.join("Cargo.toml"), render(EMPTY_CARGO_TOML, &vars))?;
-        fs::write(dir.join("forge.toml"), render(EMPTY_FORGE_TOML, &vars))?;
-        fs::write(dir.join("build.rs"), EMPTY_BUILD_RS)?;
-        fs::write(dir.join(".gitignore"), EMPTY_GITIGNORE)?;
-        fs::write(dir.join(".env"), render(EMPTY_ENV, &vars))?;
-        fs::write(dir.join(".env.example"), render(EMPTY_ENV, &vars))?;
-        fs::write(dir.join("Dockerfile"), render(EMPTY_DOCKERFILE, &vars))?;
-        fs::write(
-            dir.join("docker-compose.yml"),
-            render(EMPTY_DOCKER_COMPOSE, &vars),
-        )?;
-        fs::write(dir.join(".dockerignore"), EMPTY_DOCKERIGNORE)?;
-        fs::write(dir.join("README.md"), render(EMPTY_README, &vars))?;
-        fs::write(dir.join("src/main.rs"), EMPTY_MAIN_RS)?;
-        fs::write(
-            dir.join("migrations/0001_initial.sql"),
-            EMPTY_MIGRATION_INITIAL,
-        )?;
-        fs::write(dir.join("src/schema/mod.rs"), EMPTY_SCHEMA_MOD)?;
-        fs::write(dir.join("src/functions/mod.rs"), EMPTY_FUNCTIONS_MOD)?;
-        fs::write(dir.join("AGENTS.md"), EMPTY_AGENTS_MD)?;
-        fs::write(dir.join("railway.json"), render(EMPTY_RAILWAY_JSON, &vars))?;
-        fs::write(dir.join("render.yaml"), render(EMPTY_RENDER_YAML, &vars))?;
-        fs::write(dir.join("fly.toml"), render(EMPTY_FLY_TOML, &vars))?;
-    } else {
-        // Populated templates - full example code
+    if demo {
+        // Demo templates - full example code
         fs::write(dir.join("Cargo.toml"), render(CARGO_TOML, &vars))?;
         fs::write(dir.join("forge.toml"), render(FORGE_TOML, &vars))?;
         fs::write(dir.join("build.rs"), BUILD_RS)?;
@@ -279,21 +316,43 @@ pub fn create_project(dir: &Path, name: &str, minimal: bool, empty: bool) -> Res
             FUNCTIONS_GET_BITCOIN_PRICE_ACTION,
         )?;
         fs::write(dir.join("AGENTS.md"), AGENTS_MD)?;
-        fs::write(dir.join("railway.json"), render(RAILWAY_JSON, &vars))?;
-        fs::write(dir.join("render.yaml"), render(RENDER_YAML, &vars))?;
-        fs::write(dir.join("fly.toml"), render(FLY_TOML, &vars))?;
-    }
-
-    // Create frontend if not minimal
-    if !minimal {
-        create_frontend(dir, name, empty)?;
+        // Demo frontend
+        create_frontend(dir, name, true)?;
+    } else {
+        // Minimal templates - clean scaffolding without example code
+        fs::write(dir.join("Cargo.toml"), render(EMPTY_CARGO_TOML, &vars))?;
+        fs::write(dir.join("forge.toml"), render(EMPTY_FORGE_TOML, &vars))?;
+        fs::write(dir.join("build.rs"), EMPTY_BUILD_RS)?;
+        fs::write(dir.join(".gitignore"), EMPTY_GITIGNORE)?;
+        fs::write(dir.join(".env"), render(EMPTY_ENV, &vars))?;
+        fs::write(dir.join(".env.example"), render(EMPTY_ENV, &vars))?;
+        fs::write(dir.join("Dockerfile"), render(EMPTY_DOCKERFILE, &vars))?;
+        fs::write(
+            dir.join("docker-compose.yml"),
+            render(EMPTY_DOCKER_COMPOSE, &vars),
+        )?;
+        fs::write(dir.join(".dockerignore"), EMPTY_DOCKERIGNORE)?;
+        fs::write(dir.join("README.md"), render(EMPTY_README, &vars))?;
+        fs::write(dir.join("src/main.rs"), EMPTY_MAIN_RS)?;
+        fs::write(
+            dir.join("migrations/0001_initial.sql"),
+            EMPTY_MIGRATION_INITIAL,
+        )?;
+        fs::write(dir.join("src/schema/mod.rs"), EMPTY_SCHEMA_MOD)?;
+        fs::write(dir.join("src/functions/mod.rs"), EMPTY_FUNCTIONS_MOD)?;
+        fs::write(dir.join("AGENTS.md"), EMPTY_AGENTS_MD)?;
+        // Minimal frontend
+        create_frontend(dir, name, false)?;
     }
 
     Ok(())
 }
 
 /// Create frontend scaffolding.
-fn create_frontend(dir: &Path, name: &str, empty: bool) -> Result<()> {
+///
+/// - `demo = true`: Full demo frontend with complete UI
+/// - `demo = false`: Minimal frontend with starter page
+fn create_frontend(dir: &Path, name: &str, demo: bool) -> Result<()> {
     let vars = template_vars!("name" => name, "project_name" => name);
 
     let frontend_dir = dir.join("frontend");
@@ -301,8 +360,53 @@ fn create_frontend(dir: &Path, name: &str, empty: bool) -> Result<()> {
     fs::create_dir_all(frontend_dir.join("src/routes"))?;
     fs::create_dir_all(frontend_dir.join("src/lib/forge"))?;
 
-    if empty {
-        // Empty templates - minimal frontend
+    if demo {
+        // Demo templates - full frontend with complete UI
+        fs::write(
+            frontend_dir.join("package.json"),
+            render(FRONTEND_PACKAGE_JSON, &vars),
+        )?;
+        fs::write(
+            frontend_dir.join("svelte.config.js"),
+            FRONTEND_SVELTE_CONFIG,
+        )?;
+        fs::write(frontend_dir.join("vite.config.ts"), FRONTEND_VITE_CONFIG)?;
+        fs::write(frontend_dir.join("tsconfig.json"), FRONTEND_TSCONFIG)?;
+        fs::write(frontend_dir.join("src/app.html"), FRONTEND_APP_HTML)?;
+        fs::write(frontend_dir.join(".env"), FRONTEND_ENV_EXAMPLE)?;
+        fs::write(frontend_dir.join(".env.example"), FRONTEND_ENV_EXAMPLE)?;
+        fs::write(
+            frontend_dir.join(".prettierignore"),
+            FRONTEND_PRETTIERIGNORE,
+        )?;
+        fs::write(frontend_dir.join(".prettierrc"), FRONTEND_PRETTIERRC)?;
+        fs::write(
+            frontend_dir.join("eslint.config.js"),
+            FRONTEND_ESLINT_CONFIG,
+        )?;
+        fs::write(
+            frontend_dir.join("src/routes/+layout.svelte"),
+            FRONTEND_LAYOUT_SVELTE,
+        )?;
+        fs::write(
+            frontend_dir.join("src/routes/+layout.ts"),
+            FRONTEND_LAYOUT_TS,
+        )?;
+        fs::write(
+            frontend_dir.join("src/routes/+page.svelte"),
+            FRONTEND_PAGE_SVELTE,
+        )?;
+        fs::write(
+            frontend_dir.join("src/lib/forge/types.ts"),
+            FRONTEND_TYPES_TS,
+        )?;
+        fs::write(frontend_dir.join("src/lib/forge/api.ts"), FRONTEND_API_TS)?;
+        fs::write(
+            frontend_dir.join("src/lib/forge/index.ts"),
+            FRONTEND_INDEX_TS,
+        )?;
+    } else {
+        // Minimal templates - starter frontend
         fs::write(
             frontend_dir.join("package.json"),
             render(EMPTY_FRONTEND_PACKAGE_JSON, &vars),
@@ -355,51 +459,6 @@ fn create_frontend(dir: &Path, name: &str, empty: bool) -> Result<()> {
             frontend_dir.join("src/lib/forge/index.ts"),
             EMPTY_FRONTEND_INDEX_TS,
         )?;
-    } else {
-        // Populated templates - full demo
-        fs::write(
-            frontend_dir.join("package.json"),
-            render(FRONTEND_PACKAGE_JSON, &vars),
-        )?;
-        fs::write(
-            frontend_dir.join("svelte.config.js"),
-            FRONTEND_SVELTE_CONFIG,
-        )?;
-        fs::write(frontend_dir.join("vite.config.ts"), FRONTEND_VITE_CONFIG)?;
-        fs::write(frontend_dir.join("tsconfig.json"), FRONTEND_TSCONFIG)?;
-        fs::write(frontend_dir.join("src/app.html"), FRONTEND_APP_HTML)?;
-        fs::write(frontend_dir.join(".env"), FRONTEND_ENV_EXAMPLE)?;
-        fs::write(frontend_dir.join(".env.example"), FRONTEND_ENV_EXAMPLE)?;
-        fs::write(
-            frontend_dir.join(".prettierignore"),
-            FRONTEND_PRETTIERIGNORE,
-        )?;
-        fs::write(frontend_dir.join(".prettierrc"), FRONTEND_PRETTIERRC)?;
-        fs::write(
-            frontend_dir.join("eslint.config.js"),
-            FRONTEND_ESLINT_CONFIG,
-        )?;
-        fs::write(
-            frontend_dir.join("src/routes/+layout.svelte"),
-            FRONTEND_LAYOUT_SVELTE,
-        )?;
-        fs::write(
-            frontend_dir.join("src/routes/+layout.ts"),
-            FRONTEND_LAYOUT_TS,
-        )?;
-        fs::write(
-            frontend_dir.join("src/routes/+page.svelte"),
-            FRONTEND_PAGE_SVELTE,
-        )?;
-        fs::write(
-            frontend_dir.join("src/lib/forge/types.ts"),
-            FRONTEND_TYPES_TS,
-        )?;
-        fs::write(frontend_dir.join("src/lib/forge/api.ts"), FRONTEND_API_TS)?;
-        fs::write(
-            frontend_dir.join("src/lib/forge/index.ts"),
-            FRONTEND_INDEX_TS,
-        )?;
     }
 
     // Generate @forge/svelte runtime package
@@ -414,13 +473,14 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn test_create_project() {
+    fn test_create_demo_project() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("test-project");
+        let path = dir.path().join("test-demo");
         fs::create_dir_all(&path).unwrap();
 
-        create_project(&path, "test-project", false, false).unwrap();
+        create_project(&path, "test-demo", true).unwrap();
 
+        // All demo files should exist
         assert!(path.join("Cargo.toml").exists());
         assert!(path.join("forge.toml").exists());
         assert!(path.join("src/main.rs").exists());
@@ -428,6 +488,11 @@ mod tests {
         assert!(path.join("src/schema/mod.rs").exists());
         assert!(path.join("src/schema/user.rs").exists());
         assert!(path.join("src/functions/users.rs").exists());
+        assert!(path.join("src/functions/export_users_job.rs").exists());
+        assert!(path.join("src/functions/heartbeat_stats_cron.rs").exists());
+        assert!(path
+            .join("src/functions/account_verification_workflow.rs")
+            .exists());
         assert!(path.join("frontend/package.json").exists());
         assert!(path.join("frontend/src/lib/forge/types.ts").exists());
         assert!(path.join("frontend/src/lib/forge/api.ts").exists());
@@ -447,20 +512,7 @@ mod tests {
         let path = dir.path().join("test-minimal");
         fs::create_dir_all(&path).unwrap();
 
-        create_project(&path, "test-minimal", true, false).unwrap();
-
-        assert!(path.join("Cargo.toml").exists());
-        assert!(path.join("AGENTS.md").exists());
-        assert!(!path.join("frontend").exists());
-    }
-
-    #[test]
-    fn test_create_empty_project() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("test-empty");
-        fs::create_dir_all(&path).unwrap();
-
-        create_project(&path, "test-empty", false, true).unwrap();
+        create_project(&path, "test-minimal", false).unwrap();
 
         // Core files should exist
         assert!(path.join("Cargo.toml").exists());
@@ -480,33 +532,9 @@ mod tests {
             .join("src/functions/account_verification_workflow.rs")
             .exists());
 
-        // Frontend should still exist (not minimal)
+        // Frontend should exist with minimal templates
         assert!(path.join("frontend/package.json").exists());
         assert!(path.join("frontend/src/lib/forge/types.ts").exists());
         assert!(path.join("frontend/src/lib/forge/api.ts").exists());
-    }
-
-    #[test]
-    fn test_create_empty_minimal_project() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("test-empty-minimal");
-        fs::create_dir_all(&path).unwrap();
-
-        create_project(&path, "test-empty-minimal", true, true).unwrap();
-
-        // Core backend files should exist
-        assert!(path.join("Cargo.toml").exists());
-        assert!(path.join("forge.toml").exists());
-        assert!(path.join("src/main.rs").exists());
-        assert!(path.join("src/schema/mod.rs").exists());
-        assert!(path.join("src/functions/mod.rs").exists());
-        assert!(path.join("AGENTS.md").exists());
-
-        // Example files should NOT exist
-        assert!(!path.join("src/schema/user.rs").exists());
-        assert!(!path.join("src/functions/users.rs").exists());
-
-        // No frontend (minimal)
-        assert!(!path.join("frontend").exists());
     }
 }

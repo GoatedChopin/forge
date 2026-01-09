@@ -88,6 +88,17 @@ jobs:
             fi
           done
 
+      - name: Update scaffold template versions
+        run: |
+          VERSION="${{ inputs.version }}"
+
+          # Update forgex version in scaffold templates (used when users create new projects)
+          for template in crates/forge/templates/*/project/Cargo.toml.tmpl; do
+            if [ -f "$template" ]; then
+              sed -i "s/forgex = { version = \"[^\"]*\"/forgex = { version = \"$VERSION\"/g" "$template"
+            fi
+          done
+
       - name: Update docs version
         run: |
           VERSION="${{ inputs.version }}"
@@ -111,6 +122,10 @@ jobs:
           echo "=== Internal dependencies ==="
           grep -r "forge-core = { version" crates/*/Cargo.toml || true
           grep -r "forge-runtime = { version" crates/*/Cargo.toml || true
+
+          echo ""
+          echo "=== Scaffold template versions ==="
+          grep "forgex = { version" crates/forge/templates/*/project/Cargo.toml.tmpl || true
 
           echo ""
           echo "=== docs/package.json version ==="

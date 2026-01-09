@@ -16,8 +16,8 @@
 //!
 //! # Zero-Config Database
 //!
-//! When the `embedded-test-db` feature is enabled, `TestDatabase` will automatically
-//! download and start an embedded PostgreSQL instance if `DATABASE_URL` is not set.
+//! `TestDatabase::embedded()` automatically downloads and starts an embedded PostgreSQL
+//! instance - no configuration required. This is the recommended approach for tests.
 //!
 //! # Example
 //!

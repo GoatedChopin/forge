@@ -34,40 +34,44 @@ cargo install --path crates/forge
 
 ## forge new
 
-Create a new FORGE project.
+Create a new FORGE project. You must choose a template mode.
 
 ```bash
-forge new <project-name> [options]
+forge new <project-name> --demo|--minimal [options]
 ```
 
 **Arguments:**
 - `<project-name>` - Name of the project (also used as directory name)
 
-**Options:**
+**Template Modes (required - choose one):**
 
 | Option | Description |
 |--------|-------------|
-| `--empty` | Create minimal scaffolding without example code |
-| `--minimal` | Skip frontend (backend only) |
+| `--demo` | Full demo project with working examples (User CRUD, jobs, workflows, cron tasks, external API actions, complete frontend UI) |
+| `--minimal` | Clean project with just the structure (empty directories with commented examples, starter frontend) |
+
+**Additional Options:**
+
+| Option | Description |
+|--------|-------------|
 | `-o, --output` | Output directory (defaults to project name) |
 
 **Examples:**
 
 ```bash
-# Create project with full demo (User CRUD, jobs, workflows, etc.)
-forge new my-app
+# Create a full demo project - learn FORGE with working examples
+forge new my-app --demo
 
-# Create empty project (scaffolding only, no example code)
-forge new my-app --empty
-
-# Create backend-only project (no frontend)
+# Create a clean project - start fresh with just the scaffolding
 forge new my-app --minimal
-
-# Create empty backend-only project
-forge new my-app --empty --minimal
 ```
 
-**Default project structure** (with demo code):
+:::tip Choosing a template
+- Use `--demo` if you're learning FORGE or want working examples to build from
+- Use `--minimal` if you're experienced and want a clean slate
+:::
+
+**Demo project structure** (`--demo`):
 ```
 my-app/
 ├── Cargo.toml
@@ -95,7 +99,7 @@ my-app/
     └── ...
 ```
 
-**Empty project structure** (`--empty`):
+**Minimal project structure** (`--minimal`):
 ```
 my-app/
 ├── Cargo.toml
@@ -459,8 +463,8 @@ FORGE_JWT_SECRET=your-secret-key-here
 ### Starting a New Project
 
 ```bash
-# Create project
-forge new my-app
+# Create project with demo examples
+forge new my-app --demo
 cd my-app
 
 # Start database
@@ -509,5 +513,5 @@ DATABASE_URL=$PROD_DB forge migrate up
 
 ## See Also
 
-- [Quick Start](/quick-start) - Get started in 5 minutes
+- [Quick Start](/docs/quick-start) - Get started in 5 minutes
 - [Tutorials](/tutorials) - Learn by building

@@ -24,19 +24,18 @@ const ABOUT: &str = r#"FORGE - The Full-Stack Framework for the Impatient
 Everything you need in one binary. No Redis, no Kafka, just PostgreSQL.
 
 Quick Start:
-  forge new my-app     Create a new project
+  forge new my-app --demo     Create a demo project with examples
+  forge new my-app --minimal  Create a clean project to start fresh
   cd my-app
-  forge dev            Start development environment
+  forge dev                   Start development environment
 
 Learn more: https://tryforge.dev/docs"#;
 
 const AFTER_HELP: &str = r#"Examples:
-  forge new my-saas              Create a full-stack project
-  forge new api --minimal        Create backend-only project
-  forge new starter --empty      Create empty scaffolding
+  forge new my-app --demo        Full demo with User CRUD, jobs, workflows
+  forge new my-app --minimal     Clean slate with just the structure
   forge check                    Validate project setup
   forge dev                      Start backend + frontend
-  forge add model User           Add a new data model
   forge add query get_users      Add a new query function
   forge generate                 Regenerate TypeScript types
   forge migrate status           Check migration status
@@ -88,13 +87,13 @@ pub struct InitCommand {
     #[arg(short, long)]
     pub name: Option<String>,
 
-    /// Use minimal template (no frontend).
-    #[arg(long)]
-    pub minimal: bool,
+    /// Create a full demo project with example code.
+    #[arg(long, conflicts_with = "minimal")]
+    pub demo: bool,
 
-    /// Use empty template (no example code, just scaffolding).
-    #[arg(long)]
-    pub empty: bool,
+    /// Create a clean project with minimal scaffolding.
+    #[arg(long, conflicts_with = "demo")]
+    pub minimal: bool,
 }
 
 impl Cli {
@@ -115,6 +114,29 @@ impl Cli {
 
 /// Initialize a new project in the current directory.
 async fn init_project(cmd: InitCommand) -> Result<()> {
+    use console::style;
+
+    // Require either --demo or --minimal
+    if !cmd.demo && !cmd.minimal {
+        eprintln!(
+            "{}",
+            style("Error: You must specify a template mode")
+                .red()
+                .bold()
+        );
+        eprintln!();
+        eprintln!("Choose one of:");
+        eprintln!("  {} - Full demo with examples", style("--demo").cyan());
+        eprintln!("  {} - Clean slate", style("--minimal").cyan());
+        eprintln!();
+        eprintln!(
+            "Example: {} or {}",
+            style("forge init --demo").green(),
+            style("forge init --minimal").green()
+        );
+        std::process::exit(1);
+    }
+
     let current_dir = std::env::current_dir()?;
     let name = cmd.name.unwrap_or_else(|| {
         current_dir
@@ -124,7 +146,7 @@ async fn init_project(cmd: InitCommand) -> Result<()> {
             .to_string()
     });
 
-    new::create_project(&current_dir, &name, cmd.minimal, cmd.empty)?;
+    new::create_project(&current_dir, &name, cmd.demo)?;
     println!("✅ Initialized FORGE project: {}", name);
     Ok(())
 }
@@ -134,14 +156,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_cli_parse() {
-        let cli = Cli::try_parse_from(["forge", "new", "my-app"]);
+    fn test_cli_parse_new_demo() {
+        let cli = Cli::try_parse_from(["forge", "new", "my-app", "--demo"]);
         assert!(cli.is_ok());
     }
 
     #[test]
+    fn test_cli_parse_new_minimal() {
+        let cli = Cli::try_parse_from(["forge", "new", "my-app", "--minimal"]);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_cli_parse_new_conflicting_flags() {
+        // --demo and --minimal are mutually exclusive
+        let cli = Cli::try_parse_from(["forge", "new", "my-app", "--demo", "--minimal"]);
+        assert!(cli.is_err());
+    }
+
+    #[test]
     fn test_cli_parse_add() {
-        let cli = Cli::try_parse_from(["forge", "add", "model", "User"]);
+        let cli = Cli::try_parse_from(["forge", "add", "query", "get_users"]);
         assert!(cli.is_ok());
     }
 }

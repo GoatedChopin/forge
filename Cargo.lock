@@ -897,6 +897,7 @@ dependencies = [
  "futures-util",
  "hyper",
  "jsonwebtoken",
+ "postgresql_embedded",
  "prost",
  "regex",
  "reqwest",

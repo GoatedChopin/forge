@@ -12,8 +12,7 @@ pub mod schema;
 pub mod tenant;
 pub mod workflow;
 
-// Testing utilities - available when the "testing" feature is enabled or in test mode
-#[cfg(any(test, feature = "testing"))]
+// Testing utilities
 pub mod testing;
 
 pub use auth::{Claims, ClaimsBuilder};

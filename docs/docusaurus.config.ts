@@ -30,13 +30,30 @@ const config: Config = {
       {
         docs: {
           sidebarPath: './sidebars.ts',
-          routeBasePath: '/',
+          routeBasePath: '/docs',
         },
-        blog: false,
+        blog: {
+          showReadingTime: true,
+          blogTitle: 'FORGE Blog',
+          blogDescription: 'Updates, tutorials, and insights from the FORGE team',
+          routeBasePath: '/blog',
+        },
         theme: {
           customCss: './src/css/custom.css',
         },
       } satisfies Preset.Options,
+    ],
+  ],
+
+  plugins: [
+    [
+      '@docusaurus/plugin-content-docs',
+      {
+        id: 'tutorials',
+        path: 'tutorials',
+        routeBasePath: '/tutorials',
+        sidebarPath: './sidebarsTutorials.ts',
+      },
     ],
   ],
 
@@ -65,8 +82,8 @@ const config: Config = {
           position: 'left',
         },
         {
-          to: '/api',
-          label: 'API Reference',
+          to: '/blog',
+          label: 'Blog',
           position: 'left',
         },
         {
@@ -84,7 +101,7 @@ const config: Config = {
           items: [
             {
               label: 'Quick Start',
-              to: '/quick-start',
+              to: '/docs/quick-start',
             },
             {
               label: 'Tutorials',
@@ -92,7 +109,7 @@ const config: Config = {
             },
             {
               label: 'Core Concepts',
-              to: '/concepts/how-it-works',
+              to: '/docs/concepts/how-it-works',
             },
           ],
         },
@@ -101,15 +118,15 @@ const config: Config = {
           items: [
             {
               label: 'API Reference',
-              to: '/api',
+              to: '/docs/api',
             },
             {
               label: 'CLI Reference',
-              to: '/cli',
+              to: '/docs/cli',
             },
             {
-              label: 'Background Processing',
-              to: '/background',
+              label: 'Blog',
+              to: '/blog',
             },
           ],
         },

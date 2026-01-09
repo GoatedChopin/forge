@@ -120,7 +120,7 @@ pub async fn checkout(ctx: &MutationContext, input: CheckoutInput) -> Result<Che
 
 ### `auth`
 
-The authentication context containing user information. Same as [QueryContext.auth](/api/query-context#authcontext).
+The authentication context containing user information. Same as [QueryContext.auth](/docs/api/query-context#authcontext).
 
 ```rust
 #[forge::mutation]
@@ -260,6 +260,6 @@ pub async fn publish_post(ctx: &MutationContext, id: Uuid) -> Result<Post> {
 
 ## See Also
 
-- [QueryContext](/api/query-context) - For read-only operations
-- [JobContext](/api/job-context) - For background jobs
-- [WorkflowContext](/api/workflow-context) - For workflows
+- [QueryContext](/docs/api/query-context) - For read-only operations
+- [JobContext](/docs/api/job-context) - For background jobs
+- [WorkflowContext](/docs/api/workflow-context) - For workflows

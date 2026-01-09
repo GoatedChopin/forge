@@ -76,16 +76,15 @@ async fn test_with_database() {
 ### Configuration Options
 
 ```rust
-// Option 1: Explicit URL
+// Option 1: Embedded PostgreSQL (recommended - zero config)
+let db = TestDatabase::embedded().await?;
+
+// Option 2: Explicit URL
 let db = TestDatabase::from_url("postgres://localhost/test_db").await?;
 
-// Option 2: From TEST_DATABASE_URL environment variable
+// Option 3: From TEST_DATABASE_URL environment variable
 // Note: Uses TEST_DATABASE_URL (not DATABASE_URL) for safety
 let db = TestDatabase::from_env().await?;
-
-// Option 3: Embedded PostgreSQL (requires embedded-test-db feature)
-#[cfg(feature = "embedded-test-db")]
-let db = TestDatabase::embedded().await?;
 ```
 
 **Important:** The `.env` file `DATABASE_URL` is NEVER automatically read. You must explicitly choose one of the options above.
@@ -112,11 +111,11 @@ isolated.cleanup().await?;
 ### Running Tests
 
 ```bash
-# With external database (explicit env var)
-TEST_DATABASE_URL=postgres://localhost/test cargo test
+# Tests use embedded PostgreSQL automatically
+cargo test
 
-# With embedded Postgres (automatic)
-cargo test --features embedded-test-db
+# Or with an external database
+TEST_DATABASE_URL=postgres://localhost/test cargo test
 ```
 
 ## Test Contexts
@@ -703,6 +702,6 @@ async fn test_workflow_steps() {
 
 ## See Also
 
-- [Background Jobs](/background/jobs) - Full jobs guide
-- [Workflows](/background/workflows) - Workflows guide
-- [ForgeError](/api/forge-error) - Error types
+- [Background Jobs](/docs/background/jobs) - Full jobs guide
+- [Workflows](/docs/background/workflows) - Workflows guide
+- [ForgeError](/docs/api/forge-error) - Error types

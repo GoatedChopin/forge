@@ -1,39 +1,41 @@
-//! Explicit database provisioning for tests.
+//! Database provisioning for tests.
 //!
 //! Provides PostgreSQL access for integration tests. Database configuration
-//! is EXPLICIT - you must either:
+//! options:
 //! 1. Pass a URL directly via `from_url()`
 //! 2. Use `from_env()` to explicitly read from TEST_DATABASE_URL
-//! 3. Enable `embedded-test-db` feature and use `embedded()`
+//! 3. Use `embedded()` for automatic embedded PostgreSQL (requires `embedded-db` feature)
 //!
 //! This design prevents accidental use of production databases. The .env file
 //! DATABASE_URL is NEVER automatically read.
 
 use sqlx::PgPool;
-#[cfg(feature = "embedded-test-db")]
-use tokio::sync::OnceCell;
 
 use crate::error::{ForgeError, Result};
 
-#[cfg(feature = "embedded-test-db")]
+#[cfg(feature = "embedded-db")]
+use tokio::sync::OnceCell;
+
+#[cfg(feature = "embedded-db")]
 static EMBEDDED_PG: OnceCell<postgresql_embedded::PostgreSQL> = OnceCell::const_new();
 
-/// Explicit database access for tests.
+/// Database access for tests.
 ///
-/// Unlike runtime database access, test database configuration is intentionally
-/// explicit to prevent accidental use of production databases.
+/// Test database configuration is intentionally explicit to prevent
+/// accidental use of production databases.
 ///
 /// # Examples
 ///
 /// ```ignore
-/// // Option 1: Explicit URL
+/// // Option 1: Embedded Postgres (requires embedded-db feature)
+/// // Run with: cargo test --features embedded-db
+/// let db = TestDatabase::embedded().await?;
+///
+/// // Option 2: Explicit URL
 /// let db = TestDatabase::from_url("postgres://localhost/test_db").await?;
 ///
-/// // Option 2: From TEST_DATABASE_URL env var (explicit opt-in)
+/// // Option 3: From TEST_DATABASE_URL env var
 /// let db = TestDatabase::from_env().await?;
-///
-/// // Option 3: Embedded Postgres (requires embedded-test-db feature)
-/// let db = TestDatabase::embedded().await?;
 /// ```
 pub struct TestDatabase {
     pool: PgPool,
@@ -72,9 +74,9 @@ impl TestDatabase {
 
     /// Start an embedded PostgreSQL instance.
     ///
-    /// Requires the `embedded-test-db` feature. Downloads and starts a real
-    /// PostgreSQL instance automatically.
-    #[cfg(feature = "embedded-test-db")]
+    /// Downloads and starts a real PostgreSQL instance automatically.
+    /// Requires the `embedded-db` feature: `cargo test --features embedded-db`
+    #[cfg(feature = "embedded-db")]
     pub async fn embedded() -> Result<Self> {
         let pg = EMBEDDED_PG
             .get_or_try_init(|| async {

@@ -6,6 +6,16 @@ use sqlx::postgres::{PgPool, PgPoolOptions};
 use forge_core::config::DatabaseConfig;
 use forge_core::error::{ForgeError, Result};
 
+#[cfg(feature = "embedded-db")]
+use tokio::sync::OnceCell;
+
+#[cfg(feature = "embedded-db")]
+use tracing::info;
+
+/// Global embedded PostgreSQL instance (shared across all Database instances).
+#[cfg(feature = "embedded-db")]
+static EMBEDDED_PG: OnceCell<postgresql_embedded::PostgreSQL> = OnceCell::const_new();
+
 /// Database connection wrapper providing connection pooling.
 #[derive(Clone)]
 pub struct Database {
@@ -20,12 +30,37 @@ pub struct Database {
 
     /// Counter for round-robin replica selection.
     replica_counter: Arc<std::sync::atomic::AtomicUsize>,
+
+    /// Whether using embedded PostgreSQL.
+    embedded: bool,
 }
 
 impl Database {
     /// Create a new database connection from configuration.
     pub async fn from_config(config: &DatabaseConfig) -> Result<Self> {
-        let primary = Self::create_pool(&config.url, config.pool_size, config.pool_timeout_secs)
+        let (url, embedded) = if config.embedded {
+            #[cfg(feature = "embedded-db")]
+            {
+                let url = Self::start_embedded_postgres(config.data_dir.as_deref()).await?;
+                (url, true)
+            }
+            #[cfg(not(feature = "embedded-db"))]
+            {
+                return Err(ForgeError::Database(
+                    "Embedded PostgreSQL requires the 'embedded-db' feature. \
+                    Build with: cargo build --features embedded-db".to_string()
+                ));
+            }
+        } else {
+            if config.url.is_empty() {
+                return Err(ForgeError::Database(
+                    "Database URL is required when embedded = false. Set database.url or database.embedded = true".to_string()
+                ));
+            }
+            (config.url.clone(), false)
+        };
+
+        let primary = Self::create_pool(&url, config.pool_size, config.pool_timeout_secs)
             .await
             .map_err(|e| ForgeError::Database(format!("Failed to connect to primary: {}", e)))?;
 
@@ -45,7 +80,44 @@ impl Database {
             replicas,
             config: config.clone(),
             replica_counter: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            embedded,
         })
+    }
+
+    /// Start embedded PostgreSQL and return the connection URL.
+    #[cfg(feature = "embedded-db")]
+    async fn start_embedded_postgres(data_dir: Option<&str>) -> Result<String> {
+        let pg = EMBEDDED_PG
+            .get_or_try_init(|| async {
+                info!("Starting embedded PostgreSQL...");
+
+                // Create settings with custom data directory if specified
+                let settings = if let Some(dir) = data_dir {
+                    let mut s = postgresql_embedded::Settings::default();
+                    s.data_dir = std::path::PathBuf::from(dir);
+                    s
+                } else {
+                    postgresql_embedded::Settings::default()
+                };
+
+                let mut pg = postgresql_embedded::PostgreSQL::new(settings);
+                pg.setup().await.map_err(|e| {
+                    ForgeError::Database(format!("Failed to setup embedded Postgres: {}", e))
+                })?;
+                pg.start().await.map_err(|e| {
+                    ForgeError::Database(format!("Failed to start embedded Postgres: {}", e))
+                })?;
+                info!("Embedded PostgreSQL started successfully");
+                Ok::<_, ForgeError>(pg)
+            })
+            .await?;
+
+        Ok(pg.settings().url("forge"))
+    }
+
+    /// Check if using embedded PostgreSQL.
+    pub fn is_embedded(&self) -> bool {
+        self.embedded
     }
 
     /// Create a connection pool with the given parameters.

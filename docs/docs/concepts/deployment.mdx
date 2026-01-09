@@ -82,6 +82,67 @@ The included `fly.toml` configures auto-scaling and health checks.
 
 *All support hobby tiers with free credits for getting started.*
 
+## Zero-Dependency Deployment (Embedded PostgreSQL)
+
+For small projects, demos, or self-hosted deployments, FORGE can run with **embedded PostgreSQL** - no external database needed.
+
+### Configuration
+
+```toml title="forge.toml"
+[database]
+embedded = true
+```
+
+That's it. On first start, FORGE downloads and runs a bundled PostgreSQL instance automatically.
+
+### When to Use Embedded PostgreSQL
+
+**Good for:**
+- Personal projects and demos
+- Small team applications (under 100 concurrent users)
+- Self-hosted single-server deployments
+- Offline/air-gapped environments
+- Development without Docker
+
+**Not recommended for:**
+- High-availability production (no replication)
+- Large-scale applications (limited to single machine)
+- Environments requiring managed backups
+
+### Data Location
+
+Embedded PostgreSQL stores data in the working directory:
+
+```
+your-app/
+├── .forge/
+│   └── postgres/      # PostgreSQL data directory
+├── src/
+└── forge.toml
+```
+
+To backup: copy the `.forge/postgres/` directory.
+
+### Combining with Embedded Frontend
+
+For a truly zero-dependency deployment (single binary, no external services):
+
+```toml title="forge.toml"
+[database]
+embedded = true
+```
+
+```bash
+# Build with embedded frontend (default)
+cd frontend && bun install && bun run build && cd ..
+cargo build --release
+
+# Single binary deployment
+./target/release/my-app
+```
+
+This creates a completely self-contained application.
+
 ## Docker
 
 Scaffolded projects include Docker files for containerized deployment.
@@ -306,11 +367,11 @@ spec:
 
 ## Environment Variables
 
-### Required
+### Database
 
 | Variable | Description |
 |----------|-------------|
-| `DATABASE_URL` | PostgreSQL connection string |
+| `DATABASE_URL` | PostgreSQL connection string (required unless `database.embedded = true`) |
 
 ### Optional
 
