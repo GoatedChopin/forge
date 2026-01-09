@@ -1,7 +1,8 @@
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
 
 use uuid::Uuid;
 
+use crate::env::{EnvAccess, EnvProvider, RealEnvProvider};
 use crate::function::AuthContext;
 
 /// Context available to job handlers.
@@ -22,6 +23,8 @@ pub struct JobContext {
     http_client: reqwest::Client,
     /// Progress reporter (sync channel for simplicity).
     progress_tx: Option<mpsc::Sender<ProgressUpdate>>,
+    /// Environment variable provider.
+    env_provider: Arc<dyn EnvProvider>,
 }
 
 /// Progress update message.
@@ -54,6 +57,7 @@ impl JobContext {
             db_pool,
             http_client,
             progress_tx: None,
+            env_provider: Arc::new(RealEnvProvider::new()),
         }
     }
 
@@ -66,6 +70,12 @@ impl JobContext {
     /// Set progress channel.
     pub fn with_progress(mut self, tx: mpsc::Sender<ProgressUpdate>) -> Self {
         self.progress_tx = Some(tx);
+        self
+    }
+
+    /// Set environment provider.
+    pub fn with_env_provider(mut self, provider: Arc<dyn EnvProvider>) -> Self {
+        self.env_provider = provider;
         self
     }
 
@@ -120,6 +130,12 @@ impl JobContext {
     /// Check if this is the last attempt.
     pub fn is_last_attempt(&self) -> bool {
         self.attempt >= self.max_attempts
+    }
+}
+
+impl EnvAccess for JobContext {
+    fn env_provider(&self) -> &dyn EnvProvider {
+        self.env_provider.as_ref()
     }
 }
 

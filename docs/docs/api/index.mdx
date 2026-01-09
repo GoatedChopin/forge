@@ -69,6 +69,24 @@ ctx.dispatch_job("job_name", serde_json::json!({
 })).await?;
 ```
 
+### Environment Variables
+
+All contexts provide typesafe environment variable access via the `EnvAccess` trait:
+
+```rust
+// Get required variable (errors if missing)
+let api_key = ctx.env_require("STRIPE_API_KEY")?;
+
+// Get with default
+let timeout = ctx.env_or("TIMEOUT", "30");
+
+// Parse to type
+let port: u16 = ctx.env_parse("PORT")?;
+let debug: bool = ctx.env_parse_or("DEBUG", false)?;
+```
+
+See [Environment Variables](/docs/api/env-access) for testing and full API.
+
 ### Error Handling
 
 ```rust
@@ -190,6 +208,16 @@ return Err(ForgeError::Internal("Something went wrong".into()));
       </div>
       <div className="card__body">
         System tables, indexes, and patterns
+      </div>
+    </a>
+  </div>
+  <div className="col col--6">
+    <a className="card" href="/api/env-access">
+      <div className="card__header">
+        <h3>Environment Variables</h3>
+      </div>
+      <div className="card__body">
+        Typesafe env access and testing
       </div>
     </a>
   </div>

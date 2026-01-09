@@ -7,6 +7,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::super::mock_dispatch::{MockJobDispatch, MockWorkflowDispatch};
+use crate::env::{EnvAccess, EnvProvider, MockEnvProvider};
 use crate::function::{AuthContext, RequestMetadata};
 use crate::Result;
 
@@ -39,6 +40,8 @@ pub struct TestMutationContext {
     job_dispatch: Arc<MockJobDispatch>,
     /// Mock workflow dispatch for verification.
     workflow_dispatch: Arc<MockWorkflowDispatch>,
+    /// Mock environment provider.
+    env_provider: Arc<MockEnvProvider>,
 }
 
 impl TestMutationContext {
@@ -86,6 +89,17 @@ impl TestMutationContext {
     pub async fn start_workflow<T: serde::Serialize>(&self, name: &str, input: T) -> Result<Uuid> {
         self.workflow_dispatch.start(name, input).await
     }
+
+    /// Get the mock env provider for verification.
+    pub fn env_mock(&self) -> &MockEnvProvider {
+        &self.env_provider
+    }
+}
+
+impl EnvAccess for TestMutationContext {
+    fn env_provider(&self) -> &dyn EnvProvider {
+        self.env_provider.as_ref()
+    }
 }
 
 /// Builder for TestMutationContext.
@@ -96,6 +110,7 @@ pub struct TestMutationContextBuilder {
     pool: Option<PgPool>,
     job_dispatch: Arc<MockJobDispatch>,
     workflow_dispatch: Arc<MockWorkflowDispatch>,
+    env_vars: HashMap<String, String>,
 }
 
 impl Default for TestMutationContextBuilder {
@@ -107,6 +122,7 @@ impl Default for TestMutationContextBuilder {
             pool: None,
             job_dispatch: Arc::new(MockJobDispatch::new()),
             workflow_dispatch: Arc::new(MockWorkflowDispatch::new()),
+            env_vars: HashMap::new(),
         }
     }
 }
@@ -154,6 +170,18 @@ impl TestMutationContextBuilder {
         self
     }
 
+    /// Set a single environment variable.
+    pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.env_vars.insert(key.into(), value.into());
+        self
+    }
+
+    /// Set multiple environment variables.
+    pub fn with_envs(mut self, vars: HashMap<String, String>) -> Self {
+        self.env_vars.extend(vars);
+        self
+    }
+
     /// Build the test context.
     pub fn build(self) -> TestMutationContext {
         let auth = if let Some(user_id) = self.user_id {
@@ -168,6 +196,7 @@ impl TestMutationContextBuilder {
             pool: self.pool,
             job_dispatch: self.job_dispatch,
             workflow_dispatch: self.workflow_dispatch,
+            env_provider: Arc::new(MockEnvProvider::with_vars(self.env_vars)),
         }
     }
 }

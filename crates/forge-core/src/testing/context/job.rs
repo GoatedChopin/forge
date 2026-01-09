@@ -7,6 +7,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::super::mock_http::{MockHttp, MockRequest, MockResponse};
+use crate::env::{EnvAccess, EnvProvider, MockEnvProvider};
 use crate::function::AuthContext;
 use crate::Result;
 
@@ -54,6 +55,8 @@ pub struct TestJobContext {
     http: Arc<MockHttp>,
     /// Progress updates recorded during execution.
     progress_updates: Arc<RwLock<Vec<TestProgressUpdate>>>,
+    /// Mock environment provider.
+    env_provider: Arc<MockEnvProvider>,
 }
 
 impl TestJobContext {
@@ -101,6 +104,17 @@ impl TestJobContext {
     pub async fn heartbeat(&self) -> Result<()> {
         Ok(())
     }
+
+    /// Get the mock env provider for verification.
+    pub fn env_mock(&self) -> &MockEnvProvider {
+        &self.env_provider
+    }
+}
+
+impl EnvAccess for TestJobContext {
+    fn env_provider(&self) -> &dyn EnvProvider {
+        self.env_provider.as_ref()
+    }
 }
 
 /// Builder for TestJobContext.
@@ -114,6 +128,7 @@ pub struct TestJobContextBuilder {
     claims: HashMap<String, serde_json::Value>,
     pool: Option<PgPool>,
     http: MockHttp,
+    env_vars: HashMap<String, String>,
 }
 
 impl TestJobContextBuilder {
@@ -129,6 +144,7 @@ impl TestJobContextBuilder {
             claims: HashMap::new(),
             pool: None,
             http: MockHttp::new(),
+            env_vars: HashMap::new(),
         }
     }
 
@@ -190,6 +206,18 @@ impl TestJobContextBuilder {
         self.mock_http(pattern, move |_| MockResponse::json(json.clone()))
     }
 
+    /// Set a single environment variable.
+    pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.env_vars.insert(key.into(), value.into());
+        self
+    }
+
+    /// Set multiple environment variables.
+    pub fn with_envs(mut self, vars: HashMap<String, String>) -> Self {
+        self.env_vars.extend(vars);
+        self
+    }
+
     /// Build the test context.
     pub fn build(self) -> TestJobContext {
         let auth = if let Some(user_id) = self.user_id {
@@ -207,6 +235,7 @@ impl TestJobContextBuilder {
             pool: self.pool,
             http: Arc::new(self.http),
             progress_updates: Arc::new(RwLock::new(Vec::new())),
+            env_provider: Arc::new(MockEnvProvider::with_vars(self.env_vars)),
         }
     }
 }

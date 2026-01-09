@@ -8,6 +8,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::super::mock_http::{MockHttp, MockRequest, MockResponse};
+use crate::env::{EnvAccess, EnvProvider, MockEnvProvider};
 use crate::function::AuthContext;
 
 /// Log entry recorded during testing.
@@ -130,6 +131,8 @@ pub struct TestCronContext {
     pool: Option<PgPool>,
     /// Mock HTTP client.
     http: Arc<MockHttp>,
+    /// Mock environment provider.
+    env_provider: Arc<MockEnvProvider>,
 }
 
 impl TestCronContext {
@@ -157,6 +160,17 @@ impl TestCronContext {
     pub fn is_late(&self) -> bool {
         self.delay() > Duration::minutes(1)
     }
+
+    /// Get the mock env provider for verification.
+    pub fn env_mock(&self) -> &MockEnvProvider {
+        &self.env_provider
+    }
+}
+
+impl EnvAccess for TestCronContext {
+    fn env_provider(&self) -> &dyn EnvProvider {
+        self.env_provider.as_ref()
+    }
 }
 
 /// Builder for TestCronContext.
@@ -172,6 +186,7 @@ pub struct TestCronContextBuilder {
     claims: HashMap<String, serde_json::Value>,
     pool: Option<PgPool>,
     http: MockHttp,
+    env_vars: HashMap<String, String>,
 }
 
 impl TestCronContextBuilder {
@@ -190,6 +205,7 @@ impl TestCronContextBuilder {
             claims: HashMap::new(),
             pool: None,
             http: MockHttp::new(),
+            env_vars: HashMap::new(),
         }
     }
 
@@ -256,6 +272,18 @@ impl TestCronContextBuilder {
         self.mock_http(pattern, move |_| MockResponse::json(json.clone()))
     }
 
+    /// Set a single environment variable.
+    pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.env_vars.insert(key.into(), value.into());
+        self
+    }
+
+    /// Set multiple environment variables.
+    pub fn with_envs(mut self, vars: HashMap<String, String>) -> Self {
+        self.env_vars.extend(vars);
+        self
+    }
+
     /// Build the test context.
     pub fn build(self) -> TestCronContext {
         let auth = if let Some(user_id) = self.user_id {
@@ -275,6 +303,7 @@ impl TestCronContextBuilder {
             log: TestCronLog::new(self.cron_name),
             pool: self.pool,
             http: Arc::new(self.http),
+            env_provider: Arc::new(MockEnvProvider::with_vars(self.env_vars)),
         }
     }
 }

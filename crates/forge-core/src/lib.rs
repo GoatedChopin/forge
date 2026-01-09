@@ -2,6 +2,7 @@ pub mod auth;
 pub mod cluster;
 pub mod config;
 pub mod cron;
+pub mod env;
 pub mod error;
 pub mod function;
 pub mod job;
@@ -18,6 +19,7 @@ pub mod testing;
 pub use auth::{Claims, ClaimsBuilder};
 pub use cluster::{ClusterInfo, LeaderInfo, LeaderRole, NodeId, NodeInfo, NodeRole, NodeStatus};
 pub use config::ForgeConfig;
+pub use env::{EnvAccess, EnvProvider, MockEnvProvider, RealEnvProvider};
 pub use cron::{CronContext, CronInfo, CronSchedule, ForgeCron};
 pub use error::{ForgeError, Result};
 pub use function::{

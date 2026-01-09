@@ -27,13 +27,17 @@ struct BitcoinData {
     usd_24h_change: f64,
 }
 
-/// Action demonstrating external API calls via ctx.http()
+/// Action demonstrating external API calls via ctx.http() and env var access via ctx.env()
 #[forge::action(timeout = 30)]
 pub async fn get_bitcoin_price(
     ctx: &ActionContext,
     input: GetBitcoinPriceInput,
 ) -> Result<GetBitcoinPriceOutput> {
     let currency = input.currency.unwrap_or_else(|| "usd".to_string());
+
+    // Example: Read API key from environment (optional for CoinGecko free tier)
+    // For APIs that require authentication, use ctx.env_require() to ensure the key exists
+    let _api_key = ctx.env_or("COINGECKO_API_KEY", "");
 
     tracing::info!(currency = %currency, "Fetching Bitcoin price");
 
@@ -77,6 +81,7 @@ mod tests {
 
     // Action test contexts provide HTTP mocking for external API calls
     // with pattern matching and response verification.
+    // They also support environment variable mocking via with_env().
 
     #[tokio::test]
     async fn test_action_http_mock() {
@@ -105,5 +110,30 @@ mod tests {
             .build();
 
         ctx.http().assert_not_called("https://api.coingecko.com/*");
+    }
+
+    #[tokio::test]
+    async fn test_action_with_env_vars() {
+        // Environment variables can be mocked for testing
+        let ctx = TestActionContext::builder()
+            .as_user(Uuid::new_v4())
+            .with_env("COINGECKO_API_KEY", "test_api_key_123")
+            .with_env("API_TIMEOUT", "30")
+            .mock_http_json("https://api.coingecko.com/*", serde_json::json!({
+                "bitcoin": {
+                    "usd": 50000.0,
+                    "eur": 45000.0,
+                    "gbp": 40000.0,
+                    "usd_24h_change": 2.5
+                }
+            }))
+            .build();
+
+        // Verify env vars are accessible
+        assert_eq!(ctx.env("COINGECKO_API_KEY"), Some("test_api_key_123".to_string()));
+        assert_eq!(ctx.env_or("API_TIMEOUT", "60"), "30");
+
+        // Verify which env vars were accessed
+        ctx.env_mock().assert_accessed("COINGECKO_API_KEY");
     }
 }

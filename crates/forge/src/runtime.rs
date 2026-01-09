@@ -65,6 +65,7 @@ pub mod prelude {
     pub use forge_core::cluster::NodeRole;
     pub use forge_core::config::ForgeConfig;
     pub use forge_core::cron::{CronContext, ForgeCron};
+    pub use forge_core::env::EnvAccess;
     pub use forge_core::error::{ForgeError, Result};
     pub use forge_core::function::{
         ActionContext, AuthContext, ForgeMutation, ForgeQuery, MutationContext, QueryContext,

@@ -711,3 +711,22 @@ Refactored embedded-db as optional feature to reduce compile time and binary siz
 - templates/empty/project/README.md.tmpl: Simplified, removed Deployment/Feature sections, points to docs
 - templates/empty/project/AGENTS.md.tmpl: Updated testing section with embedded-db info
 - Usage: cargo test --features embedded-db (optional, not required for all tests)
+
+Implemented typesafe environment variable access for functions (closes #4).
+- crates/forge-core/src/env/mod.rs: New module with EnvProvider trait, RealEnvProvider, MockEnvProvider
+- EnvAccess trait: env(), env_or(), env_require(), env_parse(), env_parse_or(), env_contains()
+- All contexts updated: QueryContext, MutationContext, ActionContext, JobContext, CronContext, WorkflowContext
+- crates/forge-core/src/testing/context/*.rs: Added with_env(), with_envs() builders to all test contexts
+- MockEnvProvider tracks accessed keys for verification: assert_accessed(), was_accessed(), accessed_keys()
+- crates/forge/src/runtime.rs: Added EnvAccess to prelude exports
+- crates/forge/src/lib.rs: Added pub use forge_core::testing for test utilities
+- templates/populated/project/functions/get_bitcoin_price_action.rs.tmpl: Added env example with COINGECKO_API_KEY
+- examples/env-demo/: New demo app showcasing env access in all context types with tests
+- Cargo.toml: Added workspace dependency aliases (forge = { package = "forgex", ... })
+- docker-compose.yml: New file for workspace build/test
+- docs/docs/api/env-access.mdx: New page documenting EnvAccess trait, all methods, testing patterns
+- docs/docs/api/index.mdx: Added Environment Variables section to common patterns, added card link
+- docs/docs/api/testing.mdx: Added Mock Environment section with with_env(), env_mock() verification
+- docs/docs/api/query-context.mdx: Added Environment Variables section with examples
+- docs/docs/api/action-context.mdx: Added Environment Variables section with API key example
+- docs/sidebars.ts: Added env-access and testing pages to API Reference section

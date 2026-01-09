@@ -4,6 +4,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use super::dispatch::{JobDispatch, WorkflowDispatch};
+use crate::env::{EnvAccess, EnvProvider, RealEnvProvider};
 
 /// Authentication context available to all functions.
 #[derive(Debug, Clone)]
@@ -140,6 +141,8 @@ pub struct QueryContext {
     pub request: RequestMetadata,
     /// Database pool for read operations.
     db_pool: sqlx::PgPool,
+    /// Environment variable provider.
+    env_provider: Arc<dyn EnvProvider>,
 }
 
 impl QueryContext {
@@ -149,6 +152,22 @@ impl QueryContext {
             auth,
             request,
             db_pool,
+            env_provider: Arc::new(RealEnvProvider::new()),
+        }
+    }
+
+    /// Create a query context with a custom environment provider.
+    pub fn with_env(
+        db_pool: sqlx::PgPool,
+        auth: AuthContext,
+        request: RequestMetadata,
+        env_provider: Arc<dyn EnvProvider>,
+    ) -> Self {
+        Self {
+            auth,
+            request,
+            db_pool,
+            env_provider,
         }
     }
 
@@ -160,6 +179,12 @@ impl QueryContext {
     /// Get the authenticated user ID or return an error.
     pub fn require_user_id(&self) -> crate::error::Result<Uuid> {
         self.auth.require_user_id()
+    }
+}
+
+impl EnvAccess for QueryContext {
+    fn env_provider(&self) -> &dyn EnvProvider {
+        self.env_provider.as_ref()
     }
 }
 
@@ -175,6 +200,8 @@ pub struct MutationContext {
     job_dispatch: Option<Arc<dyn JobDispatch>>,
     /// Optional workflow dispatcher for starting workflows.
     workflow_dispatch: Option<Arc<dyn WorkflowDispatch>>,
+    /// Environment variable provider.
+    env_provider: Arc<dyn EnvProvider>,
 }
 
 impl MutationContext {
@@ -186,6 +213,7 @@ impl MutationContext {
             db_pool,
             job_dispatch: None,
             workflow_dispatch: None,
+            env_provider: Arc::new(RealEnvProvider::new()),
         }
     }
 
@@ -203,6 +231,26 @@ impl MutationContext {
             db_pool,
             job_dispatch,
             workflow_dispatch,
+            env_provider: Arc::new(RealEnvProvider::new()),
+        }
+    }
+
+    /// Create a mutation context with a custom environment provider.
+    pub fn with_env(
+        db_pool: sqlx::PgPool,
+        auth: AuthContext,
+        request: RequestMetadata,
+        job_dispatch: Option<Arc<dyn JobDispatch>>,
+        workflow_dispatch: Option<Arc<dyn WorkflowDispatch>>,
+        env_provider: Arc<dyn EnvProvider>,
+    ) -> Self {
+        Self {
+            auth,
+            request,
+            db_pool,
+            job_dispatch,
+            workflow_dispatch,
+            env_provider,
         }
     }
 
@@ -257,6 +305,12 @@ impl MutationContext {
     }
 }
 
+impl EnvAccess for MutationContext {
+    fn env_provider(&self) -> &dyn EnvProvider {
+        self.env_provider.as_ref()
+    }
+}
+
 /// Context for action functions (can call external APIs).
 pub struct ActionContext {
     /// Authentication context.
@@ -271,6 +325,8 @@ pub struct ActionContext {
     job_dispatch: Option<Arc<dyn JobDispatch>>,
     /// Optional workflow dispatcher for starting workflows.
     workflow_dispatch: Option<Arc<dyn WorkflowDispatch>>,
+    /// Environment variable provider.
+    env_provider: Arc<dyn EnvProvider>,
 }
 
 impl ActionContext {
@@ -288,6 +344,7 @@ impl ActionContext {
             http_client,
             job_dispatch: None,
             workflow_dispatch: None,
+            env_provider: Arc::new(RealEnvProvider::new()),
         }
     }
 
@@ -307,6 +364,28 @@ impl ActionContext {
             http_client,
             job_dispatch,
             workflow_dispatch,
+            env_provider: Arc::new(RealEnvProvider::new()),
+        }
+    }
+
+    /// Create an action context with a custom environment provider.
+    pub fn with_env(
+        db_pool: sqlx::PgPool,
+        auth: AuthContext,
+        request: RequestMetadata,
+        http_client: reqwest::Client,
+        job_dispatch: Option<Arc<dyn JobDispatch>>,
+        workflow_dispatch: Option<Arc<dyn WorkflowDispatch>>,
+        env_provider: Arc<dyn EnvProvider>,
+    ) -> Self {
+        Self {
+            auth,
+            request,
+            db_pool,
+            http_client,
+            job_dispatch,
+            workflow_dispatch,
+            env_provider,
         }
     }
 
@@ -363,6 +442,12 @@ impl ActionContext {
         })?;
         let input_json = serde_json::to_value(input)?;
         dispatcher.start_by_name(workflow_name, input_json).await
+    }
+}
+
+impl EnvAccess for ActionContext {
+    fn env_provider(&self) -> &dyn EnvProvider {
+        self.env_provider.as_ref()
     }
 }
 

@@ -1,10 +1,12 @@
 //! Test context for query functions.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::env::{EnvAccess, EnvProvider, MockEnvProvider};
 use crate::function::{AuthContext, RequestMetadata};
 use crate::Result;
 
@@ -35,6 +37,8 @@ pub struct TestQueryContext {
     pool: Option<PgPool>,
     /// Tenant ID for multi-tenant testing.
     tenant_id: Option<Uuid>,
+    /// Mock environment provider.
+    env_provider: Arc<MockEnvProvider>,
 }
 
 impl TestQueryContext {
@@ -86,6 +90,17 @@ impl TestQueryContext {
     pub fn tenant_id(&self) -> Option<Uuid> {
         self.tenant_id
     }
+
+    /// Get the mock env provider for verification.
+    pub fn env_mock(&self) -> &MockEnvProvider {
+        &self.env_provider
+    }
+}
+
+impl EnvAccess for TestQueryContext {
+    fn env_provider(&self) -> &dyn EnvProvider {
+        self.env_provider.as_ref()
+    }
 }
 
 /// Builder for TestQueryContext.
@@ -96,6 +111,7 @@ pub struct TestQueryContextBuilder {
     claims: HashMap<String, serde_json::Value>,
     tenant_id: Option<Uuid>,
     pool: Option<PgPool>,
+    env_vars: HashMap<String, String>,
 }
 
 impl TestQueryContextBuilder {
@@ -135,6 +151,18 @@ impl TestQueryContextBuilder {
         self
     }
 
+    /// Set a single environment variable.
+    pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.env_vars.insert(key.into(), value.into());
+        self
+    }
+
+    /// Set multiple environment variables.
+    pub fn with_envs(mut self, vars: HashMap<String, String>) -> Self {
+        self.env_vars.extend(vars);
+        self
+    }
+
     /// Build the test context.
     pub fn build(self) -> TestQueryContext {
         let auth = if let Some(user_id) = self.user_id {
@@ -148,6 +176,7 @@ impl TestQueryContextBuilder {
             request: RequestMetadata::default(),
             pool: self.pool,
             tenant_id: self.tenant_id,
+            env_provider: Arc::new(MockEnvProvider::with_vars(self.env_vars)),
         }
     }
 }
@@ -193,5 +222,30 @@ mod tests {
 
         assert_eq!(ctx.claim("org_id"), Some(&serde_json::json!("org-123")));
         assert!(ctx.claim("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_context_with_env() {
+        let ctx = TestQueryContext::builder()
+            .with_env("API_KEY", "test_key_123")
+            .with_env("TIMEOUT", "30")
+            .build();
+
+        // Test env access via EnvAccess trait
+        assert_eq!(ctx.env("API_KEY"), Some("test_key_123".to_string()));
+        assert_eq!(ctx.env_or("TIMEOUT", "10"), "30");
+        assert_eq!(ctx.env_or("MISSING", "default"), "default");
+
+        // Test env_require
+        assert!(ctx.env_require("API_KEY").is_ok());
+        assert!(ctx.env_require("MISSING").is_err());
+
+        // Test env_parse
+        let timeout: u32 = ctx.env_parse("TIMEOUT").unwrap();
+        assert_eq!(timeout, 30);
+
+        // Verify access tracking
+        ctx.env_mock().assert_accessed("API_KEY");
+        ctx.env_mock().assert_accessed("TIMEOUT");
     }
 }

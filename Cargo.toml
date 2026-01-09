@@ -18,6 +18,14 @@ keywords = ["framework", "postgresql", "full-stack", "backend", "web"]
 categories = ["web-programming", "database"]
 
 [workspace.dependencies]
+# FORGE packages (use these for examples and internal crates)
+# Note: The package is named "forgex" but the library is "forge" for cleaner imports
+forge = { package = "forgex", path = "crates/forge" }
+forge-core = { path = "crates/forge-core" }
+forge-macros = { path = "crates/forge-macros" }
+forge-runtime = { path = "crates/forge-runtime" }
+forge-codegen = { path = "crates/forge-codegen" }
+
 # Async runtime
 tokio = { version = "1.48", features = ["full"] }
 

@@ -214,7 +214,36 @@ pub async fn secure_webhook(
 }
 ```
 
+## Environment Variables
+
+Actions commonly need API keys for external services. Use `EnvAccess` trait methods:
+
+```rust
+#[forge::action]
+pub async fn call_payment_api(ctx: &ActionContext, input: PaymentInput) -> Result<PaymentResult> {
+    // Get required API key (errors if missing)
+    let api_key = ctx.env_require("STRIPE_API_KEY")?;
+
+    // Get optional config with defaults
+    let api_url = ctx.env_or("STRIPE_API_URL", "https://api.stripe.com");
+    let timeout: u64 = ctx.env_parse_or("STRIPE_TIMEOUT_SECS", 30)?;
+
+    let response = ctx.http()
+        .post(&format!("{}/v1/charges", api_url))
+        .bearer_auth(&api_key)
+        .timeout(std::time::Duration::from_secs(timeout))
+        .json(&input)
+        .send()
+        .await?;
+
+    // ...
+}
+```
+
+See [Environment Variables](/docs/api/env-access) for testing with mocked env vars.
+
 ## See Also
 
 - [Functions](/docs/concepts/functions) - Action overview
 - [JobContext](/docs/api/job-context) - For background processing
+- [Environment Variables](/docs/api/env-access) - Typesafe env access

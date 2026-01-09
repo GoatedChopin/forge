@@ -12,6 +12,7 @@ use uuid::Uuid;
 use super::parallel::ParallelBuilder;
 use super::step::StepStatus;
 use super::suspend::{SuspendReason, WorkflowEvent};
+use crate::env::{EnvAccess, EnvProvider, RealEnvProvider};
 use crate::function::AuthContext;
 use crate::{ForgeError, Result};
 
@@ -108,6 +109,8 @@ pub struct WorkflowContext {
     resumed_from_sleep: bool,
     /// Tenant ID for multi-tenancy.
     tenant_id: Option<Uuid>,
+    /// Environment variable provider.
+    env_provider: Arc<dyn EnvProvider>,
 }
 
 impl WorkflowContext {
@@ -136,6 +139,7 @@ impl WorkflowContext {
             is_resumed: false,
             resumed_from_sleep: false,
             tenant_id: None,
+            env_provider: Arc::new(RealEnvProvider::new()),
         }
     }
 
@@ -164,7 +168,14 @@ impl WorkflowContext {
             is_resumed: true,
             resumed_from_sleep: false,
             tenant_id: None,
+            env_provider: Arc::new(RealEnvProvider::new()),
         }
+    }
+
+    /// Set environment provider.
+    pub fn with_env_provider(mut self, provider: Arc<dyn EnvProvider>) -> Self {
+        self.env_provider = provider;
+        self
     }
 
     /// Mark that this context resumed from a sleep (timer expired).
@@ -838,6 +849,12 @@ impl WorkflowContext {
         Fut: std::future::Future<Output = crate::Result<T>> + Send + 'static,
     {
         super::StepRunner::new(self, name, f)
+    }
+}
+
+impl EnvAccess for WorkflowContext {
+    fn env_provider(&self) -> &dyn EnvProvider {
+        self.env_provider.as_ref()
     }
 }
 

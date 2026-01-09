@@ -1,0 +1,14 @@
+services:
+  build:
+    image: rust:1.92-bookworm
+    working_dir: /app
+    command: >
+      sh -c "cargo build --workspace && cargo test --workspace"
+    volumes:
+      - .:/app
+      - cargo_cache:/usr/local/cargo/registry
+      - target_cache:/app/target
+
+volumes:
+  cargo_cache:
+  target_cache:

@@ -9,6 +9,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::super::mock_http::{MockHttp, MockRequest, MockResponse};
+use crate::env::{EnvAccess, EnvProvider, MockEnvProvider};
 use crate::function::AuthContext;
 use crate::Result;
 
@@ -65,6 +66,8 @@ pub struct TestWorkflowContext {
     completed_steps: Arc<RwLock<Vec<String>>>,
     /// Whether sleep was called.
     sleep_called: Arc<RwLock<bool>>,
+    /// Mock environment provider.
+    env_provider: Arc<MockEnvProvider>,
 }
 
 impl TestWorkflowContext {
@@ -178,6 +181,17 @@ impl TestWorkflowContext {
     pub fn elapsed(&self) -> chrono::Duration {
         Utc::now() - self.started_at
     }
+
+    /// Get the mock env provider for verification.
+    pub fn env_mock(&self) -> &MockEnvProvider {
+        &self.env_provider
+    }
+}
+
+impl EnvAccess for TestWorkflowContext {
+    fn env_provider(&self) -> &dyn EnvProvider {
+        self.env_provider.as_ref()
+    }
 }
 
 /// Builder for TestWorkflowContext.
@@ -195,6 +209,7 @@ pub struct TestWorkflowContextBuilder {
     pool: Option<PgPool>,
     http: MockHttp,
     completed_steps: HashMap<String, serde_json::Value>,
+    env_vars: HashMap<String, String>,
 }
 
 impl TestWorkflowContextBuilder {
@@ -215,6 +230,7 @@ impl TestWorkflowContextBuilder {
             pool: None,
             http: MockHttp::new(),
             completed_steps: HashMap::new(),
+            env_vars: HashMap::new(),
         }
     }
 
@@ -291,6 +307,18 @@ impl TestWorkflowContextBuilder {
         self.mock_http(pattern, move |_| MockResponse::json(json.clone()))
     }
 
+    /// Set a single environment variable.
+    pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.env_vars.insert(key.into(), value.into());
+        self
+    }
+
+    /// Set multiple environment variables.
+    pub fn with_envs(mut self, vars: HashMap<String, String>) -> Self {
+        self.env_vars.extend(vars);
+        self
+    }
+
     /// Build the test context.
     pub fn build(self) -> TestWorkflowContext {
         let auth = if let Some(user_id) = self.user_id {
@@ -329,6 +357,7 @@ impl TestWorkflowContextBuilder {
             step_states: Arc::new(RwLock::new(step_states)),
             completed_steps: Arc::new(RwLock::new(completed_steps)),
             sleep_called: Arc::new(RwLock::new(false)),
+            env_provider: Arc::new(MockEnvProvider::with_vars(self.env_vars)),
         }
     }
 }

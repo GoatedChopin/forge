@@ -182,10 +182,21 @@ Workflows:
 - Deterministic time: ctx.workflow_time()
 - Advanced patterns (commented): parallel(), fluent step API, wait_for_event()
 
+Environment Variables:
+- EnvAccess trait: ctx.env("KEY"), ctx.env_or("KEY", "default"), ctx.env_require("KEY")
+- Type parsing: ctx.env_parse::<T>("KEY"), ctx.env_parse_or("KEY", default)
+- Check existence: ctx.env_contains("KEY")
+- All context types implement EnvAccess: QueryContext, MutationContext, ActionContext, JobContext, CronContext, WorkflowContext
+- Test contexts use MockEnvProvider for mocking
+- Builder: .with_env("KEY", "value"), .with_envs(HashMap)
+- Verification: ctx.env_mock().assert_accessed("KEY"), ctx.env_mock().was_accessed("KEY")
+- Import: forge::prelude::EnvAccess (trait must be in scope for env methods)
+
 Testing:
 - Per-function-type contexts: TestQueryContext, TestMutationContext, TestActionContext, TestJobContext, TestCronContext, TestWorkflowContext
-- Builder pattern: .as_user(), .with_role(), .with_claim(), .with_tenant(), .with_pool()
+- Builder pattern: .as_user(), .with_role(), .with_claim(), .with_tenant(), .with_pool(), .with_env()
 - MockHttp with pattern matching, request recording, verification (assert_called, assert_called_times, assert_not_called)
+- MockEnvProvider with access tracking (assert_accessed, was_accessed, accessed_keys)
 - MockJobDispatch, MockWorkflowDispatch for dispatch verification
 - Assertion macros: assert_ok!, assert_err!, assert_err_variant!, assert_job_dispatched!, assert_workflow_started!, assert_http_called!
 - Helper functions: assert_json_matches(), error_contains(), validation_error_for_field()
@@ -193,9 +204,16 @@ Testing:
 - TestDatabase.embedded() requires embedded-db feature: cargo test --features embedded-db
 - TestDatabase.from_env() uses TEST_DATABASE_URL (not DATABASE_URL) for safety
 - Tests are inline with function files (#[cfg(test)] mod tests), not separate files
-- Testing utilities: import from forge_core::testing (not in prelude)
+- Testing utilities: import from forge::testing (re-exported from forge_core::testing)
 - Assertion macros: forge_core::{assert_ok, assert_err, assert_job_dispatched, ...}
 
 Config (forge.toml):
 - [project], [database], [gateway], [observability] sections
 - Commented: [function], [worker], [auth], [rate_limit], [cluster], [node]
+
+Testing Scaffolding (local dev):
+- Build CLI: LIBRARY_PATH="/opt/homebrew/opt/libiconv/lib" cargo build --release
+- Create demo: ./target/release/forge new <output-dir> --demo
+- Add [patch.crates-io] to demo's Cargo.toml pointing to local crates:
+  forgex, forge-core, forge-macros, forge-runtime, forge-codegen
+- Run demo: docker compose up -d && cargo run

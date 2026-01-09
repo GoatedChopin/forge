@@ -15,5 +15,8 @@ pub use forge_macros::{action, cron, forge_enum, job, model, mutation, query, wo
 // Re-export Migration type for programmatic migrations
 pub use forge_runtime::migrations::Migration;
 
+// Re-export testing utilities
+pub use forge_core::testing;
+
 pub use runtime::prelude;
 pub use runtime::{Forge, ForgeBuilder};

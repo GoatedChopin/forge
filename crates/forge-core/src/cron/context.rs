@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+use crate::env::{EnvAccess, EnvProvider, RealEnvProvider};
 use crate::function::AuthContext;
 
 /// Context available to cron handlers.
@@ -25,6 +28,8 @@ pub struct CronContext {
     http_client: reqwest::Client,
     /// Structured logger.
     pub log: CronLog,
+    /// Environment variable provider.
+    env_provider: Arc<dyn EnvProvider>,
 }
 
 impl CronContext {
@@ -49,7 +54,14 @@ impl CronContext {
             db_pool,
             http_client,
             log: CronLog::new(cron_name),
+            env_provider: Arc::new(RealEnvProvider::new()),
         }
+    }
+
+    /// Set environment provider.
+    pub fn with_env_provider(mut self, provider: Arc<dyn EnvProvider>) -> Self {
+        self.env_provider = provider;
+        self
     }
 
     /// Get the database pool.
@@ -76,6 +88,12 @@ impl CronContext {
     pub fn with_auth(mut self, auth: AuthContext) -> Self {
         self.auth = auth;
         self
+    }
+}
+
+impl EnvAccess for CronContext {
+    fn env_provider(&self) -> &dyn EnvProvider {
+        self.env_provider.as_ref()
     }
 }
 

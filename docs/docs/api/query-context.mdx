@@ -176,7 +176,33 @@ pub async fn list_tasks(ctx: &QueryContext) -> Result<Vec<Task>> {
 }
 ```
 
+## Environment Variables
+
+Access environment variables via the `EnvAccess` trait methods:
+
+```rust
+#[forge::query]
+pub async fn get_settings(ctx: &QueryContext) -> Result<Settings> {
+    // Get optional variable
+    let theme = ctx.env("DEFAULT_THEME");
+
+    // Get with default
+    let page_size = ctx.env_or("PAGE_SIZE", "20");
+
+    // Get required variable (returns error if missing)
+    let api_key = ctx.env_require("API_KEY")?;
+
+    // Parse to type
+    let timeout: u32 = ctx.env_parse("TIMEOUT")?;
+
+    // ...
+}
+```
+
+See [Environment Variables](/docs/api/env-access) for full API and testing.
+
 ## See Also
 
 - [MutationContext](/docs/api/mutation-context) - For data modification
+- [Environment Variables](/docs/api/env-access) - Typesafe env access
 - [Functions](/docs/concepts/functions) - Function types overview
