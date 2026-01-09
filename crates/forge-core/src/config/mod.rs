@@ -376,7 +376,9 @@ mod tests {
 
     #[test]
     fn test_env_var_substitution() {
-        std::env::set_var("TEST_DB_URL", "postgres://test:test@localhost/test");
+        unsafe {
+            std::env::set_var("TEST_DB_URL", "postgres://test:test@localhost/test");
+        }
 
         let toml = r#"
             [database]
@@ -386,6 +388,8 @@ mod tests {
         let config = ForgeConfig::parse_toml(toml).unwrap();
         assert_eq!(config.database.url, "postgres://test:test@localhost/test");
 
-        std::env::remove_var("TEST_DB_URL");
+        unsafe {
+            std::env::remove_var("TEST_DB_URL");
+        }
     }
 }

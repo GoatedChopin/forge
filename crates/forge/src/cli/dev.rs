@@ -255,10 +255,12 @@ impl DevCommand {
         // Use pg_data/ in project directory
         let data_dir = PathBuf::from("pg_data");
 
-        let mut settings = postgresql_embedded::Settings::default();
-        settings.data_dir = data_dir;
         // Use port 5433 to avoid conflicts with system postgres
-        settings.port = 5433;
+        let settings = postgresql_embedded::Settings {
+            data_dir,
+            port: 5433,
+            ..Default::default()
+        };
 
         let mut pg = postgresql_embedded::PostgreSQL::new(settings);
 
@@ -275,7 +277,9 @@ impl DevCommand {
         let url = pg.settings().url(db_name);
 
         // Set DATABASE_URL for child processes
-        std::env::set_var("DATABASE_URL", &url);
+        unsafe {
+            std::env::set_var("DATABASE_URL", &url);
+        }
 
         println!(
             "  {} Embedded PostgreSQL running on port 5433",

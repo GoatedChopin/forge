@@ -247,7 +247,9 @@ mod tests {
     #[test]
     fn test_real_env_provider() {
         // Set a test env var
-        std::env::set_var("FORGE_TEST_VAR", "test_value");
+        unsafe {
+            std::env::set_var("FORGE_TEST_VAR", "test_value");
+        }
 
         let provider = RealEnvProvider::new();
         assert_eq!(
@@ -258,7 +260,9 @@ mod tests {
         assert!(provider.get("FORGE_NONEXISTENT_VAR").is_none());
 
         // Cleanup
-        std::env::remove_var("FORGE_TEST_VAR");
+        unsafe {
+            std::env::remove_var("FORGE_TEST_VAR");
+        }
     }
 
     #[test]

@@ -801,7 +801,7 @@ mod tests {
 
     #[test]
     fn test_check_result() {
-        let mut result = CheckResult::new();
+        let result = CheckResult::new();
         assert!(result.passed);
         assert!(result.warnings.is_empty());
         assert!(result.errors.is_empty());

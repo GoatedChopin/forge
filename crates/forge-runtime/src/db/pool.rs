@@ -94,9 +94,10 @@ impl Database {
 
                 // Create settings with custom data directory if specified
                 let settings = if let Some(dir) = data_dir {
-                    let mut s = postgresql_embedded::Settings::default();
-                    s.data_dir = std::path::PathBuf::from(dir);
-                    s
+                    postgresql_embedded::Settings {
+                        data_dir: std::path::PathBuf::from(dir),
+                        ..Default::default()
+                    }
                 } else {
                     postgresql_embedded::Settings::default()
                 };
