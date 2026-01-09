@@ -1,221 +1,75 @@
 Vision
 FORGE is a framework for building full-stack applications where PostgreSQL is the only infrastructure dependency. Instead of assembling Redis, Kafka, and service meshes, adopters get auth, jobs, crons, workflows, real-time subscriptions, and observability out of the box. Nodes scale horizontally by sharing PostgreSQL as the coordination layer—no gRPC mesh, no gossip protocols. Workers register capabilities (GPU, high-CPU) and the scheduler assigns jobs intelligently via database queries. The framework handles multi-tenancy, rate limiting, and partitioning so adopters focus on business logic, not infrastructure. Target scale: ~100k MAU per deployment, 99% uptime, with the acceptable failure mode that DB down = service down.
 
-Tooling
+Stack: Rust 1.92+ (edition 2024), Svelte 5 + TypeScript, PostgreSQL
+Bun 1.3.1+ required for frontend
+Test: LIBRARY_PATH="/opt/homebrew/opt/libiconv/lib" cargo test
+Dev: forge dev (starts embedded postgres + backend + frontend)
+CLI install: cargo install --path crates/forge --features embedded-db
+Docs: cd docs && bun run start (routes: / landing, /docs, /tutorials, /blog)
 
-- Stack: Rust (backend), Svelte 5 + TypeScript (frontend), PostgreSQL
-- Rust: 1.92+ required, edition 2024
-- Bun: 1.3.1+ required
-- Package manager: cargo (backend), bun (frontend)
-- Test: LIBRARY_PATH="/opt/homebrew/opt/libiconv/lib" cargo test
-- Lint: cargo clippy | Format: cargo fmt
-- Dev: forge dev (starts embedded postgres + backend + frontend)
-- CLI install: cargo install --path crates/forge --features embedded-db
-- Docs: cd docs && bun run start (Docusaurus 3.9.2)
-- Site routes: / (landing), /docs (documentation), /tutorials (separate plugin), /blog
+Release: workflow_dispatch in GitHub Actions → validate → bump-versions → build → release → publish-crates
+Version updates: Cargo.toml workspace, internal deps, scaffold templates, docs/package.json
+Publishes to crates.io in dependency order with 30s delays
 
-Release Process
-- Trigger: workflow_dispatch in GitHub Actions (Actions → Release → Run workflow)
-- Input: version (e.g., "0.0.3-alpha")
-- Flow: validate → bump-versions → build → release → publish-crates
-- Validation: fmt check, clippy, release build, tests (must pass before version bump)
-- Version updates: Cargo.toml workspace, internal deps, scaffold templates, docs/package.json, docs/*.mdx
-- Commits directly to main (no version branches)
-- Auto-creates git tag v{version} and GitHub release
-- Publishes to crates.io in dependency order with 30s delays (index update time)
-- Main crate (forgex) uses root README.md for crates.io
+Crates: forge (CLI + runtime), forge-core (traits, types, contexts), forge-macros (proc macros), forge-runtime (executors, gateway), forge-codegen (TypeScript generator)
+Package: `forgex` (crates.io), library: `forge` (imports), CLI binary: `forge`
+Proc macros use forge::forge_core:: paths
 
-Architecture
+#[forge::model] generates struct + ModelMeta for TypeScript codegen only
+Migrations are source of truth - indexes, constraints, defaults in SQL files
+User functions take &QueryContext, &MutationContext (references)
+axum 0.7+ routes: {param} not :param
+ctx.db() accessor, not ctx.pool | RPC: {} normalized to null, response uses `data` field
 
-- Single binary: gateway + functions + workers + scheduler
-- PostgreSQL only (no Redis/Kafka) for data + coordination
-- WebSocket for real-time, gRPC for inter-node mesh
+Advisory locks: leader election (0x464F5247), migrations (0x464F524745)
+Tables: forge_nodes, forge_leaders, forge_jobs, forge_cron_runs, forge_workflow_runs/steps, forge_sessions, forge_metrics/logs/traces, forge_migrations
+Migrations: migrations/ with 0001_xxx.sql, markers: `-- @up` and `-- @down`
 
-Crates
+Reactivity: ChangeListener → InvalidationEngine → Reactor → WebSocket
+Triggers: forge_enable_reactivity(table), must update last_result_hash after sending
 
-- forge: CLI + runtime (ForgeBuilder pattern)
-- forge-core: traits, types, contexts (no tokio dep except spawn)
-- forge-macros: proc macros (#[forge::model], #[query], #[mutation], etc.)
-- forge-runtime: executors, registries, gateway, dashboard
-- forge-codegen: TypeScript generator, source parser (syn)
+Frontend runtime in $lib/forge/ (types, client, stores, api)
+query(): async Promise | subscribe(): Svelte store
+Svelte 5: no props destructuring at module level, ForgeProvider sets context immediately
 
-Key Patterns
+Dashboard: /_dashboard/ (pages), /_api/ (REST)
+Dispatch: POST /_api/jobs/{type}/dispatch, /_api/workflows/{name}/start
 
-- Package name: `forgex` (crates.io), library name: `forge` (imports), CLI binary: `forge`
-- Proc macros use forge::forge_core:: paths (re-exported)
-- #[forge::model] only generates struct + ModelMeta for TypeScript codegen (no schema attributes)
-- Migrations are source of truth (not schema attributes) - indexes, constraints, defaults in SQL
-- User functions take &QueryContext, &MutationContext (references)
-- axum 0.7+ routes: {param} not :param
-- FromStr trait for enum parsing (not inherent from_str)
-- ForgeConfig.parse_toml() not from_str() (clippy)
-- Context: ctx.db() accessor, not ctx.pool
-- RPC: {} normalized to null, response uses `data` field
+Durable workflows: ctx.sleep(), ctx.sleep_until(), ctx.wait_for_event()
+WorkflowScheduler polls suspended_at, wake_at, waiting_for_event
+WorkflowState: Pending, Running, Suspended, Completed, Failed, Cancelled
 
-Database
+Rate limiting: forge_rate_limits table with token bucket, keys: User, Ip, Tenant, UserAction, Global
+Multi-tenancy: TenantContext with None/Strict isolation, Claims.tenant_id() from JWT
+Parallel workflows: ParallelBuilder.step().step_with_compensate().run()
+Adaptive tracking: AdaptiveTracker switches Row↔Table based on subscription counts
 
-- Advisory locks: leader election (0x464F5247 prefix), migrations (0x464F524745)
-- SKIP LOCKED: job claiming without double-processing
-- Tables: forge_nodes, forge_leaders, forge_jobs, forge_cron_runs, forge_workflow_runs/steps, forge_sessions/subscriptions, forge_metrics/logs/traces, forge_migrations
+CLI Templates in crates/forge/templates/ with .tmpl extension
+template::render() for {{var}} replacement, include_str!() embeds at compile time
+Directories: empty/, populated/, runtime/
+Flags: --demo (full examples) or --minimal (clean scaffolding), one required
+create_project(dir, name, demo) - demo=true uses populated/, demo=false uses empty/
+AGENTS.md included in all scaffolded projects
 
-Migrations
+Template features: #[forge::model], #[forge::query(cache, public, timeout)], #[forge::mutation(timeout)]
+Actions: #[forge::action(timeout)], ctx.http() for external API calls
+Jobs: #[retry], #[idempotent], #[priority], #[worker_capability], ctx.progress(), ctx.heartbeat()
+Crons: #[forge::cron("...")], #[timezone], #[catch_up], ctx.log.info/warn/error/debug()
+Workflows: #[version], #[timeout], ctx.sleep(), ctx.is_resumed(), ctx.workflow_time()
 
-- Directory: migrations/ with 0001_xxx.sql files
-- Up/down markers: `-- @up` and `-- @down`
-- MigrationRunner: advisory lock for mesh-safe deploys
-- Built-in: 0000_forge_internal (system tables)
+EnvAccess trait: ctx.env(), ctx.env_or(), ctx.env_require(), ctx.env_parse()
+All context types implement EnvAccess, test contexts use MockEnvProvider
+Builder: .with_env("KEY", "value"), verification: ctx.env_mock().assert_accessed("KEY")
 
-Reactivity
+Testing: TestQueryContext, TestMutationContext, TestActionContext, TestJobContext, TestCronContext, TestWorkflowContext
+Builder: .as_user(), .with_role(), .with_claim(), .with_tenant(), .with_pool(), .with_env()
+MockHttp with pattern matching, MockJobDispatch, MockWorkflowDispatch
+TestDatabase: EXPLICIT config (from_url, from_env, embedded), from_env uses TEST_DATABASE_URL
+Tests inline with function files (#[cfg(test)] mod tests), import from forge::testing
 
-- Pipeline: ChangeListener -> InvalidationEngine -> Reactor -> WebSocket
-- Triggers: forge_enable_reactivity(table) creates NOTIFY triggers
-- Read set: query name patterns (get_X/list_X -> table X)
-- Hash updates: must update last_result_hash after sending, not during (lock ordering)
-
-Frontend
-
-- Generated runtime in $lib/forge/ (types, client, stores, api)
-- query(): async Promise | subscribe(): Svelte store
-- Job/Workflow trackers: createJobTracker(), createWorkflowTracker()
-- Svelte 5: no props destructuring at module level, use props.\* in closures
-- ForgeProvider: set context immediately (not onMount), const for $state objects
-
-Dashboard
-
-- Routes: /\_dashboard/ (pages), /\_api/ (REST)
-- Dispatch: POST /\_api/jobs/{type}/dispatch, /\_api/workflows/{name}/start
-- Chart.js via CDN with fallback
-
-Durable Workflows
-
-- Suspend: ctx.sleep(Duration), ctx.sleep_until(DateTime), ctx.wait_for_event(name, timeout)
-- Resume: WorkflowScheduler polls suspended_at, wake_at, waiting_for_event
-- Events: forge_workflow_events table, EventStore.send_event(), consume_event()
-- State: WorkflowState enum (Pending, Running, Suspended, Completed, Failed, Cancelled)
-
-Rate Limiting
-
-- Token bucket: forge_rate_limits table with atomic UPSERT
-- Keys: User, Ip, Tenant, UserAction, Global
-- Config: requests per window, refill_rate()
-
-Multi-tenancy
-
-- TenantContext: None, Strict(Uuid) isolation modes
-- require_tenant(), tenant_id() accessors
-- Claims.tenant_id() from JWT custom claims
-
-Parallel Workflows
-
-- ParallelBuilder.step(name, fn).step_with_compensate(name, fn, comp).run()
-- Caches completed steps, runs compensation on failure
-
-Table Partitioning
-
-- PartitionManager.ensure_partition(table, granularity)
-- PartitionGranularity: Hour, Day, Week, Month
-- cleanup_old_partitions() for retention
-
-Adaptive Tracking
-
-- AdaptiveTracker switches Row↔Table based on subscription counts
-- row_threshold, table_threshold for hysteresis
-- TrackingMode: None, Table, Row, Adaptive
-
-CLI Scaffolding
-
-- Templates in crates/forge/templates/ with .tmpl extension
-- template::render() for {{var}} replacement, template_vars! macro
-- Template vars: "name" and "project_name" both set to project name
-- include_str!() embeds templates at compile time
-- Directories: empty/ (project/, frontend/), populated/ (project/, frontend/), runtime/
-- new.rs must include_str! and fs::write for each template file
-- Single binary: `cargo build --release` embeds frontend via rust-embed (default, opt-out with --no-default-features)
-- Embedded PostgreSQL: `database.embedded = true` in forge.toml for zero-dependency deployment
-- Flags: --demo (full examples) or --minimal (clean scaffolding), one is required
-- Both modes include frontend, no backend-only option
-- create_project(dir, name, demo) signature - demo=true uses populated/, demo=false uses empty/
-- AGENTS.md included in all scaffolded projects (agent guide for coding assistants)
-
-Template Features Demonstrated
-
-Schema:
-- #[forge::model] for struct + TypeScript codegen (no field attributes)
-- Enum: sqlx::Type with #[sqlx(type_name, rename_all)]
-- #[default] for default enum variant
-- All indexes, constraints, defaults defined in migrations (source of truth)
-
-Queries:
-- Caching: #[forge::query(cache = "30s")]
-- Public endpoint: #[forge::query(cache = "30s", public)]
-- Timeout: #[forge::query(timeout = 10)]
-
-Mutations:
-- Basic: #[forge::mutation]
-- With timeout: #[forge::mutation(timeout = 30)]
-- Role-protected (commented): #[forge::mutation(require_auth, require_role("admin"))]
-
-Actions:
-- With timeout: #[forge::action(timeout = 30)]
-- ctx.http() for external API calls (CoinGecko API example: Bitcoin price)
-
-Jobs:
-- Retry: #[retry(max_attempts = 3, backoff = "exponential")]
-- Idempotency: #[idempotent]
-- Priority: #[priority = "low"]
-- Worker capability: #[worker_capability = "general"]
-- ctx.heartbeat() for long-running jobs
-- ctx.is_retry(), ctx.is_last_attempt() for retry detection
-- ctx.progress(percent, message) for progress reporting
-
-Crons:
-- Schedule: #[forge::cron("* * * * *")]
-- Timezone: #[timezone = "UTC"]
-- Catch-up: #[catch_up], #[catch_up_limit = 5]
-- ctx.delay(), ctx.is_late() for delay detection
-- ctx.is_catch_up for catch-up run detection
-- ctx.log.info/warn/error/debug() for structured logging
-
-Workflows:
-- Version: #[version = 1], #[timeout = "24h"]
-- Manual step tracking: ctx.is_step_completed(), ctx.record_step_start/complete()
-- Durable sleep: ctx.sleep(Duration) - survives server restarts
-- Resumption detection: ctx.is_resumed()
-- Deterministic time: ctx.workflow_time()
-- Advanced patterns (commented): parallel(), fluent step API, wait_for_event()
-
-Environment Variables:
-- EnvAccess trait: ctx.env("KEY"), ctx.env_or("KEY", "default"), ctx.env_require("KEY")
-- Type parsing: ctx.env_parse::<T>("KEY"), ctx.env_parse_or("KEY", default)
-- Check existence: ctx.env_contains("KEY")
-- All context types implement EnvAccess: QueryContext, MutationContext, ActionContext, JobContext, CronContext, WorkflowContext
-- Test contexts use MockEnvProvider for mocking
-- Builder: .with_env("KEY", "value"), .with_envs(HashMap)
-- Verification: ctx.env_mock().assert_accessed("KEY"), ctx.env_mock().was_accessed("KEY")
-- Import: forge::prelude::EnvAccess (trait must be in scope for env methods)
-
-Testing:
-- Per-function-type contexts: TestQueryContext, TestMutationContext, TestActionContext, TestJobContext, TestCronContext, TestWorkflowContext
-- Builder pattern: .as_user(), .with_role(), .with_claim(), .with_tenant(), .with_pool(), .with_env()
-- MockHttp with pattern matching, request recording, verification (assert_called, assert_called_times, assert_not_called)
-- MockEnvProvider with access tracking (assert_accessed, was_accessed, accessed_keys)
-- MockJobDispatch, MockWorkflowDispatch for dispatch verification
-- Assertion macros: assert_ok!, assert_err!, assert_err_variant!, assert_job_dispatched!, assert_workflow_started!, assert_http_called!
-- Helper functions: assert_json_matches(), error_contains(), validation_error_for_field()
-- TestDatabase: EXPLICIT config required (from_url, from_env, embedded) - never auto-reads .env
-- TestDatabase.embedded() requires embedded-db feature: cargo test --features embedded-db
-- TestDatabase.from_env() uses TEST_DATABASE_URL (not DATABASE_URL) for safety
-- Tests are inline with function files (#[cfg(test)] mod tests), not separate files
-- Testing utilities: import from forge::testing (re-exported from forge_core::testing)
-- Assertion macros: forge_core::{assert_ok, assert_err, assert_job_dispatched, ...}
-
-Config (forge.toml):
-- [project], [database], [gateway], [observability] sections
-- Commented: [function], [worker], [auth], [rate_limit], [cluster], [node]
-
-Testing Scaffolding (local dev):
+Local dev scaffolding:
 - Build CLI: LIBRARY_PATH="/opt/homebrew/opt/libiconv/lib" cargo build --release
 - Create demo: ./target/release/forge new <output-dir> --demo
-- Add [patch.crates-io] to demo's Cargo.toml pointing to local crates:
-  forgex, forge-core, forge-macros, forge-runtime, forge-codegen
-- Run demo: docker compose up -d && cargo run
+- Add [patch.crates-io] to demo's Cargo.toml pointing to local crates
+- Run: forge dev
