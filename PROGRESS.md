@@ -1,3 +1,14 @@
+Updated to Rust edition 2024 with Rust 1.92+ and Bun 1.3.1+ version requirements.
+- crates/forge/src/cli/new.rs: Added check_rust_version() and check_bun_version() with MIN_RUST_VERSION (1.92) and MIN_BUN_VERSION (1.3.1) constants
+- Cargo.toml (workspace): Changed edition from 2021 to 2024, added rust-version = "1.92"
+- All crate Cargo.toml files: Added [lints] workspace = true to inherit workspace lint settings
+- Cargo.toml (workspace): Added [workspace.lints.clippy] collapsible_if = "allow" for edition 2024 compatibility
+- crates/forge/templates/*/Cargo.toml.tmpl: Updated edition to 2024, rust-version to 1.92
+- crates/forge/src/cli/dev.rs: Wrapped std::env::set_var in unsafe block (required in edition 2024)
+- crates/forge-codegen/src/typescript/*.rs: Renamed `gen` variables to `generator` (`gen` is reserved in edition 2024)
+- docs/docs/quick-start.mdx: Updated prerequisite versions (Rust 1.92+, Bun 1.3.1+)
+- docs/docs/concepts/deployment.mdx: Updated Docker image from rust:1.75 to rust:1.92
+
 Added git init and project name extraction to CLI scaffolding.
 - crates/forge/src/cli/new.rs: Added extract_project_name() to handle paths like "path/to/my-app" → "my-app"
 - crates/forge/src/cli/new.rs: Added is_inside_git_repo() using `git rev-parse --git-dir` to detect parent repos
@@ -730,3 +741,32 @@ Implemented typesafe environment variable access for functions (closes #4).
 - docs/docs/api/query-context.mdx: Added Environment Variables section with examples
 - docs/docs/api/action-context.mdx: Added Environment Variables section with API key example
 - docs/sidebars.ts: Added env-access and testing pages to API Reference section
+
+Refactored CLI: forge dev with embedded postgres, removed run/init, improved check validation.
+- crates/forge/src/cli/dev.rs: Rewrote to start embedded postgres first, compile backend, then start frontend
+- Added --no-pg flag to skip embedded postgres when using external DATABASE_URL
+- Backend uses cargo-watch watching only src/, migrations/, Cargo.toml (ignores frontend/)
+- Requires cargo (graceful fail with install instructions if missing)
+- crates/forge/src/cli/run.rs: Deleted - forge dev is now the primary command
+- crates/forge/src/cli/mod.rs: Removed Init and Run commands, updated ABOUT/AFTER_HELP
+- crates/forge/src/cli/check.rs: Rewrote with comprehensive validation:
+  - forge.toml: Valid TOML, [project] name, [database] url format, [gateway] port range
+  - Cargo.toml: forge/forgex dependency exists
+  - Migrations: NNNN_name.sql naming, -- @up marker present
+  - Functions: #[forge::*] macros in .rs files
+  - Schema: #[forge::model] macro in .rs files
+  - Frontend: package.json, svelte dependency, .forge/svelte runtime, node_modules
+- crates/forge/Cargo.toml: Added postgresql_embedded v0.20 with embedded-db feature
+- templates/*/gitignore.tmpl: Added pg_data/ and .forge/ directories
+- templates/*/README.md.tmpl: Updated quick start to use forge dev
+- docs/docs/cli/index.mdx: Removed forge run, updated forge dev and forge check docs
+- docs/docs/quick-start.mdx: Rewritten for forge dev workflow, removed Docker requirement
+- MEMORIES.md: Updated Dev command to forge dev
+
+Additional CLI refinements: dropped Windows, added linting checks, updated deployment docs.
+- crates/forge/src/cli/dev.rs: Removed Windows support (where command, cmd browser open)
+- crates/forge/src/cli/check.rs: Added cargo fmt --check, cargo clippy -D warnings, bun run lint, bun run format:check
+- templates/*/gitignore.tmpl: Removed .forge/ from gitignore (it's committed frontend runtime code)
+- templates/*/README.md.tmpl: Added Docker Compose section, VM deployment, Docker deployment
+- docs/docs/cli/index.mdx: Updated check docs with linting, updated deployment to Docker/VM
+- docs/docs/quick-start.mdx: Added Docker Compose alternative section

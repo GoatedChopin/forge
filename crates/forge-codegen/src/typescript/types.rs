@@ -96,13 +96,13 @@ mod tests {
 
     #[test]
     fn test_generator_creation() {
-        let gen = TypeGenerator::new("/tmp");
-        assert_eq!(gen.output_dir, PathBuf::from("/tmp"));
+        let generator = TypeGenerator::new("/tmp");
+        assert_eq!(generator.output_dir, PathBuf::from("/tmp"));
     }
 
     #[test]
     fn test_generate_with_table() {
-        let gen = TypeGenerator::new("/tmp");
+        let generator = TypeGenerator::new("/tmp");
         let registry = SchemaRegistry::new();
 
         let mut table = TableDef::new("users", "User");
@@ -114,7 +114,7 @@ mod tests {
         ));
         registry.register_table(table);
 
-        let output = gen.generate(&registry).unwrap();
+        let output = generator.generate(&registry).unwrap();
         assert!(output.contains("export interface User {"));
         assert!(output.contains("id: string;"));
         assert!(output.contains("email: string;"));
@@ -123,7 +123,7 @@ mod tests {
 
     #[test]
     fn test_generate_with_enum() {
-        let gen = TypeGenerator::new("/tmp");
+        let generator = TypeGenerator::new("/tmp");
         let registry = SchemaRegistry::new();
 
         let mut enum_def = EnumDef::new("ProjectStatus");
@@ -131,7 +131,7 @@ mod tests {
         enum_def.variants.push(EnumVariant::new("Active"));
         registry.register_enum(enum_def);
 
-        let output = gen.generate(&registry).unwrap();
+        let output = generator.generate(&registry).unwrap();
         assert!(output.contains("export type ProjectStatus"));
         assert!(output.contains("'draft'"));
         assert!(output.contains("'active'"));
@@ -139,8 +139,8 @@ mod tests {
 
     #[test]
     fn test_generate_common_types() {
-        let gen = TypeGenerator::new("/tmp");
-        let result = gen.generate_common_types();
+        let generator = TypeGenerator::new("/tmp");
+        let result = generator.generate_common_types();
         assert!(result.contains("export interface Paginated<T>"));
         assert!(result.contains("export interface ForgeError"));
     }

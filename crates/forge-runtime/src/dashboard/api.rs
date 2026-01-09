@@ -1120,7 +1120,7 @@ pub async fn delete_alert_rule(
             return (
                 StatusCode::BAD_REQUEST,
                 Json(ApiResponse::error("Invalid rule ID")),
-            )
+            );
         }
     };
 

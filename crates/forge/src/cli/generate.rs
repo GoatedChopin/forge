@@ -8,8 +8,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use super::runtime_generator::{
-    generate_runtime, get_installed_version, has_legacy_runtime, needs_update,
-    remove_legacy_runtime, update_frontend_package_json, FORGE_VERSION,
+    FORGE_VERSION, generate_runtime, get_installed_version, has_legacy_runtime, needs_update,
+    remove_legacy_runtime, update_frontend_package_json,
 };
 
 /// Generate TypeScript client code.

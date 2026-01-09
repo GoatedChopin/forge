@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{parse_macro_input, ItemFn, Meta};
+use syn::{ItemFn, Meta, parse_macro_input};
 
 /// Cron attributes.
 #[derive(Debug, Default)]

@@ -18,29 +18,38 @@ FORGE handles the hard parts of full-stack engineering so you can focus on busin
 
 No Redis. No Kafka. No message queues. Just PostgreSQL.
 
-## Quick Start (Docker Compose)
+## Quick Start
+
+```bash
+forge dev
+```
+
+This single command:
+- Starts embedded PostgreSQL (data in `./pg_data/`)
+- Compiles and runs the backend with hot reload
+- Starts the frontend dev server
+- Opens your browser
+
+Backend: `http://localhost:8080` | Frontend: `http://localhost:5173` | Dashboard: `http://localhost:8080/_dashboard`
+
+## Using Docker Compose
+
+For containerized development:
 
 ```bash
 docker compose up --build
 ```
 
-Backend: `http://localhost:8080` | Frontend: `http://localhost:5173` | Dashboard: `http://localhost:8080/_dashboard`
+## Using External Database
 
-## Manual Setup
+If you prefer your own PostgreSQL:
 
-**Database:**
 ```bash
-docker run --rm -d --name {{project_name}}-db -e POSTGRES_PASSWORD=forge -e POSTGRES_DB={{project_name}} -p 5432:5432 postgres:18
-```
+# Set your database URL
+echo "DATABASE_URL=postgres://user:pass@localhost/{{project_name}}" >> .env
 
-**Backend:**
-```bash
-cargo run
-```
-
-**Frontend** (separate terminal):
-```bash
-cd frontend && bun install && bun dev
+# Start without embedded postgres
+forge dev --no-pg
 ```
 
 ## Build
@@ -65,7 +74,7 @@ See `src/functions/` for test examples.
 
 ## Deployment
 
-For deployment options (Docker, Railway, Fly.io, embedded PostgreSQL, etc.), see the [Deployment Guide](https://tryforge.dev/docs/concepts/deployment).
+For deployment options (Docker, VM, embedded PostgreSQL, etc.), see the [Deployment Guide](https://tryforge.dev/docs/concepts/deployment).
 
 ## Project Structure
 
@@ -78,5 +87,6 @@ For deployment options (Docker, Railway, Fly.io, embedded PostgreSQL, etc.), see
 ├── migrations/              # SQL migrations
 ├── frontend/                # SvelteKit frontend
 ├── forge.toml               # FORGE configuration
-└── Dockerfile
+├── docker-compose.yml       # Development containers
+└── Dockerfile               # Production image
 ```

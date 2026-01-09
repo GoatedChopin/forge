@@ -45,7 +45,7 @@ version: '3.8'
 
 services:
   postgres:
-    image: postgres:16
+    image: postgres:18
     environment:
       POSTGRES_DB: forge
       POSTGRES_USER: forge
@@ -81,7 +81,7 @@ version: '3.8'
 
 services:
   postgres:
-    image: postgres:16
+    image: postgres:18
     environment:
       POSTGRES_DB: forge
       POSTGRES_USER: forge
@@ -124,7 +124,7 @@ upstream forge {
 
 server {
     listen 80;
-    
+
     location / {
         proxy_pass http://forge;
         proxy_http_version 1.1;

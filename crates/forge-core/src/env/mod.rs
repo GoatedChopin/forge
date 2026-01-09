@@ -192,9 +192,9 @@ pub trait EnvAccess {
     ///
     /// Returns an error if the variable is not set.
     fn env_require(&self, key: &str) -> Result<String> {
-        self.env_provider()
-            .get(key)
-            .ok_or_else(|| ForgeError::Config(format!("Required environment variable '{}' not set", key)))
+        self.env_provider().get(key).ok_or_else(|| {
+            ForgeError::Config(format!("Required environment variable '{}' not set", key))
+        })
     }
 
     /// Get an environment variable and parse it to the specified type.
@@ -250,7 +250,10 @@ mod tests {
         std::env::set_var("FORGE_TEST_VAR", "test_value");
 
         let provider = RealEnvProvider::new();
-        assert_eq!(provider.get("FORGE_TEST_VAR"), Some("test_value".to_string()));
+        assert_eq!(
+            provider.get("FORGE_TEST_VAR"),
+            Some("test_value".to_string())
+        );
         assert!(provider.contains("FORGE_TEST_VAR"));
         assert!(provider.get("FORGE_NONEXISTENT_VAR").is_none());
 

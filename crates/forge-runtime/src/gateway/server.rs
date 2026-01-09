@@ -2,9 +2,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::{
-    middleware,
+    Json, Router, middleware,
     routing::{any, get, post},
-    Json, Router,
 };
 use serde::Serialize;
 use tower::ServiceBuilder;
@@ -13,11 +12,11 @@ use tower_http::cors::{Any, CorsLayer};
 use forge_core::cluster::NodeId;
 use forge_core::function::{JobDispatch, WorkflowDispatch};
 
-use super::auth::{auth_middleware, AuthConfig, AuthMiddleware};
-use super::metrics::{metrics_middleware, MetricsState};
-use super::rpc::{rpc_function_handler, rpc_handler, RpcHandler};
+use super::auth::{AuthConfig, AuthMiddleware, auth_middleware};
+use super::metrics::{MetricsState, metrics_middleware};
+use super::rpc::{RpcHandler, rpc_function_handler, rpc_handler};
 use super::tracing::TracingState;
-use super::websocket::{ws_handler, WsState};
+use super::websocket::{WsState, ws_handler};
 use crate::function::FunctionRegistry;
 use crate::observability::ObservabilityState;
 use crate::realtime::{Reactor, ReactorConfig};

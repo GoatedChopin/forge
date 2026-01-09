@@ -19,8 +19,8 @@ pub use tracing_layer::ForgeTracingLayer;
 use std::sync::Arc;
 use std::time::Duration;
 
-use forge_core::observability::{LogEntry, Metric, Span};
 use forge_core::Result;
+use forge_core::observability::{LogEntry, Metric, Span};
 use tokio::sync::RwLock;
 
 /// Shared observability state for the runtime.

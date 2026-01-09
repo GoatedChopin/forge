@@ -12,7 +12,7 @@ pub use diff::{DiffAction, DiffEntry, SchemaDiff};
 pub use executor::MigrationExecutor;
 pub use generator::MigrationGenerator;
 pub use runner::{
-    load_migrations_from_dir, AppliedMigration, Migration, MigrationRunner, MigrationStatus,
+    AppliedMigration, Migration, MigrationRunner, MigrationStatus, load_migrations_from_dir,
 };
 
 // Re-export for internal use

@@ -4,7 +4,6 @@ mod dev;
 mod generate;
 mod migrate;
 mod new;
-mod run;
 mod runtime_generator;
 mod template;
 
@@ -14,7 +13,6 @@ pub use dev::DevCommand;
 pub use generate::GenerateCommand;
 pub use migrate::MigrateCommand;
 pub use new::NewCommand;
-pub use run::RunCommand;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -24,18 +22,18 @@ const ABOUT: &str = r#"FORGE - The Full-Stack Framework for the Impatient
 Everything you need in one binary. No Redis, no Kafka, just PostgreSQL.
 
 Quick Start:
-  forge new my-app --demo     Create a demo project with examples
-  forge new my-app --minimal  Create a clean project to start fresh
+  forge new my-app --demo   Create a demo project with examples
   cd my-app
-  forge dev                   Start development environment
+  forge dev                 Start development (postgres + backend + frontend)
 
 Learn more: https://tryforge.dev/docs"#;
 
 const AFTER_HELP: &str = r#"Examples:
   forge new my-app --demo        Full demo with User CRUD, jobs, workflows
   forge new my-app --minimal     Clean slate with just the structure
-  forge check                    Validate project setup
-  forge dev                      Start backend + frontend
+  forge dev                      Start development (embedded postgres, hot reload)
+  forge dev --no-pg              Use external DATABASE_URL instead
+  forge check                    Validate project configuration
   forge add query get_users      Add a new query function
   forge generate                 Regenerate TypeScript types
   forge migrate status           Check migration status
@@ -58,13 +56,10 @@ pub enum Commands {
     /// Create a new FORGE project
     New(NewCommand),
 
-    /// Initialize FORGE in an existing directory
-    Init(InitCommand),
-
-    /// Validate project setup and dependencies
+    /// Validate project configuration and dependencies
     Check(CheckCommand),
 
-    /// Start development environment (backend + frontend)
+    /// Start development environment (postgres + backend + frontend)
     Dev(DevCommand),
 
     /// Add a new component (model, query, mutation, etc.)
@@ -73,27 +68,8 @@ pub enum Commands {
     /// Generate TypeScript client code
     Generate(GenerateCommand),
 
-    /// Run the FORGE server
-    Run(RunCommand),
-
     /// Manage database migrations
     Migrate(MigrateCommand),
-}
-
-/// Initialize in existing directory.
-#[derive(Parser)]
-pub struct InitCommand {
-    /// Project name (defaults to directory name).
-    #[arg(short, long)]
-    pub name: Option<String>,
-
-    /// Create a full demo project with example code.
-    #[arg(long, conflicts_with = "minimal")]
-    pub demo: bool,
-
-    /// Create a clean project with minimal scaffolding.
-    #[arg(long, conflicts_with = "demo")]
-    pub minimal: bool,
 }
 
 impl Cli {
@@ -101,85 +77,13 @@ impl Cli {
     pub async fn execute(self) -> Result<()> {
         match self.command {
             Commands::New(cmd) => cmd.execute().await,
-            Commands::Init(cmd) => init_project(cmd).await,
             Commands::Check(cmd) => cmd.execute().await,
             Commands::Dev(cmd) => cmd.execute().await,
             Commands::Add(cmd) => cmd.execute().await,
             Commands::Generate(cmd) => cmd.execute().await,
-            Commands::Run(cmd) => cmd.execute().await,
             Commands::Migrate(cmd) => cmd.execute().await,
         }
     }
-}
-
-/// Initialize a new project in the current directory.
-async fn init_project(cmd: InitCommand) -> Result<()> {
-    use console::style;
-
-    // Require either --demo or --minimal
-    if !cmd.demo && !cmd.minimal {
-        eprintln!(
-            "{}",
-            style("Error: You must specify a template mode")
-                .red()
-                .bold()
-        );
-        eprintln!();
-        eprintln!("Choose one of:");
-        eprintln!("  {} - Full demo with examples", style("--demo").cyan());
-        eprintln!("  {} - Clean slate", style("--minimal").cyan());
-        eprintln!();
-        eprintln!(
-            "Example: {} or {}",
-            style("forge init --demo").green(),
-            style("forge init --minimal").green()
-        );
-        std::process::exit(1);
-    }
-
-    let current_dir = std::env::current_dir()?;
-    let name = cmd
-        .name
-        .map(|n| new::extract_project_name(&n))
-        .unwrap_or_else(|| {
-            current_dir
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("forge-app")
-                .to_string()
-        });
-
-    new::create_project(&current_dir, &name, cmd.demo)?;
-
-    // Initialize git repository if git is available and not already inside a repo
-    let is_inside_repo = std::process::Command::new("git")
-        .args(["rev-parse", "--git-dir"])
-        .current_dir(&current_dir)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-
-    if !is_inside_repo {
-        if let Ok(output) = std::process::Command::new("git").arg("--version").output() {
-            if output.status.success() {
-                let _ = std::process::Command::new("git")
-                    .args(["init"])
-                    .current_dir(&current_dir)
-                    .output();
-                let _ = std::process::Command::new("git")
-                    .args(["add", "."])
-                    .current_dir(&current_dir)
-                    .output();
-                let _ = std::process::Command::new("git")
-                    .args(["commit", "-m", "Initialize project with Forge"])
-                    .current_dir(&current_dir)
-                    .output();
-            }
-        }
-    }
-
-    println!("✅ Initialized FORGE project: {}", name);
-    Ok(())
 }
 
 #[cfg(test)]

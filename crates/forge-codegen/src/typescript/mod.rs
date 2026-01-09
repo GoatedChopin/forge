@@ -105,14 +105,14 @@ mod tests {
 
     #[test]
     fn test_generator_creation() {
-        let gen = TypeScriptGenerator::new("/tmp/forge");
-        assert_eq!(gen.output_dir(), &PathBuf::from("/tmp/forge"));
+        let generator = TypeScriptGenerator::new("/tmp/forge");
+        assert_eq!(generator.output_dir(), &PathBuf::from("/tmp/forge"));
     }
 
     #[test]
     fn test_generate_index() {
-        let gen = TypeScriptGenerator::new("/tmp/forge");
-        let index = gen.generate_index();
+        let generator = TypeScriptGenerator::new("/tmp/forge");
+        let index = generator.generate_index();
         assert!(index.contains("export * from './types'"));
         assert!(index.contains("export * from './api'"));
         assert!(index.contains("export * from './client'"));

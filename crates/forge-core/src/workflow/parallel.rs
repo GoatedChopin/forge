@@ -3,10 +3,10 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 
-use super::context::WorkflowContext;
 use super::CompensationHandler;
+use super::context::WorkflowContext;
 use crate::{ForgeError, Result};
 
 /// Type alias for parallel step handler.

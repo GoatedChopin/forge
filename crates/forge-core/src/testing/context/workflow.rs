@@ -9,9 +9,9 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::super::mock_http::{MockHttp, MockRequest, MockResponse};
+use crate::Result;
 use crate::env::{EnvAccess, EnvProvider, MockEnvProvider};
 use crate::function::AuthContext;
-use crate::Result;
 
 /// Step state stored during testing.
 #[derive(Debug, Clone)]

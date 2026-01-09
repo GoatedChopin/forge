@@ -9,6 +9,9 @@ description = "CLI and runtime for the Forge full-stack framework"
 keywords = ["framework", "postgresql", "full-stack", "cli"]
 categories = ["web-programming", "command-line-utilities"]
 
+[lints]
+workspace = true
+
 [lib]
 name = "forge"
 path = "src/lib.rs"
@@ -45,7 +48,10 @@ axum = { workspace = true }
 
 [features]
 default = []
-embedded-db = ["forge-core/embedded-db", "forge-runtime/embedded-db"]
+embedded-db = ["forge-core/embedded-db", "forge-runtime/embedded-db", "dep:postgresql_embedded"]
+
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+postgresql_embedded = { version = "0.20", features = ["bundled"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use uuid::Uuid;
 
 use forge_core::error::{ForgeError, Result};
@@ -12,8 +12,8 @@ use forge_core::function::{AuthContext, MutationContext, QueryContext};
 use forge_core::job::JobStatus;
 use forge_core::workflow::WorkflowStatus;
 
-use super::mock::{MockHttp, MockRequest, MockResponse};
 use super::TestConfig;
+use super::mock::{MockHttp, MockRequest, MockResponse};
 
 /// Test context for integration tests.
 ///

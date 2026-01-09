@@ -285,14 +285,14 @@ mod tests {
 
     #[test]
     fn test_client_generator_creation() {
-        let gen = ClientGenerator::new("/tmp/forge");
-        assert_eq!(gen.output_dir, PathBuf::from("/tmp/forge"));
+        let generator = ClientGenerator::new("/tmp/forge");
+        assert_eq!(generator.output_dir, PathBuf::from("/tmp/forge"));
     }
 
     #[test]
     fn test_generate_client_content() {
-        let gen = ClientGenerator::new("/tmp/forge");
-        let content = gen.generate_client_content();
+        let generator = ClientGenerator::new("/tmp/forge");
+        let content = generator.generate_client_content();
         assert!(content.contains("ForgeClient"));
         assert!(content.contains("ForgeClientConfig"));
         assert!(content.contains("ConnectionState"));

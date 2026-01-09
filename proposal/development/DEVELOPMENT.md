@@ -85,7 +85,7 @@ docker run -d \
   -e POSTGRES_USER=forge \
   -e POSTGRES_PASSWORD=forge \
   -p 5432:5432 \
-  postgres:16
+  postgres:18
 
 # Or install natively
 # macOS: brew install postgresql@16

@@ -20,8 +20,8 @@ pub use cluster::{
 };
 pub use cron::{CronEntry, CronRecord, CronRegistry, CronRunner, CronStatus};
 pub use dashboard::{
-    create_api_router, create_dashboard_router, DashboardApi, DashboardAssets, DashboardConfig,
-    DashboardPages, DashboardState,
+    DashboardApi, DashboardAssets, DashboardConfig, DashboardPages, DashboardState,
+    create_api_router, create_dashboard_router,
 };
 pub use db::Database;
 pub use function::{FunctionExecutor, FunctionRegistry, FunctionRouter, RouteResult};

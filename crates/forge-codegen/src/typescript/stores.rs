@@ -265,14 +265,14 @@ mod tests {
 
     #[test]
     fn test_store_generator_creation() {
-        let gen = StoreGenerator::new("/tmp/forge");
-        assert_eq!(gen.output_dir, PathBuf::from("/tmp/forge"));
+        let generator = StoreGenerator::new("/tmp/forge");
+        assert_eq!(generator.output_dir, PathBuf::from("/tmp/forge"));
     }
 
     #[test]
     fn test_generate_stores_content() {
-        let gen = StoreGenerator::new("/tmp/forge");
-        let content = gen.generate_stores_content();
+        let generator = StoreGenerator::new("/tmp/forge");
+        let content = generator.generate_stores_content();
         assert!(content.contains("getForgeClient"));
         assert!(content.contains("setForgeClient"));
         assert!(content.contains("ForgeProviderProps"));

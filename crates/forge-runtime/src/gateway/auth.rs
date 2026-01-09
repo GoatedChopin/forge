@@ -9,7 +9,7 @@ use axum::{
 };
 use forge_core::auth::Claims;
 use forge_core::function::AuthContext;
-use jsonwebtoken::{dangerous, decode, Algorithm, DecodingKey, Validation};
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, dangerous, decode};
 use uuid::Uuid;
 
 /// Authentication configuration.
@@ -246,7 +246,7 @@ pub async fn auth_middleware(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jsonwebtoken::{encode, EncodingKey, Header};
+    use jsonwebtoken::{EncodingKey, Header, encode};
 
     fn create_test_claims(expired: bool) -> Claims {
         use forge_core::auth::ClaimsBuilder;

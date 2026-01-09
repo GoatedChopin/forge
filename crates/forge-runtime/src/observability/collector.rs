@@ -1,11 +1,11 @@
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 
-use forge_core::observability::{LogEntry, Metric, Span};
 use forge_core::LogLevel;
+use forge_core::observability::{LogEntry, Metric, Span};
 
 use super::config::{LogsConfig, MetricsConfig, TracesConfig};
 

@@ -430,7 +430,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_DB: forge_test
           POSTGRES_USER: forge
@@ -465,7 +465,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16
+        image: postgres:18
         # ... same as above
 
     steps:

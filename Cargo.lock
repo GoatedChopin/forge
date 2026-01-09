@@ -935,6 +935,7 @@ dependencies = [
  "forge-runtime",
  "hostname",
  "indicatif",
+ "postgresql_embedded",
  "reqwest",
  "serde",
  "serde_json",

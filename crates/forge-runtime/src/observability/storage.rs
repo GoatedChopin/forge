@@ -6,8 +6,8 @@ use chrono::{DateTime, Utc};
 use sqlx::Row;
 use tokio::sync::RwLock;
 
-use forge_core::observability::{LogEntry, Metric, MetricKind, MetricValue, Span, SpanStatus};
 use forge_core::LogLevel;
+use forge_core::observability::{LogEntry, Metric, MetricKind, MetricValue, Span, SpanStatus};
 
 /// Maximum number of items to insert in a single batch.
 const BATCH_SIZE: usize = 1000;

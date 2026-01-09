@@ -4,8 +4,8 @@ use console::style;
 use std::path::Path;
 
 use forge_core::config::ForgeConfig;
-use forge_runtime::migrations::{load_migrations_from_dir, MigrationRunner};
 use forge_runtime::Database;
+use forge_runtime::migrations::{MigrationRunner, load_migrations_from_dir};
 
 /// Manage database migrations.
 #[derive(Parser)]

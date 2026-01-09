@@ -4,11 +4,13 @@ FORGE is a framework for building full-stack applications where PostgreSQL is th
 Tooling
 
 - Stack: Rust (backend), Svelte 5 + TypeScript (frontend), PostgreSQL
+- Rust: 1.92+ required, edition 2024
+- Bun: 1.3.1+ required
 - Package manager: cargo (backend), bun (frontend)
 - Test: LIBRARY_PATH="/opt/homebrew/opt/libiconv/lib" cargo test
 - Lint: cargo clippy | Format: cargo fmt
-- Dev: ./dev.sh [setup|start|db|logs|clean|all]
-- CLI install: cargo install --path crates/forge
+- Dev: forge dev (starts embedded postgres + backend + frontend)
+- CLI install: cargo install --path crates/forge --features embedded-db
 - Docs: cd docs && bun run start (Docusaurus 3.9.2)
 - Site routes: / (landing), /docs (documentation), /tutorials (separate plugin), /blog
 

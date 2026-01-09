@@ -154,10 +154,11 @@ mod tests {
         assert!(dir.path().join(".forge/svelte/context.ts").exists());
         assert!(dir.path().join(".forge/svelte/stores.ts").exists());
         assert!(dir.path().join(".forge/svelte/api.ts").exists());
-        assert!(dir
-            .path()
-            .join(".forge/svelte/ForgeProvider.svelte")
-            .exists());
+        assert!(
+            dir.path()
+                .join(".forge/svelte/ForgeProvider.svelte")
+                .exists()
+        );
     }
 
     #[test]

@@ -2,12 +2,12 @@
 
 use std::sync::Arc;
 
-use forge_core::observability::LogEntry;
 use forge_core::LogLevel;
+use forge_core::observability::LogEntry;
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Subscriber};
-use tracing_subscriber::layer::Context;
 use tracing_subscriber::Layer;
+use tracing_subscriber::layer::Context;
 
 use super::LogCollector;
 

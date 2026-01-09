@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{parse_macro_input, spanned::Spanned, Data, DeriveInput, Fields, Meta};
+use syn::{Data, DeriveInput, Fields, Meta, parse_macro_input, spanned::Spanned};
 
 /// Expand the #[forge::model] macro.
 ///
@@ -30,7 +30,7 @@ fn expand_model_impl(_attr: TokenStream2, input: DeriveInput) -> syn::Result<Tok
                 return Err(syn::Error::new(
                     input.span(),
                     "Only named fields are supported",
-                ))
+                ));
             }
         },
         _ => return Err(syn::Error::new(input.span(), "Only structs are supported")),

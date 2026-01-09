@@ -11,7 +11,7 @@ FORGE compiles your entire backend into **one binary**: API, jobs, crons, workfl
 ```bash
 curl -fsSL https://tryforge.dev/install.sh | sh
 forge new my-app --demo && cd my-app
-cargo run
+forge dev
 ```
 
 [![Crates.io](https://img.shields.io/crates/v/forgex.svg)](https://crates.io/crates/forgex)
@@ -159,8 +159,8 @@ No WebSocket code. No manual cache invalidation. Just reactive queries.
 ## The Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     forge run                               │
+┌────────────────────────────────────────────────────────────┐
+│                       forge run                            │
 ├─────────────┬─────────────┬─────────────┬──────────────────┤
 │   Gateway   │   Workers   │  Scheduler  │    Dashboard     │
 │  (HTTP/WS)  │   (Jobs)    │   (Cron)    │   (Built-in)     │
@@ -257,11 +257,20 @@ curl -fsSL https://tryforge.dev/install.sh | sh
 # Create a project
 forge new my-app --demo
 
-# Run it
+# Set up PostgreSQL
+docker run -rm -d --name forge-postgres -e POSTGRES_PASSWORD=forge -e POSTGRES_DB=my-app -p 5432:5432 postgres:18
+
+# Start backend
 cd my-app
 cargo run
 # → API at http://localhost:8080
 # → Dashboard at http://localhost:8080/_dashboard
+
+# Start frontend (in another terminal)
+cd my-app/frontend
+bun install
+bun run dev
+# → Frontend at http://localhost:5173
 ```
 
 The `--demo` flag scaffolds a working app with examples of queries, mutations, jobs, crons, and workflows. Or use `--minimal` for a clean slate.

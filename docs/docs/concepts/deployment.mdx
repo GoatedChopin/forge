@@ -151,7 +151,7 @@ Scaffolded projects include Docker files for containerized deployment.
 
 ```dockerfile title="Dockerfile"
 # Build stage
-FROM rust:1.75-slim as builder
+FROM rust:1.92-slim as builder
 
 WORKDIR /app
 
@@ -218,7 +218,7 @@ services:
         condition: service_healthy
 
   db:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     environment:
       POSTGRES_USER: forge
       POSTGRES_PASSWORD: forge

@@ -218,15 +218,15 @@ mod tests {
 
     #[test]
     fn test_api_generator_creation() {
-        let gen = ApiGenerator::new("/tmp/forge");
-        assert_eq!(gen.output_dir, PathBuf::from("/tmp/forge"));
+        let generator = ApiGenerator::new("/tmp/forge");
+        assert_eq!(generator.output_dir, PathBuf::from("/tmp/forge"));
     }
 
     #[test]
     fn test_generate_empty_registry() {
-        let gen = ApiGenerator::new("/tmp/forge");
+        let generator = ApiGenerator::new("/tmp/forge");
         let registry = SchemaRegistry::new();
-        let content = gen.generate(&registry).unwrap();
+        let content = generator.generate(&registry).unwrap();
         assert!(content.contains("QueryFn"));
         assert!(content.contains("MutationFn"));
         assert!(content.contains("ActionFn"));
@@ -237,7 +237,7 @@ mod tests {
 
     #[test]
     fn test_generate_with_functions() {
-        let gen = ApiGenerator::new("/tmp/forge");
+        let generator = ApiGenerator::new("/tmp/forge");
         let registry = SchemaRegistry::new();
 
         // Add a query function
@@ -251,7 +251,7 @@ mod tests {
         func.args.push(FunctionArg::new("email", RustType::String));
         registry.register_function(func);
 
-        let content = gen.generate(&registry).unwrap();
+        let content = generator.generate(&registry).unwrap();
 
         // Check that bindings are generated
         assert!(content.contains("export const getUser = createQuery"));

@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{parse_macro_input, Attribute, Data, DeriveInput, Expr, Lit, Meta};
+use syn::{Attribute, Data, DeriveInput, Expr, Lit, Meta, parse_macro_input};
 
 /// Expand the #[forge::forge_enum] macro.
 pub fn expand_enum(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -25,7 +25,7 @@ fn expand_enum_impl(_attr: TokenStream2, input: DeriveInput) -> syn::Result<Toke
             return Err(syn::Error::new_spanned(
                 &input,
                 "forge_enum can only be used on enums",
-            ))
+            ));
         }
     };
 

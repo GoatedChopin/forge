@@ -6,9 +6,9 @@ use std::sync::Arc;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::Result;
 use crate::env::{EnvAccess, EnvProvider, MockEnvProvider};
 use crate::function::{AuthContext, RequestMetadata};
-use crate::Result;
 
 /// Test context for query functions.
 ///

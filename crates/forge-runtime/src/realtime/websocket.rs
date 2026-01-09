@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 
 use forge_core::cluster::NodeId;
 use forge_core::realtime::{Delta, SessionId, SubscriptionId};

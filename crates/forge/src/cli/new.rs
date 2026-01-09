@@ -27,6 +27,87 @@ fn is_git_available() -> bool {
         .unwrap_or(false)
 }
 
+/// Minimum required Rust version (major, minor).
+const MIN_RUST_VERSION: (u32, u32) = (1, 92);
+
+/// Minimum required Bun version (major, minor, patch).
+const MIN_BUN_VERSION: (u32, u32, u32) = (1, 3, 1);
+
+/// Parse version string like "1.92.0" into (major, minor, patch).
+fn parse_version(version: &str) -> Option<(u32, u32, u32)> {
+    let parts: Vec<&str> = version.trim().split('.').collect();
+    if parts.len() >= 2 {
+        let major = parts[0].parse().ok()?;
+        let minor = parts[1].parse().ok()?;
+        let patch = parts.get(2).and_then(|p| p.parse().ok()).unwrap_or(0);
+        Some((major, minor, patch))
+    } else {
+        None
+    }
+}
+
+/// Check if Rust is installed and meets the minimum version requirement.
+/// Returns Ok(version_string) if valid, Err(message) if not.
+fn check_rust_version() -> std::result::Result<String, String> {
+    let output = Command::new("rustc")
+        .arg("--version")
+        .output()
+        .map_err(|_| "Rust is not installed. Install from https://rustup.rs/".to_string())?;
+
+    if !output.status.success() {
+        return Err("Failed to run rustc --version".to_string());
+    }
+
+    let version_output = String::from_utf8_lossy(&output.stdout);
+    // Parse "rustc 1.92.0 (..." -> "1.92.0"
+    let version_str = version_output
+        .split_whitespace()
+        .nth(1)
+        .ok_or_else(|| "Could not parse Rust version".to_string())?;
+
+    let (major, minor, _patch) = parse_version(version_str)
+        .ok_or_else(|| format!("Could not parse Rust version: {}", version_str))?;
+
+    if major < MIN_RUST_VERSION.0 || (major == MIN_RUST_VERSION.0 && minor < MIN_RUST_VERSION.1) {
+        return Err(format!(
+            "Rust {}.{} or higher is required. You have {}. Update with: rustup update",
+            MIN_RUST_VERSION.0, MIN_RUST_VERSION.1, version_str
+        ));
+    }
+
+    Ok(version_str.to_string())
+}
+
+/// Check if Bun is installed and meets the minimum version requirement.
+/// Returns Ok(version_string) if valid, Err(message) if not.
+fn check_bun_version() -> std::result::Result<String, String> {
+    let output = Command::new("bun")
+        .arg("--version")
+        .output()
+        .map_err(|_| "Bun is not installed. Install from https://bun.sh/".to_string())?;
+
+    if !output.status.success() {
+        return Err("Failed to run bun --version".to_string());
+    }
+
+    let version_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    let (major, minor, patch) = parse_version(&version_str)
+        .ok_or_else(|| format!("Could not parse Bun version: {}", version_str))?;
+
+    if major < MIN_BUN_VERSION.0
+        || (major == MIN_BUN_VERSION.0 && minor < MIN_BUN_VERSION.1)
+        || (major == MIN_BUN_VERSION.0 && minor == MIN_BUN_VERSION.1 && patch < MIN_BUN_VERSION.2)
+    {
+        return Err(format!(
+            "Bun {}.{}.{} or higher is required. You have {}. Update with: bun upgrade",
+            MIN_BUN_VERSION.0, MIN_BUN_VERSION.1, MIN_BUN_VERSION.2, version_str
+        ));
+    }
+
+    Ok(version_str)
+}
+
 /// Check if the directory is inside an existing git repository.
 fn is_inside_git_repo(dir: &Path) -> bool {
     Command::new("git")
@@ -237,6 +318,39 @@ EXAMPLES:
 impl NewCommand {
     /// Execute the new project command.
     pub async fn execute(self) -> Result<()> {
+        // Check required tool versions before proceeding
+        println!("{}", style("Checking prerequisites...").dim());
+
+        let rust_version = match check_rust_version() {
+            Ok(v) => v,
+            Err(msg) => {
+                eprintln!("{} {}", style("✗").red().bold(), style(&msg).red());
+                std::process::exit(1);
+            }
+        };
+
+        let bun_version = match check_bun_version() {
+            Ok(v) => v,
+            Err(msg) => {
+                eprintln!("{} {}", style("✗").red().bold(), style(&msg).red());
+                std::process::exit(1);
+            }
+        };
+
+        println!(
+            "  {} Rust {} {}",
+            style("✓").green(),
+            rust_version,
+            style("(1.92+ required)").dim()
+        );
+        println!(
+            "  {} Bun {} {}",
+            style("✓").green(),
+            bun_version,
+            style("(1.3.1+ required)").dim()
+        );
+        println!();
+
         // Require either --demo or --minimal
         if !self.demo && !self.minimal {
             eprintln!(
@@ -581,9 +695,10 @@ mod tests {
         assert!(path.join("src/functions/users.rs").exists());
         assert!(path.join("src/functions/export_users_job.rs").exists());
         assert!(path.join("src/functions/heartbeat_stats_cron.rs").exists());
-        assert!(path
-            .join("src/functions/account_verification_workflow.rs")
-            .exists());
+        assert!(
+            path.join("src/functions/account_verification_workflow.rs")
+                .exists()
+        );
         assert!(path.join("frontend/package.json").exists());
         assert!(path.join("frontend/src/lib/forge/types.ts").exists());
         assert!(path.join("frontend/src/lib/forge/api.ts").exists());
@@ -619,9 +734,11 @@ mod tests {
         assert!(!path.join("src/functions/users.rs").exists());
         assert!(!path.join("src/functions/export_users_job.rs").exists());
         assert!(!path.join("src/functions/heartbeat_stats_cron.rs").exists());
-        assert!(!path
-            .join("src/functions/account_verification_workflow.rs")
-            .exists());
+        assert!(
+            !path
+                .join("src/functions/account_verification_workflow.rs")
+                .exists()
+        );
 
         // Frontend should exist with minimal templates
         assert!(path.join("frontend/package.json").exists());

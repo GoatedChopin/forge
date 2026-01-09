@@ -3,8 +3,8 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use forge_core::job::{ForgeJob, JobContext, JobInfo};
 use forge_core::Result;
+use forge_core::job::{ForgeJob, JobContext, JobInfo};
 use serde_json::Value;
 
 /// Type alias for boxed job handler function.
