@@ -27,83 +27,25 @@ fn is_git_available() -> bool {
         .unwrap_or(false)
 }
 
-/// Minimum required Rust version (major, minor).
-const MIN_RUST_VERSION: (u32, u32) = (1, 92);
-
-/// Minimum required Bun version (major, minor, patch).
-const MIN_BUN_VERSION: (u32, u32, u32) = (1, 3, 1);
-
-/// Parse version string like "1.92.0" into (major, minor, patch).
-fn parse_version(version: &str) -> Option<(u32, u32, u32)> {
-    let parts: Vec<&str> = version.trim().split('.').collect();
-    if parts.len() >= 2 {
-        let major = parts[0].parse().ok()?;
-        let minor = parts[1].parse().ok()?;
-        let patch = parts.get(2).and_then(|p| p.parse().ok()).unwrap_or(0);
-        Some((major, minor, patch))
-    } else {
-        None
-    }
-}
-
-/// Check if Rust is installed and meets the minimum version requirement.
-/// Returns Ok(version_string) if valid, Err(message) if not.
-fn check_rust_version() -> std::result::Result<String, String> {
-    let output = Command::new("rustc")
+/// Check if Docker is installed.
+fn check_docker() -> std::result::Result<String, String> {
+    let output = Command::new("docker")
         .arg("--version")
         .output()
-        .map_err(|_| "Rust is not installed. Install from https://rustup.rs/".to_string())?;
+        .map_err(|_| "Docker is not installed. Install from https://docs.docker.com/get-docker/".to_string())?;
 
     if !output.status.success() {
-        return Err("Failed to run rustc --version".to_string());
+        return Err("Failed to run docker --version".to_string());
     }
 
     let version_output = String::from_utf8_lossy(&output.stdout);
-    // Parse "rustc 1.92.0 (..." -> "1.92.0"
+    // Parse "Docker version 24.0.0, ..." -> "24.0.0"
     let version_str = version_output
         .split_whitespace()
-        .nth(1)
-        .ok_or_else(|| "Could not parse Rust version".to_string())?;
-
-    let (major, minor, _patch) = parse_version(version_str)
-        .ok_or_else(|| format!("Could not parse Rust version: {}", version_str))?;
-
-    if major < MIN_RUST_VERSION.0 || (major == MIN_RUST_VERSION.0 && minor < MIN_RUST_VERSION.1) {
-        return Err(format!(
-            "Rust {}.{} or higher is required. You have {}. Update with: rustup update",
-            MIN_RUST_VERSION.0, MIN_RUST_VERSION.1, version_str
-        ));
-    }
-
-    Ok(version_str.to_string())
-}
-
-/// Check if Bun is installed and meets the minimum version requirement.
-/// Returns Ok(version_string) if valid, Err(message) if not.
-fn check_bun_version() -> std::result::Result<String, String> {
-    let output = Command::new("bun")
-        .arg("--version")
-        .output()
-        .map_err(|_| "Bun is not installed. Install from https://bun.sh/".to_string())?;
-
-    if !output.status.success() {
-        return Err("Failed to run bun --version".to_string());
-    }
-
-    let version_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-
-    let (major, minor, patch) = parse_version(&version_str)
-        .ok_or_else(|| format!("Could not parse Bun version: {}", version_str))?;
-
-    if major < MIN_BUN_VERSION.0
-        || (major == MIN_BUN_VERSION.0 && minor < MIN_BUN_VERSION.1)
-        || (major == MIN_BUN_VERSION.0 && minor == MIN_BUN_VERSION.1 && patch < MIN_BUN_VERSION.2)
-    {
-        return Err(format!(
-            "Bun {}.{}.{} or higher is required. You have {}. Update with: bun upgrade",
-            MIN_BUN_VERSION.0, MIN_BUN_VERSION.1, MIN_BUN_VERSION.2, version_str
-        ));
-    }
+        .nth(2)
+        .map(|s| s.trim_end_matches(','))
+        .unwrap_or("unknown")
+        .to_string();
 
     Ok(version_str)
 }
@@ -116,6 +58,51 @@ fn is_inside_git_repo(dir: &Path) -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+/// Generate bun.lock file using Docker.
+/// Runs `bun install --lockfile-only` in the frontend directory.
+fn generate_bun_lockfile(dir: &Path) -> Result<()> {
+    let frontend_dir = dir.join("frontend");
+    let abs_frontend = frontend_dir.canonicalize()?;
+
+    println!(
+        "  {} Generating bun.lock...",
+        style("→").cyan()
+    );
+
+    let output = Command::new("docker")
+        .args([
+            "run",
+            "--rm",
+            "-v",
+            &format!("{}:/app", abs_frontend.display()),
+            "-w",
+            "/app",
+            "oven/bun:1",
+            "bun",
+            "install",
+            "--lockfile-only",
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!(
+            "  {} Failed to generate bun.lock: {}",
+            style("⚠").yellow(),
+            stderr.trim()
+        );
+        // Non-fatal: continue without lockfile
+        return Ok(());
+    }
+
+    println!(
+        "  {} bun.lock generated",
+        style("✓").green()
+    );
+
+    Ok(())
 }
 
 /// Initialize git repository and create initial commit.
@@ -165,7 +152,6 @@ const ENV: &str = include_str!("../../templates/populated/project/env.tmpl");
 const DOCKERFILE: &str = include_str!("../../templates/populated/project/Dockerfile.tmpl");
 const DOCKER_COMPOSE: &str =
     include_str!("../../templates/populated/project/docker-compose.yml.tmpl");
-const DOCKERIGNORE: &str = include_str!("../../templates/populated/project/dockerignore.tmpl");
 const README: &str = include_str!("../../templates/populated/project/README.md.tmpl");
 const MIGRATION_INITIAL: &str =
     include_str!("../../templates/populated/project/migrations/0001_initial.sql.tmpl");
@@ -210,10 +196,6 @@ const FRONTEND_API_TS: &str =
     include_str!("../../templates/populated/frontend/lib/forge/api.ts.tmpl");
 const FRONTEND_INDEX_TS: &str =
     include_str!("../../templates/populated/frontend/lib/forge/index.ts.tmpl");
-const FRONTEND_PRETTIERIGNORE: &str =
-    include_str!("../../templates/populated/frontend/prettierignore.tmpl");
-const FRONTEND_PRETTIERRC: &str =
-    include_str!("../../templates/populated/frontend/prettierrc.tmpl");
 const FRONTEND_ESLINT_CONFIG: &str =
     include_str!("../../templates/populated/frontend/eslint.config.js.tmpl");
 
@@ -227,7 +209,6 @@ const EMPTY_ENV: &str = include_str!("../../templates/empty/project/env.tmpl");
 const EMPTY_DOCKERFILE: &str = include_str!("../../templates/empty/project/Dockerfile.tmpl");
 const EMPTY_DOCKER_COMPOSE: &str =
     include_str!("../../templates/empty/project/docker-compose.yml.tmpl");
-const EMPTY_DOCKERIGNORE: &str = include_str!("../../templates/empty/project/dockerignore.tmpl");
 const EMPTY_README: &str = include_str!("../../templates/empty/project/README.md.tmpl");
 const EMPTY_MIGRATION_INITIAL: &str =
     include_str!("../../templates/empty/project/migrations/0001_initial.sql.tmpl");
@@ -259,10 +240,6 @@ const EMPTY_FRONTEND_API_TS: &str =
     include_str!("../../templates/empty/frontend/lib/forge/api.ts.tmpl");
 const EMPTY_FRONTEND_INDEX_TS: &str =
     include_str!("../../templates/empty/frontend/lib/forge/index.ts.tmpl");
-const EMPTY_FRONTEND_PRETTIERIGNORE: &str =
-    include_str!("../../templates/empty/frontend/prettierignore.tmpl");
-const EMPTY_FRONTEND_PRETTIERRC: &str =
-    include_str!("../../templates/empty/frontend/prettierrc.tmpl");
 const EMPTY_FRONTEND_ESLINT_CONFIG: &str =
     include_str!("../../templates/empty/frontend/eslint.config.js.tmpl");
 
@@ -292,6 +269,14 @@ pub struct NewCommand {
     /// Output directory (defaults to project name).
     #[arg(short, long)]
     pub output: Option<String>,
+
+    /// Skip generating bun.lock file before initial commit.
+    ///
+    /// By default, forge new runs `bun install --lockfile-only` in Docker
+    /// to generate the bun.lock file before the initial git commit.
+    /// Use this flag to skip lockfile generation.
+    #[arg(long)]
+    pub no_lock: bool,
 }
 
 const NEW_AFTER_HELP: &str = r#"TEMPLATE MODES:
@@ -318,18 +303,10 @@ EXAMPLES:
 impl NewCommand {
     /// Execute the new project command.
     pub async fn execute(self) -> Result<()> {
-        // Check required tool versions before proceeding
+        // Check Docker is installed
         println!("{}", style("Checking prerequisites...").dim());
 
-        let rust_version = match check_rust_version() {
-            Ok(v) => v,
-            Err(msg) => {
-                eprintln!("{} {}", style("✗").red().bold(), style(&msg).red());
-                std::process::exit(1);
-            }
-        };
-
-        let bun_version = match check_bun_version() {
+        let docker_version = match check_docker() {
             Ok(v) => v,
             Err(msg) => {
                 eprintln!("{} {}", style("✗").red().bold(), style(&msg).red());
@@ -338,16 +315,9 @@ impl NewCommand {
         };
 
         println!(
-            "  {} Rust {} {}",
+            "  {} Docker {}",
             style("✓").green(),
-            rust_version,
-            style("(1.92+ required)").dim()
-        );
-        println!(
-            "  {} Bun {} {}",
-            style("✓").green(),
-            bun_version,
-            style("(1.3.1+ required)").dim()
+            docker_version,
         );
         println!();
 
@@ -404,6 +374,11 @@ impl NewCommand {
         fs::create_dir_all(path)?;
         create_project(path, &project_name, self.demo)?;
 
+        // Generate bun.lock before git commit (unless --no-lock)
+        if !self.no_lock {
+            generate_bun_lockfile(path)?;
+        }
+
         // Initialize git repository if git is available
         if is_git_available() {
             init_git_repo(path)?;
@@ -423,31 +398,27 @@ impl NewCommand {
             style("1.").dim(),
             style(format!("cd {}", project_dir)).cyan()
         );
-        println!("  {} {}", style("2.").dim(), style("forge check").cyan());
-        println!("     Verify your project setup and database connection");
         println!();
-        println!("  {} {}", style("3.").dim(), style("forge dev").cyan());
-        println!("     Start backend + frontend with hot reload");
+        println!("  {} {}", style("2.").dim(), style("forge dev").cyan());
+        println!("     Start backend + frontend + database with Docker");
         println!();
         println!("{}", style("Useful commands:").bold());
         println!(
-            "  {}  Regenerate TypeScript types",
-            style("forge generate").dim()
+            "  {}    Stop the development environment",
+            style("forge dev down").dim()
         );
         println!(
-            "  {}   Check migration status",
-            style("forge migrate status").dim()
+            "  {}  Stop and remove database",
+            style("forge dev down --clean").dim()
         );
-        println!(
-            "  {}   Add new components",
-            style("forge add <type> <name>").dim()
-        );
+        println!();
+        println!("{}", style("Services (when running):").bold());
+        println!("  Frontend:  http://localhost:5173");
+        println!("  Backend:   http://localhost:8080");
+        println!("  Dashboard: http://localhost:8080/_dashboard");
         println!();
         println!("{}", style("Documentation:").bold());
         println!("  https://tryforge.dev/docs");
-        println!();
-        println!("{}", style("Dashboard (when running):").bold());
-        println!("  http://localhost:8080/_dashboard");
         println!();
 
         Ok(())
@@ -478,7 +449,6 @@ pub fn create_project(dir: &Path, name: &str, demo: bool) -> Result<()> {
             dir.join("docker-compose.yml"),
             render(DOCKER_COMPOSE, &vars),
         )?;
-        fs::write(dir.join(".dockerignore"), DOCKERIGNORE)?;
         fs::write(dir.join("README.md"), render(README, &vars))?;
         fs::write(dir.join("src/main.rs"), MAIN_RS)?;
         fs::write(dir.join("migrations/0001_initial.sql"), MIGRATION_INITIAL)?;
@@ -519,7 +489,6 @@ pub fn create_project(dir: &Path, name: &str, demo: bool) -> Result<()> {
             dir.join("docker-compose.yml"),
             render(EMPTY_DOCKER_COMPOSE, &vars),
         )?;
-        fs::write(dir.join(".dockerignore"), EMPTY_DOCKERIGNORE)?;
         fs::write(dir.join("README.md"), render(EMPTY_README, &vars))?;
         fs::write(dir.join("src/main.rs"), EMPTY_MAIN_RS)?;
         fs::write(
@@ -563,11 +532,6 @@ fn create_frontend(dir: &Path, name: &str, demo: bool) -> Result<()> {
         fs::write(frontend_dir.join("src/app.html"), FRONTEND_APP_HTML)?;
         fs::write(frontend_dir.join(".env"), FRONTEND_ENV_EXAMPLE)?;
         fs::write(frontend_dir.join(".env.example"), FRONTEND_ENV_EXAMPLE)?;
-        fs::write(
-            frontend_dir.join(".prettierignore"),
-            FRONTEND_PRETTIERIGNORE,
-        )?;
-        fs::write(frontend_dir.join(".prettierrc"), FRONTEND_PRETTIERRC)?;
         fs::write(
             frontend_dir.join("eslint.config.js"),
             FRONTEND_ESLINT_CONFIG,
@@ -614,11 +578,6 @@ fn create_frontend(dir: &Path, name: &str, demo: bool) -> Result<()> {
             frontend_dir.join(".env.example"),
             EMPTY_FRONTEND_ENV_EXAMPLE,
         )?;
-        fs::write(
-            frontend_dir.join(".prettierignore"),
-            EMPTY_FRONTEND_PRETTIERIGNORE,
-        )?;
-        fs::write(frontend_dir.join(".prettierrc"), EMPTY_FRONTEND_PRETTIERRC)?;
         fs::write(
             frontend_dir.join("eslint.config.js"),
             EMPTY_FRONTEND_ESLINT_CONFIG,
@@ -707,7 +666,6 @@ mod tests {
         assert!(path.join("migrations/0001_initial.sql").exists());
         assert!(path.join("Dockerfile").exists());
         assert!(path.join("docker-compose.yml").exists());
-        assert!(path.join(".dockerignore").exists());
         assert!(path.join("README.md").exists());
         assert!(path.join("AGENTS.md").exists());
     }

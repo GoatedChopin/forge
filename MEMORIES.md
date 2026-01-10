@@ -69,7 +69,11 @@ TestDatabase: EXPLICIT config (from_url, from_env, embedded), from_env uses TEST
 Tests inline with function files (#[cfg(test)] mod tests), import from forge::testing
 
 Local dev scaffolding:
-- Build CLI: LIBRARY_PATH="/opt/homebrew/opt/libiconv/lib" cargo build --release
+- Build CLI: cargo build --release -p forgex
 - Create demo: ./target/release/forge new <output-dir> --demo
-- Add [patch.crates-io] to demo's Cargo.toml pointing to local crates
-- Run: forge dev
+- Run: cd <output-dir> && forge dev (uses docker compose up --build)
+- Stop: forge dev down
+- Stop and clean volumes: forge dev down --clean
+- Requires: Docker only (no cargo/bun needed locally)
+- Dockerfile installs Rust 1.92 via rustup, cargo-watch for hot reload
+- Backend runs with --no-default-features (no frontend embedding in dev)

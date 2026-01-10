@@ -6,7 +6,7 @@ description: Deploy FORGE applications with Docker, Railway, Render, Fly.io, and
 
 # Deployment
 
-FORGE applications are single binaries that include everything needed to run your application. This makes deployment straightforward.
+FORGE applications are single binaries that include everything needed to run your application. The scaffolded Dockerfile produces minimal Alpine-based images (~50MB) perfect for production.
 
 ## Quick Deploy (One-Click)
 
@@ -43,7 +43,10 @@ services:
   - type: web
     name: my-app
     runtime: docker
-    healthCheckPath: /health
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: ""
+    healthCheckPath: /ready
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -82,132 +85,184 @@ The included `fly.toml` configures auto-scaling and health checks.
 
 *All support hobby tiers with free credits for getting started.*
 
-## Zero-Dependency Deployment (Embedded PostgreSQL)
+## Dockerfile
 
-For small projects, demos, or self-hosted deployments, FORGE can run with **embedded PostgreSQL** - no external database needed.
-
-### Configuration
-
-```toml title="forge.toml"
-[database]
-embedded = true
-```
-
-That's it. On first start, FORGE downloads and runs a bundled PostgreSQL instance automatically.
-
-### When to Use Embedded PostgreSQL
-
-**Good for:**
-- Personal projects and demos
-- Small team applications (under 100 concurrent users)
-- Self-hosted single-server deployments
-- Offline/air-gapped environments
-- Development without Docker
-
-**Not recommended for:**
-- High-availability production (no replication)
-- Large-scale applications (limited to single machine)
-- Environments requiring managed backups
-
-### Data Location
-
-Embedded PostgreSQL stores data in the working directory:
-
-```
-your-app/
-├── .forge/
-│   └── postgres/      # PostgreSQL data directory
-├── src/
-└── forge.toml
-```
-
-To backup: copy the `.forge/postgres/` directory.
-
-### Combining with Embedded Frontend
-
-For a truly zero-dependency deployment (single binary, no external services):
-
-```toml title="forge.toml"
-[database]
-embedded = true
-```
-
-```bash
-# Build with embedded frontend (default)
-cd frontend && bun install && bun run build && cd ..
-cargo build --release
-
-# Single binary deployment
-./target/release/my-app
-```
-
-This creates a completely self-contained application.
-
-## Docker
-
-Scaffolded projects include Docker files for containerized deployment.
-
-### Dockerfile
+Scaffolded projects include a production-ready multi-stage Dockerfile:
 
 ```dockerfile title="Dockerfile"
-# Build stage
-FROM rust:1.92-slim as builder
+# =============================================================================
+# Development stage - hot reload with cargo-watch
+# =============================================================================
+FROM rust:1-slim-bookworm AS dev
 
 WORKDIR /app
 
-# Install build dependencies
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy manifests
-COPY Cargo.toml Cargo.lock ./
+# Install cargo-watch for hot reload
+RUN cargo install cargo-watch --locked
 
-# Copy source
-COPY src ./src
-COPY migrations ./migrations
+# Development command - no frontend embedding, watch for changes
+CMD ["cargo", "watch", "-x", "run --no-default-features"]
 
-# Build release binary
-RUN cargo build --release
+# =============================================================================
+# Frontend build stage
+# =============================================================================
+FROM oven/bun:1-alpine AS frontend-builder
 
-# Runtime stage
-FROM debian:bookworm-slim
+WORKDIR /app/frontend
+
+COPY frontend/package.json frontend/bun.lock* ./
+COPY frontend/.forge ./.forge
+
+RUN bun install --frozen-lockfile || bun install
+
+COPY frontend ./
+
+RUN bun run build
+
+# =============================================================================
+# Backend build stage - Alpine for musl
+# =============================================================================
+FROM rust:1-alpine AS builder
 
 WORKDIR /app
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
-    ca-certificates \
-    libssl3 \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static pkgconf
 
-# Copy binary from builder
-COPY --from=builder /app/target/release/your-app /app/app
+COPY Cargo.toml Cargo.lock* ./
 
-# Copy migrations
+# Cache dependencies
+RUN mkdir -p src && \
+    echo "fn main() {}" > src/main.rs && \
+    cargo build --release --no-default-features && \
+    rm -rf src
+
+COPY src ./src
+COPY migrations ./migrations
+
+# Copy frontend build for embedding
+COPY --from=frontend-builder /app/frontend/build ./frontend/build
+
+# Build with embedded frontend
+RUN touch src/main.rs && cargo build --release
+
+# =============================================================================
+# Production runtime - minimal Alpine image (~35MB)
+# =============================================================================
+FROM alpine:3.21 AS production
+
+WORKDIR /app
+
+RUN apk add --no-cache ca-certificates libgcc
+
+COPY --from=builder /app/target/release/my-app /app/my-app
 COPY --from=builder /app/migrations /app/migrations
 
-# Copy config
-COPY forge.toml /app/forge.toml
-
-# Expose port
 EXPOSE 8080
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+ENV RUST_LOG=info
+ENV HOST=0.0.0.0
+ENV PORT=8080
 
-# Run
-CMD ["/app/app"]
+CMD ["/app/my-app"]
 ```
 
-### Docker Compose
+### Build Stages
+
+| Stage | Purpose | Base Image |
+|-------|---------|------------|
+| `dev` | Development with hot reload | rust:1-slim-bookworm |
+| `frontend-builder` | Build Svelte frontend | oven/bun:1-alpine |
+| `builder` | Compile Rust binary | rust:1-alpine |
+| `production` | Runtime (~35MB) | alpine:3.21 |
+
+### Building Images
+
+```bash
+# Build production image
+docker build -t my-app --target production .
+
+# Build dev image (for testing)
+docker build -t my-app:dev --target dev .
+```
+
+## Docker Compose
+
+### Development
+
+The scaffolded `docker-compose.yml` is for development:
 
 ```yaml title="docker-compose.yml"
 services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgres://postgres:forge@db:5432/my-app
+      - RUST_LOG=debug
+    volumes:
+      - .:/app
+      - cargo_cache:/usr/local/cargo/registry
+      - target_cache:/app/target
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    image: oven/bun:1
+    working_dir: /app
+    command: sh -c "bun install && bun run dev --host 0.0.0.0"
+    ports:
+      - "5173:5173"
+    env_file:
+      - ./frontend/.env
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    depends_on:
+      - backend
+
+  db:
+    image: postgres:17
+    env_file:
+      - .env
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d my-app"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  cargo_cache:
+  target_cache:
+  frontend_node_modules:
+```
+
+### Production
+
+For production, create a separate compose file:
+
+```yaml title="docker-compose.prod.yml"
+services:
   app:
-    build: .
+    build:
+      context: .
+      target: production
     ports:
       - "8080:8080"
     environment:
@@ -218,7 +273,7 @@ services:
         condition: service_healthy
 
   db:
-    image: postgres:18-alpine
+    image: postgres:17-alpine
     environment:
       POSTGRES_USER: forge
       POSTGRES_PASSWORD: forge
@@ -235,17 +290,9 @@ volumes:
   postgres_data:
 ```
 
-### Building and Running
-
 ```bash
-# Build the image
-docker build -t my-forge-app .
-
-# Run with docker-compose
-docker-compose up -d
-
-# View logs
-docker-compose logs -f app
+# Run production compose
+docker compose -f docker-compose.prod.yml up -d
 ```
 
 ## Health Endpoints
@@ -267,7 +314,7 @@ Returns `200 OK` only when the application is ready to serve traffic (database c
 
 ```bash
 curl http://localhost:8080/ready
-# {"ready": true, "database": true}
+# {"ready": true, "database": true, "version": "0.1.0"}
 
 # If database is unavailable:
 # HTTP 503 {"ready": false, "database": false}
@@ -319,10 +366,10 @@ spec:
             periodSeconds: 5
           resources:
             requests:
-              memory: "128Mi"
+              memory: "64Mi"
               cpu: "100m"
             limits:
-              memory: "512Mi"
+              memory: "256Mi"
               cpu: "500m"
 ```
 
@@ -371,15 +418,15 @@ spec:
 
 | Variable | Description |
 |----------|-------------|
-| `DATABASE_URL` | PostgreSQL connection string (required unless `database.embedded = true`) |
+| `DATABASE_URL` | PostgreSQL connection string (required) |
 
 ### Optional
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `RUST_LOG` | `info` | Log level (trace, debug, info, warn, error) |
+| `HOST` | `0.0.0.0` | HTTP server bind address |
 | `PORT` | `8080` | HTTP server port |
-| `GRPC_PORT` | `50051` | gRPC server port |
 
 ## Production Checklist
 
@@ -428,7 +475,7 @@ roles = ["gateway", "worker", "scheduler"]
 
 ## Frontend Deployment
 
-The Svelte frontend can be deployed to any static hosting:
+For separate frontend deployment (instead of embedded):
 
 ```bash
 # Build frontend
@@ -468,7 +515,7 @@ VITE_API_URL=https://api.example.com bun run build
 
 <div className="row">
   <div className="col col--6">
-    <a className="card" href="/concepts/cluster">
+    <a className="card" href="/docs/concepts/cluster">
       <div className="card__header">
         <h3>🔗 Clustering</h3>
       </div>
@@ -478,7 +525,7 @@ VITE_API_URL=https://api.example.com bun run build
     </a>
   </div>
   <div className="col col--6">
-    <a className="card" href="/concepts/observability">
+    <a className="card" href="/docs/concepts/observability">
       <div className="card__header">
         <h3>📊 Observability</h3>
       </div>

@@ -14,13 +14,8 @@ The `forge` CLI tool helps you create, develop, and manage FORGE projects.
 # Quick install (recommended)
 curl -fsSL https://tryforge.dev/install.sh | sh
 
-# Or build from source
-git clone https://github.com/isala404/forge
-cd forge
-cargo install --path crates/forge
-
-# For embedded PostgreSQL support (zero-dependency development)
-cargo install --path crates/forge --features embedded-db
+# Or with Cargo
+cargo install forgex
 ```
 
 ## Commands Overview
@@ -28,7 +23,8 @@ cargo install --path crates/forge --features embedded-db
 | Command | Description |
 |---------|-------------|
 | `forge new` | Create a new project |
-| `forge dev` | Start development (postgres + backend + frontend) |
+| `forge dev` | Start development environment (Docker Compose) |
+| `forge dev down` | Stop development environment |
 | `forge check` | Validate project configuration |
 | `forge add` | Add a function |
 | `forge generate` | Generate TypeScript types |
@@ -58,6 +54,9 @@ forge new <project-name> --demo|--minimal [options]
 |--------|-------------|
 | `-o, --output` | Output directory (defaults to project name) |
 
+**Prerequisites:**
+- Docker must be installed
+
 **Examples:**
 
 ```bash
@@ -79,6 +78,8 @@ my-app/
 ├── Cargo.toml
 ├── forge.toml           # FORGE configuration
 ├── .env                 # Environment variables
+├── Dockerfile           # Multi-stage build (dev + production)
+├── docker-compose.yml   # Development environment
 ├── src/
 │   ├── main.rs          # Entry point with registered functions
 │   ├── schema/
@@ -107,6 +108,8 @@ my-app/
 ├── Cargo.toml
 ├── forge.toml
 ├── .env
+├── Dockerfile
+├── docker-compose.yml
 ├── src/
 │   ├── main.rs          # Entry point with commented examples
 │   ├── schema/
@@ -125,71 +128,114 @@ my-app/
 
 ## forge dev
 
-Start the full development environment with embedded PostgreSQL, backend with hot reload, and frontend.
+Start the development environment using Docker Compose. This runs PostgreSQL, the Rust backend with hot reload, and the Svelte frontend.
 
 ```bash
 forge dev [options]
 ```
 
+**What it does:**
+- Runs `docker compose up --build`
+- Starts PostgreSQL container with health checks
+- Builds and runs backend with cargo-watch for hot reload
+- Starts frontend dev server with bun
+- Opens browser automatically (unless `--no-open`)
+
 **Options:**
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `-p, --port` | `8080` | Backend HTTP port |
-| `--backend-only` | `false` | Only start backend (skip frontend) |
 | `--no-open` | `false` | Don't open browser automatically |
-| `--no-pg` | `false` | Skip embedded PostgreSQL (use external DATABASE_URL) |
 
 **Examples:**
 
 ```bash
-# Start everything (postgres + backend + frontend + open browser)
+# Start everything
 forge dev
-
-# Use external database instead of embedded postgres
-forge dev --no-pg
-
-# Start only backend on port 3000
-forge dev --backend-only --port 3000
 
 # Start without opening browser
 forge dev --no-open
 ```
-
-**What happens:**
-
-1. **Embedded PostgreSQL** starts (data stored in `./pg_data/`, gitignored)
-2. **Backend compiles** with `cargo build`
-3. **Backend starts** with `cargo watch` for hot reload (watches `src/`, `migrations/`, `Cargo.toml` only - ignores frontend changes)
-4. **Frontend starts** with `bun run dev`
-5. **Browser opens** automatically
 
 **Output:**
 
 ```
 🚀 Starting FORGE development environment...
 
-  ✓ cargo found
-  ✓ bun found
-  ✓ Loaded .env
+  ✓ docker found
 
-  ⋯ Starting embedded PostgreSQL...
-  ✓ Embedded PostgreSQL running on port 5433
-    → Data: ./pg_data/
+  → Running: docker compose up --build
 
-  ⋯ Compiling backend...
-  ✓ Backend compiled successfully
-
-  → Backend: http://localhost:8080
-  → Dashboard: http://localhost:8080/_dashboard
-  → Frontend: http://localhost:5173
-
-✅ Development server running. Press Ctrl+C to stop.
+[+] Building 45.2s (15/15) FINISHED
+[+] Running 3/3
+ ✔ Container my-app-db-1        Healthy
+ ✔ Container my-app-backend-1   Started
+ ✔ Container my-app-frontend-1  Started
 ```
 
-:::info Embedded PostgreSQL
-When built with `--features embedded-db`, forge dev automatically starts an embedded PostgreSQL instance. Data persists in `./pg_data/` between sessions. Use `--no-pg` if you prefer an external database.
-:::
+**Services started:**
+
+| Service | URL | Description |
+|---------|-----|-------------|
+| Backend | http://localhost:8080 | Rust API server |
+| Frontend | http://localhost:5173 | Svelte dev server |
+| Dashboard | http://localhost:8080/_dashboard | Admin panel |
+| PostgreSQL | localhost:5432 | Database |
+
+## forge dev down
+
+Stop the development environment.
+
+```bash
+forge dev down [options]
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--clean` | Remove volumes (deletes database data) |
+
+**Examples:**
+
+```bash
+# Stop containers (preserves database)
+forge dev down
+
+# Stop and remove all data (fresh start)
+forge dev down --clean
+```
+
+**Output:**
+
+```
+⏹ Stopping FORGE development environment...
+
+  → Running: docker compose down
+
+ ✔ Container my-app-frontend-1  Removed
+ ✔ Container my-app-backend-1   Removed
+ ✔ Container my-app-db-1        Removed
+ ✔ Network my-app_default       Removed
+
+✅ Development environment stopped.
+```
+
+With `--clean`:
+
+```
+🧹 Stopping and cleaning FORGE development environment...
+
+  → Running: docker compose down -v
+
+ ✔ Container my-app-frontend-1  Removed
+ ✔ Container my-app-backend-1   Removed
+ ✔ Container my-app-db-1        Removed
+ ✔ Volume my-app_postgres_data  Removed
+ ✔ Network my-app_default       Removed
+
+✅ Development environment stopped and volumes removed.
+```
 
 ## forge check
 
@@ -244,11 +290,10 @@ forge check [options]
   ✓ .env file found
   ✓ DATABASE_URL is set
     → postgres://user:****@localhost/myapp
-    → Using localhost - fine for development
 
   ⋯ Checking database connection...
   ✓ Database connection successful
-    → PostgreSQL 16.1
+    → PostgreSQL 17
 
   ✓ frontend/ directory exists
   ✓ Svelte dependency found
@@ -256,7 +301,6 @@ forge check [options]
   ✓ Frontend dependencies installed
 
   ✓ ESLint check passed
-  ✓ Prettier check passed
 
 ✅ All checks passed! Ready for development.
 
@@ -447,15 +491,15 @@ auth = false  # Set true for production
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `DATABASE_URL` | No* | PostgreSQL connection string (*not needed with embedded postgres) |
+| `DATABASE_URL` | Yes | PostgreSQL connection string |
 | `FORGE_PORT` | No | Override gateway port |
 | `FORGE_LOG` | No | Log level (debug, info, warn, error) |
 | `FORGE_JWT_SECRET` | No | JWT signing secret |
 
 **.env Example:**
 ```bash
-DATABASE_URL=postgres://postgres:postgres@localhost:5432/myapp
-FORGE_LOG=debug
+DATABASE_URL=postgres://postgres:forge@localhost:5432/myapp
+RUST_LOG=debug
 FORGE_JWT_SECRET=your-secret-key-here
 ```
 
@@ -468,24 +512,18 @@ FORGE_JWT_SECRET=your-secret-key-here
 forge new my-app --demo
 cd my-app
 
-# Start development (embedded postgres + backend + frontend)
+# Start development (Docker Compose)
 forge dev
 ```
 
-That's it! No Docker, no external database setup needed.
-
-### Using an External Database
+### Stopping Development
 
 ```bash
-# Create project
-forge new my-app --demo
-cd my-app
+# Stop containers (keep data)
+forge dev down
 
-# Set up your database URL
-echo "DATABASE_URL=postgres://user:pass@localhost:5432/myapp" >> .env
-
-# Start with external database
-forge dev --no-pg
+# Stop and delete database
+forge dev down --clean
 ```
 
 ### Adding a New Feature
@@ -502,40 +540,14 @@ forge add mutation update_user_profile
 # Regenerate types
 forge generate
 
-# Test
-forge dev
+# Test (backend auto-reloads on save)
 ```
 
-### Using Docker Compose
-
-For containerized development:
-
-```bash
-# Start all services
-docker compose up --build
-
-# Or run in background
-docker compose up -d --build
-```
-
-### Deploying to Virtual Machine
-
-```bash
-# Build release binary
-cargo build --release
-
-# Copy to server
-scp target/release/my-app user@server:/app/
-
-# On server: run with systemd or supervisor
-DATABASE_URL=postgres://user:pass@db/myapp /app/my-app
-```
-
-### Deploying with Docker
+### Production Deployment
 
 ```bash
 # Build production image
-docker build -t my-app .
+docker build -t my-app --target production .
 
 # Run with external PostgreSQL
 docker run -d \
@@ -548,3 +560,4 @@ docker run -d \
 
 - [Quick Start](/docs/quick-start) - Get started in 5 minutes
 - [Tutorials](/tutorials) - Learn by building
+- [Deployment](/docs/concepts/deployment) - Production deployment guide

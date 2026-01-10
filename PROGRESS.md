@@ -185,6 +185,11 @@ Additional CLI refinements.
 - Added linting checks to forge check
 - Updated deployment docs for Docker/VM
 
+Fixed forge dev embedded PostgreSQL database creation.
+- Modified `crates/forge/src/cli/dev.rs` to actually create `forge_dev` database
+- Previously only set DATABASE_URL but never ran CREATE DATABASE
+- Connect to postgres database first, then CREATE DATABASE forge_dev
+
 Released v0.0.1 to GitHub and crates.io.
 - Removed all 0.0.2-alpha version references
 - Fixed Rust 2024 edition: unsafe blocks for std::env::set_var/remove_var
@@ -194,3 +199,31 @@ Released v0.0.1 to GitHub and crates.io.
 - Published forgex, forge-core, forge-macros, forge-runtime, forge-codegen to crates.io
 - Binaries: Linux (x86_64), macOS (x86_64, aarch64), Windows (x86_64)
 - Install: curl -fsSL https://raw.githubusercontent.com/isala404/forge/main/docs/static/install.sh | sh
+
+Refactored forge dev to use Docker Compose.
+- `forge dev` now runs `docker compose up --build`
+- Added `forge dev down` and `forge dev down --clean` subcommands
+- Removed embedded PostgreSQL, cargo, bun dependencies from CLI
+- `forge new` only requires Docker (no local cargo/bun)
+- Backend runs with --no-default-features (no frontend embedding in dev)
+- Removed prettier files from scaffolded frontend
+- Fixed User-Agent header in get_bitcoin_price action template
+- Updated docs: quick-start.mdx, cli/index.mdx, concepts/deployment.mdx
+
+Improved Dockerfile templates to use official Rust images.
+- Dev stage: rust:1-slim-bookworm with cargo-watch
+- Builder stage: rust:1-alpine for musl-linked binaries
+- Production stage: alpine:3.21 (~35MB final image)
+- Updated deployment docs with new base images
+
+Improved forge dev startup sequence and lockfile handling.
+- `forge new` generates `bun.lock` using Docker before initial git commit
+- Added `--no-lock` flag to skip lockfile generation
+- Added backend healthcheck (`/ready` endpoint) to docker-compose template
+- Frontend now depends on backend healthcheck (waits for backend to be ready)
+- Browser opens only after Vite ready signal detected (not fixed 10s delay)
+- Added `curl` to dev stage Dockerfile for healthcheck support
+- Modified `crates/forge/src/cli/new.rs`: generate_bun_lockfile(), --no-lock flag
+- Modified `crates/forge/src/cli/dev.rs`: output monitoring for Vite ready signal, --progress plain for non-TTY output
+- Modified `crates/forge/templates/empty/project/docker-compose.yml.tmpl`: healthchecks
+- Modified `crates/forge/templates/empty/project/Dockerfile.tmpl`: curl install

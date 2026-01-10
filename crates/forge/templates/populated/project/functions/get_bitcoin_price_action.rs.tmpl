@@ -44,6 +44,7 @@ pub async fn get_bitcoin_price(
     let response = ctx
         .http()
         .get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd,eur,gbp&include_24hr_change=true")
+        .header("User-Agent", "forge-demo")
         .send()
         .await
         .map_err(|e| ForgeError::Function(format!("HTTP request failed: {}", e)))?;

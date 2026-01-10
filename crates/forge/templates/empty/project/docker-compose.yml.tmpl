@@ -1,28 +1,28 @@
 services:
   backend:
-    image: rust:1.92-bookworm
-    working_dir: /app
-    command: >
-      sh -c "cargo install cargo-watch &&
-             cargo watch -x run"
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
     ports:
       - "8080:8080"
     env_file:
       - .env
     environment:
       - DATABASE_URL=postgres://postgres:forge@db:5432/{{project_name}}
+      - RUST_LOG=debug
     volumes:
       - .:/app
-      - cargo_cache:/app/.cargo
+      - cargo_cache:/usr/local/cargo/registry
       - target_cache:/app/target
     depends_on:
       db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
-      interval: 10s
+      test: ["CMD", "curl", "-f", "http://localhost:8080/ready"]
+      interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 30
       start_period: 60s
 
   frontend:
