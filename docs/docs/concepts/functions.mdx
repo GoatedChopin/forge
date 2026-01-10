@@ -140,6 +140,56 @@ Don't cache:
 - Queries with high cardinality arguments
 :::
 
+## Function Logging
+
+All functions are automatically logged at the `trace` level by default. You can configure the log level per-function using the `log` attribute:
+
+```rust
+// Log at debug level
+#[forge::query(log = "debug")]
+pub async fn list_users(ctx: &QueryContext) -> Result<Vec<User>> {
+    // ...
+}
+
+// Log at info level
+#[forge::mutation(log = "info")]
+pub async fn create_user(ctx: &MutationContext, input: CreateUserInput) -> Result<User> {
+    // ...
+}
+
+// Disable logging for this function
+#[forge::action(log = "off")]
+pub async fn health_check(ctx: &ActionContext) -> Result<()> {
+    // High-frequency function, no need to log
+    Ok(())
+}
+```
+
+**Available log levels:**
+- `"trace"` - Most detailed (default)
+- `"debug"` - Debug information
+- `"info"` - General information
+- `"warn"` - Warning messages
+- `"error"` - Error messages only
+- `"off"` - Disable logging for this function
+
+**Log output includes:**
+- Function name
+- Function kind (query/mutation/action)
+- Execution duration in milliseconds
+- Success/failure status
+- Error message (on failure)
+
+Example log output:
+```
+2024-01-15T10:30:45.123Z TRACE function=list_users kind=query duration_ms=12 success=true "Function executed"
+2024-01-15T10:30:46.456Z TRACE function=create_user kind=mutation duration_ms=45 success=false error="Validation error: email already exists" "Function failed"
+```
+
+:::tip
+Set `RUST_LOG=trace` in your `.env` file or docker-compose to see all function logs during development.
+:::
+
 ## Mutations
 
 Mutations are for **modifying data**. They can read and write to the database, and dispatch background jobs.

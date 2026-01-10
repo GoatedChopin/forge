@@ -10,7 +10,7 @@ services:
       - .env
     environment:
       - DATABASE_URL=postgres://postgres:forge@db:5432/{{project_name}}
-      - RUST_LOG=debug
+      - RUST_LOG=trace
     volumes:
       - .:/app
       - cargo_cache:/usr/local/cargo/registry

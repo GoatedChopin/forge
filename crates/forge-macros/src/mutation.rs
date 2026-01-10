@@ -27,6 +27,7 @@ struct MutationAttrs {
     rate_limit_requests: Option<u32>,
     rate_limit_per_secs: Option<u64>,
     rate_limit_key: Option<String>,
+    log_level: Option<String>,
     #[allow(dead_code)]
     retry_on: Vec<String>,
     #[allow(dead_code)]
@@ -114,6 +115,25 @@ fn parse_mutation_attrs(attr: TokenStream) -> MutationAttrs {
                             attrs.rate_limit_key = Some(key.to_string());
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // Parse log = "level" (trace, debug, info, warn, error, off)
+    if let Some(log_start) = attr_str.find("log") {
+        // Make sure it's not part of another word
+        let before = if log_start > 0 {
+            attr_str.chars().nth(log_start - 1)
+        } else {
+            None
+        };
+        if before.is_none() || !before.unwrap().is_alphanumeric() {
+            if let Some(quote_start) = attr_str[log_start..].find('"') {
+                let after_quote = &attr_str[log_start + quote_start + 1..];
+                if let Some(quote_end) = after_quote.find('"') {
+                    let level = &after_quote[..quote_end];
+                    attrs.log_level = Some(level.to_string());
                 }
             }
         }
@@ -259,6 +279,11 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
         None => quote! { None },
     };
 
+    let log_level = match &attrs.log_level {
+        Some(l) => quote! { Some(#l) },
+        None => quote! { None },
+    };
+
     // Generate the args struct (use unit type if no args)
     let args_struct = if args_fields.is_empty() {
         quote! {
@@ -326,6 +351,7 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
                     rate_limit_requests: #rate_limit_requests,
                     rate_limit_per_secs: #rate_limit_per_secs,
                     rate_limit_key: #rate_limit_key,
+                    log_level: #log_level,
                 }
             }
 

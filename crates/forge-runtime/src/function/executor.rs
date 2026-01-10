@@ -4,6 +4,7 @@ use std::time::Duration;
 use forge_core::{AuthContext, ForgeError, JobDispatch, RequestMetadata, Result, WorkflowDispatch};
 use serde_json::Value;
 use tokio::time::timeout;
+use tracing::{debug, error, info, trace, warn};
 
 use super::registry::FunctionRegistry;
 use super::router::{FunctionRouter, RouteResult};
@@ -72,15 +73,27 @@ impl FunctionExecutor {
         // Get function-specific timeout or use default
         let fn_timeout = self.get_function_timeout(function_name);
 
+        // Get log level for this function (default to trace)
+        let log_level = self.get_function_log_level(function_name);
+
         // Execute with timeout
         let result = match timeout(
             fn_timeout,
-            self.router.route(function_name, args, auth, request),
+            self.router.route(function_name, args.clone(), auth, request),
         )
         .await
         {
             Ok(result) => result,
             Err(_) => {
+                let duration = start.elapsed();
+                self.log_execution(
+                    log_level,
+                    function_name,
+                    "unknown",
+                    duration,
+                    false,
+                    Some(&format!("Timeout after {:?}", fn_timeout)),
+                );
                 return Err(ForgeError::Timeout(format!(
                     "Function '{}' timed out after {:?}",
                     function_name, fn_timeout
@@ -98,6 +111,8 @@ impl FunctionExecutor {
                     RouteResult::Action(v) => ("action", v),
                 };
 
+                self.log_execution(log_level, function_name, kind, duration, true, None);
+
                 Ok(ExecutionResult {
                     function_name: function_name.to_string(),
                     function_kind: kind.to_string(),
@@ -107,19 +122,158 @@ impl FunctionExecutor {
                     error: None,
                 })
             }
-            Err(e) => Ok(ExecutionResult {
-                function_name: function_name.to_string(),
-                function_kind: self
+            Err(e) => {
+                let kind = self
                     .router
                     .get_function_kind(function_name)
                     .map(|k| k.to_string())
-                    .unwrap_or_else(|| "unknown".to_string()),
-                result: Value::Null,
-                duration,
-                success: false,
-                error: Some(e.to_string()),
-            }),
+                    .unwrap_or_else(|| "unknown".to_string());
+
+                self.log_execution(
+                    log_level,
+                    function_name,
+                    &kind,
+                    duration,
+                    false,
+                    Some(&e.to_string()),
+                );
+
+                Ok(ExecutionResult {
+                    function_name: function_name.to_string(),
+                    function_kind: kind,
+                    result: Value::Null,
+                    duration,
+                    success: false,
+                    error: Some(e.to_string()),
+                })
+            }
         }
+    }
+
+    /// Log function execution at the configured level.
+    fn log_execution(
+        &self,
+        log_level: &str,
+        function_name: &str,
+        kind: &str,
+        duration: Duration,
+        success: bool,
+        error: Option<&str>,
+    ) {
+        let duration_ms = duration.as_millis();
+
+        match log_level {
+            "off" => {}
+            "error" => {
+                if success {
+                    error!(
+                        function = function_name,
+                        kind = kind,
+                        duration_ms = duration_ms,
+                        success = success,
+                        "Function executed"
+                    );
+                } else {
+                    error!(
+                        function = function_name,
+                        kind = kind,
+                        duration_ms = duration_ms,
+                        success = success,
+                        error = error,
+                        "Function failed"
+                    );
+                }
+            }
+            "warn" => {
+                if success {
+                    warn!(
+                        function = function_name,
+                        kind = kind,
+                        duration_ms = duration_ms,
+                        success = success,
+                        "Function executed"
+                    );
+                } else {
+                    warn!(
+                        function = function_name,
+                        kind = kind,
+                        duration_ms = duration_ms,
+                        success = success,
+                        error = error,
+                        "Function failed"
+                    );
+                }
+            }
+            "info" => {
+                if success {
+                    info!(
+                        function = function_name,
+                        kind = kind,
+                        duration_ms = duration_ms,
+                        success = success,
+                        "Function executed"
+                    );
+                } else {
+                    info!(
+                        function = function_name,
+                        kind = kind,
+                        duration_ms = duration_ms,
+                        success = success,
+                        error = error,
+                        "Function failed"
+                    );
+                }
+            }
+            "debug" => {
+                if success {
+                    debug!(
+                        function = function_name,
+                        kind = kind,
+                        duration_ms = duration_ms,
+                        success = success,
+                        "Function executed"
+                    );
+                } else {
+                    debug!(
+                        function = function_name,
+                        kind = kind,
+                        duration_ms = duration_ms,
+                        success = success,
+                        error = error,
+                        "Function failed"
+                    );
+                }
+            }
+            // Default to trace
+            _ => {
+                if success {
+                    trace!(
+                        function = function_name,
+                        kind = kind,
+                        duration_ms = duration_ms,
+                        success = success,
+                        "Function executed"
+                    );
+                } else {
+                    trace!(
+                        function = function_name,
+                        kind = kind,
+                        duration_ms = duration_ms,
+                        success = success,
+                        error = error,
+                        "Function failed"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Get the log level for a specific function.
+    fn get_function_log_level(&self, function_name: &str) -> &'static str {
+        self.registry
+            .get(function_name)
+            .and_then(|entry| entry.info().log_level)
+            .unwrap_or("trace")
     }
 
     /// Get the timeout for a specific function.

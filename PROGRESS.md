@@ -227,3 +227,20 @@ Improved forge dev startup sequence and lockfile handling.
 - Modified `crates/forge/src/cli/dev.rs`: output monitoring for Vite ready signal, --progress plain for non-TTY output
 - Modified `crates/forge/templates/empty/project/docker-compose.yml.tmpl`: healthchecks
 - Modified `crates/forge/templates/empty/project/Dockerfile.tmpl`: curl install
+
+Added automatic function access logging with configurable log levels.
+- All queries/mutations/actions now logged automatically at trace level by default
+- Added `log` attribute to configure per-function log level: `#[forge::query(log = "debug")]`
+- Supported levels: trace (default), debug, info, warn, error, off
+- Log output includes: function name, kind, duration_ms, success/failure, error message
+- Added `log_level` field to `FunctionInfo` in `crates/forge-core/src/function/traits.rs`
+- Added log level parsing to proc macros in `crates/forge-macros/src/query.rs`, `mutation.rs`, `action.rs`
+- Added logging logic in `crates/forge-runtime/src/function/executor.rs`
+- Updated RUST_LOG to trace in `env.tmpl` and `docker-compose.yml.tmpl`
+- Added documentation in `docs/docs/concepts/functions.mdx`
+
+Added graceful Ctrl+C handling to forge dev.
+- Pressing Ctrl+C now sends SIGTERM to docker compose and runs `docker compose down`
+- Displays "Stopping containers gracefully..." message
+- Added `nix` dependency for Unix signal handling
+- Removed Windows support (Unix-only)

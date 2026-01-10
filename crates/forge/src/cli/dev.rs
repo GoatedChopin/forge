@@ -5,6 +5,7 @@ use std::path::Path;
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+use tokio::signal;
 use tokio::sync::mpsc;
 
 /// Start the development environment using Docker Compose.
@@ -134,14 +135,49 @@ impl DevCommand {
             });
         }
 
-        // Wait for docker compose to exit
-        let status = child.wait().await?;
+        // Wait for docker compose to exit or Ctrl+C
+        tokio::select! {
+            status = child.wait() => {
+                match status {
+                    Ok(status) if status.success() => Ok(()),
+                    Ok(_) => {
+                        anyhow::bail!("docker compose up failed");
+                    }
+                    Err(e) => Err(e.into()),
+                }
+            }
+            _ = signal::ctrl_c() => {
+                println!();
+                println!(
+                    "{} Stopping containers gracefully...",
+                    style("⏹").cyan()
+                );
 
-        if !status.success() {
-            anyhow::bail!("docker compose up failed");
+                // Send SIGTERM to docker compose process
+                if let Some(id) = child.id() {
+                    use nix::sys::signal::{kill, Signal};
+                    use nix::unistd::Pid;
+                    let _ = kill(Pid::from_raw(id as i32), Signal::SIGTERM);
+                }
+
+                // Wait for docker compose to finish gracefully
+                let _ = child.wait().await;
+
+                // Run docker compose down to ensure clean shutdown
+                let _ = Command::new("docker")
+                    .args(["compose", "down"])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status()
+                    .await;
+
+                println!(
+                    "{} Development environment stopped.",
+                    style("✅").green()
+                );
+                Ok(())
+            }
         }
-
-        Ok(())
     }
 
     /// Stop the development environment.
