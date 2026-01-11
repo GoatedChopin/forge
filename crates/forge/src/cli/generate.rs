@@ -200,8 +200,10 @@ impl GenerateCommand {
         };
         pb.inc(1);
 
-        // Check if we have any schema definitions
-        let has_schema = !registry.all_tables().is_empty() || !registry.all_enums().is_empty();
+        // Check if we have any schema definitions (tables, enums, or functions)
+        let has_schema = !registry.all_tables().is_empty()
+            || !registry.all_enums().is_empty()
+            || !registry.all_functions().is_empty();
 
         if has_schema {
             // Use forge_codegen to generate TypeScript
@@ -249,11 +251,13 @@ impl GenerateCommand {
         if has_schema {
             let table_count = registry.all_tables().len();
             let enum_count = registry.all_enums().len();
+            let function_count = registry.all_functions().len();
             println!(
-                "  {} Generated TypeScript from {} models and {} enums",
+                "  {} Generated TypeScript from {} models, {} enums, {} functions",
                 style("✓").green(),
                 style(table_count).cyan(),
-                style(enum_count).cyan()
+                style(enum_count).cyan(),
+                style(function_count).cyan()
             );
         }
         println!(

@@ -27,29 +27,6 @@ fn is_git_available() -> bool {
         .unwrap_or(false)
 }
 
-/// Check if Docker is installed.
-fn check_docker() -> std::result::Result<String, String> {
-    let output = Command::new("docker")
-        .arg("--version")
-        .output()
-        .map_err(|_| "Docker is not installed. Install from https://docs.docker.com/get-docker/".to_string())?;
-
-    if !output.status.success() {
-        return Err("Failed to run docker --version".to_string());
-    }
-
-    let version_output = String::from_utf8_lossy(&output.stdout);
-    // Parse "Docker version 24.0.0, ..." -> "24.0.0"
-    let version_str = version_output
-        .split_whitespace()
-        .nth(2)
-        .map(|s| s.trim_end_matches(','))
-        .unwrap_or("unknown")
-        .to_string();
-
-    Ok(version_str)
-}
-
 /// Check if the directory is inside an existing git repository.
 fn is_inside_git_repo(dir: &Path) -> bool {
     Command::new("git")
@@ -60,30 +37,100 @@ fn is_inside_git_repo(dir: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Generate bun.lock file using Docker.
+/// Run forge generate to create frontend types.
+fn run_forge_generate(dir: &Path) -> Result<()> {
+    println!("  {} Generating frontend types...", style("→").cyan());
+
+    // Get the current executable path to run forge generate
+    let forge_exe = std::env::current_exe().unwrap_or_else(|_| "forge".into());
+
+    let output = Command::new(&forge_exe)
+        .args(["generate", "-y"])
+        .current_dir(dir)
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!(
+            "  {} Failed to generate types: {}",
+            style("⚠").yellow(),
+            stderr.trim()
+        );
+        return Ok(());
+    }
+
+    println!("  {} Frontend types generated", style("✓").green());
+    Ok(())
+}
+
+/// Run formatters (bun format and cargo fmt) to ensure clean code.
+fn run_formatters(dir: &Path) -> Result<()> {
+    // Run bun format in frontend directory
+    let frontend_dir = dir.join("frontend");
+    if frontend_dir.exists() {
+        println!("  {} Formatting frontend...", style("→").cyan());
+        let output = Command::new("bun")
+            .args(["run", "format"])
+            .current_dir(&frontend_dir)
+            .output();
+
+        match output {
+            Ok(o) if o.status.success() => {
+                println!("  {} Frontend formatted", style("✓").green());
+            }
+            _ => {
+                // Non-fatal: continue without formatting
+            }
+        }
+    }
+
+    // Run cargo fmt if cargo is available
+    let cargo_check = Command::new("cargo").arg("--version").output();
+    if cargo_check.is_ok() && cargo_check.unwrap().status.success() {
+        println!("  {} Formatting backend...", style("→").cyan());
+        let output = Command::new("cargo")
+            .args(["fmt"])
+            .current_dir(dir)
+            .output();
+
+        match output {
+            Ok(o) if o.status.success() => {
+                println!("  {} Backend formatted", style("✓").green());
+            }
+            _ => {
+                // Non-fatal: continue without formatting
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Generate bun.lock file using native bun.
 /// Runs `bun install --lockfile-only` in the frontend directory.
 fn generate_bun_lockfile(dir: &Path) -> Result<()> {
     let frontend_dir = dir.join("frontend");
-    let abs_frontend = frontend_dir.canonicalize()?;
 
-    println!(
-        "  {} Generating bun.lock...",
-        style("→").cyan()
-    );
+    println!("  {} Generating bun.lock...", style("→").cyan());
 
-    let output = Command::new("docker")
-        .args([
-            "run",
-            "--rm",
-            "-v",
-            &format!("{}:/app", abs_frontend.display()),
-            "-w",
-            "/app",
-            "oven/bun:1",
-            "bun",
-            "install",
-            "--lockfile-only",
-        ])
+    // Check if bun is available
+    let bun_check = Command::new("bun").arg("--version").output();
+
+    if bun_check.is_err() || !bun_check.unwrap().status.success() {
+        eprintln!(
+            "  {} bun not found, skipping lockfile generation",
+            style("⚠").yellow()
+        );
+        eprintln!(
+            "    Run {} in frontend/ after installing bun",
+            style("bun install").cyan()
+        );
+        return Ok(());
+    }
+
+    let output = Command::new("bun")
+        .args(["install", "--lockfile-only"])
+        .current_dir(&frontend_dir)
         .output()?;
 
     if !output.status.success() {
@@ -97,10 +144,7 @@ fn generate_bun_lockfile(dir: &Path) -> Result<()> {
         return Ok(());
     }
 
-    println!(
-        "  {} bun.lock generated",
-        style("✓").green()
-    );
+    println!("  {} bun.lock generated", style("✓").green());
 
     Ok(())
 }
@@ -190,12 +234,6 @@ const FRONTEND_LAYOUT_TS: &str =
     include_str!("../../templates/populated/frontend/routes/layout.ts.tmpl");
 const FRONTEND_PAGE_SVELTE: &str =
     include_str!("../../templates/populated/frontend/routes/page.svelte.tmpl");
-const FRONTEND_TYPES_TS: &str =
-    include_str!("../../templates/populated/frontend/lib/forge/types.ts.tmpl");
-const FRONTEND_API_TS: &str =
-    include_str!("../../templates/populated/frontend/lib/forge/api.ts.tmpl");
-const FRONTEND_INDEX_TS: &str =
-    include_str!("../../templates/populated/frontend/lib/forge/index.ts.tmpl");
 const FRONTEND_ESLINT_CONFIG: &str =
     include_str!("../../templates/populated/frontend/eslint.config.js.tmpl");
 
@@ -234,12 +272,6 @@ const EMPTY_FRONTEND_LAYOUT_TS: &str =
     include_str!("../../templates/empty/frontend/routes/layout.ts.tmpl");
 const EMPTY_FRONTEND_PAGE_SVELTE: &str =
     include_str!("../../templates/empty/frontend/routes/page.svelte.tmpl");
-const EMPTY_FRONTEND_TYPES_TS: &str =
-    include_str!("../../templates/empty/frontend/lib/forge/types.ts.tmpl");
-const EMPTY_FRONTEND_API_TS: &str =
-    include_str!("../../templates/empty/frontend/lib/forge/api.ts.tmpl");
-const EMPTY_FRONTEND_INDEX_TS: &str =
-    include_str!("../../templates/empty/frontend/lib/forge/index.ts.tmpl");
 const EMPTY_FRONTEND_ESLINT_CONFIG: &str =
     include_str!("../../templates/empty/frontend/eslint.config.js.tmpl");
 
@@ -303,22 +335,7 @@ EXAMPLES:
 impl NewCommand {
     /// Execute the new project command.
     pub async fn execute(self) -> Result<()> {
-        // Check Docker is installed
-        println!("{}", style("Checking prerequisites...").dim());
-
-        let docker_version = match check_docker() {
-            Ok(v) => v,
-            Err(msg) => {
-                eprintln!("{} {}", style("✗").red().bold(), style(&msg).red());
-                std::process::exit(1);
-            }
-        };
-
-        println!(
-            "  {} Docker {}",
-            style("✓").green(),
-            docker_version,
-        );
+        println!("{}", style("Creating project...").dim());
         println!();
 
         // Require either --demo or --minimal
@@ -379,6 +396,12 @@ impl NewCommand {
             generate_bun_lockfile(path)?;
         }
 
+        // Generate frontend types
+        run_forge_generate(path)?;
+
+        // Run formatters before git commit
+        run_formatters(path)?;
+
         // Initialize git repository if git is available
         if is_git_available() {
             init_git_repo(path)?;
@@ -400,16 +423,20 @@ impl NewCommand {
         );
         println!();
         println!("  {} {}", style("2.").dim(), style("forge dev").cyan());
-        println!("     Start backend + frontend + database with Docker");
+        println!("     Start backend + frontend + embedded PostgreSQL");
         println!();
         println!("{}", style("Useful commands:").bold());
         println!(
-            "  {}    Stop the development environment",
+            "  {}         Stop the development environment",
             style("forge dev down").dim()
         );
         println!(
-            "  {}  Stop and remove database",
-            style("forge dev down --clean").dim()
+            "  {}  Stop and clean target/ and pg_data/",
+            style("forge dev down --clear").dim()
+        );
+        println!(
+            "  {}       Run with Docker Compose",
+            style("forge dev --docker").dim()
         );
         println!();
         println!("{}", style("Services (when running):").bold());
@@ -515,7 +542,6 @@ fn create_frontend(dir: &Path, name: &str, demo: bool) -> Result<()> {
     let frontend_dir = dir.join("frontend");
     fs::create_dir_all(&frontend_dir)?;
     fs::create_dir_all(frontend_dir.join("src/routes"))?;
-    fs::create_dir_all(frontend_dir.join("src/lib/forge"))?;
 
     if demo {
         // Demo templates - full frontend with complete UI
@@ -547,15 +573,6 @@ fn create_frontend(dir: &Path, name: &str, demo: bool) -> Result<()> {
         fs::write(
             frontend_dir.join("src/routes/+page.svelte"),
             FRONTEND_PAGE_SVELTE,
-        )?;
-        fs::write(
-            frontend_dir.join("src/lib/forge/types.ts"),
-            FRONTEND_TYPES_TS,
-        )?;
-        fs::write(frontend_dir.join("src/lib/forge/api.ts"), FRONTEND_API_TS)?;
-        fs::write(
-            frontend_dir.join("src/lib/forge/index.ts"),
-            FRONTEND_INDEX_TS,
         )?;
     } else {
         // Minimal templates - starter frontend
@@ -593,18 +610,6 @@ fn create_frontend(dir: &Path, name: &str, demo: bool) -> Result<()> {
         fs::write(
             frontend_dir.join("src/routes/+page.svelte"),
             render(EMPTY_FRONTEND_PAGE_SVELTE, &vars),
-        )?;
-        fs::write(
-            frontend_dir.join("src/lib/forge/types.ts"),
-            EMPTY_FRONTEND_TYPES_TS,
-        )?;
-        fs::write(
-            frontend_dir.join("src/lib/forge/api.ts"),
-            EMPTY_FRONTEND_API_TS,
-        )?;
-        fs::write(
-            frontend_dir.join("src/lib/forge/index.ts"),
-            EMPTY_FRONTEND_INDEX_TS,
         )?;
     }
 
@@ -659,9 +664,8 @@ mod tests {
                 .exists()
         );
         assert!(path.join("frontend/package.json").exists());
-        assert!(path.join("frontend/src/lib/forge/types.ts").exists());
-        assert!(path.join("frontend/src/lib/forge/api.ts").exists());
         assert!(path.join("frontend/src/routes/+layout.ts").exists());
+        // Note: frontend/src/lib/forge/ files are generated by `forge generate`, not scaffolded
         assert!(path.join("frontend/eslint.config.js").exists());
         assert!(path.join("migrations/0001_initial.sql").exists());
         assert!(path.join("Dockerfile").exists());
@@ -700,7 +704,6 @@ mod tests {
 
         // Frontend should exist with minimal templates
         assert!(path.join("frontend/package.json").exists());
-        assert!(path.join("frontend/src/lib/forge/types.ts").exists());
-        assert!(path.join("frontend/src/lib/forge/api.ts").exists());
+        // Note: frontend/src/lib/forge/ files are generated by `forge generate`, not scaffolded
     }
 }

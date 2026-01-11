@@ -79,7 +79,8 @@ impl FunctionExecutor {
         // Execute with timeout
         let result = match timeout(
             fn_timeout,
-            self.router.route(function_name, args.clone(), auth, request),
+            self.router
+                .route(function_name, args.clone(), auth, request),
         )
         .await
         {
@@ -90,6 +91,7 @@ impl FunctionExecutor {
                     log_level,
                     function_name,
                     "unknown",
+                    &args,
                     duration,
                     false,
                     Some(&format!("Timeout after {:?}", fn_timeout)),
@@ -111,7 +113,7 @@ impl FunctionExecutor {
                     RouteResult::Action(v) => ("action", v),
                 };
 
-                self.log_execution(log_level, function_name, kind, duration, true, None);
+                self.log_execution(log_level, function_name, kind, &args, duration, true, None);
 
                 Ok(ExecutionResult {
                     function_name: function_name.to_string(),
@@ -133,6 +135,7 @@ impl FunctionExecutor {
                     log_level,
                     function_name,
                     &kind,
+                    &args,
                     duration,
                     false,
                     Some(&e.to_string()),
@@ -151,16 +154,19 @@ impl FunctionExecutor {
     }
 
     /// Log function execution at the configured level.
+    #[allow(clippy::too_many_arguments)]
     fn log_execution(
         &self,
         log_level: &str,
         function_name: &str,
         kind: &str,
+        input: &Value,
         duration: Duration,
         success: bool,
         error: Option<&str>,
     ) {
         let duration_ms = duration.as_millis();
+        let input_str = input.to_string();
 
         match log_level {
             "off" => {}
@@ -169,6 +175,7 @@ impl FunctionExecutor {
                     error!(
                         function = function_name,
                         kind = kind,
+                        input = input_str,
                         duration_ms = duration_ms,
                         success = success,
                         "Function executed"
@@ -177,6 +184,7 @@ impl FunctionExecutor {
                     error!(
                         function = function_name,
                         kind = kind,
+                        input = input_str,
                         duration_ms = duration_ms,
                         success = success,
                         error = error,
@@ -189,6 +197,7 @@ impl FunctionExecutor {
                     warn!(
                         function = function_name,
                         kind = kind,
+                        input = input_str,
                         duration_ms = duration_ms,
                         success = success,
                         "Function executed"
@@ -197,6 +206,7 @@ impl FunctionExecutor {
                     warn!(
                         function = function_name,
                         kind = kind,
+                        input = input_str,
                         duration_ms = duration_ms,
                         success = success,
                         error = error,
@@ -209,6 +219,7 @@ impl FunctionExecutor {
                     info!(
                         function = function_name,
                         kind = kind,
+                        input = input_str,
                         duration_ms = duration_ms,
                         success = success,
                         "Function executed"
@@ -217,6 +228,7 @@ impl FunctionExecutor {
                     info!(
                         function = function_name,
                         kind = kind,
+                        input = input_str,
                         duration_ms = duration_ms,
                         success = success,
                         error = error,
@@ -229,6 +241,7 @@ impl FunctionExecutor {
                     debug!(
                         function = function_name,
                         kind = kind,
+                        input = input_str,
                         duration_ms = duration_ms,
                         success = success,
                         "Function executed"
@@ -237,6 +250,7 @@ impl FunctionExecutor {
                     debug!(
                         function = function_name,
                         kind = kind,
+                        input = input_str,
                         duration_ms = duration_ms,
                         success = success,
                         error = error,
@@ -250,6 +264,7 @@ impl FunctionExecutor {
                     trace!(
                         function = function_name,
                         kind = kind,
+                        input = input_str,
                         duration_ms = duration_ms,
                         success = success,
                         "Function executed"
@@ -258,6 +273,7 @@ impl FunctionExecutor {
                     trace!(
                         function = function_name,
                         kind = kind,
+                        input = input_str,
                         duration_ms = duration_ms,
                         success = success,
                         error = error,

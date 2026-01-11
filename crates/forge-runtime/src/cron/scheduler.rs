@@ -208,9 +208,9 @@ impl CronRunner {
         let cron_list = self.registry.list();
 
         if cron_list.is_empty() {
-            tracing::debug!("Cron tick: no crons registered");
+            tracing::trace!("Cron tick: no crons registered");
         } else {
-            tracing::debug!(
+            tracing::trace!(
                 cron_count = cron_list.len(),
                 "Cron tick checking {} registered crons",
                 cron_list.len()
@@ -223,14 +223,8 @@ impl CronRunner {
             let scheduled_times = info
                 .schedule
                 .between_in_tz(window_start, now, info.timezone);
-            if scheduled_times.is_empty() {
-                tracing::debug!(
-                    cron = info.name,
-                    schedule = info.schedule.expression(),
-                    "No scheduled runs in window"
-                );
-            } else {
-                tracing::info!(
+            if !scheduled_times.is_empty() {
+                tracing::trace!(
                     cron = info.name,
                     schedule = info.schedule.expression(),
                     scheduled_count = scheduled_times.len(),
@@ -300,7 +294,7 @@ impl CronRunner {
         let run_id = Uuid::new_v4();
         let start = Instant::now();
 
-        tracing::info!(
+        tracing::debug!(
             cron = info.name,
             scheduled_time = %scheduled_time,
             is_catch_up = is_catch_up,
@@ -386,7 +380,12 @@ impl CronRunner {
 
         match result {
             Ok(Ok(())) => {
-                tracing::info!(cron = info.name, "Cron completed successfully");
+                tracing::info!(
+                    cron = info.name,
+                    scheduled_time = %scheduled_time,
+                    duration_ms = start.elapsed().as_millis(),
+                    "Cron executed"
+                );
                 self.mark_completed(info.name, scheduled_time).await;
 
                 // Record success metric

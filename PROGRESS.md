@@ -244,3 +244,21 @@ Added graceful Ctrl+C handling to forge dev.
 - Displays "Stopping containers gracefully..." message
 - Added `nix` dependency for Unix signal handling
 - Removed Windows support (Unix-only)
+
+Improved developer experience with bare metal dev, codegen, and logging.
+- `forge dev` now runs with cargo/bun + embedded PostgreSQL by default (--docker for Docker mode)
+- `forge dev down` kills orphaned processes, `--clear` removes target/ and pg_data/
+- Port 5432 availability check before starting embedded PostgreSQL
+- `forge new` runs `forge generate -y`, `bun format`, `cargo fmt` before initial commit
+- Deleted hardcoded frontend/lib/forge/ templates (types now generated dynamically)
+- Added CRITICAL warning to AGENTS.md forbidding edits to auto-generated files
+- Function access logs now include JSON-serialized input parameters
+- Default RUST_LOG: `info,forge_runtime::function::executor=trace`
+- Cron scheduler logs reduced: 1 INFO line per run with duration_ms
+- TypeScript codegen: proper DTO parsing from `#[derive(Serialize, Deserialize)]` structs
+- TypeScript codegen: job/workflow tracker factories with `createXxxJob()` / `createXxxWorkflow()`
+- TypeScript codegen: HashMap<K,V> → Record<K,V>, all numeric primitives → number
+- ForgeClient.getUrl() exposed for tracker URL resolution
+- Modified: dev.rs, new.rs, generate.rs, scheduler.rs, executor.rs, parser.rs, api.rs, types.rs, model.rs
+- Modified templates: main.rs.tmpl, env.tmpl, AGENTS.md.tmpl, client.ts.tmpl, stores.ts.tmpl, types.ts.tmpl, heartbeat_stats_cron.rs.tmpl
+- Made postgresql_embedded always included in CLI, embedded-db feature now only for end users

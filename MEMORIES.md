@@ -5,7 +5,8 @@ Stack: Rust 1.92+ (edition 2024), Svelte 5 + TypeScript, PostgreSQL
 Bun 1.3.1+ required for frontend
 Test: LIBRARY_PATH="/opt/homebrew/opt/libiconv/lib" cargo test
 Dev: forge dev (starts embedded postgres + backend + frontend)
-CLI install: cargo install --path crates/forge --features embedded-db
+CLI install: cargo install --path crates/forge
+embedded-db feature: only for end-user apps (forge-core/forge-runtime), CLI always includes postgresql_embedded
 Docs: cd docs && bun run start (routes: / landing, /docs, /tutorials, /blog)
 
 Release: workflow_dispatch in GitHub Actions → validate → bump-versions → build → release → publish-crates
@@ -69,11 +70,12 @@ TestDatabase: EXPLICIT config (from_url, from_env, embedded), from_env uses TEST
 Tests inline with function files (#[cfg(test)] mod tests), import from forge::testing
 
 Local dev scaffolding:
-- Build CLI: cargo build --release -p forgex
+- Build CLI: cargo build --release -p forgex --features embedded-db
 - Create demo: ./target/release/forge new <output-dir> --demo
-- Run: cd <output-dir> && forge dev (uses docker compose up --build)
-- Stop: forge dev down
-- Stop and clean volumes: forge dev down --clean
-- Requires: Docker only (no cargo/bun needed locally)
-- Dockerfile installs Rust 1.92 via rustup, cargo-watch for hot reload
+- Run: cd <output-dir> && forge dev (uses cargo/bun + embedded PostgreSQL)
+- Run with Docker: forge dev --docker (uses docker compose up --build)
+- Stop: forge dev down (kills orphaned postgres/cargo processes)
+- Stop and clean: forge dev down --clear (removes target/ and pg_data/)
+- Bare metal requires: cargo 92+, bun 1.3+, embedded-db feature
+- Docker mode requires: Docker only
 - Backend runs with --no-default-features (no frontend embedding in dev)

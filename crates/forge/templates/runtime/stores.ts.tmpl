@@ -270,9 +270,9 @@ export interface WorkflowTracker<TArgs>
 
 export function createJobTracker<TArgs>(
   jobType: string,
-  apiUrl: string,
 ): JobTracker<TArgs> {
   const client = getForgeClient();
+  const apiUrl = client.getUrl();
   const subscribers = new Set<(value: JobProgress | null) => void>();
   let state: JobProgress | null = null;
   let unsubscribeFn: (() => void) | null = null;
@@ -355,9 +355,9 @@ export function createJobTracker<TArgs>(
 
 export function createWorkflowTracker<TArgs>(
   workflowType: string,
-  apiUrl: string,
 ): WorkflowTracker<TArgs> {
   const client = getForgeClient();
+  const apiUrl = client.getUrl();
   const subscribers = new Set<(value: WorkflowProgress | null) => void>();
   let state: WorkflowProgress | null = null;
   let unsubscribeFn: (() => void) | null = null;

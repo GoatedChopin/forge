@@ -44,6 +44,10 @@ pub struct TableDef {
 
     /// Documentation comment.
     pub doc: Option<String>,
+
+    /// Whether this is a DTO (data transfer object) vs database table.
+    #[serde(default)]
+    pub is_dto: bool,
 }
 
 impl TableDef {
@@ -59,6 +63,7 @@ impl TableDef {
             soft_delete: false,
             tenant_field: None,
             doc: None,
+            is_dto: false,
         }
     }
 

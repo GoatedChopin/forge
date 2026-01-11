@@ -163,7 +163,50 @@ impl RustType {
             RustType::Bytes => "Uint8Array".to_string(),
             RustType::Option(inner) => format!("{} | null", inner.to_typescript()),
             RustType::Vec(inner) => format!("{}[]", inner.to_typescript()),
-            RustType::Custom(name) => name.clone(),
+            RustType::Custom(name) => {
+                // Handle common Rust primitive types
+                match name.as_str() {
+                    // Numeric types
+                    "usize" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128" | "i8" | "i16"
+                    | "i128" => "number".to_string(),
+                    // Timestamp/DateTime types
+                    "Timestamp" | "NaiveDateTime" => "string".to_string(),
+                    // DateTime<Utc>, DateTime<Local>, etc.
+                    dt if dt.starts_with("DateTime<") => "string".to_string(),
+                    // Option<T>
+                    opt if opt.starts_with("Option<") => {
+                        if let Some(inner) = opt
+                            .strip_prefix("Option<")
+                            .and_then(|s| s.strip_suffix('>'))
+                        {
+                            format!(
+                                "{} | null",
+                                RustType::Custom(inner.to_string()).to_typescript()
+                            )
+                        } else {
+                            "unknown | null".to_string()
+                        }
+                    }
+                    // Vec<T>
+                    vec if vec.starts_with("Vec<") => {
+                        if let Some(inner) =
+                            vec.strip_prefix("Vec<").and_then(|s| s.strip_suffix('>'))
+                        {
+                            format!("{}[]", RustType::Custom(inner.to_string()).to_typescript())
+                        } else {
+                            "unknown[]".to_string()
+                        }
+                    }
+                    // HashMap<K, V>
+                    hm if hm.starts_with("HashMap<")
+                        || hm.starts_with("std::collections::HashMap<") =>
+                    {
+                        "Record<string, unknown>".to_string()
+                    }
+                    // Default: pass through as-is (for custom struct types)
+                    _ => name.clone(),
+                }
+            }
         }
     }
 }

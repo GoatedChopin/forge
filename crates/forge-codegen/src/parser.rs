@@ -9,6 +9,7 @@ use forge_core::schema::{
     EnumDef, EnumVariant, FieldDef, FunctionArg, FunctionDef, FunctionKind, RustType,
     SchemaRegistry, TableDef,
 };
+use quote::ToTokens;
 use syn::{Attribute, Expr, Fields, FnArg, Lit, Meta, Pat, ReturnType};
 use walkdir::WalkDir;
 
@@ -43,10 +44,20 @@ fn parse_file(content: &str, registry: &SchemaRegistry) -> Result<(), Error> {
                     if let Some(table) = parse_model(&item_struct) {
                         registry.register_table(table);
                     }
+                } else if has_serde_derive(&item_struct.attrs) {
+                    // Parse DTO structs (those with Serialize/Deserialize)
+                    if let Some(table) = parse_dto_struct(&item_struct) {
+                        registry.register_table(table);
+                    }
                 }
             }
             syn::Item::Enum(item_enum) => {
                 if has_forge_enum_attr(&item_enum.attrs) {
+                    if let Some(enum_def) = parse_enum(&item_enum) {
+                        registry.register_enum(enum_def);
+                    }
+                } else if has_serde_derive(&item_enum.attrs) {
+                    // Parse enums with Serialize/Deserialize
                     if let Some(enum_def) = parse_enum(&item_enum) {
                         registry.register_enum(enum_def);
                     }
@@ -85,6 +96,43 @@ fn has_forge_enum_attr(attrs: &[Attribute]) -> bool {
                 && path.segments[0].ident == "forge"
                 && path.segments[1].ident == "enum_type"
     })
+}
+
+/// Check if attributes contain #[derive(...Serialize...)] or #[derive(...Deserialize...)].
+fn has_serde_derive(attrs: &[Attribute]) -> bool {
+    attrs.iter().any(|attr| {
+        if !attr.path().is_ident("derive") {
+            return false;
+        }
+        let tokens = attr.meta.to_token_stream().to_string();
+        tokens.contains("Serialize") || tokens.contains("Deserialize")
+    })
+}
+
+/// Parse a DTO struct (with Serialize/Deserialize) into a TableDef.
+fn parse_dto_struct(item: &syn::ItemStruct) -> Option<TableDef> {
+    let struct_name = item.ident.to_string();
+
+    // Use struct name as table name (DTOs don't have SQL tables)
+    let mut table = TableDef::new(&struct_name, &struct_name);
+
+    // Mark as DTO (not a database table)
+    table.is_dto = true;
+
+    // Extract documentation
+    table.doc = get_doc_comment(&item.attrs);
+
+    // Extract fields
+    if let Fields::Named(fields) = &item.fields {
+        for field in &fields.named {
+            if let Some(field_name) = &field.ident {
+                let field_def = parse_field(field_name.to_string(), &field.ty, &field.attrs);
+                table.fields.push(field_def);
+            }
+        }
+    }
+
+    Some(table)
 }
 
 /// Parse a struct with #[model] attribute into a TableDef.
