@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::RwLock;
 
 use super::function::FunctionDef;
@@ -6,24 +6,25 @@ use super::model::TableDef;
 
 /// Global registry of all schema definitions.
 /// This is populated at compile time by the proc macros.
+/// Uses BTreeMap for deterministic iteration order.
 pub struct SchemaRegistry {
     /// All registered tables by name.
-    tables: RwLock<HashMap<String, TableDef>>,
+    tables: RwLock<BTreeMap<String, TableDef>>,
 
     /// All registered enums by name.
-    enums: RwLock<HashMap<String, EnumDef>>,
+    enums: RwLock<BTreeMap<String, EnumDef>>,
 
     /// All registered functions by name.
-    functions: RwLock<HashMap<String, FunctionDef>>,
+    functions: RwLock<BTreeMap<String, FunctionDef>>,
 }
 
 impl SchemaRegistry {
     /// Create a new empty registry.
     pub fn new() -> Self {
         Self {
-            tables: RwLock::new(HashMap::new()),
-            enums: RwLock::new(HashMap::new()),
-            functions: RwLock::new(HashMap::new()),
+            tables: RwLock::new(BTreeMap::new()),
+            enums: RwLock::new(BTreeMap::new()),
+            functions: RwLock::new(BTreeMap::new()),
         }
     }
 

@@ -18,214 +18,143 @@ impl ApiGenerator {
         }
     }
 
-    /// Generate API bindings from the schema registry.
     pub fn generate(&self, registry: &SchemaRegistry) -> Result<String, Error> {
         let mut output = String::new();
-
-        // Add header
-        output.push_str(self.generate_header());
-
-        // Add helper types and functions
-        output.push_str(self.generate_helpers());
-
-        // Generate bindings for each function
+        let mut type_imports: Vec<String> = Vec::new();
         let functions = registry.all_functions();
-        if !functions.is_empty() {
-            output.push_str("\n// ============================================================================\n");
-            output.push_str("// Generated API Bindings\n");
-            output.push_str("// ============================================================================\n\n");
+        let mut bindings: Vec<String> = Vec::new();
+        let mut queries: Vec<String> = Vec::new();
+        let mut mutations: Vec<String> = Vec::new();
 
-            for func in &functions {
-                // Add doc comment if present
-                if let Some(doc) = &func.doc {
-                    output.push_str("/**\n");
-                    for line in doc.lines() {
-                        output.push_str(" * ");
-                        output.push_str(line);
-                        output.push('\n');
-                    }
-                    output.push_str(" */\n");
+        for func in &functions {
+            let args_type = if func.args.is_empty() {
+                "Record<string, never>".to_string()
+            } else if func.args.len() == 1 {
+                let arg = &func.args[0];
+                let ts_type = rust_type_to_ts(&arg.rust_type);
+                collect_custom_types(&arg.rust_type, &mut type_imports);
+                ts_type
+            } else {
+                let fields: Vec<String> = func
+                    .args
+                    .iter()
+                    .map(|arg| {
+                        let ts_type = rust_type_to_ts(&arg.rust_type);
+                        collect_custom_types(&arg.rust_type, &mut type_imports);
+                        format!("{}: {}", arg.name, ts_type)
+                    })
+                    .collect();
+                format!("{{ {} }}", fields.join(", "))
+            };
+
+            let result_type = rust_type_to_ts(&func.return_type);
+            collect_custom_types(&func.return_type, &mut type_imports);
+
+            let ts_name = to_camel_case(&func.name);
+
+            match func.kind {
+                FunctionKind::Query => {
+                    queries.push(format!(
+                        "export const {} = createQuery<{}, {}>(\"{}\");",
+                        ts_name, args_type, result_type, func.name
+                    ));
                 }
-
-                // Build args type
-                let args_type = if func.args.is_empty() {
-                    "Record<string, never>".to_string()
-                } else {
-                    let fields: Vec<String> = func
-                        .args
-                        .iter()
-                        .map(|arg| {
-                            let ts_type = rust_type_to_ts(&arg.rust_type);
-                            format!("{}: {}", to_camel_case(&arg.name), ts_type)
-                        })
-                        .collect();
-                    format!("{{ {} }}", fields.join("; "))
-                };
-
-                // Result type
-                let result_type = rust_type_to_ts(&func.return_type);
-
-                match func.kind {
-                    FunctionKind::Query => {
-                        let ts_name = to_camel_case(&func.name);
-                        output.push_str(&format!(
-                            "export const {} = createQuery<{}, {}>('{}');\n\n",
-                            ts_name, args_type, result_type, func.name
-                        ));
-                    }
-                    FunctionKind::Mutation => {
-                        let ts_name = to_camel_case(&func.name);
-                        output.push_str(&format!(
-                            "export const {} = createMutation<{}, {}>('{}');\n\n",
-                            ts_name, args_type, result_type, func.name
-                        ));
-                    }
-                    FunctionKind::Action => {
-                        let ts_name = to_camel_case(&func.name);
-                        output.push_str(&format!(
-                            "export const {} = createAction<{}, {}>('{}');\n\n",
-                            ts_name, args_type, result_type, func.name
-                        ));
-                    }
-                    FunctionKind::Job => {
-                        // Generate job tracker factory
-                        let ts_name = to_pascal_case(&func.name);
-                        output.push_str(&format!(
-                            "export const create{}Job = () => createJobTracker<{}>('{}');\n\n",
-                            ts_name, args_type, func.name
-                        ));
-                    }
-                    FunctionKind::Workflow => {
-                        // Generate workflow tracker factory
-                        let ts_name = to_pascal_case(&func.name);
-                        output.push_str(&format!(
-                            "export const create{}Workflow = () => createWorkflowTracker<{}>('{}');\n\n",
-                            ts_name, args_type, func.name
-                        ));
-                    }
-                    FunctionKind::Cron => {
-                        // Crons are not callable from frontend, skip
-                    }
+                FunctionKind::Mutation => {
+                    mutations.push(format!(
+                        "export const {} = createMutation<{}, {}>(\"{}\");",
+                        ts_name, args_type, result_type, func.name
+                    ));
                 }
+                FunctionKind::Action => {
+                    bindings.push(format!(
+                        "export const {} = createAction<{}, {}>(\"{}\");",
+                        ts_name, args_type, result_type, func.name
+                    ));
+                }
+                FunctionKind::Job | FunctionKind::Workflow | FunctionKind::Cron => {}
             }
+        }
+
+        output.push_str("// Auto-generated by FORGE - DO NOT EDIT\n\n");
+        output.push_str("import { createQuery, createMutation } from \"@forge/svelte\";\n");
+
+        if !type_imports.is_empty() {
+            type_imports.sort();
+            type_imports.dedup();
+            output.push_str("import type {\n");
+            for t in &type_imports {
+                output.push_str(&format!("  {},\n", t));
+            }
+            output.push_str("} from \"./types\";\n");
+        }
+
+        queries.sort();
+        mutations.sort();
+
+        if !queries.is_empty() {
+            output.push_str("\n// Queries\n");
+            for q in &queries {
+                output.push_str(q);
+                output.push('\n');
+            }
+        }
+
+        if !mutations.is_empty() {
+            output.push_str("\n// Mutations\n");
+            for m in &mutations {
+                output.push_str(m);
+                output.push('\n');
+            }
+        }
+
+        for b in &bindings {
+            output.push_str(b);
+            output.push('\n');
         }
 
         Ok(output)
     }
-
-    /// Generate the file header.
-    fn generate_header(&self) -> &'static str {
-        r#"// Auto-generated by FORGE - DO NOT EDIT
-import type { ForgeClient } from './client';
-import { createJobTracker, createWorkflowTracker } from '@forge/svelte';
-
-"#
-    }
-
-    /// Generate helper types and factory functions.
-    fn generate_helpers(&self) -> &'static str {
-        r#"// ============================================================================
-// API Function Types
-// ============================================================================
-
-// Query function type
-export interface QueryFn<TArgs, TResult> {
-  (client: ForgeClient, args: TArgs): Promise<TResult>;
-  functionName: string;
-  functionType: 'query';
 }
 
-// Mutation function type
-export interface MutationFn<TArgs, TResult> {
-  (client: ForgeClient, args: TArgs): Promise<TResult>;
-  functionName: string;
-  functionType: 'mutation';
-}
-
-// Action function type
-export interface ActionFn<TArgs, TResult> {
-  (client: ForgeClient, args: TArgs): Promise<TResult>;
-  functionName: string;
-  functionType: 'action';
-}
-
-// Create a query function binding
-export function createQuery<TArgs, TResult>(
-  name: string
-): QueryFn<TArgs, TResult> {
-  const fn = async (client: ForgeClient, args: TArgs): Promise<TResult> => {
-    return client.call(name, args);
-  };
-  (fn as QueryFn<TArgs, TResult>).functionName = name;
-  (fn as QueryFn<TArgs, TResult>).functionType = 'query';
-  return fn as QueryFn<TArgs, TResult>;
-}
-
-// Create a mutation function binding
-export function createMutation<TArgs, TResult>(
-  name: string
-): MutationFn<TArgs, TResult> {
-  const fn = async (client: ForgeClient, args: TArgs): Promise<TResult> => {
-    return client.call(name, args);
-  };
-  (fn as MutationFn<TArgs, TResult>).functionName = name;
-  (fn as MutationFn<TArgs, TResult>).functionType = 'mutation';
-  return fn as MutationFn<TArgs, TResult>;
-}
-
-// Create an action function binding
-export function createAction<TArgs, TResult>(
-  name: string
-): ActionFn<TArgs, TResult> {
-  const fn = async (client: ForgeClient, args: TArgs): Promise<TResult> => {
-    return client.call(name, args);
-  };
-  (fn as ActionFn<TArgs, TResult>).functionName = name;
-  (fn as ActionFn<TArgs, TResult>).functionType = 'action';
-  return fn as ActionFn<TArgs, TResult>;
-}
-
-"#
+fn collect_custom_types(rust_type: &RustType, imports: &mut Vec<String>) {
+    match rust_type {
+        RustType::Custom(name) => {
+            if name != "()" && !name.starts_with("Vec<") && !name.starts_with("HashMap<") {
+                imports.push(name.clone());
+            }
+        }
+        RustType::Option(inner) | RustType::Vec(inner) => collect_custom_types(inner, imports),
+        _ => {}
     }
 }
 
-/// Convert RustType to TypeScript type string.
 fn rust_type_to_ts(rust_type: &RustType) -> String {
     match rust_type {
-        RustType::String => "string".to_string(),
+        RustType::String | RustType::Uuid | RustType::DateTime | RustType::Date => {
+            "string".to_string()
+        }
         RustType::I32 | RustType::I64 | RustType::F32 | RustType::F64 => "number".to_string(),
         RustType::Bool => "boolean".to_string(),
-        RustType::Uuid => "string".to_string(),
-        RustType::DateTime => "string".to_string(),
-        RustType::Date => "string".to_string(),
         RustType::Json => "unknown".to_string(),
         RustType::Bytes => "Uint8Array".to_string(),
         RustType::Option(inner) => format!("{} | null", rust_type_to_ts(inner)),
         RustType::Vec(inner) => format!("{}[]", rust_type_to_ts(inner)),
         RustType::Custom(name) => {
-            // Handle unit type
             if name == "()" {
                 return "void".to_string();
             }
-            // Handle Vec<T>
             if let Some(inner) = name.strip_prefix("Vec<").and_then(|s| s.strip_suffix('>')) {
                 return format!("{}[]", inner);
             }
-            // Handle HashMap<K, V>
             if name.starts_with("HashMap<") || name.starts_with("std::collections::HashMap<") {
-                // Extract key and value types
                 let inner = name
                     .strip_prefix("HashMap<")
                     .or_else(|| name.strip_prefix("std::collections::HashMap<"))
                     .and_then(|s| s.strip_suffix('>'))
                     .unwrap_or("string, unknown");
-                // For HashMap<String, T> or similar, convert to Record<string, T>
                 let parts: Vec<&str> = inner.splitn(2, ',').map(|s| s.trim()).collect();
                 if parts.len() == 2 {
-                    let key_type = match parts[0] {
-                        "String" | "&str" | "str" => "string",
-                        _ => "string", // Keys are typically strings in JSON
-                    };
+                    let key_type = "string";
                     let value_type = match parts[1] {
                         "String" | "&str" | "str" => "string",
                         "i32" | "i64" | "u32" | "u64" | "f32" | "f64" => "number",
@@ -241,7 +170,6 @@ fn rust_type_to_ts(rust_type: &RustType) -> String {
     }
 }
 
-/// Convert snake_case to camelCase.
 fn to_camel_case(s: &str) -> String {
     let mut result = String::new();
     let mut capitalize_next = false;
@@ -260,7 +188,7 @@ fn to_camel_case(s: &str) -> String {
     result
 }
 
-/// Convert snake_case to PascalCase.
+#[allow(dead_code)]
 fn to_pascal_case(s: &str) -> String {
     let mut result = String::new();
     let mut capitalize_next = true;
@@ -295,12 +223,9 @@ mod tests {
         let generator = ApiGenerator::new("/tmp/forge");
         let registry = SchemaRegistry::new();
         let content = generator.generate(&registry).unwrap();
-        assert!(content.contains("QueryFn"));
-        assert!(content.contains("MutationFn"));
-        assert!(content.contains("ActionFn"));
+        assert!(content.contains("Auto-generated by FORGE"));
         assert!(content.contains("createQuery"));
         assert!(content.contains("createMutation"));
-        assert!(content.contains("createAction"));
     }
 
     #[test]
@@ -324,9 +249,6 @@ mod tests {
         // Check that bindings are generated
         assert!(content.contains("export const getUser = createQuery"));
         assert!(content.contains("export const createUser = createMutation"));
-        assert!(content.contains("id: string"));
-        assert!(content.contains("name: string"));
-        assert!(content.contains("email: string"));
     }
 
     #[test]

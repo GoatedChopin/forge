@@ -41,11 +41,17 @@ impl FieldDef {
         }
     }
 
-    /// Generate TypeScript field.
     pub fn to_typescript(&self) -> String {
-        let ts_type = self.rust_type.to_typescript();
-        let optional = if self.nullable { "?" } else { "" };
-        format!("  {}{}: {};", to_camel_case(&self.name), optional, ts_type)
+        let (ts_type, optional) = if self.nullable {
+            let inner_type = match &self.rust_type {
+                super::types::RustType::Option(inner) => inner.to_typescript(),
+                other => other.to_typescript(),
+            };
+            (inner_type, "?")
+        } else {
+            (self.rust_type.to_typescript(), "")
+        };
+        format!("  {}{}: {};", self.name, optional, ts_type)
     }
 }
 
@@ -66,6 +72,7 @@ fn to_snake_case(s: &str) -> String {
 }
 
 /// Convert a string to camelCase.
+#[allow(dead_code)]
 fn to_camel_case(s: &str) -> String {
     let mut result = String::new();
     let mut capitalize_next = false;

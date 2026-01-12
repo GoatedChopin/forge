@@ -19,11 +19,14 @@ use crate::Error;
 pub fn parse_project(src_dir: &Path) -> Result<SchemaRegistry, Error> {
     let registry = SchemaRegistry::new();
 
-    for entry in WalkDir::new(src_dir)
+    let mut files: Vec<_> = WalkDir::new(src_dir)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.path().extension().map(|ext| ext == "rs").unwrap_or(false))
-    {
+        .collect();
+    files.sort_by(|a, b| a.path().cmp(b.path()));
+
+    for entry in files {
         let content = std::fs::read_to_string(entry.path())?;
         if let Err(e) = parse_file(&content, &registry) {
             tracing::debug!(file = ?entry.path(), error = %e, "Failed to parse file");
@@ -340,7 +343,7 @@ fn type_to_rust_type(ty: &syn::Type) -> RustType {
                     "f64" => RustType::F64,
                     "bool" => RustType::Bool,
                     "Uuid" => RustType::Uuid,
-                    _ => RustType::String, // Default fallback
+                    _ => RustType::Custom(inner.to_string()),
                 };
                 return RustType::Option(Box::new(inner_type));
             }
@@ -354,7 +357,7 @@ fn type_to_rust_type(ty: &syn::Type) -> RustType {
                     "String" => RustType::String,
                     "i32" => RustType::I32,
                     "u8" => return RustType::Bytes,
-                    _ => RustType::String,
+                    _ => RustType::Custom(inner.to_string()),
                 };
                 return RustType::Vec(Box::new(inner_type));
             }

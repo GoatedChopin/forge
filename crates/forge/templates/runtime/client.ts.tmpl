@@ -129,7 +129,7 @@ export class ForgeClient implements ForgeClientInterface {
         "Content-Type": "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify(normalizedArgs),
+      body: JSON.stringify({ args: normalizedArgs }),
     });
 
     const result: RpcResponse<T> = await response.json();

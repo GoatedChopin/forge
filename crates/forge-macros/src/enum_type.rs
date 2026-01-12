@@ -108,25 +108,25 @@ fn expand_enum_impl(_attr: TokenStream2, input: DeriveInput) -> syn::Result<Toke
         }
 
         impl std::str::FromStr for #enum_name {
-            type Err = String;
+            type Err = std::string::String;
 
-            fn from_str(s: &str) -> Result<Self, Self::Err> {
+            fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
                 match s {
                     #(#from_string_arms,)*
-                    _ => Err(format!("Unknown {} value: {}", stringify!(#enum_name), s))
+                    _ => std::result::Result::Err(format!("Unknown {} value: {}", stringify!(#enum_name), s))
                 }
             }
         }
 
         impl<'r> sqlx::Decode<'r, sqlx::Postgres> for #enum_name {
-            fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+            fn decode(value: sqlx::postgres::PgValueRef<'r>) -> std::result::Result<Self, sqlx::error::BoxDynError> {
                 let s = <&str as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
-                s.parse().map_err(|e: String| e.into())
+                s.parse().map_err(|e: std::string::String| e.into())
             }
         }
 
         impl sqlx::Encode<'_, sqlx::Postgres> for #enum_name {
-            fn encode_by_ref(&self, buf: &mut sqlx::postgres::PgArgumentBuffer) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+            fn encode_by_ref(&self, buf: &mut sqlx::postgres::PgArgumentBuffer) -> std::result::Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
                 <&str as sqlx::Encode<sqlx::Postgres>>::encode(self.as_sql_str(), buf)
             }
         }

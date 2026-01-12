@@ -188,8 +188,30 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
         ));
     }
 
-    // Get context param
-    let ctx_param = &params[0];
+    // Get context param - extract name and ensure it uses reference
+    let (ctx_name, ctx_type) = match &params[0] {
+        FnArg::Typed(pat_type) => {
+            let name = if let Pat::Ident(pat_ident) = &*pat_type.pat {
+                pat_ident.ident.clone()
+            } else {
+                return Err(syn::Error::new_spanned(
+                    pat_type,
+                    "Expected context parameter to be an identifier",
+                ));
+            };
+            (name, &*pat_type.ty)
+        }
+        _ => {
+            return Err(syn::Error::new_spanned(
+                params[0],
+                "Expected typed context parameter",
+            ));
+        }
+    };
+
+    // Determine the context type string (e.g., MutationContext)
+    let type_str = quote! { #ctx_type }.to_string();
+    let is_ref = type_str.starts_with('&');
 
     // Get remaining params for args struct
     let arg_params: Vec<_> = params.iter().skip(1).cloned().collect();
@@ -284,49 +306,95 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
         None => quote! { None },
     };
 
-    // Generate the args struct (use unit type if no args)
-    let args_struct = if args_fields.is_empty() {
-        quote! {
-            #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-            #vis struct #struct_name;
-        }
-    } else {
-        let args_struct_name = syn::Ident::new(&format!("{}Args", struct_name), fn_name.span());
-        quote! {
-            #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-            #vis struct #args_struct_name {
-                #(#args_fields),*
+    // Check if we have a single custom args type (user-defined struct)
+    // In this case, use it directly instead of wrapping it
+    let single_custom_args_type: Option<&Type> = if arg_params.len() == 1 {
+        if let FnArg::Typed(pat_type) = &arg_params[0] {
+            // Check if it's a custom type (not a primitive)
+            if let Type::Path(type_path) = &*pat_type.ty {
+                if let Some(segment) = type_path.path.segments.last() {
+                    // Use the user's type directly if it looks like a custom Args struct
+                    let type_name = segment.ident.to_string();
+                    if type_name.ends_with("Args") || type_name.contains("Args") {
+                        Some(&*pat_type.ty)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
             }
-
-            #vis struct #struct_name;
-        }
-    };
-
-    // Generate the inner function
-    let inner_fn = if arg_names.is_empty() {
-        quote! {
-            #(#fn_attrs)*
-            #vis async fn #fn_name(#ctx_param) -> forge::forge_core::Result<#output_type> #fn_block
+        } else {
+            None
         }
     } else {
-        quote! {
-            #(#fn_attrs)*
-            #vis async fn #fn_name(#ctx_param, #(#arg_params),*) -> forge::forge_core::Result<#output_type> #fn_block
-        }
+        None
     };
 
-    // Generate the ForgeMutation implementation
-    let args_type = if args_fields.is_empty() {
-        quote! { () }
+    // Generate the args struct (use unit type if no args, user type if single custom args)
+    let (args_struct, args_type, execute_call) = if args_fields.is_empty() {
+        (
+            quote! {
+                #vis struct #struct_name;
+            },
+            quote! { () },
+            quote! { #fn_name(ctx).await },
+        )
+    } else if let Some(user_args_type) = single_custom_args_type {
+        // Use the user's args type directly
+        (
+            quote! {
+                #vis struct #struct_name;
+            },
+            quote! { #user_args_type },
+            quote! { #fn_name(ctx, args).await },
+        )
     } else {
+        // Generate a wrapper struct for multiple args
         let args_struct_name = syn::Ident::new(&format!("{}Args", struct_name), fn_name.span());
-        quote! { #args_struct_name }
+        (
+            quote! {
+                #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+                #vis struct #args_struct_name {
+                    #(#args_fields),*
+                }
+
+                #vis struct #struct_name;
+            },
+            quote! { #args_struct_name },
+            quote! { #fn_name(ctx, #(args.#arg_names),*).await },
+        )
     };
 
-    let execute_call = if arg_names.is_empty() {
-        quote! { #fn_name(ctx).await }
+    // Generate the inner function - always take context by reference
+    let inner_fn = if is_ref {
+        // User already uses reference, keep the type as-is
+        if arg_names.is_empty() {
+            quote! {
+                #(#fn_attrs)*
+                #vis async fn #fn_name(#ctx_name: #ctx_type) -> forge::forge_core::Result<#output_type> #fn_block
+            }
+        } else {
+            quote! {
+                #(#fn_attrs)*
+                #vis async fn #fn_name(#ctx_name: #ctx_type, #(#arg_params),*) -> forge::forge_core::Result<#output_type> #fn_block
+            }
+        }
     } else {
-        quote! { #fn_name(ctx, #(args.#arg_names),*).await }
+        // User uses value, convert to reference in the generated function
+        if arg_names.is_empty() {
+            quote! {
+                #(#fn_attrs)*
+                #vis async fn #fn_name(#ctx_name: &#ctx_type) -> forge::forge_core::Result<#output_type> #fn_block
+            }
+        } else {
+            quote! {
+                #(#fn_attrs)*
+                #vis async fn #fn_name(#ctx_name: &#ctx_type, #(#arg_params),*) -> forge::forge_core::Result<#output_type> #fn_block
+            }
+        }
     };
 
     Ok(quote! {

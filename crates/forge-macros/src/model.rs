@@ -3,26 +3,24 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{Data, DeriveInput, Fields, Meta, parse_macro_input, spanned::Spanned};
 
-/// Expand the #[forge::model] macro.
-///
-/// Generates:
-/// - Struct with Debug, Clone, Serialize, Deserialize derives
-/// - ModelMeta trait implementation for TypeScript codegen
 pub fn expand_model(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let input_clone = item.clone();
     let input = parse_macro_input!(item as DeriveInput);
 
-    match expand_model_impl(attr.into(), input) {
+    match expand_model_impl(attr.into(), input, input_clone.into()) {
         Ok(tokens) => tokens.into(),
         Err(err) => err.to_compile_error().into(),
     }
 }
 
-fn expand_model_impl(_attr: TokenStream2, input: DeriveInput) -> syn::Result<TokenStream2> {
+fn expand_model_impl(
+    _attr: TokenStream2,
+    input: DeriveInput,
+    _original_tokens: TokenStream2,
+) -> syn::Result<TokenStream2> {
     let struct_name = &input.ident;
-    let table_name = get_table_name(&input)?;
     let vis = &input.vis;
-
-    // Extract fields
+    let table_name = get_table_name(&input)?;
     let fields = match &input.data {
         Data::Struct(data) => match &data.fields {
             Fields::Named(fields) => &fields.named,
@@ -36,7 +34,6 @@ fn expand_model_impl(_attr: TokenStream2, input: DeriveInput) -> syn::Result<Tok
         _ => return Err(syn::Error::new(input.span(), "Only structs are supported")),
     };
 
-    // Generate field definitions for TableDef (used for TypeScript codegen)
     let field_tokens: Vec<TokenStream2> = fields
         .iter()
         .map(|field| {
@@ -57,11 +54,29 @@ fn expand_model_impl(_attr: TokenStream2, input: DeriveInput) -> syn::Result<Tok
         })
         .collect();
 
-    // Generate the impl
+    let field_defs: Vec<TokenStream2> = fields
+        .iter()
+        .map(|field| {
+            let field_name = &field.ident;
+            let field_type = &field.ty;
+            let field_vis = &field.vis;
+            quote! { #field_vis #field_name: #field_type }
+        })
+        .collect();
+
+    let other_attrs: Vec<&syn::Attribute> = input
+        .attrs
+        .iter()
+        .filter(|attr| {
+            let path = attr.path();
+            !path.is_ident("derive") && path.segments.first().is_none_or(|s| s.ident != "forge")
+        })
+        .collect();
+
     let expanded = quote! {
-        #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+        #(#other_attrs)*
         #vis struct #struct_name {
-            #fields
+            #(#field_defs),*
         }
 
         impl forge::forge_core::schema::ModelMeta for #struct_name {

@@ -105,15 +105,23 @@ pub async fn rpc_handler(
     handler.handle(request, auth, metadata).await
 }
 
+/// Request body wrapper for REST-style RPC calls.
+#[derive(Debug, serde::Deserialize)]
+pub struct RpcFunctionBody {
+    /// Function arguments.
+    #[serde(default)]
+    pub args: serde_json::Value,
+}
+
 /// Axum handler for POST /rpc/:function (REST-style).
 pub async fn rpc_function_handler(
     State(handler): State<Arc<RpcHandler>>,
     Extension(auth): Extension<AuthContext>,
     Extension(tracing): Extension<TracingState>,
     axum::extract::Path(function): axum::extract::Path<String>,
-    Json(args): Json<serde_json::Value>,
+    Json(body): Json<RpcFunctionBody>,
 ) -> RpcResponse {
-    let request = RpcRequest::new(function, args);
+    let request = RpcRequest::new(function, body.args);
 
     let metadata = RequestMetadata {
         request_id: uuid::Uuid::parse_str(&tracing.request_id)

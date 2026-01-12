@@ -188,8 +188,30 @@ fn expand_action_impl(input: ItemFn, attrs: ActionAttrs) -> syn::Result<TokenStr
         ));
     }
 
-    // Get context param
-    let ctx_param = &params[0];
+    // Get context param - extract name and ensure it uses reference
+    let (ctx_name, ctx_type) = match &params[0] {
+        FnArg::Typed(pat_type) => {
+            let name = if let Pat::Ident(pat_ident) = &*pat_type.pat {
+                pat_ident.ident.clone()
+            } else {
+                return Err(syn::Error::new_spanned(
+                    pat_type,
+                    "Expected context parameter to be an identifier",
+                ));
+            };
+            (name, &*pat_type.ty)
+        }
+        _ => {
+            return Err(syn::Error::new_spanned(
+                params[0],
+                "Expected typed context parameter",
+            ));
+        }
+    };
+
+    // Determine the context type string
+    let type_str = quote! { #ctx_type }.to_string();
+    let is_ref = type_str.starts_with('&');
 
     // Get remaining params for args struct
     let arg_params: Vec<_> = params.iter().skip(1).cloned().collect();
@@ -306,16 +328,32 @@ fn expand_action_impl(input: ItemFn, attrs: ActionAttrs) -> syn::Result<TokenStr
         }
     };
 
-    // Generate the inner function
-    let inner_fn = if arg_names.is_empty() {
-        quote! {
-            #(#fn_attrs)*
-            #vis async fn #fn_name(#ctx_param) -> forge::forge_core::Result<#output_type> #fn_block
+    // Generate the inner function - always take context by reference
+    let inner_fn = if is_ref {
+        // User already uses reference, keep the type as-is
+        if arg_names.is_empty() {
+            quote! {
+                #(#fn_attrs)*
+                #vis async fn #fn_name(#ctx_name: #ctx_type) -> forge::forge_core::Result<#output_type> #fn_block
+            }
+        } else {
+            quote! {
+                #(#fn_attrs)*
+                #vis async fn #fn_name(#ctx_name: #ctx_type, #(#arg_params),*) -> forge::forge_core::Result<#output_type> #fn_block
+            }
         }
     } else {
-        quote! {
-            #(#fn_attrs)*
-            #vis async fn #fn_name(#ctx_param, #(#arg_params),*) -> forge::forge_core::Result<#output_type> #fn_block
+        // User uses value, convert to reference in the generated function
+        if arg_names.is_empty() {
+            quote! {
+                #(#fn_attrs)*
+                #vis async fn #fn_name(#ctx_name: &#ctx_type) -> forge::forge_core::Result<#output_type> #fn_block
+            }
+        } else {
+            quote! {
+                #(#fn_attrs)*
+                #vis async fn #fn_name(#ctx_name: &#ctx_type, #(#arg_params),*) -> forge::forge_core::Result<#output_type> #fn_block
+            }
         }
     };
 
