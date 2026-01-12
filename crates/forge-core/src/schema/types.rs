@@ -183,8 +183,7 @@ impl RustType {
                     }
                 }
                 vec if vec.starts_with("Vec<") => {
-                    if let Some(inner) =
-                        vec.strip_prefix("Vec<").and_then(|s| s.strip_suffix('>'))
+                    if let Some(inner) = vec.strip_prefix("Vec<").and_then(|s| s.strip_suffix('>'))
                     {
                         format!("{}[]", RustType::Custom(inner.to_string()).to_typescript())
                     } else {

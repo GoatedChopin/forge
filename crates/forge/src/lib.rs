@@ -38,7 +38,8 @@ pub use forge_core::testing;
 /// // Then run your migrations
 /// db.migrate(Path::new("migrations")).await?;
 /// ```
-pub const FORGE_INTERNAL_SQL: &str = include_str!("../../forge-runtime/migrations/0000_forge_internal.sql");
+pub const FORGE_INTERNAL_SQL: &str =
+    include_str!("../../forge-runtime/migrations/system/v001_initial.sql");
 
 pub use runtime::prelude;
 pub use runtime::{Forge, ForgeBuilder};

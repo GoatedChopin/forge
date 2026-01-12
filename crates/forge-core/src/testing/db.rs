@@ -210,9 +210,7 @@ impl IsolatedTestDb {
             sqlx::query(statement)
                 .execute(&self.pool)
                 .await
-                .map_err(|e| {
-                    ForgeError::Database(format!("Failed to execute SQL: {}", e))
-                })?;
+                .map_err(|e| ForgeError::Database(format!("Failed to execute SQL: {}", e)))?;
         }
         Ok(())
     }
@@ -314,10 +312,7 @@ impl IsolatedTestDb {
                     .execute(&self.pool)
                     .await
                     .map_err(|e| {
-                        ForgeError::Database(format!(
-                            "Failed to apply migration '{}': {}",
-                            name, e
-                        ))
+                        ForgeError::Database(format!("Failed to apply migration '{}': {}", name, e))
                     })?;
             }
         }

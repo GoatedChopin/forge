@@ -40,7 +40,9 @@ impl TypeGenerator {
             output.push_str("\n\n");
         }
 
-        output.push_str("export type { ForgeError, QueryResult, SubscriptionResult } from \"@forge/svelte\";\n");
+        output.push_str(
+            "export type { ForgeError, QueryResult, SubscriptionResult } from \"@forge/svelte\";\n",
+        );
 
         Ok(output)
     }

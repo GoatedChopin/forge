@@ -1,12 +1,25 @@
 //! Migration runner with mesh-safe locking.
 //!
 //! Ensures only one node runs migrations at a time using PostgreSQL advisory locks.
+//!
+//! # Migration Types
+//!
+//! This runner handles two types of migrations:
+//!
+//! 1. **System migrations** (`__forge_vXXX`): Internal FORGE schema changes.
+//!    These are versioned numerically and always run before user migrations.
+//!    Legacy installations may have `0000_forge_internal` which is treated as v001.
+//!
+//! 2. **User migrations** (`XXXX_name.sql`): Application-specific schema changes.
+//!    These are sorted alphabetically by name.
 
 use forge_core::error::{ForgeError, Result};
 use sqlx::PgPool;
 use std::collections::HashSet;
 use std::path::Path;
 use tracing::{debug, info, warn};
+
+use super::builtin::extract_version;
 
 /// Lock ID for migration advisory lock (arbitrary but consistent).
 /// Using a fixed value derived from "FORGE" ascii values.
@@ -135,15 +148,33 @@ impl MigrationRunner {
         let applied = self.get_applied_migrations().await?;
         debug!("Already applied migrations: {:?}", applied);
 
-        // Run built-in FORGE migrations first
-        let builtin = super::builtin::get_builtin_migrations();
-        for migration in builtin {
-            if !applied.contains(&migration.name) {
-                self.apply_migration(&migration).await?;
+        // Calculate the highest system version already applied
+        let max_applied_version = self.get_max_system_version(&applied);
+        debug!("Max applied system version: {:?}", max_applied_version);
+
+        // Run built-in FORGE system migrations first (in version order)
+        let system_migrations = super::builtin::get_system_migrations();
+        for sys_migration in system_migrations {
+            // Skip if this version (or equivalent legacy) is already applied
+            if let Some(max_ver) = max_applied_version {
+                if sys_migration.version <= max_ver {
+                    debug!(
+                        "Skipping system migration v{} (already at v{})",
+                        sys_migration.version, max_ver
+                    );
+                    continue;
+                }
             }
+
+            let migration = sys_migration.to_migration();
+            info!(
+                "Applying system migration: {} ({})",
+                migration.name, sys_migration.description
+            );
+            self.apply_migration(&migration).await?;
         }
 
-        // Then run user migrations
+        // Then run user migrations (sorted by name)
         for migration in user_migrations {
             if !applied.contains(&migration.name) {
                 self.apply_migration(&migration).await?;
@@ -151,6 +182,15 @@ impl MigrationRunner {
         }
 
         Ok(())
+    }
+
+    /// Get the maximum system migration version that has been applied.
+    /// Considers both new-style `__forge_vXXX` and legacy `0000_forge_internal`.
+    fn get_max_system_version(&self, applied: &HashSet<String>) -> Option<u32> {
+        applied
+            .iter()
+            .filter_map(|name| extract_version(name))
+            .max()
     }
 
     async fn acquire_lock(&self) -> Result<()> {
