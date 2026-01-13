@@ -1,44 +1,81 @@
 # FORGE Agent Guide
 
-PostgreSQL-only infrastructure. **Package: `forgex`** (import as `forge`). [Full docs](https://tryforge.dev/docs) | `forge --help` | `forge.toml` for config.
+PostgreSQL-only. **Package: `forgex`** (import as `forge`). [Docs](https://tryforge.dev/docs) | `forge --help`
 
-## Run
+## Verify Changes
 
 ```bash
-[ -f .env ] || cp .env.example .env; [ -f frontend/.env ] || cp frontend/.env.example frontend/.env
-docker compose up --build  # Starts backend, frontend, postgres
+cargo clippy --all-targets -- -D warnings && cargo test --features embedded-db && bun lint && bun format
 ```
+
+## Testing (In-File with Embedded DB)
+
+Tests live in same file as function. Use `#[cfg(all(test, feature = "embedded-db"))]` to gate.
+
+```rust
+// src/functions/create_user.rs
+use forge::prelude::*;
+
+#[forge::mutation(public)]
+pub async fn create_user(ctx: MutationContext, args: CreateUserArgs) -> Result<User> {
+    // ... implementation
+}
+
+#[cfg(all(test, feature = "embedded-db"))]
+mod tests {
+    use super::*;
+    use forge::testing::{IsolatedTestDb, TestDatabase};
+    use std::path::Path;
+
+    async fn setup_db(test_name: &str) -> (IsolatedTestDb, sqlx::PgPool) {
+        let base = TestDatabase::embedded().await.unwrap();
+        let db = base.isolated(test_name).await.unwrap();
+        db.run_sql(forge::FORGE_INTERNAL_SQL).await.unwrap();  // Forge internals
+        db.migrate(Path::new("migrations")).await.unwrap();    // Your migrations
+        (db, db.pool().clone())
+    }
+
+    #[tokio::test]
+    async fn test_creates_user() {
+        let (_db, pool) = setup_db("creates_user").await;
+
+        // Use runtime queries (not macros) for test flexibility
+        sqlx::query("INSERT INTO users (id, email) VALUES ($1, $2)")
+            .bind(Uuid::new_v4()).bind("test@test.com")
+            .execute(&pool).await.unwrap();
+
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(count.0, 1);
+    }
+}
+```
+
+Run: `cargo test --features embedded-db`
 
 ## Function Selection
 
 | Need | Use | Note |
 |------|-----|------|
-| Read data | Query | Cacheable, subscribable, no side effects |
-| Write data | Mutation | Transactional, atomic, triggers reactivity |
-| External API | Action | Non-transactional, has `ctx.http()` |
+| Read data | Query | Cacheable, subscribable |
+| Write data | Mutation | Transactional, triggers reactivity |
+| External API | Action | Has `ctx.http()` |
 | Async work | Job | Retryable, progress tracking |
-| Scheduled | Cron | Time-based, catch-up support, leader-only |
-| Multi-step | Workflow | Durable, suspendable, compensatable |
+| Scheduled | Cron | Time-based, leader-only |
+| Multi-step | Workflow | Durable, compensatable |
 
 ## Backend Patterns
 
 ```rust
-// All contexts
 ctx.db()                          ctx.require_user_id()?
 ctx.dispatch_job(name, args)      ctx.start_workflow(name, input)
 
-// Attributes (see docs for full options)
 #[forge::query]                  // + cache="30s", public, rate_limit(...)
 #[forge::mutation]               // + timeout=30, require_role("admin")
 #[forge::action]                 // + timeout=60
 #[forge::job]                    // + #[retry(...)], #[priority], #[idempotent]
 #[forge::cron("0 * * * *")]      // + #[timezone], #[catch_up]
 #[forge::workflow]               // + #[version], #[timeout]
-
-// Job: ctx.progress(50, "msg")?; ctx.heartbeat().await?;
-// Cron: ctx.log.info("msg", json!({...}));
-// Workflow: ctx.step("name", || async {...}).run().await?;
-//           ctx.sleep(Duration).await?; ctx.parallel().step(...).run().await?;
 ```
 
 ## Anti-Patterns
@@ -46,33 +83,39 @@ ctx.dispatch_job(name, args)      ctx.start_workflow(name, input)
 | Don't | Do |
 |-------|-----|
 | External API in Mutation | Use Action |
-| `tokio::sleep` in Workflow | `ctx.sleep()` (durable) |
+| `tokio::sleep` in Workflow | `ctx.sleep()` |
 | Destructure `$props()` | Keep reference |
 | Poll with `query()` loop | `subscribe()` |
-| Skip `ctx.heartbeat()` | Call in long loops |
 | `ctx.auth.user_id().unwrap()` | `ctx.require_user_id()?` |
 
 ## Schema
 
 ```rust
 #[forge::model]
-pub struct Task { pub id: Uuid, pub status: TaskStatus, pub created_at: DateTime<Utc> }
+pub struct Task { pub id: Uuid, pub status: TaskStatus }
 
 #[forge::forge_enum]
-pub enum TaskStatus { Pending, InProgress, Completed }
+pub enum TaskStatus { Pending, Completed }
 ```
-Generates TypeScript types. DB uses sqlx. Schema (indexes, constraints) → migrations.
+
+## Run
+
+```bash
+[ -f .env ] || cp .env.example .env
+docker compose up --build
+```
 
 ## Structure
 
 ```
-src/main.rs              # ForgeBuilder, registrations
-src/schema/              # #[forge::model]
-src/functions/           # One file per function (queries, mutations, jobs, crons, workflows)
-frontend/src/lib/forge/  # Generated (forge generate)
+src/functions/  # One file per function (+ tests inside)
+src/schema/     # #[forge::model]
+migrations/     # NNNN_name.sql (-- @up / -- @down)
 ```
 
-## Workflow: Schema → Migration (`migrations/NNNN_name.sql` with `-- @up`/`-- @down`) → Function (`forge add <type> <name>`) → Register in main.rs → `forge generate`
+## Workflow
+
+Schema → Migration → `forge add <type> <name>` → Register in main.rs → `forge generate`
 
 ## Auth
 
@@ -80,50 +123,17 @@ frontend/src/lib/forge/  # Generated (forge generate)
 #[forge::query(public)]                    // No auth
 #[forge::mutation(require_role("admin"))]  // Role required
 ctx.require_user_id()?                      // Uuid or error
-ctx.auth.user_id()                          // Option<Uuid>
-ctx.auth.has_role("x")                      // bool
-ctx.auth.claim("key")                       // Custom JWT claim
 ```
 
 ## Frontend (Svelte 5)
 
 ```svelte
-let props = $props();  // NEVER destructure at module level
 const users = subscribe(getUsers, {});     // Real-time
-const data = await query(getUsers, {});    // One-time
-await mutate(createUser, { name, email }); // Write
-const job = createJobTracker<Args>('type'); job.start({...});
+await mutate(createUser, { name });        // Write
 ```
 
-## Testing
-
-```bash
-cargo test --features embedded-db  # Uses embedded PostgreSQL (recommended)
-TEST_DATABASE_URL=postgres://... cargo test  # Uses external database
-```
-
-```rust
-// Import testing utilities directly from forge_core
-use forge_core::testing::{TestQueryContext, TestMutationContext, TestDatabase};
-use forge_core::{assert_ok, assert_err, assert_job_dispatched};
-
-let ctx = TestQueryContext::authenticated(user_id);
-let ctx = TestQueryContext::builder().as_user(id).with_role("admin").build();
-let ctx = TestActionContext::builder().mock_http_json("url/*", json!({...})).build();
-let db = TestDatabase::embedded().await?;  // Requires embedded-db feature
-assert_job_dispatched!(ctx, "name"); assert_workflow_started!(ctx, "name");
-```
+**NEVER edit `frontend/src/lib/forge/`** — auto-generated.
 
 ## Code Quality
 
-Idiomatic Rust | Testability (inject via context) | Fail fast (`require_*`) | Small functions (<30 lines) | No premature abstraction | Design out edge cases | Structured logging | Comments explain why | Use `bun` (never npm/yarn/pnpm)
-
-**Always use CLI:** `forge add <type> <name>` to generate functions. **Always run after changes:** Run `cargo clippy -- -D warnings && cargo test --features embedded-db && bun lint && bun format` to verify.
-
-**NEVER edit `frontend/src/lib/forge/` or `frontend/.forge/`** — auto-generated by `forge generate`, edits will be lost. Add types via `#[forge::model]` in Rust, then `forge generate`.
-
-## Advanced (see docs)
-
-- **Rate Limiting:** `#[forge::query(rate_limit(requests=100, per="1m", key="user"))]`
-- **Multi-Tenancy:** `ctx.tenant_id()`, `ctx.require_tenant()`
-- **Clustering:** `forge.toml` → `[node]` roles, worker_capabilities
+Idiomatic Rust | Small functions | Fail fast | No premature abstraction | Use `bun` only
