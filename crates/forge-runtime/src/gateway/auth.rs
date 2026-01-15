@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
@@ -12,7 +11,6 @@ use forge_core::config::JwtAlgorithm as CoreJwtAlgorithm;
 use forge_core::function::AuthContext;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, dangerous, decode};
 use tracing::debug;
-use uuid::Uuid;
 
 use super::jwks::JwksClient;
 
@@ -365,14 +363,39 @@ pub fn extract_auth_context(req: &Request<Body>, middleware: &AuthMiddleware) ->
 
     match token {
         Some(token) => match middleware.validate_token(token) {
-            Ok(claims) => {
-                let user_id = claims.user_id().unwrap_or_else(Uuid::nil);
-                let custom_claims: HashMap<String, serde_json::Value> = claims.custom;
-                AuthContext::authenticated(user_id, claims.roles, custom_claims)
-            }
+            Ok(claims) => build_auth_context_from_claims(claims),
             Err(_) => AuthContext::unauthenticated(),
         },
         None => AuthContext::unauthenticated(),
+    }
+}
+
+/// Build auth context from validated claims.
+///
+/// This handles both UUID and non-UUID subjects properly:
+/// - UUID subjects: uses `authenticated()` with the parsed UUID
+/// - Non-UUID subjects: uses `authenticated_without_uuid()` and stores raw subject in claims
+pub fn build_auth_context_from_claims(claims: Claims) -> AuthContext {
+    // Try to parse subject as UUID first (before moving claims)
+    let user_id = claims.user_id();
+
+    // Build custom claims with raw subject included
+    let mut custom_claims = claims.custom;
+    custom_claims.insert(
+        "sub".to_string(),
+        serde_json::Value::String(claims.sub),
+    );
+
+    match user_id {
+        Some(uuid) => {
+            // Subject is a valid UUID
+            AuthContext::authenticated(uuid, claims.roles, custom_claims)
+        }
+        None => {
+            // Subject is not a UUID (e.g., Firebase uid, Clerk user_xxx, email)
+            // Still authenticated, but user_id() will return None
+            AuthContext::authenticated_without_uuid(claims.roles, custom_claims)
+        }
     }
 }
 

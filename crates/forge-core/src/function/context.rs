@@ -30,7 +30,7 @@ impl AuthContext {
         }
     }
 
-    /// Create an authenticated context.
+    /// Create an authenticated context with a UUID user ID.
     pub fn authenticated(
         user_id: Uuid,
         roles: Vec<String>,
@@ -38,6 +38,23 @@ impl AuthContext {
     ) -> Self {
         Self {
             user_id: Some(user_id),
+            roles,
+            claims,
+            authenticated: true,
+        }
+    }
+
+    /// Create an authenticated context without requiring a UUID user ID.
+    ///
+    /// Use this for auth providers that don't use UUID subjects (e.g., Firebase,
+    /// Clerk). The raw subject string is available via `subject()` method
+    /// from the "sub" claim.
+    pub fn authenticated_without_uuid(
+        roles: Vec<String>,
+        claims: HashMap<String, serde_json::Value>,
+    ) -> Self {
+        Self {
+            user_id: None,
             roles,
             claims,
             authenticated: true,
@@ -85,6 +102,15 @@ impl AuthContext {
     /// Get all roles.
     pub fn roles(&self) -> &[String] {
         &self.roles
+    }
+
+    /// Get the raw subject claim.
+    ///
+    /// This works with any provider's subject format (UUID, email, custom ID).
+    /// For providers like Firebase or Clerk that don't use UUIDs, use this
+    /// instead of `user_id()`.
+    pub fn subject(&self) -> Option<&str> {
+        self.claims.get("sub").and_then(|v| v.as_str())
     }
 }
 
