@@ -117,6 +117,10 @@ pub enum WebSocketMessage {
         code: String,
         message: String,
     },
+    /// Authentication successful.
+    AuthSuccess,
+    /// Authentication failed.
+    AuthFailed { reason: String },
 }
 
 /// Represents a connected WebSocket client.

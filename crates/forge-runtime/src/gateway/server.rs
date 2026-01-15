@@ -182,12 +182,13 @@ impl GatewayServer {
             CorsLayer::new()
         };
 
-        // WebSocket state uses the reactor and db_pool for session tracking
+        // WebSocket state uses the reactor, db_pool, and auth middleware for session tracking
         let node_id = self.reactor.node_id();
-        let ws_state = Arc::new(WsState::new(
+        let ws_state = Arc::new(WsState::with_auth(
             self.reactor.clone(),
             self.db_pool.clone(),
             node_id,
+            auth_middleware_state.clone(),
         ));
 
         // Readiness state for DB health check

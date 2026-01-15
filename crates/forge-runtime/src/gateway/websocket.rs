@@ -15,8 +15,10 @@ use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
 
 use forge_core::cluster::NodeId;
+use forge_core::function::AuthContext;
 use forge_core::realtime::SessionId;
 
+use super::auth::{AuthMiddleware, build_auth_context_from_claims};
 use crate::realtime::{Reactor, WebSocketMessage as ReactorMessage};
 
 /// Validate and parse a string as UUID.
@@ -38,6 +40,7 @@ pub struct WsState {
     pub reactor: Arc<Reactor>,
     pub db_pool: PgPool,
     pub node_id: NodeId,
+    pub auth_middleware: Option<Arc<AuthMiddleware>>,
 }
 
 impl WsState {
@@ -46,6 +49,22 @@ impl WsState {
             reactor,
             db_pool,
             node_id,
+            auth_middleware: None,
+        }
+    }
+
+    /// Create a new WebSocket state with authentication middleware.
+    pub fn with_auth(
+        reactor: Arc<Reactor>,
+        db_pool: PgPool,
+        node_id: NodeId,
+        auth_middleware: Arc<AuthMiddleware>,
+    ) -> Self {
+        Self {
+            reactor,
+            db_pool,
+            node_id,
+            auth_middleware: Some(auth_middleware),
         }
     }
 }
@@ -98,6 +117,10 @@ pub enum ServerMessage {
     Connected,
     /// Ping response.
     Pong,
+    /// Authentication successful.
+    AuthSuccess,
+    /// Authentication failed.
+    AuthFailed { reason: String },
     /// Subscription data.
     Data { id: String, data: serde_json::Value },
     /// Job progress update.
@@ -188,6 +211,10 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
     let internal_to_client: Arc<RwLock<HashMap<forge_core::realtime::SubscriptionId, String>>> =
         Arc::new(RwLock::new(HashMap::new()));
 
+    // Track connection's auth context (starts unauthenticated)
+    let connection_auth: Arc<RwLock<AuthContext>> =
+        Arc::new(RwLock::new(AuthContext::unauthenticated()));
+
     // Send connected message
     let connected = ServerMessage::Connected;
     if let Ok(json) = serde_json::to_string(&connected) {
@@ -266,6 +293,8 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
                     code,
                     message,
                 },
+                ReactorMessage::AuthSuccess => ServerMessage::AuthSuccess,
+                ReactorMessage::AuthFailed { reason } => ServerMessage::AuthFailed { reason },
                 ReactorMessage::Ping => ServerMessage::Pong,
                 ReactorMessage::Pong => continue,
                 _ => continue,
@@ -305,8 +334,52 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
             ClientMessage::Ping => {
                 // Pong is handled by the reactor message sender
             }
-            ClientMessage::Auth { token: _ } => {
-                // TODO: Validate token and set auth context
+            ClientMessage::Auth { token } => {
+                // Validate token and set auth context
+                if let Some(ref auth_middleware) = state.auth_middleware {
+                    match auth_middleware.validate_token_async(&token).await {
+                        Ok(claims) => {
+                            // Update connection auth context
+                            let auth_context = build_auth_context_from_claims(claims);
+                            *connection_auth.write().await = auth_context;
+
+                            // Send success response
+                            let _ = state
+                                .reactor
+                                .ws_server()
+                                .send_to_session(session_id, ReactorMessage::AuthSuccess)
+                                .await;
+
+                            tracing::debug!(?session_id, "WebSocket authentication successful");
+                        }
+                        Err(e) => {
+                            let _ = state
+                                .reactor
+                                .ws_server()
+                                .send_to_session(
+                                    session_id,
+                                    ReactorMessage::AuthFailed {
+                                        reason: e.to_string(),
+                                    },
+                                )
+                                .await;
+
+                            tracing::debug!(?session_id, error = %e, "WebSocket authentication failed");
+                        }
+                    }
+                } else {
+                    // No auth middleware configured - auth not available
+                    let _ = state
+                        .reactor
+                        .ws_server()
+                        .send_to_session(
+                            session_id,
+                            ReactorMessage::AuthFailed {
+                                reason: "Authentication not configured".to_string(),
+                            },
+                        )
+                        .await;
+                }
             }
             ClientMessage::Subscribe {
                 id,
