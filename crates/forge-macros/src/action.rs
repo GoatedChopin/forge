@@ -394,6 +394,7 @@ fn expand_action_impl(input: ItemFn, attrs: ActionAttrs) -> syn::Result<TokenStr
                     rate_limit_per_secs: #rate_limit_per_secs,
                     rate_limit_key: #rate_limit_key,
                     log_level: #log_level,
+                    table_dependencies: &[],
                 }
             }
 

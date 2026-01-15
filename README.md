@@ -150,7 +150,7 @@ Deploy new code, restart servers, scale up or down. The workflow picks up right 
 {/each}
 ```
 
-Under the hood: PostgreSQL triggers fire NOTIFY on data changes → FORGE re-runs the query → WebSocket pushes the diff to subscribed clients.
+Under the hood: Compile-time SQL parsing extracts all table dependencies (including JOINs and subqueries) → PostgreSQL triggers fire NOTIFY on changes → FORGE re-runs affected queries → WebSocket pushes diffs to clients.
 
 No WebSocket code. No manual cache invalidation. Just reactive queries.
 

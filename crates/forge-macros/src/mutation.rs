@@ -420,6 +420,7 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
                     rate_limit_per_secs: #rate_limit_per_secs,
                     rate_limit_key: #rate_limit_key,
                     log_level: #log_level,
+                    table_dependencies: &[],
                 }
             }
 

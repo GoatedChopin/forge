@@ -22,7 +22,7 @@ cargo clippy --all-targets -- -D warnings && cargo test && bun lint && bun forma
 ## Function Signatures & Attributes
 
 ```rust
-// Query: cache, public, require_auth, require_role("x"), timeout=30, rate_limit(requests=100, per="1m", key="user")
+// Query: cache, public, require_auth, require_role("x"), timeout=30, rate_limit(...), tables=["t1","t2"] (explicit deps for subscribe())
 #[forge::query(cache = "5m", public)]
 pub async fn get_users(ctx: &QueryContext) -> Result<Vec<User>> { }
 
@@ -165,6 +165,7 @@ forge check                          # Validate project
 | Poll with `query()` loop | `subscribe()` |
 | `ctx.auth.user_id().unwrap()` | `ctx.require_user_id()?` |
 | Edit `frontend/src/lib/forge/` | Run `forge generate` |
+| Dynamic SQL in subscribed query | Add `tables = [...]` for invalidation |
 
 ## Schema
 

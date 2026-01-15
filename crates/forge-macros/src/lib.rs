@@ -7,6 +7,7 @@ mod job;
 mod model;
 mod mutation;
 mod query;
+mod sql_extractor;
 mod workflow;
 
 /// Marks a struct as a FORGE model, generating schema metadata for TypeScript codegen.
@@ -50,18 +51,32 @@ pub fn forge_enum(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// - `public` - No authentication required
 /// - `require_auth` - Require authentication
 /// - `timeout = 30` - Timeout in seconds
+/// - `tables = ["users", "projects"]` - Explicit table dependencies (for dynamic SQL)
+///
+/// # Table Dependency Extraction
+/// By default, table dependencies are automatically extracted from SQL strings
+/// in the function body at compile time. This enables accurate reactive
+/// subscription invalidation for queries that join multiple tables.
+///
+/// For dynamic SQL (e.g., table names built at runtime), use the `tables`
+/// attribute to explicitly specify dependencies.
 ///
 /// # Example
 /// ```ignore
 /// #[forge::query]
 /// pub async fn get_user(ctx: &QueryContext, user_id: Uuid) -> Result<User> {
-///     // ...
+///     // Tables automatically extracted from SQL
 /// }
 ///
 /// #[forge::query(cache = "5m", require_auth)]
 /// pub async fn get_profile(ctx: &QueryContext) -> Result<Profile> {
 ///     let user_id = ctx.require_user_id()?;
 ///     // ...
+/// }
+///
+/// #[forge::query(tables = ["users", "audit_log"])]
+/// pub async fn dynamic_query(ctx: &QueryContext, table: String) -> Result<Vec<Row>> {
+///     // Explicit tables for dynamic SQL
 /// }
 /// ```
 #[proc_macro_attribute]

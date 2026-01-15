@@ -1,7 +1,10 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
+use syn::visit::Visit;
 use syn::{FnArg, ItemFn, Pat, ReturnType, Type, parse_macro_input};
+
+use crate::sql_extractor::{SqlStringExtractor, extract_tables_from_sql};
 
 /// Expand the #[forge::query] attribute.
 ///
@@ -29,6 +32,8 @@ struct QueryAttrs {
     rate_limit_per_secs: Option<u64>,
     rate_limit_key: Option<String>,
     log_level: Option<String>,
+    /// Explicitly specified table dependencies (override for dynamic SQL).
+    tables: Option<Vec<String>>,
 }
 
 fn parse_query_attrs(attr: TokenStream) -> QueryAttrs {
@@ -140,6 +145,24 @@ fn parse_query_attrs(attr: TokenStream) -> QueryAttrs {
         }
     }
 
+    // Parse tables = ["table1", "table2"] for explicit table dependencies
+    if let Some(tables_start) = attr_str.find("tables") {
+        if let Some(bracket_start) = attr_str[tables_start..].find('[') {
+            let remaining = &attr_str[tables_start + bracket_start + 1..];
+            if let Some(bracket_end) = remaining.find(']') {
+                let tables_str = &remaining[..bracket_end];
+                let tables: Vec<String> = tables_str
+                    .split(',')
+                    .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if !tables.is_empty() {
+                    attrs.tables = Some(tables);
+                }
+            }
+        }
+    }
+
     attrs
 }
 
@@ -210,6 +233,21 @@ fn expand_query_impl(input: ItemFn, attrs: QueryAttrs) -> syn::Result<TokenStrea
     // Determine the context type string
     let type_str = quote! { #ctx_type }.to_string();
     let is_ref = type_str.starts_with('&');
+
+    // Extract table dependencies from function body or use explicit override
+    let table_dependencies: Vec<String> = if let Some(explicit_tables) = attrs.tables {
+        // Use explicitly specified tables
+        explicit_tables
+    } else {
+        // Extract from SQL strings in the function body
+        let mut extractor = SqlStringExtractor::new();
+        extractor.visit_block(fn_block);
+
+        let tables = extract_tables_from_sql(&extractor.sql_strings);
+        let mut sorted: Vec<String> = tables.into_iter().collect();
+        sorted.sort(); // Sort for deterministic output
+        sorted
+    };
 
     // Get remaining params for args struct
     let arg_params: Vec<_> = params.iter().skip(1).cloned().collect();
@@ -310,6 +348,14 @@ fn expand_query_impl(input: ItemFn, attrs: QueryAttrs) -> syn::Result<TokenStrea
     let log_level = match &attrs.log_level {
         Some(l) => quote! { Some(#l) },
         None => quote! { None },
+    };
+
+    // Generate table_dependencies token
+    let table_deps_tokens = if table_dependencies.is_empty() {
+        quote! { &[] }
+    } else {
+        let table_strs: Vec<_> = table_dependencies.iter().map(|t| quote! { #t }).collect();
+        quote! { &[#(#table_strs),*] }
     };
 
     // Check if we have a single custom args type (user-defined struct)
@@ -426,6 +472,7 @@ fn expand_query_impl(input: ItemFn, attrs: QueryAttrs) -> syn::Result<TokenStrea
                     rate_limit_per_secs: #rate_limit_per_secs,
                     rate_limit_key: #rate_limit_key,
                     log_level: #log_level,
+                    table_dependencies: #table_deps_tokens,
                 }
             }
 

@@ -112,12 +112,43 @@ pub async fn get_realtime_data(ctx: &QueryContext) -> Result<Data> {
 }
 ```
 
+### Query Table Dependencies
+
+FORGE automatically extracts table dependencies from SQL at compile time for reactive subscriptions. When a mutation modifies any dependent table, subscribed clients receive updates.
+
+```rust
+// Tables are automatically extracted from SQL (works with JOINs, subqueries, CTEs)
+#[forge::query]
+pub async fn get_user_orders(ctx: &QueryContext, user_id: Uuid) -> Result<Vec<OrderWithItems>> {
+    // FORGE extracts: ["users", "orders", "order_items"]
+    sqlx::query_as!(
+        OrderWithItems,
+        r#"
+        SELECT o.*, u.name as user_name
+        FROM orders o
+        JOIN users u ON u.id = o.user_id
+        WHERE o.user_id = $1
+        AND EXISTS (SELECT 1 FROM order_items oi WHERE oi.order_id = o.id)
+        "#,
+        user_id
+    ).fetch_all(ctx.db()).await
+}
+
+// For dynamic SQL, specify tables explicitly
+#[forge::query(tables = ["users", "orders"])]
+pub async fn search_orders(ctx: &QueryContext, filter: OrderFilter) -> Result<Vec<Order>> {
+    let sql = build_dynamic_query(&filter);  // SQL varies based on filter
+    sqlx::query_as(&sql).fetch_all(ctx.db()).await
+}
+```
+
 ### Query Rules
 
 1. **Deterministic**: Same inputs → same outputs
 2. **No side effects**: Cannot modify database
 3. **No external calls**: Cannot call APIs (use Actions)
 4. **Fast**: Should complete in < 100ms typically
+5. **Table dependencies**: Use `tables` attribute for dynamic SQL
 
 ---
 

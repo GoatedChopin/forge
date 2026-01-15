@@ -34,6 +34,9 @@ pub struct FunctionInfo {
     /// Log level for access logging: "trace", "debug", "info", "warn", "error", "off".
     /// Defaults to "trace" if not specified.
     pub log_level: Option<&'static str>,
+    /// Table dependencies extracted at compile time for reactive subscriptions.
+    /// Empty slice means tables could not be determined (dynamic SQL).
+    pub table_dependencies: &'static [&'static str],
 }
 
 /// The kind of function.
@@ -151,6 +154,7 @@ mod tests {
             rate_limit_per_secs: Some(60),
             rate_limit_key: Some("user"),
             log_level: Some("debug"),
+            table_dependencies: &["users"],
         };
 
         assert_eq!(info.name, "get_user");
@@ -159,5 +163,6 @@ mod tests {
         assert_eq!(info.cache_ttl, Some(300));
         assert_eq!(info.rate_limit_requests, Some(100));
         assert_eq!(info.log_level, Some("debug"));
+        assert_eq!(info.table_dependencies, &["users"]);
     }
 }

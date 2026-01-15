@@ -454,7 +454,7 @@ impl Reactor {
         args: &serde_json::Value,
     ) -> forge_core::Result<(serde_json::Value, ReadSet)> {
         match self.registry.get(query_name) {
-            Some(FunctionEntry::Query { handler, .. }) => {
+            Some(FunctionEntry::Query { info, handler }) => {
                 let ctx = forge_core::function::QueryContext::new(
                     self.db_pool.clone(),
                     forge_core::function::AuthContext::unauthenticated(),
@@ -471,11 +471,30 @@ impl Reactor {
 
                 let data = handler(&ctx, normalized_args).await?;
 
-                // Create a read set based on the query name
-                // For queries like "get_users", track the "users" table
+                // Create read set from compile-time extracted table dependencies
                 let mut read_set = ReadSet::new();
-                let table_name = Self::extract_table_name(query_name);
-                read_set.add_table(&table_name);
+
+                if info.table_dependencies.is_empty() {
+                    // Fallback: no tables extracted (dynamic SQL)
+                    // Use naming convention as last resort
+                    let table_name = Self::extract_table_name(query_name);
+                    read_set.add_table(&table_name);
+                    tracing::debug!(
+                        query = %query_name,
+                        fallback_table = %table_name,
+                        "No compile-time table dependencies found, using naming convention fallback"
+                    );
+                } else {
+                    // Use compile-time extracted tables
+                    for table in info.table_dependencies {
+                        read_set.add_table(*table);
+                    }
+                    tracing::debug!(
+                        query = %query_name,
+                        tables = ?info.table_dependencies,
+                        "Using compile-time table dependencies"
+                    );
+                }
 
                 Ok((data, read_set))
             }
@@ -924,7 +943,7 @@ impl Reactor {
         args: &serde_json::Value,
     ) -> forge_core::Result<(serde_json::Value, ReadSet)> {
         match registry.get(query_name) {
-            Some(FunctionEntry::Query { handler, .. }) => {
+            Some(FunctionEntry::Query { info, handler }) => {
                 let ctx = forge_core::function::QueryContext::new(
                     db_pool.clone(),
                     forge_core::function::AuthContext::unauthenticated(),
@@ -940,10 +959,28 @@ impl Reactor {
 
                 let data = handler(&ctx, normalized_args).await?;
 
-                // Create a read set based on the query name
+                // Create read set from compile-time extracted table dependencies
                 let mut read_set = ReadSet::new();
-                let table_name = Self::extract_table_name(query_name);
-                read_set.add_table(&table_name);
+
+                if info.table_dependencies.is_empty() {
+                    // Fallback for dynamic SQL
+                    let table_name = Self::extract_table_name(query_name);
+                    read_set.add_table(&table_name);
+                    tracing::debug!(
+                        query = %query_name,
+                        fallback_table = %table_name,
+                        "No compile-time table dependencies found (static), using naming convention fallback"
+                    );
+                } else {
+                    for table in info.table_dependencies {
+                        read_set.add_table(*table);
+                    }
+                    tracing::debug!(
+                        query = %query_name,
+                        tables = ?info.table_dependencies,
+                        "Using compile-time table dependencies (static)"
+                    );
+                }
 
                 Ok((data, read_set))
             }

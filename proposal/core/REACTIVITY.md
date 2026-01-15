@@ -163,39 +163,93 @@ When a mutation modifies data, related queries are automatically invalidated:
 #[forge::mutation]
 pub async fn create_project(ctx: &MutationContext, input: CreateProjectInput) -> Result<Project> {
     let project = ctx.db.insert(Project { ... }).await?;
-    
+
     // FORGE automatically:
     // 1. Detects that 'projects' table changed
     // 2. Finds all subscriptions that read from 'projects'
     // 3. Re-runs those queries
     // 4. Sends deltas to clients
-    
+
     Ok(project)
+}
+```
+
+### Compile-Time Table Extraction
+
+FORGE extracts table dependencies from SQL at **compile time** by parsing the `#[forge::query]` macro:
+
+```rust
+#[forge::query]
+pub async fn get_user_dashboard(ctx: &QueryContext, user_id: Uuid) -> Result<Dashboard> {
+    // FORGE parses this SQL at compile time and extracts:
+    // tables = ["users", "projects", "tasks"]
+    sqlx::query_as!(
+        Dashboard,
+        r#"
+        SELECT u.*, p.name as project_name, COUNT(t.id) as task_count
+        FROM users u
+        LEFT JOIN projects p ON p.owner_id = u.id
+        LEFT JOIN tasks t ON t.project_id = p.id
+        WHERE u.id = $1
+        GROUP BY u.id, p.id
+        "#,
+        user_id
+    ).fetch_one(ctx.db()).await
+}
+```
+
+**Supported SQL patterns:**
+- `FROM` clauses (direct tables, aliases)
+- All `JOIN` types (INNER, LEFT, RIGHT, FULL)
+- Subqueries in `WHERE`, `SELECT`, `HAVING`
+- `EXISTS` subqueries
+- CTEs (`WITH` clause)
+- `UNION`/`INTERSECT` branches
+- `INSERT INTO`, `UPDATE`, `DELETE FROM`
+
+**For dynamic SQL**, use the explicit `tables` attribute:
+
+```rust
+#[forge::query(tables = ["users", "audit_logs"])]
+pub async fn search_users(ctx: &QueryContext, filter: Filter) -> Result<Vec<User>> {
+    // Dynamic SQL - tables can't be determined at compile time
+    let sql = build_dynamic_query(&filter);
+    sqlx::query_as(&sql).fetch_all(ctx.db()).await
 }
 ```
 
 ### How Invalidation Is Tracked
 
 ```rust
-// During query execution, FORGE tracks:
+// Table dependencies are extracted at COMPILE TIME from the query's SQL:
+struct FunctionInfo {
+    name: &'static str,
+    // ... other fields ...
+
+    // Tables extracted from SQL at compile time
+    // e.g., ["projects", "users", "tasks"] for a query with JOINs
+    table_dependencies: &'static [&'static str],
+}
+
+// During query execution, FORGE builds a ReadSet from compile-time tables:
 struct ReadSet {
-    // Tables accessed
+    // Tables from compile-time extraction (or explicit `tables` attribute)
     tables: HashSet<String>,  // ["projects", "users"]
-    
+
     // Specific rows read (for fine-grained invalidation)
     rows: HashMap<String, HashSet<Uuid>>,  // { "projects": [id1, id2] }
-    
+
     // Columns used in filters (for smarter invalidation)
     filter_columns: HashMap<String, HashSet<String>>,
 }
 
 // After mutation, FORGE checks:
 fn should_invalidate(subscription: &Subscription, change: &Change) -> bool {
-    // Table-level check
+    // Table-level check using compile-time extracted tables
     if !subscription.read_set.tables.contains(&change.table) {
         return false;
     }
-    
+
     // Row-level check (if available)
     if let Some(rows) = subscription.read_set.rows.get(&change.table) {
         if change.operation == Operation::Update || change.operation == Operation::Delete {
@@ -203,10 +257,12 @@ fn should_invalidate(subscription: &Subscription, change: &Change) -> bool {
         }
         // For inserts, we need to re-run to see if new row matches filters
     }
-    
+
     true  // Conservative: invalidate if unsure
 }
 ```
+
+This compile-time extraction ensures that queries with JOINs, subqueries, and CTEs correctly invalidate when **any** of their dependent tables change—not just the "main" table inferred from the function name.
 
 ---
 
