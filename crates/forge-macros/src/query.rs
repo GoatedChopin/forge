@@ -50,6 +50,18 @@ fn parse_query_attrs(attr: TokenStream) -> QueryAttrs {
         attrs.requires_auth = true;
     }
 
+    // Parse role requirement
+    if let Some(role_start) = attr_str.find("require_role") {
+        if let Some(paren_start) = attr_str[role_start..].find('(') {
+            let remaining = &attr_str[role_start + paren_start + 1..];
+            if let Some(paren_end) = remaining.find(')') {
+                let role = remaining[..paren_end].trim().trim_matches('"');
+                attrs.required_role = Some(role.to_string());
+                attrs.requires_auth = true; // require_role implies require_auth
+            }
+        }
+    }
+
     // Parse cache TTL (simple parsing)
     if let Some(cache_start) = attr_str.find("cache") {
         if let Some(quote_start) = attr_str[cache_start..].find('"') {
