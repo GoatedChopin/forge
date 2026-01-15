@@ -1,0 +1,460 @@
+---
+sidebar_position: 8
+title: Authentication
+description: Configure JWT-based authentication for any OIDC provider
+---
+
+# Authentication
+
+FORGE uses JWT-based authentication that works with **any OIDC-compliant provider**. You bring your own identity provider (Firebase, Clerk, Auth0, Supabase, etc.) and FORGE validates the tokens.
+
+## How It Works
+
+```
+┌─────────────┐    1. Login     ┌──────────────────┐
+│   Client    │ ───────────────→ │  Auth Provider   │
+│  (Browser)  │ ←─────────────── │ (Firebase, etc.) │
+└──────┬──────┘    JWT Token     └──────────────────┘
+       │
+       │ 2. API Request with JWT
+       ▼
+┌─────────────┐                  ┌──────────────────┐
+│   FORGE     │ ───────────────→ │ JWKS Endpoint    │
+│   Gateway   │ ←─────────────── │ (public keys)    │
+└─────────────┘   Fetch keys     └──────────────────┘
+       │
+       │ 3. Validated user context
+       ▼
+┌─────────────────────────────────────────────────┐
+│              Your Functions                      │
+│  ctx.auth.user_id()  ctx.auth.has_role("admin") │
+└─────────────────────────────────────────────────┘
+```
+
+FORGE **does not issue tokens** - it only validates them. Your auth provider handles user registration, login, password reset, and token issuance.
+
+## Configuration
+
+Configure authentication in your `Forge.toml`:
+
+### HMAC Algorithms (HS256/HS384/HS512)
+
+For providers that give you a shared secret (Supabase, BetterAuth, self-signed tokens):
+
+```toml title="Forge.toml"
+[security.auth]
+algorithm = "HS256"
+jwt_secret = "${JWT_SECRET}"  # From environment variable
+```
+
+### RSA Algorithms (RS256/RS384/RS512)
+
+For providers with public JWKS endpoints (Firebase, Clerk, Auth0):
+
+```toml title="Forge.toml"
+[security.auth]
+algorithm = "RS256"
+jwks_url = "https://your-provider/.well-known/jwks.json"
+issuer = "https://your-provider/"        # Optional: validate iss claim
+audience = "your-app-id"                  # Optional: validate aud claim
+```
+
+### Full Configuration Reference
+
+```toml title="Forge.toml"
+[security.auth]
+# JWT algorithm: HS256, HS384, HS512, RS256, RS384, RS512
+algorithm = "RS256"
+
+# For HMAC algorithms - the shared secret
+jwt_secret = "${JWT_SECRET}"
+
+# For RSA algorithms - URL to fetch public keys
+jwks_url = "https://example.com/.well-known/jwks.json"
+
+# Validate token issuer (iss claim)
+issuer = "https://issuer.example.com"
+
+# Validate token audience (aud claim)
+audience = "your-app-id"
+
+# Allow unauthenticated requests to public functions (default: true)
+allow_anonymous = true
+
+# JWKS cache TTL in seconds (default: 3600 = 1 hour)
+jwks_cache_ttl_secs = 3600
+
+# WebSocket session TTL in seconds (default: 7 days)
+session_ttl_secs = 604800
+```
+
+## Provider Examples
+
+### Firebase
+
+```toml title="Forge.toml"
+[security.auth]
+algorithm = "RS256"
+jwks_url = "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com"
+issuer = "https://securetoken.google.com/YOUR_PROJECT_ID"
+audience = "YOUR_PROJECT_ID"
+```
+
+### Clerk
+
+```toml title="Forge.toml"
+[security.auth]
+algorithm = "RS256"
+jwks_url = "https://YOUR_CLERK_DOMAIN/.well-known/jwks.json"
+# Clerk tokens don't require issuer/audience validation
+```
+
+### Auth0
+
+```toml title="Forge.toml"
+[security.auth]
+algorithm = "RS256"
+jwks_url = "https://YOUR_TENANT.auth0.com/.well-known/jwks.json"
+issuer = "https://YOUR_TENANT.auth0.com/"
+audience = "YOUR_API_IDENTIFIER"
+```
+
+### Supabase
+
+```toml title="Forge.toml"
+[security.auth]
+algorithm = "HS256"
+jwt_secret = "${SUPABASE_JWT_SECRET}"
+issuer = "https://YOUR_PROJECT.supabase.co/auth/v1"
+```
+
+### BetterAuth
+
+```toml title="Forge.toml"
+[security.auth]
+algorithm = "HS256"
+jwt_secret = "${BETTER_AUTH_SECRET}"
+```
+
+### Custom / Self-Signed
+
+If you're issuing your own JWTs:
+
+```toml title="Forge.toml"
+[security.auth]
+algorithm = "HS256"
+jwt_secret = "${YOUR_SECRET_KEY}"
+```
+
+## Accessing Auth in Functions
+
+### Get User ID
+
+```rust
+#[forge::query(require_auth)]
+pub async fn get_profile(ctx: &QueryContext) -> Result<User> {
+    // Get user ID (if subject is a valid UUID)
+    let user_id = ctx.auth.require_user_id()?;
+
+    sqlx::query_as("SELECT * FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_one(ctx.db())
+        .await
+        .map_err(Into::into)
+}
+```
+
+### Get Raw Subject
+
+Some providers (Firebase, Clerk) don't use UUIDs for the `sub` claim. Use `subject()` to get the raw value:
+
+```rust
+#[forge::query(require_auth)]
+pub async fn get_profile(ctx: &QueryContext) -> Result<User> {
+    // Works with any subject format (UUID, email, custom ID)
+    let subject = ctx.auth.subject()
+        .ok_or_else(|| ForgeError::Unauthorized("No subject in token".into()))?;
+
+    sqlx::query_as("SELECT * FROM users WHERE external_id = $1")
+        .bind(subject)
+        .fetch_one(ctx.db())
+        .await
+        .map_err(Into::into)
+}
+```
+
+### Check Roles
+
+```rust
+#[forge::mutation(require_role("admin"))]
+pub async fn delete_user(ctx: &MutationContext, id: Uuid) -> Result<bool> {
+    // Only users with "admin" role can access this function
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(id)
+        .execute(ctx.db())
+        .await?;
+
+    Ok(true)
+}
+
+// Or check roles manually:
+#[forge::mutation(require_auth)]
+pub async fn update_user(ctx: &MutationContext, id: Uuid, input: UpdateUserInput) -> Result<User> {
+    if ctx.auth.has_role("admin") {
+        // Admin can update any user
+    } else {
+        // Regular users can only update themselves
+        let user_id = ctx.auth.require_user_id()?;
+        if user_id != id {
+            return Err(ForgeError::Forbidden("Cannot update other users".into()));
+        }
+    }
+    // ...
+}
+```
+
+### Access Custom Claims
+
+```rust
+#[forge::query(require_auth)]
+pub async fn get_organization_data(ctx: &QueryContext) -> Result<OrgData> {
+    // Access custom claims from JWT
+    let org_id = ctx.auth.claim("org_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ForgeError::Forbidden("No organization access".into()))?;
+
+    sqlx::query_as("SELECT * FROM organizations WHERE id = $1")
+        .bind(org_id)
+        .fetch_one(ctx.db())
+        .await
+        .map_err(Into::into)
+}
+```
+
+## Function Attributes
+
+### Public Functions
+
+No authentication required:
+
+```rust
+#[forge::query(public)]
+pub async fn get_public_posts(ctx: &QueryContext) -> Result<Vec<Post>> {
+    sqlx::query_as("SELECT * FROM posts WHERE is_public = true")
+        .fetch_all(ctx.db())
+        .await
+        .map_err(Into::into)
+}
+```
+
+### Require Authentication
+
+```rust
+#[forge::query(require_auth)]
+pub async fn get_my_data(ctx: &QueryContext) -> Result<MyData> {
+    let user_id = ctx.auth.require_user_id()?;
+    // ...
+}
+```
+
+### Require Specific Role
+
+```rust
+// Query with role requirement
+#[forge::query(require_role("admin"))]
+pub async fn get_admin_stats(ctx: &QueryContext) -> Result<AdminStats> {
+    // Only admins can access
+}
+
+// Mutation with role requirement
+#[forge::mutation(require_role("moderator"))]
+pub async fn ban_user(ctx: &MutationContext, user_id: Uuid) -> Result<bool> {
+    // Only moderators can ban users
+}
+```
+
+## WebSocket Authentication
+
+WebSocket connections can authenticate by sending an auth message:
+
+```typescript
+// Client-side
+const ws = new WebSocket('ws://localhost:8080/ws');
+
+ws.onopen = () => {
+  // Send authentication message
+  ws.send(JSON.stringify({
+    type: 'auth',
+    token: 'your-jwt-token'
+  }));
+};
+
+ws.onmessage = (event) => {
+  const msg = JSON.parse(event.data);
+
+  if (msg.type === 'auth_success') {
+    console.log('Authenticated!');
+    // Now you can subscribe to protected queries
+  } else if (msg.type === 'auth_failed') {
+    console.error('Auth failed:', msg.reason);
+  }
+};
+```
+
+### Protocol
+
+| Client Message | Description |
+|----------------|-------------|
+| `{"type": "auth", "token": "<jwt>"}` | Authenticate the connection |
+
+| Server Response | Description |
+|-----------------|-------------|
+| `{"type": "auth_success"}` | Authentication successful |
+| `{"type": "auth_failed", "reason": "<error>"}` | Authentication failed |
+
+## AuthContext API
+
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `is_authenticated()` | `bool` | Check if user is authenticated |
+| `user_id()` | `Option<Uuid>` | Get user ID (if subject is UUID) |
+| `require_user_id()` | `Result<Uuid>` | Get user ID or error |
+| `subject()` | `Option<&str>` | Get raw subject claim |
+| `has_role(role)` | `bool` | Check if user has a role |
+| `require_role(role)` | `Result<()>` | Require a role or error |
+| `roles()` | `&[String]` | Get all user roles |
+| `claim(key)` | `Option<&Value>` | Get a custom claim value |
+
+## Token Requirements
+
+FORGE expects JWT tokens with standard claims:
+
+| Claim | Required | Description |
+|-------|----------|-------------|
+| `sub` | Yes | Subject (user identifier) |
+| `exp` | Yes | Expiration time (Unix timestamp) |
+| `iat` | No | Issued at time |
+| `iss` | No | Issuer (validated if configured) |
+| `aud` | No | Audience (validated if configured) |
+| `roles` | No | Array of role strings |
+
+### Example Token Payload
+
+```json
+{
+  "sub": "user_123",
+  "exp": 1704067200,
+  "iat": 1703980800,
+  "iss": "https://auth.example.com",
+  "aud": "your-app-id",
+  "roles": ["user", "premium"],
+  "org_id": "org_456"
+}
+```
+
+## Best Practices
+
+### 1. Use Environment Variables for Secrets
+
+```toml title="Forge.toml"
+[security.auth]
+jwt_secret = "${JWT_SECRET}"  # Never hardcode secrets!
+```
+
+### 2. Validate Issuer and Audience
+
+Always validate `iss` and `aud` claims when possible to prevent token confusion attacks:
+
+```toml
+[security.auth]
+issuer = "https://your-auth-provider.com"
+audience = "your-api-identifier"
+```
+
+### 3. Use Short Token Lifetimes
+
+Configure your auth provider to issue short-lived tokens (15-60 minutes) with refresh token rotation.
+
+### 4. Prefer RS256 for Production
+
+HMAC algorithms require sharing the secret with every service that validates tokens. RSA allows public key distribution:
+
+```toml
+# Development (simpler setup)
+algorithm = "HS256"
+jwt_secret = "${JWT_SECRET}"
+
+# Production (better security)
+algorithm = "RS256"
+jwks_url = "https://your-provider/.well-known/jwks.json"
+```
+
+### 5. Handle Non-UUID Subjects
+
+Not all providers use UUIDs. Use `subject()` for compatibility:
+
+```rust
+// Works with any provider
+let external_id = ctx.auth.subject()
+    .ok_or_else(|| ForgeError::Unauthorized("Not authenticated".into()))?;
+
+// Then look up your internal user
+let user = sqlx::query_as("SELECT * FROM users WHERE external_id = $1")
+    .bind(external_id)
+    .fetch_one(ctx.db())
+    .await?;
+```
+
+## Troubleshooting
+
+### "Token signature invalid"
+
+- Check that `jwt_secret` matches your provider's secret (HMAC)
+- Check that `jwks_url` is correct and accessible (RSA)
+- Ensure the algorithm matches what your provider uses
+
+### "Token expired"
+
+- Check server time synchronization
+- Token `exp` claim has passed
+- Request a new token from your auth provider
+
+### "Issuer mismatch"
+
+- The `iss` claim in your token doesn't match `issuer` in config
+- Check your provider's documentation for the correct issuer URL
+
+### "Audience mismatch"
+
+- The `aud` claim in your token doesn't match `audience` in config
+- Some providers don't include `aud` - try removing the config
+
+### "User ID is None"
+
+- The `sub` claim is not a valid UUID
+- Use `ctx.auth.subject()` instead of `ctx.auth.user_id()` for non-UUID subjects
+
+## What's Next?
+
+<div className="row">
+  <div className="col col--6">
+    <a className="card" href="/concepts/rate-limiting">
+      <div className="card__header">
+        <h3>Rate Limiting</h3>
+      </div>
+      <div className="card__body">
+        Protect your API from abuse
+      </div>
+    </a>
+  </div>
+  <div className="col col--6">
+    <a className="card" href="/tutorials/user-authentication">
+      <div className="card__header">
+        <h3>Auth Tutorial</h3>
+      </div>
+      <div className="card__body">
+        Build auth from scratch
+      </div>
+    </a>
+  </div>
+</div>
