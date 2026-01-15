@@ -163,6 +163,10 @@ impl FunctionRouter {
 
         // Check role requirement
         if let Some(role) = info.required_role {
+            // Role check implies authentication is required
+            if !auth.is_authenticated() {
+                return Err(ForgeError::Unauthorized("Authentication required".into()));
+            }
             if !auth.has_role(role) {
                 return Err(ForgeError::Forbidden(format!("Role '{}' required", role)));
             }
