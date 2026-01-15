@@ -23,5 +23,8 @@ axum = "0.8"
 rust-embed = { version = "8", optional = true }
 mime_guess = { version = "2", optional = true }
 
+[dev-dependencies]
+forge = { version = "0.0.2", package = "forgex", features = ["embedded-db"] }
+
 [build-dependencies]
 which = "7"

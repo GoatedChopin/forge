@@ -116,6 +116,23 @@ impl DevCommand {
         }
         println!("    {} cargo {}", style("✓").green(), cargo_version);
 
+        // Check cargo-watch
+        if !check_tool_exists("cargo-watch").await {
+            eprintln!(
+                "    {} cargo-watch not found (required for hot reload)",
+                style("✗").red()
+            );
+            eprintln!();
+            eprintln!("Install with: cargo install cargo-watch");
+            eprintln!();
+            eprintln!(
+                "Alternatively, use {} to run with Docker.",
+                style("forge dev --docker").cyan()
+            );
+            std::process::exit(1);
+        }
+        println!("    {} cargo-watch", style("✓").green());
+
         // Check bun version
         let bun_version = match get_tool_version("bun", &["--version"]).await {
             Ok(v) => v,
@@ -201,11 +218,14 @@ impl DevCommand {
         let (tx, mut rx) = mpsc::channel::<()>(1);
         let no_open = self.no_open;
 
-        // Start backend with cargo
-        println!("  {} Starting backend with cargo...", style("→").cyan());
+        // Start backend with cargo-watch for hot reload
+        println!(
+            "  {} Starting backend with cargo-watch (hot reload enabled)...",
+            style("→").cyan()
+        );
 
         let mut backend = Command::new("cargo")
-            .args(["run", "--no-default-features"])
+            .args(["watch", "--ignore", "frontend/*", "-x", "run --no-default-features"])
             .env("DATABASE_URL", &database_url)
             .env("RUST_LOG", "info,forge_runtime::function::executor=trace")
             .env("HOST", "0.0.0.0")
