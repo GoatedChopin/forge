@@ -1,4 +1,5 @@
 mod auth;
+pub mod jwks;
 mod metrics;
 mod request;
 mod response;
@@ -8,6 +9,7 @@ mod tracing;
 pub mod websocket;
 
 pub use auth::{AuthConfig, AuthMiddleware};
+pub use jwks::{JwksClient, JwksError};
 pub use metrics::{MetricsState, metrics_middleware};
 pub use request::RpcRequest;
 pub use response::{RpcError, RpcResponse};

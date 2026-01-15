@@ -236,6 +236,7 @@ mod tests {
             rate_limit_per_secs: None,
             rate_limit_key: None,
             log_level: None,
+            table_dependencies: &[],
         };
 
         let _auth = AuthContext::unauthenticated();

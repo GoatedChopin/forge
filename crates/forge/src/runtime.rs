@@ -384,7 +384,7 @@ impl Forge {
                 request_timeout_secs: self.config.gateway.request_timeout_secs,
                 cors_enabled: true,
                 cors_origins: vec!["*".to_string()],
-                auth: AuthConfig::default(),
+                auth: AuthConfig::from_forge_config(&self.config.security.auth),
             };
 
             // Create dashboard state with registries and dispatchers

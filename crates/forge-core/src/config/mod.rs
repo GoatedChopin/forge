@@ -294,15 +294,123 @@ pub struct SecurityConfig {
     pub auth: AuthConfig,
 }
 
+/// JWT signing algorithm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum JwtAlgorithm {
+    /// HMAC using SHA-256 (symmetric, requires jwt_secret).
+    #[default]
+    HS256,
+    /// HMAC using SHA-384 (symmetric, requires jwt_secret).
+    HS384,
+    /// HMAC using SHA-512 (symmetric, requires jwt_secret).
+    HS512,
+    /// RSA using SHA-256 (asymmetric, requires jwks_url).
+    RS256,
+    /// RSA using SHA-384 (asymmetric, requires jwks_url).
+    RS384,
+    /// RSA using SHA-512 (asymmetric, requires jwks_url).
+    RS512,
+}
+
 /// Authentication configuration.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthConfig {
-    /// JWT secret for token validation.
+    /// JWT signing algorithm.
+    /// HMAC algorithms (HS256, HS384, HS512) require jwt_secret.
+    /// RSA algorithms (RS256, RS384, RS512) require jwks_url.
+    #[serde(default)]
+    pub algorithm: JwtAlgorithm,
+
+    /// JWT secret for HMAC algorithms (HS256, HS384, HS512).
+    /// Required when using HMAC algorithms.
     pub jwt_secret: Option<String>,
 
-    /// Session TTL in seconds.
+    /// JWKS URL for RSA algorithms (RS256, RS384, RS512).
+    /// Keys are fetched and cached automatically.
+    pub jwks_url: Option<String>,
+
+    /// Expected token issuer (iss claim).
+    /// If set, tokens with a different issuer are rejected.
+    pub issuer: Option<String>,
+
+    /// Expected audience (aud claim).
+    /// If set, tokens with a different audience are rejected.
+    pub audience: Option<String>,
+
+    /// Allow unauthenticated requests to reach public functions.
+    #[serde(default = "default_true")]
+    pub allow_anonymous: bool,
+
+    /// JWKS cache TTL in seconds.
+    #[serde(default = "default_jwks_cache_ttl")]
+    pub jwks_cache_ttl_secs: u64,
+
+    /// Session TTL in seconds (for WebSocket sessions).
     #[serde(default = "default_session_ttl")]
     pub session_ttl_secs: u64,
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            algorithm: JwtAlgorithm::default(),
+            jwt_secret: None,
+            jwks_url: None,
+            issuer: None,
+            audience: None,
+            allow_anonymous: true,
+            jwks_cache_ttl_secs: default_jwks_cache_ttl(),
+            session_ttl_secs: default_session_ttl(),
+        }
+    }
+}
+
+impl AuthConfig {
+    /// Validate that the configuration is complete for the chosen algorithm.
+    pub fn validate(&self) -> Result<()> {
+        match self.algorithm {
+            JwtAlgorithm::HS256 | JwtAlgorithm::HS384 | JwtAlgorithm::HS512 => {
+                if self.jwt_secret.is_none() {
+                    return Err(ForgeError::Config(
+                        "jwt_secret is required for HMAC algorithms (HS256, HS384, HS512)".into(),
+                    ));
+                }
+            }
+            JwtAlgorithm::RS256 | JwtAlgorithm::RS384 | JwtAlgorithm::RS512 => {
+                if self.jwks_url.is_none() {
+                    return Err(ForgeError::Config(
+                        "jwks_url is required for RSA algorithms (RS256, RS384, RS512)".into(),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Check if this config uses HMAC (symmetric) algorithms.
+    pub fn is_hmac(&self) -> bool {
+        matches!(
+            self.algorithm,
+            JwtAlgorithm::HS256 | JwtAlgorithm::HS384 | JwtAlgorithm::HS512
+        )
+    }
+
+    /// Check if this config uses RSA (asymmetric) algorithms.
+    pub fn is_rsa(&self) -> bool {
+        matches!(
+            self.algorithm,
+            JwtAlgorithm::RS256 | JwtAlgorithm::RS384 | JwtAlgorithm::RS512
+        )
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_jwks_cache_ttl() -> u64 {
+    3600 // 1 hour
 }
 
 fn default_session_ttl() -> u64 {

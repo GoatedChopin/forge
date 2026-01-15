@@ -33,7 +33,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 sysinfo = { workspace = true }
 regex = "1.12"
-jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto"] }
+jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto", "use_pem"] }
 futures-util = "0.3"
 tokio-util = "0.7"
 
