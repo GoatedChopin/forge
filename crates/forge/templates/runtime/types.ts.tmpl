@@ -47,12 +47,6 @@ export interface MutationFn<TArgs, TResult> {
   functionType: "mutation";
 }
 
-export interface ActionFn<TArgs, TResult> {
-  (client: ForgeClientInterface, args: TArgs): Promise<TResult>;
-  functionName: string;
-  functionType: "action";
-}
-
 // FORGE client interface for making RPC calls
 export interface ForgeClientInterface {
   call<T>(functionName: string, args: unknown): Promise<T>;

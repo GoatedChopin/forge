@@ -4,10 +4,29 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use forge_core::{
-    ActionContext, ForgeAction, ForgeMutation, ForgeQuery, FunctionInfo, FunctionKind,
-    MutationContext, QueryContext, Result,
+    ForgeMutation, ForgeQuery, FunctionInfo, FunctionKind, MutationContext, QueryContext, Result,
 };
 use serde_json::Value;
+
+/// Normalize args for deserialization.
+/// - Converts empty objects `{}` to `null` to support unit type `()` deserialization.
+/// - Unwraps `{"args": ...}` wrapper if present (frontend may send wrapped args).
+///   This allows frontend to send `{}` for functions with no arguments.
+fn normalize_args(args: Value) -> Value {
+    // First, unwrap {"args": ...} wrapper if present
+    let unwrapped = match &args {
+        Value::Object(map) if map.len() == 1 && map.contains_key("args") => {
+            map.get("args").cloned().unwrap_or(Value::Null)
+        }
+        _ => args,
+    };
+
+    // Then normalize empty objects to null
+    match &unwrapped {
+        Value::Object(map) if map.is_empty() => Value::Null,
+        _ => unwrapped,
+    }
+}
 
 /// Type alias for a boxed function that executes with JSON args and returns JSON result.
 pub type BoxedQueryFn = Arc<
@@ -22,12 +41,6 @@ pub type BoxedMutationFn = Arc<
         + Sync,
 >;
 
-pub type BoxedActionFn = Arc<
-    dyn Fn(&ActionContext, Value) -> Pin<Box<dyn Future<Output = Result<Value>> + Send + '_>>
-        + Send
-        + Sync,
->;
-
 /// Entry in the function registry.
 pub enum FunctionEntry {
     Query {
@@ -38,10 +51,6 @@ pub enum FunctionEntry {
         info: FunctionInfo,
         handler: BoxedMutationFn,
     },
-    Action {
-        info: FunctionInfo,
-        handler: BoxedActionFn,
-    },
 }
 
 impl FunctionEntry {
@@ -49,7 +58,6 @@ impl FunctionEntry {
         match self {
             FunctionEntry::Query { info, .. } => info,
             FunctionEntry::Mutation { info, .. } => info,
-            FunctionEntry::Action { info, .. } => info,
         }
     }
 
@@ -57,7 +65,6 @@ impl FunctionEntry {
         match self {
             FunctionEntry::Query { .. } => FunctionKind::Query,
             FunctionEntry::Mutation { .. } => FunctionKind::Mutation,
-            FunctionEntry::Action { .. } => FunctionKind::Action,
         }
     }
 }
@@ -76,10 +83,6 @@ impl Clone for FunctionEntry {
                 handler: Arc::clone(handler),
             },
             FunctionEntry::Mutation { info, handler } => FunctionEntry::Mutation {
-                info: info.clone(),
-                handler: Arc::clone(handler),
-            },
-            FunctionEntry::Action { info, handler } => FunctionEntry::Action {
                 info: info.clone(),
                 handler: Arc::clone(handler),
             },
@@ -106,7 +109,7 @@ impl FunctionRegistry {
 
         let handler: BoxedQueryFn = Arc::new(move |ctx, args| {
             Box::pin(async move {
-                let parsed_args: Q::Args = serde_json::from_value(args)
+                let parsed_args: Q::Args = serde_json::from_value(normalize_args(args))
                     .map_err(|e| forge_core::ForgeError::Validation(e.to_string()))?;
                 let result = Q::execute(ctx, parsed_args).await?;
                 serde_json::to_value(result)
@@ -129,7 +132,7 @@ impl FunctionRegistry {
 
         let handler: BoxedMutationFn = Arc::new(move |ctx, args| {
             Box::pin(async move {
-                let parsed_args: M::Args = serde_json::from_value(args)
+                let parsed_args: M::Args = serde_json::from_value(normalize_args(args))
                     .map_err(|e| forge_core::ForgeError::Validation(e.to_string()))?;
                 let result = M::execute(ctx, parsed_args).await?;
                 serde_json::to_value(result)
@@ -139,29 +142,6 @@ impl FunctionRegistry {
 
         self.functions
             .insert(name, FunctionEntry::Mutation { info, handler });
-    }
-
-    /// Register an action function.
-    pub fn register_action<A: ForgeAction>(&mut self)
-    where
-        A::Args: serde::de::DeserializeOwned + Send + 'static,
-        A::Output: serde::Serialize + Send + 'static,
-    {
-        let info = A::info();
-        let name = info.name.to_string();
-
-        let handler: BoxedActionFn = Arc::new(move |ctx, args| {
-            Box::pin(async move {
-                let parsed_args: A::Args = serde_json::from_value(args)
-                    .map_err(|e| forge_core::ForgeError::Validation(e.to_string()))?;
-                let result = A::execute(ctx, parsed_args).await?;
-                serde_json::to_value(result)
-                    .map_err(|e| forge_core::ForgeError::Internal(e.to_string()))
-            })
-        });
-
-        self.functions
-            .insert(name, FunctionEntry::Action { info, handler });
     }
 
     /// Get a function by name.
@@ -204,17 +184,6 @@ impl FunctionRegistry {
     pub fn mutations(&self) -> impl Iterator<Item = (&str, &FunctionInfo)> {
         self.functions.iter().filter_map(|(name, entry)| {
             if let FunctionEntry::Mutation { info, .. } = entry {
-                Some((name.as_str(), info))
-            } else {
-                None
-            }
-        })
-    }
-
-    /// Get all actions.
-    pub fn actions(&self) -> impl Iterator<Item = (&str, &FunctionInfo)> {
-        self.functions.iter().filter_map(|(name, entry)| {
-            if let FunctionEntry::Action { info, .. } = entry {
                 Some((name.as_str(), info))
             } else {
                 None

@@ -1,6 +1,5 @@
 use proc_macro::TokenStream;
 
-mod action;
 mod cron;
 mod enum_type;
 mod job;
@@ -104,28 +103,6 @@ pub fn query(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn mutation(attr: TokenStream, item: TokenStream) -> TokenStream {
     mutation::expand_mutation(attr, item)
-}
-
-/// Marks a function as an action (side effects, external APIs).
-///
-/// Actions can call external APIs and perform side effects. NOT transactional.
-///
-/// # Attributes
-/// - `require_auth` - Require authentication
-/// - `require_role("admin")` - Require specific role
-/// - `timeout = 60` - Timeout in seconds
-///
-/// # Example
-/// ```ignore
-/// #[forge::action(timeout = 60)]
-/// pub async fn sync_with_stripe(ctx: &ActionContext, user_id: Uuid) -> Result<SyncResult> {
-///     let customer = ctx.http().get("https://api.stripe.com/...").await?;
-///     // ...
-/// }
-/// ```
-#[proc_macro_attribute]
-pub fn action(attr: TokenStream, item: TokenStream) -> TokenStream {
-    action::expand_action(attr, item)
 }
 
 /// Marks a function as a background job.

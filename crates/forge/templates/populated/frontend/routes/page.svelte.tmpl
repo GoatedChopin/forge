@@ -1,16 +1,15 @@
 <script lang="ts">
-  import { subscribe, mutate, action } from "@forge/svelte";
+  import { subscribe, mutate } from "@forge/svelte";
   import {
     getUsers,
     createUser,
     updateUser,
     deleteUser,
-    getAppStats,
-    getBitcoinPrice,
+    getIssLocation,
     createExportUsersJob,
     createAccountVerificationWorkflow,
   } from "$lib/forge";
-  import type { User, GetBitcoinPriceOutput } from "$lib/forge/types";
+  import type { User } from "$lib/forge/types";
   import { onMount, onDestroy } from "svelte";
 
   const ACTIVE_JOB_KEY = "forge_active_job_id";
@@ -18,26 +17,21 @@
   const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8080";
 
   const users = subscribe(getUsers, {});
-  const stats = subscribe(getAppStats, {});
+  const issLocation = subscribe(getIssLocation, {});
 
   let name = $state("");
   let email = $state("");
   let isSubmitting = $state(false);
   let selectedUser = $state<User | null>(null);
 
-  // Edit user state
-  let editingUser = $state<User | null>(null);
+  // Inline edit state
+  let editingUserId = $state<string | null>(null);
   let editName = $state("");
   let editEmail = $state("");
   let isEditing = $state(false);
 
   // Delete confirmation popover state
   let deletePopoverUserId = $state<string | null>(null);
-
-  // Action state
-  let actionResult = $state<GetBitcoinPriceOutput | null>(null);
-  let actionError = $state<string | null>(null);
-  let isActionRunning = $state(false);
 
   const exportUsersJob = createExportUsersJob();
   const verifyAccountWorkflow = createAccountVerificationWorkflow();
@@ -46,7 +40,6 @@
     const savedJobId = localStorage.getItem(ACTIVE_JOB_KEY);
     if (savedJobId) {
       exportUsersJob.resume(savedJobId, () => {
-        // Clear stale job ID from localStorage
         localStorage.removeItem(ACTIVE_JOB_KEY);
       });
     }
@@ -54,7 +47,6 @@
     const savedWorkflowId = localStorage.getItem(ACTIVE_WORKFLOW_KEY);
     if (savedWorkflowId) {
       verifyAccountWorkflow.resume(savedWorkflowId, () => {
-        // Clear stale workflow ID from localStorage
         localStorage.removeItem(ACTIVE_WORKFLOW_KEY);
       });
     }
@@ -71,7 +63,7 @@
 
     isSubmitting = true;
     try {
-      await mutate(createUser, { name, email });
+      await mutate(createUser, { name, email, role: null });
       name = "";
       email = "";
     } catch (err) {
@@ -90,7 +82,7 @@
 
   async function confirmDeleteUser(id: string) {
     hideDeletePopover();
-    await mutate(deleteUser, { id });
+    await mutate(deleteUser, id);
     if (selectedUser?.id === id) selectedUser = null;
   }
 
@@ -115,36 +107,8 @@
     }
   }
 
-  async function handleGetBitcoinPrice() {
-    isActionRunning = true;
-    actionResult = null;
-    actionError = null;
-
-    try {
-      const result = await action(getBitcoinPrice, {
-        input: { currency: "usd" },
-      });
-      actionResult = result;
-    } catch (err) {
-      actionError = err instanceof Error ? err.message : "Action failed";
-    }
-    isActionRunning = false;
-  }
-
-  function formatPrice(price: number): string {
-    return price.toLocaleString("en-US", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    });
-  }
-
-  function formatChange(change: number): string {
-    const sign = change >= 0 ? "+" : "";
-    return `${sign}${change.toFixed(2)}%`;
-  }
-
   function startEditUser(user: User) {
-    editingUser = user;
+    editingUserId = user.id;
     editName = user.name;
     editEmail = user.email;
     selectedUser = user;
@@ -152,18 +116,17 @@
 
   async function handleUpdateUser(e: Event) {
     e.preventDefault();
-    if (!editingUser || !editName || !editEmail) return;
+    if (!editingUserId || !editName || !editEmail) return;
 
     isEditing = true;
     try {
       await mutate(updateUser, {
-        id: editingUser.id,
+        id: editingUserId,
         name: editName,
         email: editEmail,
+        role: null,
       });
-      editingUser = null;
-      editName = "";
-      editEmail = "";
+      cancelEdit();
     } catch (err) {
       console.error("Failed to update user:", err);
     }
@@ -171,23 +134,26 @@
   }
 
   function cancelEdit() {
-    editingUser = null;
+    editingUserId = null;
     editName = "";
     editEmail = "";
   }
 
-  function formatTime(timestamp: string) {
+  function formatCoordinate(value: number, isLat: boolean): string {
+    const direction = isLat
+      ? value >= 0
+        ? "N"
+        : "S"
+      : value >= 0
+        ? "E"
+        : "W";
+    return `${Math.abs(value).toFixed(4)}° ${direction}`;
+  }
+
+  function formatTimestamp(timestamp: string): string {
     if (!timestamp) return "-";
     const date = new Date(timestamp);
     return date.toLocaleTimeString();
-  }
-
-  function isHeartbeatLate(timestamp: string): boolean {
-    if (!timestamp) return false;
-    const heartbeatTime = new Date(timestamp).getTime();
-    const now = Date.now();
-    // Consider late if more than 90 seconds old (cron runs every 60s)
-    return now - heartbeatTime > 90000;
   }
 
   function stepIcon(status: string) {
@@ -212,31 +178,65 @@
     <a href={apiUrl + "/_dashboard"} target="_blank">/_dashboard</a>
   </p>
 
-  <section class="card status-panel">
-    <h2>System Health <span class="badge live">cron + subscribe</span></h2>
-    <p class="hint">Auto-updates every minute via scheduled heartbeat</p>
+  <section class="card iss-panel">
+    <div class="iss-header">
+      <svg
+        class="iss-logo"
+        viewBox="0 0 64 64"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <ellipse
+          cx="32"
+          cy="50"
+          rx="28"
+          ry="8"
+          stroke="#60a5fa"
+          stroke-width="2"
+          stroke-dasharray="4 2"
+          opacity="0.5"
+        />
+        <rect x="12" y="28" width="40" height="8" rx="2" fill="#94a3b8" />
+        <rect x="28" y="20" width="8" height="24" rx="2" fill="#cbd5e1" />
+        <rect x="4" y="30" width="12" height="4" rx="1" fill="#3b82f6" />
+        <rect x="48" y="30" width="12" height="4" rx="1" fill="#3b82f6" />
+        <rect x="2" y="26" width="4" height="12" rx="1" fill="#60a5fa" />
+        <rect x="58" y="26" width="4" height="12" rx="1" fill="#60a5fa" />
+        <circle cx="32" cy="32" r="3" fill="#fbbf24" />
+        <circle cx="32" cy="32" r="1.5" fill="#fef3c7" />
+      </svg>
+      <div>
+        <h2>ISS Location <span class="badge live">cron + subscribe</span></h2>
+        <p class="hint">Tracked every minute via Open Notify API</p>
+      </div>
+    </div>
 
-    {#if $stats.loading}
-      <p>Loading stats...</p>
-    {:else if $stats.data}
-      <div class="stats-grid">
+    {#if $issLocation.loading}
+      <p>Loading ISS position...</p>
+    {:else if $issLocation.data}
+      <div class="iss-stats">
         <div class="stat-item">
-          <span class="stat-label">Last Heartbeat</span>
+          <span class="stat-label">Latitude</span>
           <span class="stat-value"
-            >{formatTime($stats.data.heartbeat || "")}</span
+            >{formatCoordinate($issLocation.data.latitude, true)}</span
           >
-          {#if isHeartbeatLate($stats.data.heartbeat || "")}
-            <span class="late-warning">⚠ Late</span>
-          {/if}
         </div>
         <div class="stat-item">
-          <span class="stat-label">Total Users</span>
-          <span class="stat-value">{$stats.data.user_count || "0"}</span>
+          <span class="stat-label">Longitude</span>
+          <span class="stat-value"
+            >{formatCoordinate($issLocation.data.longitude, false)}</span
+          >
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Last Update</span>
+          <span class="stat-value timestamp"
+            >{formatTimestamp($issLocation.data.created_at)}</span
+          >
         </div>
       </div>
     {:else}
       <p class="muted">
-        Stats will appear after first cron run (up to 1 minute)
+        ISS location will appear after first cron run (up to 1 minute)
       </p>
     {/if}
   </section>
@@ -259,7 +259,7 @@
               $exportUsersJob.status}
           </p>
           {#if $exportUsersJob.status === "retry"}
-            <p class="retry-info">⟳ Retrying (job will retry on failure)</p>
+            <p class="retry-info">Retrying (job will retry on failure)</p>
           {/if}
           {#if $exportUsersJob.status === "completed" || $exportUsersJob.status === "failed" || $exportUsersJob.status === "pending"}
             <button onclick={startExportJob} class="mt-sm">Start New Job</button
@@ -296,78 +296,6 @@
     </section>
   </div>
 
-  <div class="grid">
-    <section class="card">
-      <h2>Bitcoin Price <span class="badge">action</span></h2>
-      <p class="hint">Live price from CoinGecko API (external API call)</p>
-
-      {#if isActionRunning}
-        <p>Fetching Bitcoin price...</p>
-      {:else if actionResult}
-        <div class="action-result success">
-          <div class="price-display">
-            <span class="price-value"
-              >${formatPrice(actionResult.price_usd)}</span
-            >
-            <span
-              class="price-change"
-              class:positive={actionResult.change_24h >= 0}
-              class:negative={actionResult.change_24h < 0}
-            >
-              {formatChange(actionResult.change_24h)} (24h)
-            </span>
-          </div>
-          <div class="price-other">
-            <span>€{formatPrice(actionResult.price_eur)}</span>
-            <span>£{formatPrice(actionResult.price_gbp)}</span>
-          </div>
-          <button class="small mt-sm" onclick={handleGetBitcoinPrice}
-            >Refresh</button
-          >
-        </div>
-      {:else if actionError}
-        <div class="action-result error">
-          <p>✗ Failed: {actionError}</p>
-          <button class="small mt-sm" onclick={() => (actionError = null)}
-            >Retry</button
-          >
-        </div>
-      {:else}
-        <button onclick={handleGetBitcoinPrice}>Get Bitcoin Price</button>
-      {/if}
-    </section>
-
-    <section class="card">
-      <h2>Edit User <span class="badge">mutate</span></h2>
-      {#if editingUser}
-        <form onsubmit={handleUpdateUser}>
-          <input
-            type="text"
-            placeholder="Name"
-            bind:value={editName}
-            required
-          />
-          <input
-            type="email"
-            placeholder="Email"
-            bind:value={editEmail}
-            required
-          />
-          <div class="button-group">
-            <button type="submit" disabled={isEditing}>
-              {isEditing ? "Saving..." : "Save"}
-            </button>
-            <button type="button" class="secondary" onclick={cancelEdit}>
-              Cancel
-            </button>
-          </div>
-        </form>
-      {:else}
-        <p class="muted">Click "Edit" on a user below to modify</p>
-      {/if}
-    </section>
-  </div>
-
   <section class="card">
     <h2>Create User <span class="badge">mutate</span></h2>
     <form onsubmit={handleCreateUser}>
@@ -381,7 +309,7 @@
 
   <section class="card">
     <h2>User Directory <span class="badge live">subscribe</span></h2>
-    <p class="hint">Live-updating list - changes appear instantly</p>
+    <p class="hint">Live-updating list with inline editing</p>
 
     {#if $users.loading}
       <p>Loading...</p>
@@ -400,42 +328,75 @@
         </thead>
         <tbody>
           {#each $users.data as user (user.id)}
-            <tr>
-              <td>{user.name}</td>
-              <td>{user.email}</td>
-              <td class="actions-cell">
-                <button class="small" onclick={() => startEditUser(user)}>
-                  Edit
-                </button>
-                <div class="delete-wrapper">
+            {#if editingUserId === user.id}
+              <tr class="editing-row">
+                <td>
+                  <input
+                    type="text"
+                    class="inline-input"
+                    bind:value={editName}
+                    required
+                  />
+                </td>
+                <td>
+                  <input
+                    type="email"
+                    class="inline-input"
+                    bind:value={editEmail}
+                    required
+                  />
+                </td>
+                <td class="actions-cell">
                   <button
-                    class="small danger"
-                    onclick={() => showDeletePopover(user.id)}
+                    class="small"
+                    onclick={handleUpdateUser}
+                    disabled={isEditing}
                   >
-                    Delete
+                    {isEditing ? "..." : "Save"}
                   </button>
-                  {#if deletePopoverUserId === user.id}
-                    <div class="delete-popover">
-                      <p>Delete this user?</p>
-                      <div class="popover-buttons">
-                        <button
-                          class="small danger"
-                          onclick={() => confirmDeleteUser(user.id)}
-                        >
-                          Confirm
-                        </button>
-                        <button
-                          class="small secondary"
-                          onclick={hideDeletePopover}
-                        >
-                          Cancel
-                        </button>
+                  <button class="small secondary" onclick={cancelEdit}>
+                    Cancel
+                  </button>
+                </td>
+              </tr>
+            {:else}
+              <tr>
+                <td>{user.name}</td>
+                <td>{user.email}</td>
+                <td class="actions-cell">
+                  <button class="small" onclick={() => startEditUser(user)}>
+                    Edit
+                  </button>
+                  <div class="delete-wrapper">
+                    <button
+                      class="small danger"
+                      onclick={() => showDeletePopover(user.id)}
+                    >
+                      Delete
+                    </button>
+                    {#if deletePopoverUserId === user.id}
+                      <div class="delete-popover">
+                        <p>Delete this user?</p>
+                        <div class="popover-buttons">
+                          <button
+                            class="small danger"
+                            onclick={() => confirmDeleteUser(user.id)}
+                          >
+                            Confirm
+                          </button>
+                          <button
+                            class="small secondary"
+                            onclick={hideDeletePopover}
+                          >
+                            Cancel
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  {/if}
-                </div>
-              </td>
-            </tr>
+                    {/if}
+                  </div>
+                </td>
+              </tr>
+            {/if}
           {/each}
         </tbody>
       </table>
@@ -488,14 +449,43 @@
     padding: 1.25rem;
   }
 
-  .status-panel {
-    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
-    border-color: #bae6fd;
+  .iss-panel {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+    border-color: #334155;
+    color: #f1f5f9;
   }
 
-  .stats-grid {
+  .iss-header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .iss-logo {
+    width: 64px;
+    height: 64px;
+    flex-shrink: 0;
+  }
+
+  .iss-panel h2 {
+    color: #f1f5f9;
+    margin: 0;
+  }
+
+  .iss-panel .hint {
+    color: #94a3b8;
+    margin: 0.25rem 0 0;
+  }
+
+  .iss-panel .muted {
+    color: #64748b;
+  }
+
+  .iss-stats {
     display: flex;
     gap: 2rem;
+    flex-wrap: wrap;
   }
 
   .stat-item {
@@ -505,24 +495,19 @@
 
   .stat-label {
     font-size: 0.8rem;
-    color: #666;
+    color: #94a3b8;
   }
 
   .stat-value {
     font-size: 1.5rem;
     font-weight: 600;
-    color: #0369a1;
+    color: #60a5fa;
+    font-family: "SF Mono", Monaco, monospace;
   }
 
-  .stat-hint {
-    font-size: 0.75rem;
-    color: #666;
-    font-style: italic;
-  }
-
-  .late-warning {
-    font-size: 0.75rem;
-    color: #dc2626;
+  .stat-value.timestamp {
+    font-size: 1.25rem;
+    color: #fbbf24;
   }
 
   .badge {
@@ -538,6 +523,11 @@
   .badge.live {
     background: #dcfce7;
     color: #166534;
+  }
+
+  .iss-panel .badge.live {
+    background: #064e3b;
+    color: #6ee7b7;
   }
 
   .hint {
@@ -562,6 +552,16 @@
     border: 1px solid #ccc;
     border-radius: 4px;
     font-size: 0.95rem;
+  }
+
+  .inline-input {
+    width: 100%;
+    padding: 0.35rem 0.5rem;
+    font-size: 0.9rem;
+  }
+
+  .editing-row {
+    background: #f0f9ff;
   }
 
   button {
@@ -709,80 +709,13 @@
     color: #dc2626;
   }
 
-  .action-result {
-    padding: 0.75rem;
-    border-radius: 4px;
-  }
-
-  .action-result.success {
-    background: #dcfce7;
-    color: #166534;
-  }
-
-  .action-result.error {
-    background: #fee2e2;
-    color: #dc2626;
-  }
-
-  .action-result p {
-    margin: 0.25rem 0;
-  }
-
-  .action-result .small {
-    font-size: 0.75rem;
-    color: #666;
-  }
-
-  .action-result button {
-    background: #fff;
-    color: #333;
-    border: 1px solid #ccc;
-  }
-
-  .action-result button:hover:not(:disabled) {
-    background: #f5f5f5;
-  }
-
-  .price-display {
-    display: flex;
-    align-items: baseline;
-    gap: 0.75rem;
-    margin-bottom: 0.5rem;
-  }
-
-  .price-value {
-    font-size: 1.5rem;
-    font-weight: 600;
-    color: #166534;
-  }
-
-  .price-change {
-    font-size: 0.9rem;
-    font-weight: 500;
-  }
-
-  .price-change.positive {
-    color: #166534;
-  }
-
-  .price-change.negative {
-    color: #dc2626;
-  }
-
-  .price-other {
-    display: flex;
-    gap: 1rem;
-    font-size: 0.9rem;
-    color: #555;
-  }
-
-  .button-group {
-    display: flex;
-    gap: 0.5rem;
-  }
-
   .actions-cell {
     position: relative;
+    white-space: nowrap;
+  }
+
+  .actions-cell button {
+    margin-right: 0.25rem;
   }
 
   .delete-wrapper {
@@ -820,7 +753,7 @@
       grid-template-columns: 1fr;
     }
 
-    .stats-grid {
+    .iss-stats {
       flex-direction: column;
       gap: 1rem;
     }

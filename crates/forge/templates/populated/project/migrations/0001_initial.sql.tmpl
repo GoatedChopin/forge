@@ -14,21 +14,22 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email);
 
-CREATE TABLE IF NOT EXISTS app_stats (
-    id VARCHAR(64) PRIMARY KEY,
-    stat_name VARCHAR(128) NOT NULL,
-    stat_value TEXT NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+CREATE TABLE IF NOT EXISTS iss_location (
+    id UUID PRIMARY KEY,
+    latitude DOUBLE PRECISION NOT NULL,
+    longitude DOUBLE PRECISION NOT NULL,
+    api_timestamp TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 SELECT forge_enable_reactivity('users');
-SELECT forge_enable_reactivity('app_stats');
+SELECT forge_enable_reactivity('iss_location');
 
 -- @down
 
-SELECT forge_disable_reactivity('app_stats');
+SELECT forge_disable_reactivity('iss_location');
 SELECT forge_disable_reactivity('users');
-DROP TABLE IF EXISTS app_stats;
+DROP TABLE IF EXISTS iss_location;
 DROP INDEX IF EXISTS idx_users_email;
 DROP TABLE IF EXISTS users;
 DROP TYPE IF EXISTS user_role;

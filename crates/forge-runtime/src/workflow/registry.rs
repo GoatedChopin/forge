@@ -4,6 +4,30 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use forge_core::workflow::{ForgeWorkflow, WorkflowContext, WorkflowInfo};
+use serde_json::Value;
+
+/// Normalize args for deserialization.
+/// - Converts empty objects `{}` to `null` to support unit type `()` deserialization.
+/// - Unwraps `{"args": ...}` or `{"input": ...}` wrapper if present.
+fn normalize_args(args: Value) -> Value {
+    let unwrapped = match &args {
+        Value::Object(map) if map.len() == 1 => {
+            if map.contains_key("args") {
+                map.get("args").cloned().unwrap_or(Value::Null)
+            } else if map.contains_key("input") {
+                map.get("input").cloned().unwrap_or(Value::Null)
+            } else {
+                args
+            }
+        }
+        _ => args,
+    };
+
+    match &unwrapped {
+        Value::Object(map) if map.is_empty() => Value::Null,
+        _ => unwrapped,
+    }
+}
 
 /// Type alias for boxed workflow handler function.
 pub type BoxedWorkflowHandler = Arc<
@@ -35,7 +59,7 @@ impl WorkflowEntry {
             info: W::info(),
             handler: Arc::new(|ctx, input| {
                 Box::pin(async move {
-                    let typed_input: W::Input = serde_json::from_value(input)
+                    let typed_input: W::Input = serde_json::from_value(normalize_args(input))
                         .map_err(|e| forge_core::ForgeError::Validation(e.to_string()))?;
                     let result = W::execute(ctx, typed_input).await?;
                     serde_json::to_value(result).map_err(forge_core::ForgeError::from)

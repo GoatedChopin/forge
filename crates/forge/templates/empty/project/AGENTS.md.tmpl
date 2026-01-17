@@ -13,8 +13,7 @@ cargo clippy --all-targets -- -D warnings && cargo test && bun lint && bun forma
 | Type | Use Case | Key Features |
 |------|----------|--------------|
 | Query | Read data | Cacheable, subscribable, `ctx.db()` |
-| Mutation | Write data | Transactional, `ctx.db()`, `ctx.dispatch_job()`, `ctx.start_workflow()` |
-| Action | External API | NOT transactional, `ctx.http()`, `ctx.dispatch_job()`, `ctx.start_workflow()` |
+| Mutation | Write data | `ctx.db()`, `ctx.http()`, `ctx.dispatch_job()`, opt-in transactional |
 | Job | Background work | Retryable, progress tracking, `ctx.http()`, `ctx.progress()` |
 | Cron | Scheduled | Leader-only, catch-up, `ctx.http()`, `ctx.log` |
 | Workflow | Multi-step | Durable, compensatable, `ctx.step()`, `ctx.sleep()`, `ctx.http()` |
@@ -26,13 +25,12 @@ cargo clippy --all-targets -- -D warnings && cargo test && bun lint && bun forma
 #[forge::query(cache = "5m", public)]
 pub async fn get_users(ctx: &QueryContext) -> Result<Vec<User>> { }
 
-// Mutation: require_auth, require_role("x"), timeout=30, rate_limit(...)
+// Mutation: require_auth, require_role("x"), timeout=30, rate_limit(...), transactional (opt-in TX wrapping)
 #[forge::mutation(require_role("admin"))]
 pub async fn create_user(ctx: &MutationContext, input: CreateUserInput) -> Result<User> { }
 
-// Action: require_auth, require_role("x"), timeout=60, rate_limit(...)
-#[forge::action(timeout = 60)]
-pub async fn send_email(ctx: &ActionContext, input: EmailInput) -> Result<()> { }
+#[forge::mutation(transactional)]  // Wraps in BEGIN/COMMIT, jobs use outbox pattern
+pub async fn transfer_funds(ctx: &MutationContext, input: TransferInput) -> Result<()> { }
 
 // Job: timeout, priority, max_attempts, worker_capability, idempotent, retry
 #[forge::job]
@@ -65,11 +63,12 @@ ctx.auth.has_role("admin")            // bool
 ctx.env("KEY")                        // Option<String>
 ctx.env_require("KEY")?               // Result<String>
 
-// Mutation & Action only
+// Mutation only
+ctx.http()                            // &reqwest::Client
 ctx.dispatch_job("job_name", args)?   // -> Uuid
 ctx.start_workflow("wf_name", input)? // -> Uuid
 
-// Action, Job, Cron, Workflow only
+// Job, Cron, Workflow only
 ctx.http()                            // &reqwest::Client
 
 // Job only
@@ -126,15 +125,14 @@ let ctx = TestQueryContext::builder()
     .with_pool(pool)
     .build();
 
-// Mutation context (with dispatch verification)
-let ctx = TestMutationContext::builder().as_user(id).build();
-ctx.dispatch_job("send_email", args).await?;
-ctx.job_dispatch().assert_dispatched("send_email");
-
-// Action context (with HTTP mocking)
-let ctx = TestActionContext::builder()
+// Mutation context (with HTTP mocking and dispatch verification)
+let ctx = TestMutationContext::builder()
+    .as_user(id)
     .mock_http_json("https://api.example.com/*", json!({"ok": true}))
     .build();
+ctx.dispatch_job("send_email", args).await?;
+ctx.job_dispatch().assert_dispatched("send_email");
+ctx.http().assert_called("https://api.example.com/*");
 
 // Job context
 let ctx = TestJobContext::builder("job_name")
@@ -149,7 +147,7 @@ let ctx = TestJobContext::builder("job_name")
 forge new <name> --demo|--minimal    # Create project
 forge dev                            # Start dev (embedded PG + backend + frontend)
 forge dev --docker                   # Start with Docker Compose
-forge add query|mutation|action|job|cron|workflow <name>
+forge add query|mutation|job|cron|workflow <name>
 forge generate                       # Generate TypeScript types
 forge migrate up|down|status         # Database migrations
 forge check                          # Validate project
@@ -159,13 +157,13 @@ forge check                          # Validate project
 
 | Don't | Do |
 |-------|-----|
-| External API in Mutation | Use Action |
 | `tokio::sleep` in Workflow | `ctx.sleep()` |
 | Destructure `$props()` | Keep reference |
 | Poll with `query()` loop | `subscribe()` |
 | `ctx.auth.user_id().unwrap()` | `ctx.require_user_id()?` |
 | Edit `frontend/src/lib/forge/` | Run `forge generate` |
 | Dynamic SQL in subscribed query | Add `tables = [...]` for invalidation |
+| Non-atomic data+job | Use `#[forge::mutation(transactional)]` |
 
 ## Schema
 

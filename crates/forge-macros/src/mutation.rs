@@ -28,6 +28,7 @@ struct MutationAttrs {
     rate_limit_per_secs: Option<u64>,
     rate_limit_key: Option<String>,
     log_level: Option<String>,
+    transactional: bool,
     #[allow(dead_code)]
     retry_on: Vec<String>,
     #[allow(dead_code)]
@@ -41,6 +42,10 @@ fn parse_mutation_attrs(attr: TokenStream) -> MutationAttrs {
 
     if attr_str.contains("require_auth") {
         attrs.requires_auth = true;
+    }
+
+    if attr_str.contains("transactional") {
+        attrs.transactional = true;
     }
 
     // Parse role requirement
@@ -306,6 +311,8 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
         None => quote! { None },
     };
 
+    let transactional = attrs.transactional;
+
     // Check if we have a single custom args type (user-defined struct)
     // In this case, use it directly instead of wrapping it
     let single_custom_args_type: Option<&Type> = if arg_params.len() == 1 {
@@ -425,6 +432,7 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
                     rate_limit_key: #rate_limit_key,
                     log_level: #log_level,
                     table_dependencies: &[],
+                    transactional: #transactional,
                 }
             }
 

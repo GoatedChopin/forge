@@ -7,6 +7,23 @@ use forge_core::Result;
 use forge_core::job::{ForgeJob, JobContext, JobInfo};
 use serde_json::Value;
 
+/// Normalize args for deserialization.
+/// - Converts empty objects `{}` to `null` to support unit type `()` deserialization.
+/// - Unwraps `{"args": ...}` wrapper if present.
+fn normalize_args(args: Value) -> Value {
+    let unwrapped = match &args {
+        Value::Object(map) if map.len() == 1 && map.contains_key("args") => {
+            map.get("args").cloned().unwrap_or(Value::Null)
+        }
+        _ => args,
+    };
+
+    match &unwrapped {
+        Value::Object(map) if map.is_empty() => Value::Null,
+        _ => unwrapped,
+    }
+}
+
 /// Type alias for boxed job handler function.
 pub type BoxedJobHandler = Arc<
     dyn Fn(&JobContext, Value) -> Pin<Box<dyn Future<Output = Result<Value>> + Send + '_>>
@@ -47,7 +64,7 @@ impl JobRegistry {
 
         let handler: BoxedJobHandler = Arc::new(move |ctx, args| {
             Box::pin(async move {
-                let parsed_args: J::Args = serde_json::from_value(args)
+                let parsed_args: J::Args = serde_json::from_value(normalize_args(args))
                     .map_err(|e| forge_core::ForgeError::Validation(e.to_string()))?;
                 let result = J::execute(ctx, parsed_args).await?;
                 serde_json::to_value(result)

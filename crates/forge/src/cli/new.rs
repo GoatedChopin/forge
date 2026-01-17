@@ -243,17 +243,15 @@ const SCHEMA_USER: &str = include_str!("../../templates/populated/project/schema
 const FUNCTIONS_MOD: &str = include_str!("../../templates/populated/project/functions/mod.rs.tmpl");
 const FUNCTIONS_USERS: &str =
     include_str!("../../templates/populated/project/functions/users.rs.tmpl");
-const FUNCTIONS_APP_STATS: &str =
-    include_str!("../../templates/populated/project/functions/app_stats.rs.tmpl");
+const FUNCTIONS_ISS_LOCATION: &str =
+    include_str!("../../templates/populated/project/functions/iss_location.rs.tmpl");
 const FUNCTIONS_EXPORT_USERS_JOB: &str =
     include_str!("../../templates/populated/project/functions/export_users_job.rs.tmpl");
-const FUNCTIONS_HEARTBEAT_CRON: &str =
-    include_str!("../../templates/populated/project/functions/heartbeat_stats_cron.rs.tmpl");
+const FUNCTIONS_ISS_LOCATION_CRON: &str =
+    include_str!("../../templates/populated/project/functions/iss_location_cron.rs.tmpl");
 const FUNCTIONS_VERIFICATION_WORKFLOW: &str = include_str!(
     "../../templates/populated/project/functions/account_verification_workflow.rs.tmpl"
 );
-const FUNCTIONS_GET_BITCOIN_PRICE_ACTION: &str =
-    include_str!("../../templates/populated/project/functions/get_bitcoin_price_action.rs.tmpl");
 const AGENTS_MD: &str = include_str!("../../templates/populated/project/AGENTS.md.tmpl");
 
 // Populated frontend templates (default)
@@ -275,6 +273,8 @@ const FRONTEND_PAGE_SVELTE: &str =
     include_str!("../../templates/populated/frontend/routes/page.svelte.tmpl");
 const FRONTEND_ESLINT_CONFIG: &str =
     include_str!("../../templates/populated/frontend/eslint.config.js.tmpl");
+const FRONTEND_PRETTIERIGNORE: &str =
+    include_str!("../../templates/populated/frontend/.prettierignore.tmpl");
 
 // Empty project templates (for --empty flag)
 const EMPTY_CARGO_TOML: &str = include_str!("../../templates/empty/project/Cargo.toml.tmpl");
@@ -313,6 +313,8 @@ const EMPTY_FRONTEND_PAGE_SVELTE: &str =
     include_str!("../../templates/empty/frontend/routes/page.svelte.tmpl");
 const EMPTY_FRONTEND_ESLINT_CONFIG: &str =
     include_str!("../../templates/empty/frontend/eslint.config.js.tmpl");
+const EMPTY_FRONTEND_PRETTIERIGNORE: &str =
+    include_str!("../../templates/empty/frontend/.prettierignore.tmpl");
 
 /// Create a new FORGE project.
 #[derive(Parser)]
@@ -356,9 +358,9 @@ const NEW_AFTER_HELP: &str = r#"TEMPLATE MODES:
   --demo      Full demo project with working examples
               - User model with CRUD operations
               - Background job (export users)
-              - Cron task (heartbeat stats)
+              - Cron task (ISS location tracker)
               - Durable workflow (account verification)
-              - External API action (Bitcoin price)
+              - Mutations with HTTP support
               - Complete frontend demo UI
 
   --minimal   Clean slate with just the structure
@@ -533,22 +535,21 @@ pub fn create_project(dir: &Path, name: &str, demo: bool) -> Result<()> {
         fs::write(dir.join("src/schema/user.rs"), SCHEMA_USER)?;
         fs::write(dir.join("src/functions/mod.rs"), FUNCTIONS_MOD)?;
         fs::write(dir.join("src/functions/users.rs"), FUNCTIONS_USERS)?;
-        fs::write(dir.join("src/functions/app_stats.rs"), FUNCTIONS_APP_STATS)?;
+        fs::write(
+            dir.join("src/functions/iss_location.rs"),
+            FUNCTIONS_ISS_LOCATION,
+        )?;
         fs::write(
             dir.join("src/functions/export_users_job.rs"),
             FUNCTIONS_EXPORT_USERS_JOB,
         )?;
         fs::write(
-            dir.join("src/functions/heartbeat_stats_cron.rs"),
-            FUNCTIONS_HEARTBEAT_CRON,
+            dir.join("src/functions/iss_location_cron.rs"),
+            FUNCTIONS_ISS_LOCATION_CRON,
         )?;
         fs::write(
             dir.join("src/functions/account_verification_workflow.rs"),
             FUNCTIONS_VERIFICATION_WORKFLOW,
-        )?;
-        fs::write(
-            dir.join("src/functions/get_bitcoin_price_action.rs"),
-            FUNCTIONS_GET_BITCOIN_PRICE_ACTION,
         )?;
         fs::write(dir.join("AGENTS.md"), AGENTS_MD)?;
         // Demo frontend
@@ -624,6 +625,10 @@ fn create_frontend(dir: &Path, name: &str, demo: bool) -> Result<()> {
             FRONTEND_ESLINT_CONFIG,
         )?;
         fs::write(
+            frontend_dir.join(".prettierignore"),
+            FRONTEND_PRETTIERIGNORE,
+        )?;
+        fs::write(
             frontend_dir.join("src/routes/+layout.svelte"),
             FRONTEND_LAYOUT_SVELTE,
         )?;
@@ -659,6 +664,10 @@ fn create_frontend(dir: &Path, name: &str, demo: bool) -> Result<()> {
         fs::write(
             frontend_dir.join("eslint.config.js"),
             EMPTY_FRONTEND_ESLINT_CONFIG,
+        )?;
+        fs::write(
+            frontend_dir.join(".prettierignore"),
+            EMPTY_FRONTEND_PRETTIERIGNORE,
         )?;
         fs::write(
             frontend_dir.join("src/routes/+layout.svelte"),
@@ -718,8 +727,9 @@ mod tests {
         assert!(path.join("src/schema/mod.rs").exists());
         assert!(path.join("src/schema/user.rs").exists());
         assert!(path.join("src/functions/users.rs").exists());
+        assert!(path.join("src/functions/iss_location.rs").exists());
         assert!(path.join("src/functions/export_users_job.rs").exists());
-        assert!(path.join("src/functions/heartbeat_stats_cron.rs").exists());
+        assert!(path.join("src/functions/iss_location_cron.rs").exists());
         assert!(
             path.join("src/functions/account_verification_workflow.rs")
                 .exists()
@@ -755,8 +765,9 @@ mod tests {
         // Example files should NOT exist
         assert!(!path.join("src/schema/user.rs").exists());
         assert!(!path.join("src/functions/users.rs").exists());
+        assert!(!path.join("src/functions/iss_location.rs").exists());
         assert!(!path.join("src/functions/export_users_job.rs").exists());
-        assert!(!path.join("src/functions/heartbeat_stats_cron.rs").exists());
+        assert!(!path.join("src/functions/iss_location_cron.rs").exists());
         assert!(
             !path
                 .join("src/functions/account_verification_workflow.rs")

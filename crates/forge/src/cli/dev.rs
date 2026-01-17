@@ -225,7 +225,13 @@ impl DevCommand {
         );
 
         let mut backend = Command::new("cargo")
-            .args(["watch", "--ignore", "frontend/*", "-x", "run --no-default-features"])
+            .args([
+                "watch",
+                "--ignore",
+                "frontend/*",
+                "-x",
+                "run --no-default-features",
+            ])
             .env("DATABASE_URL", &database_url)
             .env("RUST_LOG", "info,forge_runtime::function::executor=trace")
             .env("HOST", "0.0.0.0")

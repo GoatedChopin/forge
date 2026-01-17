@@ -29,11 +29,6 @@ pub enum AddType {
         /// Function name (snake_case).
         name: String,
     },
-    /// Add a new action function.
-    Action {
-        /// Function name (snake_case).
-        name: String,
-    },
     /// Add a new background job.
     Job {
         /// Job name (snake_case).
@@ -58,7 +53,6 @@ impl AddCommand {
             AddType::Model { name } => add_model(&name),
             AddType::Query { name } => add_function(&name, FunctionType::Query),
             AddType::Mutation { name } => add_function(&name, FunctionType::Mutation),
-            AddType::Action { name } => add_function(&name, FunctionType::Action),
             AddType::Job { name } => add_job(&name),
             AddType::Cron { name } => add_cron(&name),
             AddType::Workflow { name } => add_workflow(&name),
@@ -70,7 +64,6 @@ impl AddCommand {
 enum FunctionType {
     Query,
     Mutation,
-    Action,
 }
 
 /// Add a new model.
@@ -162,7 +155,8 @@ pub async fn {snake_name}(ctx: &QueryContext) -> Result<Vec<()>> {{
 //! Mutations are write operations that modify data. They:
 //! - Automatically invalidate affected subscriptions
 //! - Support optimistic updates on the frontend
-//! - Are wrapped in database transactions
+//! - Have access to HTTP client for external API calls via ctx.http()
+//! - Can optionally be transactional with #[forge::mutation(transactional)]
 
 use forge::prelude::*;
 
@@ -179,49 +173,16 @@ pub async fn {snake_name}(ctx: &MutationContext) -> Result<()> {{
     // .execute(ctx.db())
     // .await?;
 
-    Ok(())
-}}
-"#
-        ),
-        FunctionType::Action => format!(
-            r#"//! Action: {snake_name}
-//!
-//! Actions are for external API calls and side effects. They:
-//! - Are NOT wrapped in database transactions
-//! - Should be idempotent when possible
-//! - Can call external services (Stripe, SendGrid, etc.)
-//!
-//! Common use cases:
-//! - Payment processing
-//! - Email/SMS sending
-//! - Third-party API calls
-//! - File uploads to cloud storage
-
-use forge::prelude::*;
-
-/// Result from {snake_name} action.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct {pascal_name}Result {{
-    pub success: bool,
-    // Add your result fields here
-}}
-
-/// {snake_name} action.
-#[forge::action]
-pub async fn {snake_name}(ctx: &ActionContext) -> Result<{pascal_name}Result> {{
-    tracing::info!("Executing {snake_name} action");
-
     // Example: Call external API
-    // let response = ctx.http_client()
+    // let response = ctx.http()
     //     .post("https://api.example.com/endpoint")
     //     .json(&payload)
     //     .send()
     //     .await?;
 
-    Ok({pascal_name}Result {{ success: true }})
+    Ok(())
 }}
-"#,
-            pascal_name = to_pascal_case(&snake_name)
+"#
         ),
     };
 
@@ -231,7 +192,6 @@ pub async fn {snake_name}(ctx: &ActionContext) -> Result<{pascal_name}Result> {{
     let description = match fn_type {
         FunctionType::Query => "query",
         FunctionType::Mutation => "mutation",
-        FunctionType::Action => "action",
     };
 
     println!(

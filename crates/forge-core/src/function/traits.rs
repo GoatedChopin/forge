@@ -3,7 +3,7 @@ use std::pin::Pin;
 
 use serde::{Serialize, de::DeserializeOwned};
 
-use super::context::{ActionContext, MutationContext, QueryContext};
+use super::context::{MutationContext, QueryContext};
 use crate::error::Result;
 
 /// Information about a registered function.
@@ -37,6 +37,10 @@ pub struct FunctionInfo {
     /// Table dependencies extracted at compile time for reactive subscriptions.
     /// Empty slice means tables could not be determined (dynamic SQL).
     pub table_dependencies: &'static [&'static str],
+    /// Whether this mutation should be wrapped in a database transaction.
+    /// Only applies to mutations. When true, jobs are buffered and inserted
+    /// atomically with the mutation via the outbox pattern.
+    pub transactional: bool,
 }
 
 /// The kind of function.
@@ -44,7 +48,6 @@ pub struct FunctionInfo {
 pub enum FunctionKind {
     Query,
     Mutation,
-    Action,
 }
 
 impl std::fmt::Display for FunctionKind {
@@ -52,7 +55,6 @@ impl std::fmt::Display for FunctionKind {
         match self {
             FunctionKind::Query => write!(f, "query"),
             FunctionKind::Mutation => write!(f, "mutation"),
-            FunctionKind::Action => write!(f, "action"),
         }
     }
 }
@@ -104,30 +106,6 @@ pub trait ForgeMutation: Send + Sync + 'static {
     ) -> Pin<Box<dyn Future<Output = Result<Self::Output>> + Send + '_>>;
 }
 
-/// An action function (side effects, external APIs).
-///
-/// Actions:
-/// - Can call external APIs
-/// - Are NOT transactional by default
-/// - Can call queries and mutations
-/// - May be slow (external network calls)
-/// - Can have timeouts and retries
-pub trait ForgeAction: Send + Sync + 'static {
-    /// The input arguments type.
-    type Args: DeserializeOwned + Serialize + Send + Sync;
-    /// The output type.
-    type Output: Serialize + Send;
-
-    /// Function metadata.
-    fn info() -> FunctionInfo;
-
-    /// Execute the action.
-    fn execute(
-        ctx: &ActionContext,
-        args: Self::Args,
-    ) -> Pin<Box<dyn Future<Output = Result<Self::Output>> + Send + '_>>;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,7 +114,6 @@ mod tests {
     fn test_function_kind_display() {
         assert_eq!(format!("{}", FunctionKind::Query), "query");
         assert_eq!(format!("{}", FunctionKind::Mutation), "mutation");
-        assert_eq!(format!("{}", FunctionKind::Action), "action");
     }
 
     #[test]
@@ -155,6 +132,7 @@ mod tests {
             rate_limit_key: Some("user"),
             log_level: Some("debug"),
             table_dependencies: &["users"],
+            transactional: false,
         };
 
         assert_eq!(info.name, "get_user");

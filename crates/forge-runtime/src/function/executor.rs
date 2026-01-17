@@ -110,7 +110,6 @@ impl FunctionExecutor {
                 let (kind, value) = match route_result {
                     RouteResult::Query(v) => ("query", v),
                     RouteResult::Mutation(v) => ("mutation", v),
-                    RouteResult::Action(v) => ("action", v),
                 };
 
                 self.log_execution(log_level, function_name, kind, &args, duration, true, None);
@@ -312,7 +311,7 @@ impl FunctionExecutor {
 pub struct ExecutionResult {
     /// Function name that was executed.
     pub function_name: String,
-    /// Kind of function (query, mutation, action).
+    /// Kind of function (query, mutation).
     pub function_kind: String,
     /// The result value (or null on error).
     pub result: Value,

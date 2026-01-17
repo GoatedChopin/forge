@@ -1,0 +1,79 @@
+use forge::prelude::*;
+
+/// ISS Location record from database
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
+pub struct IssLocation {
+    pub id: Uuid,
+    pub latitude: f64,
+    pub longitude: f64,
+    pub api_timestamp: Timestamp,
+    pub created_at: Timestamp,
+}
+
+/// Get the latest ISS location from the database
+#[forge::query]
+pub async fn get_iss_location(ctx: &QueryContext) -> Result<Option<IssLocation>> {
+    let location: Option<IssLocation> = sqlx::query_as(
+        "SELECT id, latitude, longitude, api_timestamp, created_at
+         FROM iss_location
+         ORDER BY created_at DESC
+         LIMIT 1",
+    )
+    .fetch_optional(ctx.db())
+    .await?;
+
+    Ok(location)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_query_context_creation() {
+        let ctx = TestQueryContext::minimal();
+        assert!(!ctx.auth.is_authenticated());
+    }
+
+    #[tokio::test]
+    async fn test_query_with_user() {
+        let user_id = Uuid::new_v4();
+        let ctx = TestQueryContext::authenticated(user_id);
+
+        assert!(ctx.auth.is_authenticated());
+        assert_eq!(ctx.require_user_id().unwrap(), user_id);
+    }
+
+    #[tokio::test]
+    async fn test_iss_location_struct() {
+        let location = IssLocation {
+            id: Uuid::new_v4(),
+            latitude: 51.5074,
+            longitude: -0.1278,
+            api_timestamp: Utc::now(),
+            created_at: Utc::now(),
+        };
+
+        assert!(location.latitude > 0.0);
+        assert!(location.longitude < 0.0);
+    }
+
+    #[tokio::test]
+    async fn test_iss_location_serialization() {
+        let location = IssLocation {
+            id: Uuid::new_v4(),
+            latitude: 45.0,
+            longitude: -90.0,
+            api_timestamp: Utc::now(),
+            created_at: Utc::now(),
+        };
+
+        let json = serde_json::to_string(&location).unwrap();
+        assert!(json.contains("latitude"));
+        assert!(json.contains("longitude"));
+
+        let parsed: IssLocation = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.latitude, 45.0);
+        assert_eq!(parsed.longitude, -90.0);
+    }
+}

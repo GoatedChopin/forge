@@ -199,7 +199,7 @@ fn parse_enum(item: &syn::ItemEnum) -> Option<EnumDef> {
     Some(enum_def)
 }
 
-/// Parse a function with #[query], #[mutation], or #[action] attribute.
+/// Parse a function with #[query] or #[mutation] attribute.
 fn parse_function(item: &syn::ItemFn) -> Option<FunctionDef> {
     let kind = get_function_kind(&item.attrs)?;
     let func_name = item.sig.ident.to_string();
@@ -226,7 +226,6 @@ fn parse_function(item: &syn::ItemFn) -> Option<FunctionDef> {
                 if type_str.contains("Context")
                     || type_str.contains("QueryContext")
                     || type_str.contains("MutationContext")
-                    || type_str.contains("ActionContext")
                 {
                     continue;
                 }
@@ -263,7 +262,6 @@ fn get_function_kind(attrs: &[Attribute]) -> Option<FunctionKind> {
             match kind {
                 "query" => return Some(FunctionKind::Query),
                 "mutation" => return Some(FunctionKind::Mutation),
-                "action" => return Some(FunctionKind::Action),
                 "job" => return Some(FunctionKind::Job),
                 "cron" => return Some(FunctionKind::Cron),
                 "workflow" => return Some(FunctionKind::Workflow),
@@ -563,22 +561,5 @@ mod tests {
         assert_eq!(func.args.len(), 2);
         assert_eq!(func.args[0].name, "name");
         assert_eq!(func.args[1].name, "email");
-    }
-
-    #[test]
-    fn test_parse_action_function() {
-        let source = r#"
-            #[action]
-            async fn send_notification(ctx: ActionContext, message: String) -> Result<()> {
-                todo!()
-            }
-        "#;
-
-        let registry = SchemaRegistry::new();
-        parse_file(source, &registry).unwrap();
-
-        let func = registry.get_function("send_notification").unwrap();
-        assert_eq!(func.name, "send_notification");
-        assert_eq!(func.kind, FunctionKind::Action);
     }
 }

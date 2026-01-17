@@ -10,14 +10,12 @@ use crate::function::AuthContext;
 use std::collections::HashMap;
 use uuid::Uuid;
 
-mod action;
 mod cron;
 mod job;
 mod mutation;
 mod query;
 mod workflow;
 
-pub use action::{TestActionContext, TestActionContextBuilder};
 pub use cron::{TestCronContext, TestCronContextBuilder};
 pub use job::{TestJobContext, TestJobContextBuilder, TestProgressUpdate};
 pub use mutation::{TestMutationContext, TestMutationContextBuilder};

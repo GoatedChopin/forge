@@ -5,15 +5,13 @@
 
 use super::types::RustType;
 
-/// Function kind (query, mutation, action, job, cron, workflow).
+/// Function kind (query, mutation, job, cron, workflow).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FunctionKind {
     /// Read-only database query.
     Query,
-    /// Write operation that modifies database state.
+    /// Write operation that modifies database state (may include HTTP calls).
     Mutation,
-    /// External API call or side-effect.
-    Action,
     /// Background job with retry logic.
     Job,
     /// Scheduled cron task.
@@ -28,7 +26,6 @@ impl FunctionKind {
         match self {
             FunctionKind::Query => "query",
             FunctionKind::Mutation => "mutation",
-            FunctionKind::Action => "action",
             FunctionKind::Job => "job",
             FunctionKind::Cron => "cron",
             FunctionKind::Workflow => "workflow",
@@ -37,10 +34,7 @@ impl FunctionKind {
 
     /// Check if this function kind is callable from the frontend.
     pub fn is_client_callable(&self) -> bool {
-        matches!(
-            self,
-            FunctionKind::Query | FunctionKind::Mutation | FunctionKind::Action
-        )
+        matches!(self, FunctionKind::Query | FunctionKind::Mutation)
     }
 }
 
@@ -110,11 +104,6 @@ impl FunctionDef {
     /// Create a mutation function.
     pub fn mutation(name: impl Into<String>, return_type: RustType) -> Self {
         Self::new(name, FunctionKind::Mutation, return_type)
-    }
-
-    /// Create an action function.
-    pub fn action(name: impl Into<String>, return_type: RustType) -> Self {
-        Self::new(name, FunctionKind::Action, return_type)
     }
 
     /// Add an argument.

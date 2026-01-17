@@ -7,6 +7,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::super::mock_dispatch::{MockJobDispatch, MockWorkflowDispatch};
+use super::super::mock_http::{MockHttp, MockRequest, MockResponse};
 use super::build_test_auth;
 use crate::Result;
 use crate::env::{EnvAccess, EnvProvider, MockEnvProvider};
@@ -37,6 +38,8 @@ pub struct TestMutationContext {
     pub request: RequestMetadata,
     /// Optional database pool.
     pool: Option<PgPool>,
+    /// Mock HTTP client.
+    http: Arc<MockHttp>,
     /// Mock job dispatch for verification.
     job_dispatch: Arc<MockJobDispatch>,
     /// Mock workflow dispatch for verification.
@@ -64,6 +67,11 @@ impl TestMutationContext {
     /// Get the database pool (if available).
     pub fn db(&self) -> Option<&PgPool> {
         self.pool.as_ref()
+    }
+
+    /// Get the mock HTTP client.
+    pub fn http(&self) -> &MockHttp {
+        &self.http
     }
 
     /// Get the mock job dispatch for verification.
@@ -114,6 +122,7 @@ pub struct TestMutationContextBuilder {
     roles: Vec<String>,
     claims: HashMap<String, serde_json::Value>,
     pool: Option<PgPool>,
+    http: MockHttp,
     job_dispatch: Arc<MockJobDispatch>,
     workflow_dispatch: Arc<MockWorkflowDispatch>,
     env_vars: HashMap<String, String>,
@@ -126,6 +135,7 @@ impl Default for TestMutationContextBuilder {
             roles: Vec::new(),
             claims: HashMap::new(),
             pool: None,
+            http: MockHttp::new(),
             job_dispatch: Arc::new(MockJobDispatch::new()),
             workflow_dispatch: Arc::new(MockWorkflowDispatch::new()),
             env_vars: HashMap::new(),
@@ -171,6 +181,21 @@ impl TestMutationContextBuilder {
         self
     }
 
+    /// Add an HTTP mock with a custom handler.
+    pub fn mock_http<F>(self, pattern: &str, handler: F) -> Self
+    where
+        F: Fn(&MockRequest) -> MockResponse + Send + Sync + 'static,
+    {
+        self.http.add_mock_sync(pattern, handler);
+        self
+    }
+
+    /// Add an HTTP mock that returns a JSON response.
+    pub fn mock_http_json<T: serde::Serialize>(self, pattern: &str, response: T) -> Self {
+        let json = serde_json::to_value(response).unwrap_or(serde_json::Value::Null);
+        self.mock_http(pattern, move |_| MockResponse::json(json.clone()))
+    }
+
     /// Use a specific mock job dispatch.
     pub fn with_job_dispatch(mut self, dispatch: Arc<MockJobDispatch>) -> Self {
         self.job_dispatch = dispatch;
@@ -201,6 +226,7 @@ impl TestMutationContextBuilder {
             auth: build_test_auth(self.user_id, self.roles, self.claims),
             request: RequestMetadata::default(),
             pool: self.pool,
+            http: Arc::new(self.http),
             job_dispatch: self.job_dispatch,
             workflow_dispatch: self.workflow_dispatch,
             env_provider: Arc::new(MockEnvProvider::with_vars(self.env_vars)),

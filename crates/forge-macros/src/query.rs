@@ -489,6 +489,7 @@ fn expand_query_impl(input: ItemFn, attrs: QueryAttrs) -> syn::Result<TokenStrea
                     rate_limit_key: #rate_limit_key,
                     log_level: #log_level,
                     table_dependencies: #table_deps_tokens,
+                    transactional: false,
                 }
             }
 

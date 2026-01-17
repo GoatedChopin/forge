@@ -5,7 +5,6 @@ import type {
   ForgeClientInterface,
   QueryFn,
   MutationFn,
-  ActionFn,
 } from "./types.js";
 
 export function createQuery<TArgs, TResult>(
@@ -34,18 +33,4 @@ export function createMutation<TArgs, TResult>(
   (fn as MutationFn<TArgs, TResult>).functionName = name;
   (fn as MutationFn<TArgs, TResult>).functionType = "mutation";
   return fn as MutationFn<TArgs, TResult>;
-}
-
-export function createAction<TArgs, TResult>(
-  name: string,
-): ActionFn<TArgs, TResult> {
-  const fn = async (
-    client: ForgeClientInterface,
-    args: TArgs,
-  ): Promise<TResult> => {
-    return client.call(name, args);
-  };
-  (fn as ActionFn<TArgs, TResult>).functionName = name;
-  (fn as ActionFn<TArgs, TResult>).functionType = "action";
-  return fn as ActionFn<TArgs, TResult>;
 }

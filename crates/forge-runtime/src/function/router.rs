@@ -2,8 +2,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use forge_core::{
-    ActionContext, AuthContext, ForgeError, FunctionInfo, FunctionKind, JobDispatch,
-    MutationContext, QueryContext, RequestMetadata, Result, WorkflowDispatch,
+    AuthContext, ForgeError, FunctionInfo, FunctionKind, JobDispatch, MutationContext,
+    QueryContext, RequestMetadata, Result, WorkflowDispatch,
     rate_limit::{RateLimitConfig, RateLimitKey},
 };
 use serde_json::Value;
@@ -18,8 +18,6 @@ pub enum RouteResult {
     Query(Value),
     /// Mutation execution result.
     Mutation(Value),
-    /// Action execution result.
-    Action(Value),
 }
 
 /// Routes function calls to the appropriate handler.
@@ -128,23 +126,12 @@ impl FunctionRouter {
                     self.db_pool.clone(),
                     auth,
                     request,
-                    self.job_dispatcher.clone(),
-                    self.workflow_dispatcher.clone(),
-                );
-                let result = handler(&ctx, args).await?;
-                Ok(RouteResult::Mutation(result))
-            }
-            FunctionEntry::Action { handler, .. } => {
-                let ctx = ActionContext::with_dispatch(
-                    self.db_pool.clone(),
-                    auth,
-                    request,
                     self.http_client.clone(),
                     self.job_dispatcher.clone(),
                     self.workflow_dispatcher.clone(),
                 );
                 let result = handler(&ctx, args).await?;
-                Ok(RouteResult::Action(result))
+                Ok(RouteResult::Mutation(result))
             }
         }
     }
@@ -241,6 +228,7 @@ mod tests {
             rate_limit_key: None,
             log_level: None,
             table_dependencies: &[],
+            transactional: false,
         };
 
         let _auth = AuthContext::unauthenticated();

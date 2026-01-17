@@ -63,7 +63,7 @@ async fn main() -> Result<()> {
         .register_query::<functions::GetUserQuery>();
     builder
         .function_registry_mut()
-        .register_query::<functions::GetAppStatsQuery>();
+        .register_query::<functions::GetIssLocationQuery>();
 
     // Mutations
     builder
@@ -76,11 +76,6 @@ async fn main() -> Result<()> {
         .function_registry_mut()
         .register_mutation::<functions::DeleteUserMutation>();
 
-    // Actions
-    builder
-        .function_registry_mut()
-        .register_action::<functions::GetBitcoinPriceAction>();
-
     // Jobs
     builder
         .job_registry_mut()
@@ -89,7 +84,7 @@ async fn main() -> Result<()> {
     // Crons
     builder
         .cron_registry_mut()
-        .register::<functions::HeartbeatStatsCron>();
+        .register::<functions::IssLocationCron>();
 
     // Workflows
     builder

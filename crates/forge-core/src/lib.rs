@@ -23,8 +23,8 @@ pub use cron::{CronContext, CronInfo, CronSchedule, ForgeCron};
 pub use env::{EnvAccess, EnvProvider, MockEnvProvider, RealEnvProvider};
 pub use error::{ForgeError, Result};
 pub use function::{
-    ActionContext, AuthContext, ForgeAction, ForgeMutation, ForgeQuery, FunctionInfo, FunctionKind,
-    JobDispatch, MutationContext, QueryContext, RequestMetadata, WorkflowDispatch,
+    AuthContext, ForgeMutation, ForgeQuery, FunctionInfo, FunctionKind, JobDispatch,
+    MutationContext, QueryContext, RequestMetadata, WorkflowDispatch,
 };
 pub use job::{ForgeJob, JobContext, JobInfo, JobPriority, JobStatus, RetryConfig};
 pub use observability::{

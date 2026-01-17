@@ -18,7 +18,6 @@ export {
   query,
   subscribe,
   mutate,
-  action,
   subscribeJob,
   subscribeWorkflow,
   createJobTracker,
@@ -32,7 +31,7 @@ export {
   type JobTracker,
   type WorkflowTracker,
 } from "./stores.js";
-export { createQuery, createMutation, createAction } from "./api.js";
+export { createQuery, createMutation } from "./api.js";
 export type {
   ForgeError,
   QueryResult,
@@ -41,7 +40,6 @@ export type {
   AuthState,
   QueryFn,
   MutationFn,
-  ActionFn,
   ForgeClientInterface,
   JobProgress,
   WorkflowProgress,

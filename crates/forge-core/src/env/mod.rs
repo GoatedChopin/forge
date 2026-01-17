@@ -11,8 +11,8 @@
 //! # Example
 //!
 //! ```ignore
-//! #[forge::action]
-//! async fn call_stripe(ctx: &ActionContext, input: ChargeInput) -> Result<Charge> {
+//! #[forge::mutation]
+//! async fn call_stripe(ctx: &MutationContext, input: ChargeInput) -> Result<Charge> {
 //!     // Get required env var (returns error if missing)
 //!     let api_key = ctx.env_require("STRIPE_API_KEY")?;
 //!
@@ -22,6 +22,9 @@
 //!     // Get and parse to specific type
 //!     let max_retries: u32 = ctx.env_parse("STRIPE_MAX_RETRIES")?;
 //!
+//!     // Make HTTP call
+//!     let response = ctx.http().post("https://api.stripe.com/...").send().await?;
+//!
 //!     // ...
 //! }
 //! ```
@@ -30,13 +33,14 @@
 //!
 //! ```ignore
 //! #[test]
-//! fn test_stripe_action() {
-//!     let ctx = TestActionContext::builder()
+//! fn test_stripe_mutation() {
+//!     let ctx = TestMutationContext::builder()
 //!         .with_env("STRIPE_API_KEY", "sk_test_xxx")
 //!         .with_env("STRIPE_TIMEOUT", "60")
+//!         .mock_http_json("https://api.stripe.com/*", json!({"id": "ch_123"}))
 //!         .build();
 //!
-//!     // Function will use mocked env vars
+//!     // Function will use mocked env vars and HTTP responses
 //! }
 //! ```
 

@@ -10,7 +10,7 @@ mod runtime;
 pub use forge_core;
 
 // Re-export proc macros at crate root
-pub use forge_macros::{action, cron, forge_enum, job, model, mutation, query, workflow};
+pub use forge_macros::{cron, forge_enum, job, model, mutation, query, workflow};
 
 // Re-export Migration type for programmatic migrations
 pub use forge_runtime::migrations::Migration;

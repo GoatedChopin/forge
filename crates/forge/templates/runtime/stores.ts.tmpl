@@ -8,7 +8,6 @@ import type {
   ForgeError,
   QueryFn,
   MutationFn,
-  ActionFn,
   JobProgress,
   WorkflowProgress,
   JobStatus,
@@ -148,14 +147,6 @@ export function subscribe<TArgs, TResult>(
 
 export async function mutate<TArgs, TResult>(
   fn: MutationFn<TArgs, TResult>,
-  args: TArgs,
-): Promise<TResult> {
-  const client = getForgeClient();
-  return fn(client, args);
-}
-
-export async function action<TArgs, TResult>(
-  fn: ActionFn<TArgs, TResult>,
   args: TArgs,
 ): Promise<TResult> {
   const client = getForgeClient();

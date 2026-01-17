@@ -622,7 +622,7 @@ mod tests {
     #[test]
     fn test_union() {
         let tables = extract_tables_from_sql(&[
-            "SELECT id FROM users UNION SELECT id FROM admins".to_string(),
+            "SELECT id FROM users UNION SELECT id FROM admins".to_string()
         ]);
         assert!(tables.contains("users"));
         assert!(tables.contains("admins"));
@@ -662,7 +662,7 @@ mod tests {
     fn test_sql_with_placeholders() {
         // This might fail to parse but should fall back to simple extraction
         let tables = extract_tables_from_sql(&[
-            "SELECT * FROM users WHERE id = $1 AND name = $2".to_string(),
+            "SELECT * FROM users WHERE id = $1 AND name = $2".to_string()
         ]);
         assert!(tables.contains("users"));
     }
