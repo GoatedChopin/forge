@@ -858,7 +858,7 @@ checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 
 [[package]]
 name = "forge-codegen"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "forge-core",
  "quote",
@@ -872,7 +872,7 @@ dependencies = [
 
 [[package]]
 name = "forge-core"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -895,7 +895,7 @@ dependencies = [
 
 [[package]]
 name = "forge-macros"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -906,7 +906,7 @@ dependencies = [
 
 [[package]]
 name = "forge-runtime"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "anyhow",
  "axum",
@@ -939,7 +939,7 @@ dependencies = [
 
 [[package]]
 name = "forgex"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "anyhow",
  "axum",
