@@ -16,8 +16,8 @@
   const ACTIVE_WORKFLOW_KEY = "forge_active_workflow_id";
   const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8080";
 
-  const users = subscribe(getUsers, {});
-  const issLocation = subscribe(getIssLocation, {});
+  const users = subscribe(getUsers, null);
+  const issLocation = subscribe(getIssLocation, null);
 
   let name = $state("");
   let email = $state("");
@@ -173,9 +173,9 @@
 <main>
   <h1>Forge</h1>
   <p class="subtitle">
-    Backend: <a href={apiUrl + "/health"} target="_blank">{apiUrl}</a> |
+    Backend: <a href={apiUrl + "/health"} target="_blank" rel="external noopener">{apiUrl}</a> |
     Dashboard:
-    <a href={apiUrl + "/_dashboard"} target="_blank">/_dashboard</a>
+    <a href={apiUrl + "/_dashboard"} target="_blank" rel="external noopener">/_dashboard</a>
   </p>
 
   <section class="card iss-panel">
@@ -277,7 +277,7 @@
 
       {#if $verifyAccountWorkflow}
         <div class="steps-list">
-          {#each $verifyAccountWorkflow.steps as step}
+          {#each $verifyAccountWorkflow.steps as step (step.name)}
             <div class="step-item {step.status}">
               <span class="step-icon">{stepIcon(step.status)}</span>
               <span class="step-name">{step.name}</span>

@@ -59,6 +59,7 @@ pub async fn onboarding(ctx: &WorkflowContext, user: User) -> Result<()> { }
 // All contexts
 ctx.db()                              // &PgPool
 ctx.require_user_id()?                // Uuid or Unauthorized error
+ctx.require_subject()?                // &str (for Firebase/Auth0/Clerk - non-UUID providers)
 ctx.auth.has_role("admin")            // bool
 ctx.env("KEY")                        // Option<String>
 ctx.env_require("KEY")?               // Result<String>
@@ -224,6 +225,17 @@ ForgeError::Unauthorized("Login required")  // 401
 ForgeError::Forbidden("Admin only")         // 403
 ForgeError::Validation("Invalid email")     // 400
 ForgeError::Database(msg)                   // 500
+```
+
+## External Auth (Firebase, Auth0, Clerk)
+
+Frontend: `<ForgeProvider getToken={() => firebase.currentUser?.getIdToken()}>`. Backend:
+
+```toml
+[auth]
+jwt_algorithm = "RS256"
+jwt_issuer = "https://securetoken.google.com/PROJECT_ID"  # or Auth0/Clerk issuer
+jwks_url = "https://www.googleapis.com/...jwk/securetoken@system.gserviceaccount.com"
 ```
 
 ## Workflow

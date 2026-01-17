@@ -19,23 +19,54 @@ jwt_algorithm = "HS256"
 ```rust
 #[forge::query]
 pub async fn get_profile(ctx: &QueryContext) -> Result<User> {
-    let user = ctx.auth.require_user()?;  // Errors if not authenticated
-    ctx.db.get::<User>(user.id).await
+    let user_id = ctx.require_user_id()?;  // Errors if not authenticated
+    ctx.db().get::<User>(user_id).await
 }
 ```
 
-### External Providers
+### External Auth Providers (Firebase, Auth0, Clerk)
+
+For client-side auth providers that issue JWTs, configure JWKS validation:
 
 ```toml
 # forge.toml
-[security.auth]
-provider = "oauth"
+[auth]
+jwt_algorithm = "RS256"
+jwt_issuer = "https://securetoken.google.com/YOUR_PROJECT_ID"
+jwt_audience = "YOUR_PROJECT_ID"
+jwks_url = "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com"
+```
 
-[security.auth.providers.google]
+**Frontend**: Pass the provider's JWT via `getToken`:
+
+```svelte
+<script lang="ts">
+  import { getAuth } from 'firebase/auth';
+  const auth = getAuth();
+</script>
+
+<ForgeProvider url="http://localhost:8080" getToken={() => auth.currentUser?.getIdToken()}>
+  {@render children()}
+</ForgeProvider>
+```
+
+| Provider | Issuer | JWKS URL |
+|----------|--------|----------|
+| Firebase | `https://securetoken.google.com/PROJECT_ID` | `https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com` |
+| Auth0 | `https://YOUR_DOMAIN.auth0.com/` | `https://YOUR_DOMAIN.auth0.com/.well-known/jwks.json` |
+| Clerk | `https://YOUR_DOMAIN.clerk.accounts.dev` | `https://YOUR_DOMAIN.clerk.accounts.dev/.well-known/jwks.json` |
+
+**Note:** External providers use string IDs, not UUIDs. Use `ctx.require_subject()?` instead of `ctx.require_user_id()?`.
+
+### Server-Side OAuth
+
+```toml
+# forge.toml
+[auth.providers.google]
 client_id = "${GOOGLE_CLIENT_ID}"
 client_secret = "${GOOGLE_CLIENT_SECRET}"
 
-[security.auth.providers.github]
+[auth.providers.github]
 client_id = "${GITHUB_CLIENT_ID}"
 client_secret = "${GITHUB_CLIENT_SECRET}"
 ```

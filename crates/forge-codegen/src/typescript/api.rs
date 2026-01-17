@@ -29,7 +29,7 @@ impl ApiGenerator {
 
         for func in &functions {
             let args_type = if func.args.is_empty() {
-                "Record<string, never>".to_string()
+                "null".to_string()
             } else if func.args.len() == 1 {
                 let arg = &func.args[0];
                 let ts_type = rust_type_to_ts(&arg.rust_type);
@@ -48,19 +48,20 @@ impl ApiGenerator {
                 format!("{{ {} }}", fields.join(", "))
             };
 
-            let result_type = rust_type_to_ts(&func.return_type);
-            collect_custom_types(&func.return_type, &mut type_imports);
-
             let ts_name = to_camel_case(&func.name);
 
             match func.kind {
                 FunctionKind::Query => {
+                    let result_type = rust_type_to_ts(&func.return_type);
+                    collect_custom_types(&func.return_type, &mut type_imports);
                     queries.push(format!(
                         "export const {} = createQuery<{}, {}>(\"{}\");",
                         ts_name, args_type, result_type, func.name
                     ));
                 }
                 FunctionKind::Mutation => {
+                    let result_type = rust_type_to_ts(&func.return_type);
+                    collect_custom_types(&func.return_type, &mut type_imports);
                     mutations.push(format!(
                         "export const {} = createMutation<{}, {}>(\"{}\");",
                         ts_name, args_type, result_type, func.name

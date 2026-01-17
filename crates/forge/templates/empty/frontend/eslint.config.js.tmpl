@@ -28,10 +28,6 @@ export default [
         parser: ts.parser,
       },
     },
-    rules: {
-      "svelte/no-navigation-without-resolve": "off",
-      "svelte/require-each-key": "off",
-    },
   },
   {
     files: ["**/*.ts"],
@@ -40,12 +36,6 @@ export default [
         "error",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
       ],
-    },
-  },
-  {
-    files: ["**/lib/forge/**/*.ts"],
-    rules: {
-      "@typescript-eslint/no-unused-vars": "off",
     },
   },
   {
