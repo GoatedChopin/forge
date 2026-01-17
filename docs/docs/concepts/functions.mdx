@@ -1,18 +1,17 @@
 ---
 sidebar_position: 3
 title: Functions
-description: Queries, Mutations, and Actions - the building blocks of your API
+description: Queries and Mutations - the building blocks of your API
 ---
 
 # Functions
 
-Functions are the building blocks of your FORGE API. There are three types, each with a specific purpose:
+Functions are the building blocks of your FORGE API. There are two types:
 
 | Type | Purpose | Can Read DB | Can Write DB | Can Call APIs |
 |------|---------|-------------|--------------|---------------|
 | **Query** | Fetch data | ✅ | ❌ | ❌ |
-| **Mutation** | Modify data | ✅ | ✅ | ❌ |
-| **Action** | External calls | ✅ | ✅ | ✅ |
+| **Mutation** | Modify data | ✅ | ✅ | ✅ |
 
 ## Queries
 
@@ -158,8 +157,8 @@ pub async fn create_user(ctx: &MutationContext, input: CreateUserInput) -> Resul
 }
 
 // Disable logging for this function
-#[forge::action(log = "off")]
-pub async fn health_check(ctx: &ActionContext) -> Result<()> {
+#[forge::mutation(log = "off")]
+pub async fn health_check(ctx: &MutationContext) -> Result<()> {
     // High-frequency function, no need to log
     Ok(())
 }
@@ -175,7 +174,7 @@ pub async fn health_check(ctx: &ActionContext) -> Result<()> {
 
 **Log output includes:**
 - Function name
-- Function kind (query/mutation/action)
+- Function kind (query/mutation)
 - Execution duration in milliseconds
 - Success/failure status
 - Error message (on failure)
@@ -192,7 +191,7 @@ Set `RUST_LOG=trace` in your `.env` file or docker-compose to see all function l
 
 ## Mutations
 
-Mutations are for **modifying data**. They can read and write to the database, and dispatch background jobs.
+Mutations are for **modifying data**. They can read and write to the database, call external APIs via HTTP, and dispatch background jobs.
 
 ```rust title="src/functions/mutations/users.rs"
 use forge::prelude::*;
@@ -284,11 +283,11 @@ pub async fn delete_user(ctx: &MutationContext, id: Uuid) -> Result<bool> {
 }
 ```
 
-## Actions
+### With HTTP Client
 
-Actions are for **external API calls**. They have access to an HTTP client and can call third-party services.
+Mutations can call external APIs using the built-in HTTP client:
 
-```rust title="src/functions/actions/stripe.rs"
+```rust title="src/functions/mutations/payments.rs"
 use forge::prelude::*;
 
 #[derive(Debug, Serialize)]
@@ -297,15 +296,15 @@ pub struct PaymentResult {
     pub status: String,
 }
 
-#[forge::action]
+#[forge::mutation]
 pub async fn create_payment(
-    ctx: &ActionContext,
+    ctx: &MutationContext,
     amount: i64,
     currency: String,
 ) -> Result<PaymentResult> {
     let response = ctx.http()
         .post("https://api.stripe.com/v1/payment_intents")
-        .header("Authorization", format!("Bearer {}", std::env::var("STRIPE_KEY")?))
+        .header("Authorization", format!("Bearer {}", ctx.env_require("STRIPE_KEY")?))
         .form(&[
             ("amount", amount.to_string()),
             ("currency", currency),
@@ -356,22 +355,7 @@ pub struct MutationContext {
 
 impl MutationContext {
     fn db(&self) -> &PgPool;   // Database access (read-write)
-    async fn dispatch_job(&self, name: &str, args: Value) -> Result<Uuid>;
-    async fn start_workflow(&self, name: &str, input: Value) -> Result<Uuid>;
-}
-```
-
-### ActionContext
-
-```rust
-pub struct ActionContext {
-    pub auth: AuthContext,
-    pub request: RequestMetadata,
-}
-
-impl ActionContext {
-    fn db(&self) -> &PgPool;   // Database access
-    fn http(&self) -> &Client; // HTTP client
+    fn http(&self) -> &Client; // HTTP client for external APIs
     async fn dispatch_job(&self, name: &str, args: Value) -> Result<Uuid>;
     async fn start_workflow(&self, name: &str, input: Value) -> Result<Uuid>;
 }
@@ -480,7 +464,6 @@ async fn main() -> Result<()> {
 The macro generates a struct with a suffix:
 - `list_users` → `ListUsersQuery`
 - `create_user` → `CreateUserMutation`
-- `send_email` → `SendEmailAction`
 :::
 
 ## Calling from Frontend
@@ -500,8 +483,8 @@ const newUser = await mutate('create_user', {
     name: 'John Doe',
 });
 
-// Action
-const payment = await action('create_payment', {
+// Mutation with external API call
+const payment = await mutate('create_payment', {
     amount: 1000,
     currency: 'usd',
 });
@@ -535,18 +518,17 @@ pub async fn complete_task(ctx: &MutationContext, id: Uuid) -> Result<Task> { ..
 pub async fn complete_task(ctx: &QueryContext, id: Uuid) -> Result<Task> { ... }
 ```
 
-### 3. Use Actions for External Calls
+### 3. Use HTTP Client for External Calls
 
 ```rust
-// Good: Action for external API
-#[forge::action]
-pub async fn send_sms(ctx: &ActionContext, phone: String, message: String) -> Result<()> { ... }
-
-// Bad: External call in mutation (blocks transaction)
+// Good: Mutation with HTTP client for external API
 #[forge::mutation]
-pub async fn verify_phone(ctx: &MutationContext, phone: String) -> Result<()> {
-    // Don't call external APIs in mutations!
-    send_sms_api(&phone).await?;
+pub async fn send_sms(ctx: &MutationContext, phone: String, message: String) -> Result<()> {
+    ctx.http()
+        .post("https://api.twilio.com/...")
+        .send()
+        .await?;
+    Ok(())
 }
 ```
 

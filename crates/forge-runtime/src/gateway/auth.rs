@@ -52,9 +52,10 @@ impl AuthConfig {
     pub fn from_forge_config(config: &forge_core::config::AuthConfig) -> Self {
         let algorithm = JwtAlgorithm::from(config.algorithm);
 
-        let jwks_client = config.jwks_url.as_ref().map(|url| {
-            Arc::new(JwksClient::new(url.clone(), config.jwks_cache_ttl_secs))
-        });
+        let jwks_client = config
+            .jwks_url
+            .as_ref()
+            .map(|url| Arc::new(JwksClient::new(url.clone(), config.jwks_cache_ttl_secs)));
 
         Self {
             jwt_secret: config.jwt_secret.clone(),
@@ -240,9 +241,8 @@ impl AuthMiddleware {
         })?;
 
         // Extract key ID from token header
-        let header = jsonwebtoken::decode_header(token).map_err(|e| {
-            AuthError::InvalidToken(format!("Invalid token header: {}", e))
-        })?;
+        let header = jsonwebtoken::decode_header(token)
+            .map_err(|e| AuthError::InvalidToken(format!("Invalid token header: {}", e)))?;
 
         debug!(kid = ?header.kid, alg = ?header.alg, "Validating RSA token");
 
@@ -252,9 +252,9 @@ impl AuthMiddleware {
                 AuthError::InvalidToken(format!("Failed to get key '{}': {}", kid, e))
             })?
         } else {
-            jwks.get_any_key().await.map_err(|e| {
-                AuthError::InvalidToken(format!("Failed to get JWKS key: {}", e))
-            })?
+            jwks.get_any_key()
+                .await
+                .map_err(|e| AuthError::InvalidToken(format!("Failed to get JWKS key: {}", e)))?
         };
 
         self.decode_and_validate(token, &key)
@@ -284,9 +284,8 @@ impl AuthMiddleware {
             validation.validate_aud = false;
         }
 
-        let token_data = decode::<Claims>(token, key, &validation).map_err(|e| {
-            self.map_jwt_error(e)
-        })?;
+        let token_data =
+            decode::<Claims>(token, key, &validation).map_err(|e| self.map_jwt_error(e))?;
 
         Ok(token_data.claims)
     }
@@ -346,25 +345,27 @@ pub enum AuthError {
     TokenExpired,
 }
 
-/// Extract auth context from request.
-pub fn extract_auth_context(req: &Request<Body>, middleware: &AuthMiddleware) -> AuthContext {
-    // Try to extract Authorization header
-    let auth_header = req
-        .headers()
+/// Extract token from request headers.
+pub fn extract_token(req: &Request<Body>) -> Option<String> {
+    req.headers()
         .get(axum::http::header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok());
+        .and_then(|v| v.to_str().ok())
+        .filter(|header| header.starts_with("Bearer "))
+        .map(|header| header.trim_start_matches("Bearer ").trim().to_string())
+}
 
-    let token = match auth_header {
-        Some(header) if header.starts_with("Bearer ") => {
-            Some(header.trim_start_matches("Bearer ").trim())
-        }
-        _ => None,
-    };
-
+/// Extract auth context from token (async, supports both HMAC and RSA/JWKS).
+pub async fn extract_auth_context_async(
+    token: Option<String>,
+    middleware: &AuthMiddleware,
+) -> AuthContext {
     match token {
-        Some(token) => match middleware.validate_token(token) {
+        Some(token) => match middleware.validate_token_async(&token).await {
             Ok(claims) => build_auth_context_from_claims(claims),
-            Err(_) => AuthContext::unauthenticated(),
+            Err(e) => {
+                tracing::warn!(error = %e, "Token validation failed");
+                AuthContext::unauthenticated()
+            }
         },
         None => AuthContext::unauthenticated(),
     }
@@ -381,10 +382,7 @@ pub fn build_auth_context_from_claims(claims: Claims) -> AuthContext {
 
     // Build custom claims with raw subject included
     let mut custom_claims = claims.custom;
-    custom_claims.insert(
-        "sub".to_string(),
-        serde_json::Value::String(claims.sub),
-    );
+    custom_claims.insert("sub".to_string(), serde_json::Value::String(claims.sub));
 
     match user_id {
         Some(uuid) => {
@@ -405,9 +403,18 @@ pub async fn auth_middleware(
     req: Request<Body>,
     next: Next,
 ) -> Response {
-    let auth_context = extract_auth_context(&req, &middleware);
+    let token = extract_token(&req);
+    tracing::trace!(
+        token_present = token.is_some(),
+        "Auth middleware processing request"
+    );
 
-    // Store auth context in request extensions
+    let auth_context = extract_auth_context_async(token, &middleware).await;
+    tracing::trace!(
+        authenticated = auth_context.is_authenticated(),
+        "Auth context created"
+    );
+
     let mut req = req;
     req.extensions_mut().insert(auth_context);
 

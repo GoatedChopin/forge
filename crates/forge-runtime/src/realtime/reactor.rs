@@ -35,6 +35,8 @@ pub struct ActiveSubscription {
     pub last_result_hash: Option<String>,
     #[allow(dead_code)]
     pub read_set: ReadSet,
+    /// Auth context for re-executing the query on invalidation.
+    pub auth_context: forge_core::function::AuthContext,
 }
 
 /// Job subscription tracking.
@@ -184,8 +186,8 @@ impl Reactor {
         client_sub_id: String,
         query_name: String,
         args: serde_json::Value,
+        auth_context: forge_core::function::AuthContext,
     ) -> forge_core::Result<(SubscriptionId, serde_json::Value)> {
-        // Create subscription in manager
         let sub_info = self
             .subscription_manager
             .create_subscription(session_id, &query_name, args.clone())
@@ -193,18 +195,16 @@ impl Reactor {
 
         let subscription_id = sub_info.id;
 
-        // Add to WebSocket server
         self.ws_server
             .add_subscription(session_id, subscription_id)
             .await?;
 
-        // Execute the query to get initial data
-        let (data, read_set) = self.execute_query(&query_name, &args).await?;
+        let (data, read_set) = self
+            .execute_query(&query_name, &args, &auth_context)
+            .await?;
 
-        // Compute result hash for delta detection
         let result_hash = Self::compute_hash(&data);
 
-        // Update subscription with read set
         let tables: Vec<_> = read_set.tables.iter().collect();
         tracing::debug!(
             ?subscription_id,
@@ -217,7 +217,6 @@ impl Reactor {
             .update_subscription(subscription_id, read_set.clone(), result_hash.clone())
             .await;
 
-        // Store active subscription
         let active = ActiveSubscription {
             subscription_id,
             session_id,
@@ -226,6 +225,7 @@ impl Reactor {
             args,
             last_result_hash: Some(result_hash),
             read_set,
+            auth_context,
         };
         self.active_subscriptions
             .write()
@@ -452,12 +452,13 @@ impl Reactor {
         &self,
         query_name: &str,
         args: &serde_json::Value,
+        auth_context: &forge_core::function::AuthContext,
     ) -> forge_core::Result<(serde_json::Value, ReadSet)> {
         match self.registry.get(query_name) {
             Some(FunctionEntry::Query { info, handler }) => {
                 let ctx = forge_core::function::QueryContext::new(
                     self.db_pool.clone(),
-                    forge_core::function::AuthContext::unauthenticated(),
+                    auth_context.clone(),
                     forge_core::function::RequestMetadata::new(),
                 );
 
@@ -664,6 +665,7 @@ impl Reactor {
                             active.query_name.clone(),
                             active.args.clone(),
                             active.last_result_hash.clone(),
+                            active.auth_context.clone(),
                         )
                     })
                 })
@@ -674,9 +676,11 @@ impl Reactor {
         let mut updates: Vec<(SubscriptionId, String)> = Vec::new();
 
         // Re-execute invalidated queries and push updates (without holding locks)
-        for (sub_id, session_id, query_name, args, last_hash) in subs_to_process {
+        for (sub_id, session_id, query_name, args, last_hash, auth_context) in subs_to_process {
             // Re-execute the query
-            match Self::execute_query_static(registry, db_pool, &query_name, &args).await {
+            match Self::execute_query_static(registry, db_pool, &query_name, &args, &auth_context)
+                .await
+            {
                 Ok((new_data, _read_set)) => {
                     let new_hash = Self::compute_hash(&new_data);
 
@@ -941,12 +945,13 @@ impl Reactor {
         db_pool: &sqlx::PgPool,
         query_name: &str,
         args: &serde_json::Value,
+        auth_context: &forge_core::function::AuthContext,
     ) -> forge_core::Result<(serde_json::Value, ReadSet)> {
         match registry.get(query_name) {
             Some(FunctionEntry::Query { info, handler }) => {
                 let ctx = forge_core::function::QueryContext::new(
                     db_pool.clone(),
-                    forge_core::function::AuthContext::unauthenticated(),
+                    auth_context.clone(),
                     forge_core::function::RequestMetadata::new(),
                 );
 

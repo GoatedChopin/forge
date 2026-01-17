@@ -8,6 +8,45 @@ use std::process::Command;
 use super::template::render;
 use crate::template_vars;
 
+// In debug builds, embed the path to the forge source directory
+#[cfg(debug_assertions)]
+const FORGE_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
+
+/// Get the forge workspace root directory (only available in debug builds).
+/// CARGO_MANIFEST_DIR points to crates/forge, so we go up two levels.
+#[cfg(debug_assertions)]
+fn get_forge_workspace_dir() -> Option<&'static str> {
+    let manifest_dir = Path::new(FORGE_MANIFEST_DIR);
+    // Go up from crates/forge to the workspace root
+    manifest_dir.parent()?.parent()?.to_str()
+}
+
+/// Append cargo patch section to use local forge crates (only in debug builds).
+#[cfg(debug_assertions)]
+fn append_cargo_patch(cargo_toml_path: &Path) -> Result<()> {
+    let workspace_dir = get_forge_workspace_dir()
+        .ok_or_else(|| anyhow::anyhow!("Could not determine forge workspace directory"))?;
+
+    let patch_section = format!(
+        r#"
+# Local dev patches (debug build) - remove before publishing
+[patch.crates-io]
+forgex = {{ path = "{workspace}/crates/forge" }}
+forge-core = {{ path = "{workspace}/crates/forge-core" }}
+forge-macros = {{ path = "{workspace}/crates/forge-macros" }}
+forge-runtime = {{ path = "{workspace}/crates/forge-runtime" }}
+forge-codegen = {{ path = "{workspace}/crates/forge-codegen" }}
+"#,
+        workspace = workspace_dir
+    );
+
+    let mut content = fs::read_to_string(cargo_toml_path)?;
+    content.push_str(&patch_section);
+    fs::write(cargo_toml_path, content)?;
+
+    Ok(())
+}
+
 /// Extract project name from a path (last segment only).
 /// Handles: "my-app", "path/to/my-app", "./my-app", "../my-app"
 pub(super) fn extract_project_name(input: &str) -> String {
@@ -467,6 +506,17 @@ pub fn create_project(dir: &Path, name: &str, demo: bool) -> Result<()> {
     if demo {
         // Demo templates - full example code
         fs::write(dir.join("Cargo.toml"), render(CARGO_TOML, &vars))?;
+
+        // In debug builds, add cargo patch to use local forge source
+        #[cfg(debug_assertions)]
+        {
+            append_cargo_patch(&dir.join("Cargo.toml"))?;
+            println!(
+                "  {} Added cargo patch for local development",
+                style("→").cyan()
+            );
+        }
+
         fs::write(dir.join("forge.toml"), render(FORGE_TOML, &vars))?;
         fs::write(dir.join("build.rs"), BUILD_RS)?;
         fs::write(dir.join(".gitignore"), GITIGNORE)?;
@@ -506,6 +556,17 @@ pub fn create_project(dir: &Path, name: &str, demo: bool) -> Result<()> {
     } else {
         // Minimal templates - clean scaffolding without example code
         fs::write(dir.join("Cargo.toml"), render(EMPTY_CARGO_TOML, &vars))?;
+
+        // In debug builds, add cargo patch to use local forge source
+        #[cfg(debug_assertions)]
+        {
+            append_cargo_patch(&dir.join("Cargo.toml"))?;
+            println!(
+                "  {} Added cargo patch for local development",
+                style("→").cyan()
+            );
+        }
+
         fs::write(dir.join("forge.toml"), render(EMPTY_FORGE_TOML, &vars))?;
         fs::write(dir.join("build.rs"), EMPTY_BUILD_RS)?;
         fs::write(dir.join(".gitignore"), EMPTY_GITIGNORE)?;

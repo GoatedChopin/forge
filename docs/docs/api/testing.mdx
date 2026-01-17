@@ -6,7 +6,7 @@ description: API reference for testing FORGE applications
 
 # Testing
 
-FORGE provides a comprehensive testing framework for unit and integration testing your applications. This includes test contexts for all function types (queries, mutations, actions, jobs, crons, workflows), zero-config database provisioning, HTTP mocking, and assertion macros for common test patterns.
+FORGE provides a comprehensive testing framework for unit and integration testing your applications. This includes test contexts for all function types (queries, mutations, jobs, crons, workflows), zero-config database provisioning, HTTP mocking, and assertion macros for common test patterns.
 
 ## Quick Start
 
@@ -193,12 +193,10 @@ assert_workflow_started!(ctx, "onboarding");
 | `dispatch_job(type, args)` | Dispatch a job |
 | `start_workflow(name, input)` | Start a workflow |
 
-### TestActionContext
-
-For testing actions (external HTTP calls).
+**HTTP Mocking (for mutations with external calls):**
 
 ```rust
-let ctx = TestActionContext::builder()
+let ctx = TestMutationContext::builder()
     .as_user(Uuid::new_v4())
     .with_env("STRIPE_API_KEY", "sk_test_xxx")
     .mock_http_json("https://api.stripe.com/*", serde_json::json!({
@@ -207,12 +205,12 @@ let ctx = TestActionContext::builder()
     }))
     .build();
 
-// After your action makes HTTP calls:
+// After your mutation makes HTTP calls:
 ctx.http().assert_called("https://api.stripe.com/*");
 ctx.http().assert_called_times("https://api.stripe.com/*", 1);
 ```
 
-**Builder Methods:**
+**HTTP Mocking Builder Methods:**
 
 | Method | Description |
 |--------|-------------|
@@ -338,7 +336,7 @@ Mocks external HTTP requests with pattern matching and request verification.
 ### Creating Mocks
 
 ```rust
-let ctx = TestActionContext::builder()
+let ctx = TestMutationContext::builder()
     // Static JSON response
     .mock_http_json("https://api.example.com/*", serde_json::json!({
         "status": "ok"
@@ -389,7 +387,7 @@ MockResponse::internal_error("Database error")
 ### Request Verification
 
 ```rust
-let ctx = TestActionContext::builder()
+let ctx = TestMutationContext::builder()
     .mock_http_json("https://api.example.com/*", serde_json::json!({}))
     .build();
 
@@ -491,7 +489,7 @@ let ctx = TestQueryContext::builder()
 The mock provider tracks which variables were accessed:
 
 ```rust
-let ctx = TestActionContext::builder()
+let ctx = TestMutationContext::builder()
     .with_env("REQUIRED_KEY", "value")
     .with_env("OPTIONAL_KEY", "other")
     .build();
@@ -515,7 +513,7 @@ let keys = ctx.env_mock().accessed_keys();
 ```rust
 #[tokio::test]
 async fn test_missing_env_fails() {
-    let ctx = TestActionContext::builder().build();  // No env vars
+    let ctx = TestMutationContext::builder().build();  // No env vars
 
     let result = ctx.env_require("MISSING_KEY");
     assert!(result.is_err());
@@ -724,7 +722,7 @@ async fn test_order_creation_flow() {
 
 #[tokio::test]
 async fn test_action_with_external_api() {
-    let ctx = TestActionContext::builder()
+    let ctx = TestMutationContext::builder()
         .as_user(Uuid::new_v4())
         .mock_http_json("https://api.stripe.com/v1/charges", serde_json::json!({
             "id": "ch_123",

@@ -187,11 +187,11 @@ pub async fn create_order(ctx: &MutationContext, input: OrderInput) -> Result<Or
 }
 ```
 
-### From Actions
+### From Mutations
 
 ```rust
-#[forge::action]
-pub async fn webhook_handler(ctx: &ActionContext, payload: WebhookPayload) -> Result<()> {
+#[forge::mutation]
+pub async fn webhook_handler(ctx: &MutationContext, payload: WebhookPayload) -> Result<()> {
     // Process asynchronously
     ctx.dispatch_job("process_webhook", serde_json::json!(payload)).await?;
     Ok(())

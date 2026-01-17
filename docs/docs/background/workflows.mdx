@@ -663,11 +663,11 @@ pub async fn create_order(ctx: &MutationContext, input: OrderInput) -> Result<Or
 }
 ```
 
-### From Actions
+### From Mutations
 
 ```rust
-#[forge::action]
-pub async fn stripe_webhook(ctx: &ActionContext, event: StripeEvent) -> Result<()> {
+#[forge::mutation]
+pub async fn stripe_webhook(ctx: &MutationContext, event: StripeEvent) -> Result<()> {
     match event.type_ {
         "checkout.session.completed" => {
             ctx.dispatch_workflow("fulfill_order", event.data).await?;
@@ -926,8 +926,8 @@ pub async fn approval_workflow(ctx: &WorkflowContext, input: ApprovalInput) -> R
 Send events to waiting workflows:
 
 ```rust
-#[forge::action]
-pub async fn approve_request(ctx: &ActionContext, input: ApproveInput) -> Result<()> {
+#[forge::mutation]
+pub async fn approve_request(ctx: &MutationContext, input: ApproveInput) -> Result<()> {
     // Send event to the waiting workflow
     ctx.send_workflow_event(
         "approval_response",

@@ -257,21 +257,19 @@ impl JwksClient {
                             "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----",
                             cert
                         );
-                        return DecodingKey::from_rsa_pem(pem.as_bytes())
-                            .map(Some)
-                            .map_err(|e: jsonwebtoken::errors::Error| {
+                        return DecodingKey::from_rsa_pem(pem.as_bytes()).map(Some).map_err(
+                            |e: jsonwebtoken::errors::Error| {
                                 JwksError::KeyParseFailed(e.to_string())
-                            });
+                            },
+                        );
                     }
                 }
 
                 // Fall back to n/e components (used by Clerk, Auth0, etc.)
                 if let (Some(n), Some(e)) = (&jwk.n, &jwk.e) {
-                    return DecodingKey::from_rsa_components(n, e)
-                        .map(Some)
-                        .map_err(|e: jsonwebtoken::errors::Error| {
-                            JwksError::KeyParseFailed(e.to_string())
-                        });
+                    return DecodingKey::from_rsa_components(n, e).map(Some).map_err(
+                        |e: jsonwebtoken::errors::Error| JwksError::KeyParseFailed(e.to_string()),
+                    );
                 }
 
                 // RSA key but missing required components

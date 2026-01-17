@@ -15,7 +15,7 @@ Learn to write unit and integration tests for your FORGE application. We'll cove
 
 ## What You'll Learn
 
-- Testing queries, mutations, and actions
+- Testing queries and mutations (including HTTP calls)
 - Mocking external HTTP APIs
 - Verifying job and workflow dispatches
 - Testing authentication and authorization
@@ -237,18 +237,18 @@ async fn create_order_starts_fulfillment_workflow() {
 }
 ```
 
-## Part 3: Testing Actions (External APIs)
+## Part 3: Testing Mutations with HTTP
 
-Actions make external HTTP calls. We mock these in tests.
+Mutations can make external HTTP calls. We mock these in tests.
 
 ### The Function
 
 ```rust title="src/functions/payments.rs"
-#[forge::action]
-pub async fn charge_card(ctx: &ActionContext, input: ChargeInput) -> Result<ChargeResult> {
+#[forge::mutation]
+pub async fn charge_card(ctx: &MutationContext, input: ChargeInput) -> Result<ChargeResult> {
     let response = ctx.http()
         .post("https://api.stripe.com/v1/charges")
-        .bearer_auth(&ctx.get_secret("STRIPE_SECRET_KEY")?)
+        .bearer_auth(&ctx.env_require("STRIPE_SECRET_KEY")?)
         .json(&serde_json::json!({
             "amount": input.amount,
             "currency": "usd",
@@ -275,7 +275,7 @@ pub async fn charge_card(ctx: &ActionContext, input: ChargeInput) -> Result<Char
 ```rust
 #[tokio::test]
 async fn charge_card_success() {
-    let ctx = TestActionContext::builder()
+    let ctx = TestMutationContext::builder()
         .as_user(Uuid::new_v4())
         .mock_http_json("https://api.stripe.com/v1/charges", serde_json::json!({
             "id": "ch_test123",
@@ -295,7 +295,7 @@ async fn charge_card_success() {
 ```rust
 #[tokio::test]
 async fn charge_card_handles_failure() {
-    let ctx = TestActionContext::builder()
+    let ctx = TestMutationContext::builder()
         .as_user(Uuid::new_v4())
         .mock_http("https://api.stripe.com/v1/charges", |_| {
             MockResponse::error(402, "Card declined")
@@ -310,8 +310,8 @@ async fn charge_card_handles_failure() {
 
 ```rust
 #[tokio::test]
-async fn sync_action_calls_multiple_apis() {
-    let ctx = TestActionContext::builder()
+async fn sync_mutation_calls_multiple_apis() {
+    let ctx = TestMutationContext::builder()
         .mock_http_json("https://api.stripe.com/*", serde_json::json!({
             "customer_id": "cus_123"
         }))
@@ -321,7 +321,7 @@ async fn sync_action_calls_multiple_apis() {
         .mock_http("https://hooks.slack.com/*", |_| MockResponse::ok())
         .build();
 
-    // After your action runs, verify all calls were made
+    // After your mutation runs, verify all calls were made
     ctx.http().assert_called("https://api.stripe.com/*");
     ctx.http().assert_called("https://api.sendgrid.com/*");
     ctx.http().assert_called("https://hooks.slack.com/*");
@@ -721,8 +721,7 @@ You've learned how to test all FORGE function types:
 | Function Type | Test Context | Key Capabilities |
 |---------------|--------------|------------------|
 | Query | `TestQueryContext` | Auth simulation, role checking |
-| Mutation | `TestMutationContext` | Job/workflow dispatch verification |
-| Action | `TestActionContext` | HTTP mocking, request verification |
+| Mutation | `TestMutationContext` | Job/workflow dispatch, HTTP mocking |
 | Job | `TestJobContext` | Progress tracking, retry simulation |
 | Cron | `TestCronContext` | Schedule simulation, catch-up |
 | Workflow | `TestWorkflowContext` | Step tracking, resume simulation |

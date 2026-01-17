@@ -313,9 +313,13 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
             // Check if it's a custom type (not a primitive)
             if let Type::Path(type_path) = &*pat_type.ty {
                 if let Some(segment) = type_path.path.segments.last() {
-                    // Use the user's type directly if it looks like a custom Args struct
+                    // Use the user's type directly if it looks like a custom Args/Input struct
                     let type_name = segment.ident.to_string();
-                    if type_name.ends_with("Args") || type_name.contains("Args") {
+                    if type_name.ends_with("Args")
+                        || type_name.contains("Args")
+                        || type_name.ends_with("Input")
+                        || type_name.contains("Input")
+                    {
                         Some(&*pat_type.ty)
                     } else {
                         None

@@ -60,7 +60,6 @@ const sidebars: SidebarsConfig = {
         'api/configuration',
         'api/query-context',
         'api/mutation-context',
-        'api/action-context',
         'api/job-context',
         'api/workflow-context',
         'api/env-access',

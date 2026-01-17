@@ -6,6 +6,7 @@ use std::sync::Arc;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use super::build_test_auth;
 use crate::Result;
 use crate::env::{EnvAccess, EnvProvider, MockEnvProvider};
 use crate::function::{AuthContext, RequestMetadata};
@@ -76,6 +77,11 @@ impl TestQueryContext {
         self.auth.require_user_id()
     }
 
+    /// Like `require_user_id()` but for non-UUID auth providers.
+    pub fn require_subject(&self) -> Result<&str> {
+        self.auth.require_subject()
+    }
+
     /// Check if a specific role is present.
     pub fn has_role(&self, role: &str) -> bool {
         self.auth.has_role(role)
@@ -115,9 +121,16 @@ pub struct TestQueryContextBuilder {
 }
 
 impl TestQueryContextBuilder {
-    /// Set the authenticated user.
+    /// Set the authenticated user with a UUID.
     pub fn as_user(mut self, id: Uuid) -> Self {
         self.user_id = Some(id);
+        self
+    }
+
+    /// For non-UUID auth providers (Firebase, Clerk, etc.).
+    pub fn as_subject(mut self, subject: impl Into<String>) -> Self {
+        self.claims
+            .insert("sub".to_string(), serde_json::json!(subject.into()));
         self
     }
 
@@ -165,14 +178,8 @@ impl TestQueryContextBuilder {
 
     /// Build the test context.
     pub fn build(self) -> TestQueryContext {
-        let auth = if let Some(user_id) = self.user_id {
-            AuthContext::authenticated(user_id, self.roles, self.claims)
-        } else {
-            AuthContext::unauthenticated()
-        };
-
         TestQueryContext {
-            auth,
+            auth: build_test_auth(self.user_id, self.roles, self.claims),
             request: RequestMetadata::default(),
             pool: self.pool,
             tenant_id: self.tenant_id,

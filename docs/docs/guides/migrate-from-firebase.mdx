@@ -13,7 +13,7 @@ This guide helps you migrate from Firebase/Firestore to FORGE with PostgreSQL.
 | Firebase | FORGE Equivalent |
 |----------|------------------|
 | Firestore | PostgreSQL |
-| Cloud Functions | Jobs, Actions, Workflows |
+| Cloud Functions | Jobs, Mutations, Workflows |
 | Cloud Scheduler | Built-in cron |
 | Realtime Database | PostgreSQL NOTIFY |
 | Firebase Auth | Built-in JWT auth |
@@ -381,7 +381,7 @@ const users = await forge.query('list_users', {});
 - [ ] Create FORGE project
 - [ ] Create Rust models
 - [ ] Convert queries to FORGE functions
-- [ ] Convert Cloud Functions to Jobs/Actions/Workflows
+- [ ] Convert Cloud Functions to Jobs/Mutations/Workflows
 - [ ] Convert scheduled functions to Crons
 - [ ] Update realtime subscriptions
 - [ ] Import data

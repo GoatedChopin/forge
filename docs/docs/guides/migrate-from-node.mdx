@@ -240,8 +240,8 @@ app.post('/webhooks/stripe', async (req, res) => {
 
 **FORGE:**
 ```rust
-#[forge::action]
-pub async fn stripe_webhook(ctx: &ActionContext, event: StripeEvent) -> Result<()> {
+#[forge::mutation]
+pub async fn stripe_webhook(ctx: &MutationContext, event: StripeEvent) -> Result<()> {
     if event.type_ == "checkout.session.completed" {
         ctx.dispatch_workflow("fulfill_order", event.data).await?;
     }

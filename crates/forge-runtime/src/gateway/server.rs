@@ -1,4 +1,3 @@
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::{
@@ -240,8 +239,8 @@ impl GatewayServer {
     }
 
     /// Get the socket address to bind to.
-    pub fn addr(&self) -> SocketAddr {
-        SocketAddr::from(([0, 0, 0, 0], self.config.port))
+    pub fn addr(&self) -> std::net::SocketAddr {
+        std::net::SocketAddr::from(([0, 0, 0, 0], self.config.port))
     }
 
     /// Run the server (blocking).
@@ -259,13 +258,7 @@ impl GatewayServer {
         tracing::info!("Gateway server listening on {}", addr);
 
         let listener = tokio::net::TcpListener::bind(addr).await?;
-        // Use into_make_service_with_connect_info to enable ConnectInfo extractor
-        // This allows handlers to access the client's socket address
-        axum::serve(
-            listener,
-            router.into_make_service_with_connect_info::<SocketAddr>(),
-        )
-        .await
+        axum::serve(listener, router.into_make_service()).await
     }
 }
 

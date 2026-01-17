@@ -26,8 +26,8 @@ pub async fn create_account(ctx: &MutationContext, input: CreateAccountInput) ->
 }
 
 // 1000 requests per day per tenant
-#[forge::action(rate_limit(requests = 1000, per = "1d", key = "tenant"))]
-pub async fn send_email(ctx: &ActionContext, input: SendEmailInput) -> Result<EmailResult> {
+#[forge::mutation(rate_limit(requests = 1000, per = "1d", key = "tenant"))]
+pub async fn send_email(ctx: &MutationContext, input: SendEmailInput) -> Result<EmailResult> {
     // Rate limited by tenant
 }
 ```

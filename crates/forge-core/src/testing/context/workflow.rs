@@ -9,6 +9,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::super::mock_http::{MockHttp, MockRequest, MockResponse};
+use super::build_test_auth;
 use crate::Result;
 use crate::env::{EnvAccess, EnvProvider, MockEnvProvider};
 use crate::function::AuthContext;
@@ -274,9 +275,16 @@ impl TestWorkflowContextBuilder {
         self
     }
 
-    /// Set the authenticated user.
+    /// Set the authenticated user with a UUID.
     pub fn as_user(mut self, id: Uuid) -> Self {
         self.user_id = Some(id);
+        self
+    }
+
+    /// For non-UUID auth providers (Firebase, Clerk, etc.).
+    pub fn as_subject(mut self, subject: impl Into<String>) -> Self {
+        self.claims
+            .insert("sub".to_string(), serde_json::json!(subject.into()));
         self
     }
 
@@ -321,12 +329,6 @@ impl TestWorkflowContextBuilder {
 
     /// Build the test context.
     pub fn build(self) -> TestWorkflowContext {
-        let auth = if let Some(user_id) = self.user_id {
-            AuthContext::authenticated(user_id, self.roles, self.claims)
-        } else {
-            AuthContext::unauthenticated()
-        };
-
         let step_states: HashMap<String, TestStepState> = self
             .completed_steps
             .iter()
@@ -351,7 +353,7 @@ impl TestWorkflowContextBuilder {
             workflow_time: self.workflow_time.unwrap_or(self.started_at),
             is_resumed: self.is_resumed,
             tenant_id: self.tenant_id,
-            auth,
+            auth: build_test_auth(self.user_id, self.roles, self.claims),
             pool: self.pool,
             http: Arc::new(self.http),
             step_states: Arc::new(RwLock::new(step_states)),

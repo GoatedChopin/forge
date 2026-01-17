@@ -53,8 +53,8 @@ Flags: --demo (full examples) or --minimal (clean scaffolding), one required
 create_project(dir, name, demo) - demo=true uses populated/, demo=false uses empty/
 AGENTS.md included in all scaffolded projects
 
-Template features: #[forge::model], #[forge::query(cache, public, timeout)], #[forge::mutation(timeout)]
-Actions: #[forge::action(timeout)], ctx.http() for external API calls
+Template features: #[forge::model], #[forge::query(cache, public, timeout)], #[forge::mutation(timeout, transactional)]
+Mutations: ctx.http() for external API calls, #[forge::mutation(transactional)] for opt-in transaction wrapping
 Jobs: #[retry], #[idempotent], #[priority], #[worker_capability], ctx.progress(), ctx.heartbeat()
 Crons: #[forge::cron("...")], #[timezone], #[catch_up], ctx.log.info/warn/error/debug()
 Workflows: #[version], #[timeout], ctx.sleep(), ctx.is_resumed(), ctx.workflow_time()
@@ -63,9 +63,10 @@ EnvAccess trait: ctx.env(), ctx.env_or(), ctx.env_require(), ctx.env_parse()
 All context types implement EnvAccess, test contexts use MockEnvProvider
 Builder: .with_env("KEY", "value"), verification: ctx.env_mock().assert_accessed("KEY")
 
-Testing: TestQueryContext, TestMutationContext, TestActionContext, TestJobContext, TestCronContext, TestWorkflowContext
+Testing: TestQueryContext, TestMutationContext, TestJobContext, TestCronContext, TestWorkflowContext
 Builder: .as_user(), .with_role(), .with_claim(), .with_tenant(), .with_pool(), .with_env()
-MockHttp with pattern matching, MockJobDispatch, MockWorkflowDispatch
+TestMutationContext: .mock_http(), .mock_http_json() for HTTP mocking, ctx.http() accessor
+MockJobDispatch, MockWorkflowDispatch for dispatch verification
 TestDatabase: EXPLICIT config (from_url, from_env, embedded), from_env uses TEST_DATABASE_URL
 Tests inline with function files (#[cfg(test)] mod tests), import from forge::testing
 

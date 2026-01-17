@@ -306,26 +306,70 @@ fn expand_action_impl(input: ItemFn, attrs: ActionAttrs) -> syn::Result<TokenStr
         None => quote! { None },
     };
 
-    // Generate the args struct (use unit type if no args)
-    let args_struct = if args_fields.is_empty() {
-        quote! {
-            #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-            #vis struct #struct_name;
-
-            impl #struct_name {
-                type Args = ();
+    // Check if we have a single custom args type (user-defined struct)
+    // In this case, use it directly instead of wrapping it
+    let single_custom_args_type: Option<&Type> = if arg_params.len() == 1 {
+        if let FnArg::Typed(pat_type) = &arg_params[0] {
+            // Check if it's a custom type (not a primitive)
+            if let Type::Path(type_path) = &*pat_type.ty {
+                if let Some(segment) = type_path.path.segments.last() {
+                    // Use the user's type directly if it looks like a custom Args/Input struct
+                    let type_name = segment.ident.to_string();
+                    if type_name.ends_with("Args")
+                        || type_name.contains("Args")
+                        || type_name.ends_with("Input")
+                        || type_name.contains("Input")
+                    {
+                        Some(&*pat_type.ty)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
             }
+        } else {
+            None
         }
     } else {
-        let args_struct_name = syn::Ident::new(&format!("{}Args", struct_name), fn_name.span());
-        quote! {
-            #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-            #vis struct #args_struct_name {
-                #(#args_fields),*
-            }
+        None
+    };
 
-            #vis struct #struct_name;
-        }
+    // Generate the args struct (use unit type if no args, user type if single custom args)
+    let (args_struct, args_type, execute_call) = if args_fields.is_empty() {
+        (
+            quote! {
+                #vis struct #struct_name;
+            },
+            quote! { () },
+            quote! { #fn_name(ctx).await },
+        )
+    } else if let Some(user_args_type) = single_custom_args_type {
+        // Use the user's args type directly
+        (
+            quote! {
+                #vis struct #struct_name;
+            },
+            quote! { #user_args_type },
+            quote! { #fn_name(ctx, args).await },
+        )
+    } else {
+        // Generate a wrapper struct for multiple args
+        let args_struct_name = syn::Ident::new(&format!("{}Args", struct_name), fn_name.span());
+        (
+            quote! {
+                #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+                #vis struct #args_struct_name {
+                    #(#args_fields),*
+                }
+
+                #vis struct #struct_name;
+            },
+            quote! { #args_struct_name },
+            quote! { #fn_name(ctx, #(args.#arg_names),*).await },
+        )
     };
 
     // Generate the inner function - always take context by reference
@@ -355,20 +399,6 @@ fn expand_action_impl(input: ItemFn, attrs: ActionAttrs) -> syn::Result<TokenStr
                 #vis async fn #fn_name(#ctx_name: &#ctx_type, #(#arg_params),*) -> forge::forge_core::Result<#output_type> #fn_block
             }
         }
-    };
-
-    // Generate the ForgeAction implementation
-    let args_type = if args_fields.is_empty() {
-        quote! { () }
-    } else {
-        let args_struct_name = syn::Ident::new(&format!("{}Args", struct_name), fn_name.span());
-        quote! { #args_struct_name }
-    };
-
-    let execute_call = if arg_names.is_empty() {
-        quote! { #fn_name(ctx).await }
-    } else {
-        quote! { #fn_name(ctx, #(args.#arg_names),*).await }
     };
 
     Ok(quote! {

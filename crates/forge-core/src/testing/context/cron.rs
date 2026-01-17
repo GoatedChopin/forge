@@ -8,6 +8,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::super::mock_http::{MockHttp, MockRequest, MockResponse};
+use super::build_test_auth;
 use crate::env::{EnvAccess, EnvProvider, MockEnvProvider};
 use crate::function::AuthContext;
 
@@ -239,9 +240,16 @@ impl TestCronContextBuilder {
         self
     }
 
-    /// Set the authenticated user.
+    /// Set the authenticated user with a UUID.
     pub fn as_user(mut self, id: Uuid) -> Self {
         self.user_id = Some(id);
+        self
+    }
+
+    /// For non-UUID auth providers (Firebase, Clerk, etc.).
+    pub fn as_subject(mut self, subject: impl Into<String>) -> Self {
+        self.claims
+            .insert("sub".to_string(), serde_json::json!(subject.into()));
         self
     }
 
@@ -286,12 +294,6 @@ impl TestCronContextBuilder {
 
     /// Build the test context.
     pub fn build(self) -> TestCronContext {
-        let auth = if let Some(user_id) = self.user_id {
-            AuthContext::authenticated(user_id, self.roles, self.claims)
-        } else {
-            AuthContext::unauthenticated()
-        };
-
         TestCronContext {
             run_id: self.run_id.unwrap_or_else(Uuid::new_v4),
             cron_name: self.cron_name.clone(),
@@ -299,7 +301,7 @@ impl TestCronContextBuilder {
             execution_time: self.execution_time,
             timezone: self.timezone,
             is_catch_up: self.is_catch_up,
-            auth,
+            auth: build_test_auth(self.user_id, self.roles, self.claims),
             log: TestCronLog::new(self.cron_name),
             pool: self.pool,
             http: Arc::new(self.http),

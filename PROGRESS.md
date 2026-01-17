@@ -262,3 +262,45 @@ Improved developer experience with bare metal dev, codegen, and logging.
 - Modified: dev.rs, new.rs, generate.rs, scheduler.rs, executor.rs, parser.rs, api.rs, types.rs, model.rs
 - Modified templates: main.rs.tmpl, env.tmpl, AGENTS.md.tmpl, client.ts.tmpl, stores.ts.tmpl, types.ts.tmpl, heartbeat_stats_cron.rs.tmpl
 - Made postgresql_embedded always included in CLI, embedded-db feature now only for end users
+
+Optimized commit 54f1506 per CLAUDE.md principles.
+- Changed auth middleware logging from INFO → TRACE level for production appropriateness
+- Removed dead code: sync `extract_auth_context` function (replaced by async version)
+- Added `build_test_auth()` helper to deduplicate auth context creation across 6 test context builders
+- Removed obvious "what" comments throughout (api.rs, rpc.rs, websocket.rs, reactor.rs)
+- Simplified verbose doc comments for `as_subject()` and `require_subject()` (4 lines → 1 line)
+- Simplified cargo patch comment block in new.rs
+- Removed dead code: Firebase auth template references (files never existed)
+- Modified: auth.rs, context.rs, rpc.rs, websocket.rs, reactor.rs, api.rs, new.rs, testing/context/*.rs
+
+Merged Action into Mutation with opt-in transactional support.
+- Deleted Action function type entirely (ForgeAction trait, FunctionKind::Action, ActionContext)
+- Added `transactional: bool` field to FunctionInfo for opt-in transaction wrapping
+- Added HTTP client to MutationContext with ctx.http() accessor
+- Added #[forge::mutation(transactional)] attribute parsing in proc macro
+- Added MockHttp support to TestMutationContext with mock_http(), mock_http_json() builders
+- Removed action macro, test context, templates, codegen across all crates
+- Updated TypeScript runtime templates: removed ActionFn, createAction, action() from types.ts, api.ts, stores.ts, index.ts
+- Updated populated demo: removed Bitcoin price section from page.svelte
+- Updated empty/main.rs.tmpl: removed action registration comment
+- Deleted: action.rs (macros), action.rs (testing), get_bitcoin_price_action.rs.tmpl, action-context.mdx
+- Modified: traits.rs, context.rs, mod.rs, mutation.rs, query.rs, lib.rs, registry.rs, router.rs, executor.rs, parser.rs, api.rs (codegen), function.rs (schema), add.rs, new.rs, runtime.rs, AGENTS.md templates, runtime/*.ts.tmpl, page.svelte.tmpl
+- Updated docs: sidebars.ts, functions.mdx, api/index.mdx, api/testing.mdx, api/env-access.mdx, background/jobs.mdx, background/workflows.mdx, cli/index.mdx, tutorials/testing.mdx, migration guides, how-it-works.mdx, rate-limiting.mdx, quick-start.mdx
+
+Replaced System Health demo with ISS Location tracker in populated template.
+- Created iss_location_cron.rs.tmpl: Cron job polling http://api.open-notify.org/iss-now.json every minute
+- Created iss_location.rs.tmpl: Query returning latest ISS position (lat, lon, timestamp)
+- Deleted heartbeat_stats_cron.rs.tmpl, app_stats.rs.tmpl
+- Updated migration: replaced app_stats table with iss_location table (UUID id, lat/lon DOUBLE PRECISION, api_timestamp, created_at)
+- Updated mod.rs.tmpl, main.rs.tmpl: replaced function registrations
+- Updated page.svelte.tmpl: ISS panel with dark theme, inline SVG logo (space station), lat/lon display with N/S/E/W formatting
+- Updated page.svelte.tmpl: moved user editing from separate card to inline table rows
+- Fixed TypeScript types: createUser/updateUser need role parameter, deleteUser takes string not object
+- Updated eslint.config.js.tmpl: added globals for browser/node, disabled strict svelte rules, ignored auto-generated lib/forge
+- Added globals package to package.json.tmpl devDependencies
+- Modified: new.rs (template references and tests), cli help text
+- Fixed: reqwest errors need explicit map_err (no From impl), ForgeError::Internal capitalization
+- Fixed: Empty object `{}` to `null` normalization in function/job/workflow registries for unit type `()` deserialization
+- Fixed: `{"args": ...}` wrapper unwrapping in normalize_args() for frontend-sent args
+- Fixed: ESLint globals not applying to Svelte files (added globals to svelte languageOptions)
+- Added: .prettierignore template to exclude .forge/ directory from prettier checks

@@ -215,7 +215,6 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
     let connection_auth: Arc<RwLock<AuthContext>> =
         Arc::new(RwLock::new(AuthContext::unauthenticated()));
 
-    // Send connected message
     let connected = ServerMessage::Connected;
     if let Ok(json) = serde_json::to_string(&connected) {
         let _ = ws_sender.send(Message::Text(json.into())).await;
@@ -308,7 +307,6 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
         }
     });
 
-    // Handle incoming messages from client
     while let Some(msg) = ws_receiver.next().await {
         let msg = match msg {
             Ok(Message::Text(text)) => text,
@@ -321,7 +319,6 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
             _ => continue,
         };
 
-        // Parse client message
         let client_msg: ClientMessage = match serde_json::from_str(&msg) {
             Ok(m) => m,
             Err(e) => {
@@ -339,11 +336,9 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
                 if let Some(ref auth_middleware) = state.auth_middleware {
                     match auth_middleware.validate_token_async(&token).await {
                         Ok(claims) => {
-                            // Update connection auth context
                             let auth_context = build_auth_context_from_claims(claims);
                             *connection_auth.write().await = auth_context;
 
-                            // Send success response
                             let _ = state
                                 .reactor
                                 .ws_server()
@@ -387,15 +382,14 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
                 args,
             } => {
                 let normalized_args = args.unwrap_or(serde_json::Value::Null);
+                let auth = connection_auth.read().await.clone();
 
-                // Subscribe through reactor
                 match state
                     .reactor
-                    .subscribe(session_id, id.clone(), function_name, normalized_args)
+                    .subscribe(session_id, id.clone(), function_name, normalized_args, auth)
                     .await
                 {
                     Ok((subscription_id, data)) => {
-                        // Track the mapping
                         {
                             let mut map = client_to_internal.write().await;
                             map.insert(id.clone(), subscription_id);
@@ -405,14 +399,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
                             map.insert(subscription_id, id.clone());
                         }
 
-                        // Send subscribed confirmation + initial data
-                        // Note: These need to go through the reactor channel
-                        // For now, we'll store the messages to send
                         tracing::debug!(?subscription_id, client_id = %id, "Subscription created");
-
-                        // The reactor will send the initial data through the reactor_tx channel
-                        // But we need to send the subscribed confirmation first
-                        // This is a bit awkward - let's inject directly
 
                         // Actually, the data is returned from subscribe, so we should send it
                         // The sender_handle has ws_sender, so we can't send from here directly
@@ -625,11 +612,9 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
         }
     }
 
-    // Clean up on disconnect
     sender_handle.abort();
     state.reactor.remove_session(session_id).await;
 
-    // Remove session from database
     let _ = sqlx::query("DELETE FROM forge_sessions WHERE id = $1")
         .bind(session_uuid)
         .execute(&state.db_pool)

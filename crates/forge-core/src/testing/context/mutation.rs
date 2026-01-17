@@ -7,6 +7,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::super::mock_dispatch::{MockJobDispatch, MockWorkflowDispatch};
+use super::build_test_auth;
 use crate::Result;
 use crate::env::{EnvAccess, EnvProvider, MockEnvProvider};
 use crate::function::{AuthContext, RequestMetadata};
@@ -80,6 +81,11 @@ impl TestMutationContext {
         self.auth.require_user_id()
     }
 
+    /// Like `require_user_id()` but for non-UUID auth providers.
+    pub fn require_subject(&self) -> Result<&str> {
+        self.auth.require_subject()
+    }
+
     /// Dispatch a job (records for later verification).
     pub async fn dispatch_job<T: serde::Serialize>(&self, job_type: &str, args: T) -> Result<Uuid> {
         self.job_dispatch.dispatch(job_type, args).await
@@ -128,9 +134,16 @@ impl Default for TestMutationContextBuilder {
 }
 
 impl TestMutationContextBuilder {
-    /// Set the authenticated user.
+    /// Set the authenticated user with a UUID.
     pub fn as_user(mut self, id: Uuid) -> Self {
         self.user_id = Some(id);
+        self
+    }
+
+    /// For non-UUID auth providers (Firebase, Clerk, etc.).
+    pub fn as_subject(mut self, subject: impl Into<String>) -> Self {
+        self.claims
+            .insert("sub".to_string(), serde_json::json!(subject.into()));
         self
     }
 
@@ -184,14 +197,8 @@ impl TestMutationContextBuilder {
 
     /// Build the test context.
     pub fn build(self) -> TestMutationContext {
-        let auth = if let Some(user_id) = self.user_id {
-            AuthContext::authenticated(user_id, self.roles, self.claims)
-        } else {
-            AuthContext::unauthenticated()
-        };
-
         TestMutationContext {
-            auth,
+            auth: build_test_auth(self.user_id, self.roles, self.claims),
             request: RequestMetadata::default(),
             pool: self.pool,
             job_dispatch: self.job_dispatch,

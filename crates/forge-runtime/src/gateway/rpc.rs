@@ -1,9 +1,8 @@
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::{
     Json,
-    extract::{ConnectInfo, Extension, State},
+    extract::{Extension, State},
     http::{HeaderMap, header::USER_AGENT},
 };
 use forge_core::function::{AuthContext, JobDispatch, RequestMetadata, WorkflowDispatch};
@@ -54,7 +53,6 @@ impl RpcHandler {
         auth: AuthContext,
         metadata: RequestMetadata,
     ) -> RpcResponse {
-        // Check if function exists
         if !self.executor.has_function(&request.function) {
             return RpcResponse::error(RpcError::not_found(format!(
                 "Function '{}' not found",
@@ -63,7 +61,6 @@ impl RpcHandler {
             .with_request_id(metadata.request_id.to_string());
         }
 
-        // Execute function
         match self
             .executor
             .execute(&request.function, request.args, auth, metadata.clone())
@@ -88,15 +85,13 @@ impl RpcHandler {
     }
 }
 
-/// Extract client IP from X-Forwarded-For header or socket address.
-fn extract_client_ip(headers: &HeaderMap, socket_addr: &SocketAddr) -> Option<String> {
-    // First try X-Forwarded-For (from reverse proxies)
+/// Extract client IP from X-Forwarded-For or X-Real-IP headers.
+fn extract_client_ip(headers: &HeaderMap) -> Option<String> {
     headers
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.split(',').next().unwrap_or("").trim().to_string())
         .filter(|s| !s.is_empty())
-        // Fall back to X-Real-IP
         .or_else(|| {
             headers
                 .get("x-real-ip")
@@ -104,8 +99,6 @@ fn extract_client_ip(headers: &HeaderMap, socket_addr: &SocketAddr) -> Option<St
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
         })
-        // Fall back to socket address
-        .or_else(|| Some(socket_addr.ip().to_string()))
 }
 
 /// Extract user agent from headers.
@@ -119,7 +112,6 @@ fn extract_user_agent(headers: &HeaderMap) -> Option<String> {
 /// Axum handler for POST /rpc.
 pub async fn rpc_handler(
     State(handler): State<Arc<RpcHandler>>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Extension(auth): Extension<AuthContext>,
     Extension(tracing): Extension<TracingState>,
     headers: HeaderMap,
@@ -129,7 +121,7 @@ pub async fn rpc_handler(
         request_id: uuid::Uuid::parse_str(&tracing.request_id)
             .unwrap_or_else(|_| uuid::Uuid::new_v4()),
         trace_id: tracing.trace_id,
-        client_ip: extract_client_ip(&headers, &addr),
+        client_ip: extract_client_ip(&headers),
         user_agent: extract_user_agent(&headers),
         timestamp: chrono::Utc::now(),
     };
@@ -148,7 +140,6 @@ pub struct RpcFunctionBody {
 /// Axum handler for POST /rpc/:function (REST-style).
 pub async fn rpc_function_handler(
     State(handler): State<Arc<RpcHandler>>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Extension(auth): Extension<AuthContext>,
     Extension(tracing): Extension<TracingState>,
     headers: HeaderMap,
@@ -161,7 +152,7 @@ pub async fn rpc_function_handler(
         request_id: uuid::Uuid::parse_str(&tracing.request_id)
             .unwrap_or_else(|_| uuid::Uuid::new_v4()),
         trace_id: tracing.trace_id,
-        client_ip: extract_client_ip(&headers, &addr),
+        client_ip: extract_client_ip(&headers),
         user_agent: extract_user_agent(&headers),
         timestamp: chrono::Utc::now(),
     };

@@ -7,6 +7,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::super::mock_http::{MockHttp, MockRequest, MockResponse};
+use super::build_test_auth;
 use crate::Result;
 use crate::env::{EnvAccess, EnvProvider, MockEnvProvider};
 use crate::function::AuthContext;
@@ -173,9 +174,16 @@ impl TestJobContextBuilder {
         self
     }
 
-    /// Set the authenticated user.
+    /// Set the authenticated user with a UUID.
     pub fn as_user(mut self, id: Uuid) -> Self {
         self.user_id = Some(id);
+        self
+    }
+
+    /// For non-UUID auth providers (Firebase, Clerk, etc.).
+    pub fn as_subject(mut self, subject: impl Into<String>) -> Self {
+        self.claims
+            .insert("sub".to_string(), serde_json::json!(subject.into()));
         self
     }
 
@@ -220,18 +228,12 @@ impl TestJobContextBuilder {
 
     /// Build the test context.
     pub fn build(self) -> TestJobContext {
-        let auth = if let Some(user_id) = self.user_id {
-            AuthContext::authenticated(user_id, self.roles, self.claims)
-        } else {
-            AuthContext::unauthenticated()
-        };
-
         TestJobContext {
             job_id: self.job_id.unwrap_or_else(Uuid::new_v4),
             job_type: self.job_type,
             attempt: self.attempt,
             max_attempts: self.max_attempts,
-            auth,
+            auth: build_test_auth(self.user_id, self.roles, self.claims),
             pool: self.pool,
             http: Arc::new(self.http),
             progress_updates: Arc::new(RwLock::new(Vec::new())),

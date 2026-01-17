@@ -30,7 +30,7 @@ FORGE is designed to be simple on the surface but powerful underneath. Let's pee
 │                                                                  │
 │   ┌─────────────────────────────────────────────────────────┐   │
 │   │                    Function Executor                      │   │
-│   │         (Queries, Mutations, Actions)                     │   │
+│   │              (Queries, Mutations)                         │   │
 │   └─────────────────────────────────────────────────────────┘   │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
@@ -67,8 +67,7 @@ pub async fn get_user(ctx: &QueryContext, id: Uuid) -> Result<User> {
 
 The executor runs your functions with the right context:
 - **Queries** get `QueryContext` (read-only database access)
-- **Mutations** get `MutationContext` (read-write + job dispatch)
-- **Actions** get `ActionContext` (+ HTTP client for external APIs)
+- **Mutations** get `MutationContext` (read-write + HTTP client + job dispatch)
 
 ```rust
 // The executor provides the context automatically
@@ -298,7 +297,7 @@ All nodes share state through PostgreSQL. No Redis needed.
         <h3>⚙️ Functions</h3>
       </div>
       <div className="card__body">
-        Queries, Mutations, Actions
+        Queries and Mutations
       </div>
     </a>
   </div>

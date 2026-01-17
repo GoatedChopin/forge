@@ -6,6 +6,10 @@
 //! - Mocking capabilities (HTTP, job dispatch, workflow dispatch)
 //! - Context-specific fields (job_id, attempt, cron schedule, etc.)
 
+use crate::function::AuthContext;
+use std::collections::HashMap;
+use uuid::Uuid;
+
 mod action;
 mod cron;
 mod job;
@@ -19,3 +23,19 @@ pub use job::{TestJobContext, TestJobContextBuilder, TestProgressUpdate};
 pub use mutation::{TestMutationContext, TestMutationContextBuilder};
 pub use query::{TestQueryContext, TestQueryContextBuilder};
 pub use workflow::{TestWorkflowContext, TestWorkflowContextBuilder};
+
+/// Build an AuthContext from test builder fields.
+/// Handles UUID-based users, subject-based auth (Firebase/Clerk), and unauthenticated.
+pub(crate) fn build_test_auth(
+    user_id: Option<Uuid>,
+    roles: Vec<String>,
+    claims: HashMap<String, serde_json::Value>,
+) -> AuthContext {
+    if let Some(user_id) = user_id {
+        AuthContext::authenticated(user_id, roles, claims)
+    } else if claims.contains_key("sub") {
+        AuthContext::authenticated_without_uuid(roles, claims)
+    } else {
+        AuthContext::unauthenticated()
+    }
+}

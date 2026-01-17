@@ -31,7 +31,7 @@ let timeout: u32 = ctx.env_parse("TIMEOUT")?;
 
 ## Available Methods
 
-All context types (`QueryContext`, `MutationContext`, `ActionContext`, `JobContext`, `CronContext`, `WorkflowContext`) implement `EnvAccess`:
+All context types (`QueryContext`, `MutationContext`, `JobContext`, `CronContext`, `WorkflowContext`) implement `EnvAccess`:
 
 | Method | Returns | Description |
 |--------|---------|-------------|
@@ -73,8 +73,8 @@ async fn get_settings(ctx: &QueryContext) -> Result<Settings> {
 ### Required Variables
 
 ```rust
-#[forge::action]
-async fn charge_card(ctx: &ActionContext, input: ChargeInput) -> Result<Charge> {
+#[forge::mutation]
+async fn charge_card(ctx: &MutationContext, input: ChargeInput) -> Result<Charge> {
     // Returns error if not set: "Required environment variable 'STRIPE_API_KEY' not set"
     let api_key = ctx.env_require("STRIPE_API_KEY")?;
 
@@ -135,7 +135,7 @@ use forge::prelude::*;
 
 #[tokio::test]
 async fn test_with_env_vars() {
-    let ctx = TestActionContext::builder()
+    let ctx = TestMutationContext::builder()
         .with_env("STRIPE_API_KEY", "sk_test_xxx")
         .with_env("TIMEOUT", "60")
         .build();
@@ -173,7 +173,7 @@ You can verify which environment variables were accessed:
 ```rust
 #[tokio::test]
 async fn test_env_access_verification() {
-    let ctx = TestActionContext::builder()
+    let ctx = TestMutationContext::builder()
         .with_env("REQUIRED_KEY", "value")
         .with_env("OPTIONAL_KEY", "other")
         .build();
@@ -196,7 +196,7 @@ async fn test_env_access_verification() {
 ```rust
 #[tokio::test]
 async fn test_missing_env_var() {
-    let ctx = TestActionContext::builder().build();  // No env vars set
+    let ctx = TestMutationContext::builder().build();  // No env vars set
 
     let result = ctx.env_require("MISSING_KEY");
     assert!(result.is_err());
@@ -229,8 +229,8 @@ async fn test_invalid_env_var() {
 ### API Integration
 
 ```rust
-#[forge::action]
-async fn send_email(ctx: &ActionContext, input: EmailInput) -> Result<EmailResult> {
+#[forge::mutation]
+async fn send_email(ctx: &MutationContext, input: EmailInput) -> Result<EmailResult> {
     let api_key = ctx.env_require("SENDGRID_API_KEY")?;
     let from_email = ctx.env_or("FROM_EMAIL", "noreply@example.com");
     let sandbox: bool = ctx.env_parse_or("SENDGRID_SANDBOX", false)?;
@@ -253,7 +253,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_email() {
-        let ctx = TestActionContext::builder()
+        let ctx = TestMutationContext::builder()
             .with_env("SENDGRID_API_KEY", "SG.test_key")
             .with_env("SENDGRID_SANDBOX", "true")
             .mock_http_json("https://api.sendgrid.com/*", serde_json::json!({
@@ -308,4 +308,4 @@ async fn sync_inventory(ctx: &JobContext, input: SyncInput) -> Result<()> {
 
 - [Testing](/docs/api/testing) - Full testing guide with MockEnvProvider
 - [Configuration](/docs/api/configuration) - forge.toml configuration reference
-- [ActionContext](/docs/api/action-context) - External API integrations
+- [MutationContext](/docs/api/mutation-context) - Data modification + external API integrations

@@ -13,7 +13,7 @@ This guide helps you migrate from Supabase to FORGE while keeping your PostgreSQ
 | Supabase | FORGE Equivalent |
 |----------|------------------|
 | PostgREST (auto-API) | Rust query/mutation functions |
-| Edge Functions (Deno) | Jobs, Actions, Workflows |
+| Edge Functions (Deno) | Jobs, Mutations, Workflows |
 | pg_cron | Built-in cron |
 | Realtime | PostgreSQL NOTIFY subscriptions |
 | Auth | Built-in JWT auth |
@@ -180,7 +180,7 @@ pub async fn send_email(ctx: &JobContext, input: SendEmailInput) -> Result<()> {
 }
 ```
 
-## Step 6: Convert Webhooks to Actions
+## Step 6: Convert Webhooks to Mutations
 
 **Supabase webhook handler:**
 ```typescript
@@ -194,10 +194,10 @@ serve(async (req) => {
 });
 ```
 
-**FORGE Action:**
+**FORGE Mutation:**
 ```rust
-#[forge::action]
-pub async fn stripe_webhook(ctx: &ActionContext, event: StripeEvent) -> Result<()> {
+#[forge::mutation]
+pub async fn stripe_webhook(ctx: &MutationContext, event: StripeEvent) -> Result<()> {
     match event.type_.as_str() {
         "checkout.session.completed" => {
             ctx.dispatch_job("fulfill_order", event.data).await?;
@@ -311,7 +311,7 @@ Export users and implement password reset flow for migration.
 - [ ] Create FORGE project with `forge new`
 - [ ] Create Rust models for each table
 - [ ] Convert PostgREST queries to FORGE functions
-- [ ] Convert Edge Functions to Jobs/Actions
+- [ ] Convert Edge Functions to Jobs/Mutations
 - [ ] Convert pg_cron to FORGE crons
 - [ ] Update Realtime subscriptions
 - [ ] Migrate data

@@ -45,7 +45,7 @@ forge new <project-name> --demo|--minimal [options]
 
 | Option | Description |
 |--------|-------------|
-| `--demo` | Full demo project with working examples (User CRUD, jobs, workflows, cron tasks, external API actions, complete frontend UI) |
+| `--demo` | Full demo project with working examples (User CRUD, jobs, workflows, cron tasks, complete frontend UI) |
 | `--minimal` | Clean project with just the structure (empty directories with commented examples, starter frontend) |
 
 **Additional Options:**
@@ -90,8 +90,7 @@ my-app/
 │       ├── users.rs     # CRUD queries/mutations
 │       ├── export_users_job.rs
 │       ├── heartbeat_stats_cron.rs
-│       ├── account_verification_workflow.rs
-│       └── get_bitcoin_price_action.rs
+│       └── account_verification_workflow.rs
 ├── migrations/
 │   └── 0001_initial.sql # User tables migration
 └── frontend/
@@ -317,7 +316,7 @@ forge add <type> <name>
 ```
 
 **Arguments:**
-- `<type>` - Function type: `query`, `mutation`, `action`, `job`, `cron`, `workflow`
+- `<type>` - Function type: `query`, `mutation`, `job`, `cron`, `workflow`
 - `<name>` - Function name (snake_case)
 
 **Examples:**

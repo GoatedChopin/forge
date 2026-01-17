@@ -112,6 +112,18 @@ impl AuthContext {
     pub fn subject(&self) -> Option<&str> {
         self.claims.get("sub").and_then(|v| v.as_str())
     }
+
+    /// Like `require_user_id()` but returns the raw subject string for non-UUID providers.
+    pub fn require_subject(&self) -> crate::error::Result<&str> {
+        if !self.authenticated {
+            return Err(crate::error::ForgeError::Unauthorized(
+                "Authentication required".to_string(),
+            ));
+        }
+        self.subject().ok_or_else(|| {
+            crate::error::ForgeError::Unauthorized("No subject claim in token".to_string())
+        })
+    }
 }
 
 /// Request metadata available to all functions.
@@ -206,6 +218,11 @@ impl QueryContext {
     pub fn require_user_id(&self) -> crate::error::Result<Uuid> {
         self.auth.require_user_id()
     }
+
+    /// Like `require_user_id()` but for non-UUID auth providers.
+    pub fn require_subject(&self) -> crate::error::Result<&str> {
+        self.auth.require_subject()
+    }
 }
 
 impl EnvAccess for QueryContext {
@@ -288,6 +305,11 @@ impl MutationContext {
     /// Get the authenticated user ID or return an error.
     pub fn require_user_id(&self) -> crate::error::Result<Uuid> {
         self.auth.require_user_id()
+    }
+
+    /// Like `require_user_id()` but for non-UUID auth providers.
+    pub fn require_subject(&self) -> crate::error::Result<&str> {
+        self.auth.require_subject()
     }
 
     /// Dispatch a background job.
@@ -428,6 +450,11 @@ impl ActionContext {
     /// Get the authenticated user ID or return an error.
     pub fn require_user_id(&self) -> crate::error::Result<Uuid> {
         self.auth.require_user_id()
+    }
+
+    /// Like `require_user_id()` but for non-UUID auth providers.
+    pub fn require_subject(&self) -> crate::error::Result<&str> {
+        self.auth.require_subject()
     }
 
     /// Dispatch a background job.
