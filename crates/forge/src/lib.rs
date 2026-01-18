@@ -18,28 +18,12 @@ pub use forge_runtime::migrations::Migration;
 // Re-export testing utilities
 pub use forge_core::testing;
 
-/// Internal FORGE schema SQL.
+/// All internal FORGE schema SQL concatenated.
 ///
-/// This SQL creates all forge internal tables and functions required by
-/// user migrations that use forge features like `forge_enable_reactivity`.
-///
-/// # Example
-///
-/// ```ignore
-/// use forge::testing::TestDatabase;
-/// use forge::FORGE_INTERNAL_SQL;
-///
-/// let base = TestDatabase::embedded().await?;
-/// let db = base.isolated("my_test").await?;
-///
-/// // Run forge internals first (needed for forge_enable_reactivity, etc.)
-/// db.run_sql(FORGE_INTERNAL_SQL).await?;
-///
-/// // Then run your migrations
-/// db.migrate(Path::new("migrations")).await?;
-/// ```
-pub const FORGE_INTERNAL_SQL: &str =
-    include_str!("../../forge-runtime/migrations/system/v001_initial.sql");
+/// For tests: apply before user migrations. In production, migration runner handles versioning.
+pub fn get_internal_sql() -> String {
+    forge_runtime::migrations::get_all_system_sql()
+}
 
 pub use runtime::prelude;
 pub use runtime::{Forge, ForgeBuilder};

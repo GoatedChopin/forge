@@ -34,7 +34,16 @@ impl ApiGenerator {
                 let arg = &func.args[0];
                 let ts_type = rust_type_to_ts(&arg.rust_type);
                 collect_custom_types(&arg.rust_type, &mut type_imports);
-                ts_type
+                // Check if it's a custom Args/Input type (used directly by Rust macro)
+                let is_custom_args_type = matches!(&arg.rust_type, RustType::Custom(name)
+                    if name.ends_with("Args") || name.contains("Args")
+                    || name.ends_with("Input") || name.contains("Input"));
+                if is_custom_args_type {
+                    ts_type
+                } else {
+                    // Wrap in object to match Rust's generated Args struct
+                    format!("{{ {}: {} }}", arg.name, ts_type)
+                }
             } else {
                 let fields: Vec<String> = func
                     .args

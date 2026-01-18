@@ -68,6 +68,18 @@ pub fn get_builtin_migrations() -> Vec<Migration> {
         .collect()
 }
 
+/// Get all system migrations SQL concatenated.
+///
+/// Use for test setup before running user migrations.
+/// In production, use [`get_builtin_migrations`] for versioned application.
+pub fn get_all_system_sql() -> String {
+    get_system_migrations()
+        .into_iter()
+        .map(|m| m.sql)
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
 /// Check if a migration name is a system migration.
 pub fn is_system_migration(name: &str) -> bool {
     name.starts_with(SYSTEM_MIGRATION_PREFIX) || name == LEGACY_MIGRATION_NAME

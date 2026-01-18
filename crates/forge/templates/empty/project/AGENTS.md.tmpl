@@ -99,7 +99,7 @@ mod tests {
     async fn setup_db(name: &str) -> (IsolatedTestDb, sqlx::PgPool) {
         let base = TestDatabase::embedded().await.unwrap();
         let db = base.isolated(name).await.unwrap();
-        db.run_sql(forge::FORGE_INTERNAL_SQL).await.unwrap();
+        db.run_sql(&forge::get_internal_sql()).await.unwrap();
         db.migrate(Path::new("migrations")).await.unwrap();
         (db, db.pool().clone())
     }

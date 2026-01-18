@@ -269,7 +269,7 @@ impl CheckCommand {
         } else {
             result.fail(
                 "forge dependency not found",
-                "Add forge = { version = \"0.0.2-alpha\", package = \"forgex\" } to [dependencies]",
+                "Add forge = { version = \"0.0.3\", package = \"forgex\" } to [dependencies]",
             );
         }
 
