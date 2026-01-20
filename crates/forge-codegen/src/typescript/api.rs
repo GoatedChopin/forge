@@ -1,47 +1,41 @@
-use std::path::PathBuf;
-
 use forge_core::schema::{FunctionKind, RustType, SchemaRegistry};
 
 use super::Error;
 
 /// Generates TypeScript API bindings.
-pub struct ApiGenerator {
-    #[allow(dead_code)]
-    output_dir: PathBuf,
-}
+#[derive(Default)]
+pub struct ApiGenerator;
 
 impl ApiGenerator {
     /// Create a new API generator.
-    pub fn new(output_dir: impl Into<PathBuf>) -> Self {
-        Self {
-            output_dir: output_dir.into(),
-        }
+    pub fn new() -> Self {
+        Self
     }
 
     pub fn generate(&self, registry: &SchemaRegistry) -> Result<String, Error> {
         let mut output = String::new();
-        let mut type_imports: Vec<String> = Vec::new();
+        let mut type_imports = Vec::new();
         let functions = registry.all_functions();
-        let mut queries: Vec<String> = Vec::new();
-        let mut mutations: Vec<String> = Vec::new();
-        let mut jobs: Vec<String> = Vec::new();
-        let mut workflows: Vec<String> = Vec::new();
+        let mut queries = Vec::new();
+        let mut mutations = Vec::new();
+        let mut jobs = Vec::new();
+        let mut workflows = Vec::new();
 
         for func in &functions {
+            let has_args = !func.args.is_empty();
             let args_type = if func.args.is_empty() {
                 "null".to_string()
             } else if func.args.len() == 1 {
                 let arg = &func.args[0];
                 let ts_type = rust_type_to_ts(&arg.rust_type);
                 collect_custom_types(&arg.rust_type, &mut type_imports);
-                // Check if it's a custom Args/Input type (used directly by Rust macro)
+                // Custom Args/Input types from Rust macros are used directly
                 let is_custom_args_type = matches!(&arg.rust_type, RustType::Custom(name)
                     if name.ends_with("Args") || name.contains("Args")
                     || name.ends_with("Input") || name.contains("Input"));
                 if is_custom_args_type {
                     ts_type
                 } else {
-                    // Wrap in object to match Rust's generated Args struct
                     format!("{{ {}: {} }}", arg.name, ts_type)
                 }
             } else {
@@ -61,34 +55,26 @@ impl ApiGenerator {
 
             match func.kind {
                 FunctionKind::Query => {
-                    let result_type = rust_type_to_ts(&func.return_type);
+                    let result_type = rust_type_to_ts_return(&func.return_type);
                     collect_custom_types(&func.return_type, &mut type_imports);
-                    queries.push(format!(
-                        "export const {} = createQuery<{}, {}>(\"{}\");",
-                        ts_name, args_type, result_type, func.name
-                    ));
+                    queries.push(gen_rpc_binding(&ts_name, has_args, &args_type, &result_type, &func.name));
                 }
                 FunctionKind::Mutation => {
-                    let result_type = rust_type_to_ts(&func.return_type);
+                    let result_type = rust_type_to_ts_return(&func.return_type);
                     collect_custom_types(&func.return_type, &mut type_imports);
-                    mutations.push(format!(
-                        "export const {} = createMutation<{}, {}>(\"{}\");",
-                        ts_name, args_type, result_type, func.name
-                    ));
+                    mutations.push(gen_rpc_binding(&ts_name, has_args, &args_type, &result_type, &func.name));
                 }
                 FunctionKind::Job => {
-                    let factory_name = format!("create{}Job", to_pascal_case(&func.name));
-                    jobs.push(format!(
-                        "export const {} = () => createJobTracker<{}>(\"{}\");",
-                        factory_name, args_type, func.name
-                    ));
+                    let factory_name = format!("track{}", to_pascal_case(&func.name));
+                    let output_type = rust_type_to_ts_return(&func.return_type);
+                    collect_custom_types(&func.return_type, &mut type_imports);
+                    jobs.push(gen_store_binding(&factory_name, has_args, &args_type, &output_type, &func.name, "createJobStore"));
                 }
                 FunctionKind::Workflow => {
-                    let factory_name = format!("create{}Workflow", to_pascal_case(&func.name));
-                    workflows.push(format!(
-                        "export const {} = () => createWorkflowTracker<{}>(\"{}\");",
-                        factory_name, args_type, func.name
-                    ));
+                    let factory_name = format!("track{}", to_pascal_case(&func.name));
+                    let output_type = rust_type_to_ts_return(&func.return_type);
+                    collect_custom_types(&func.return_type, &mut type_imports);
+                    workflows.push(gen_store_binding(&factory_name, has_args, &args_type, &output_type, &func.name, "createWorkflowStore"));
                 }
                 FunctionKind::Cron => {}
             }
@@ -96,15 +82,14 @@ impl ApiGenerator {
 
         output.push_str("// Auto-generated by FORGE - DO NOT EDIT\n\n");
 
-        // Determine which helpers are needed based on function types
         let has_jobs = !jobs.is_empty();
         let has_workflows = !workflows.is_empty();
-        let mut helpers: Vec<&str> = vec!["createQuery", "createMutation"];
+        let mut helpers: Vec<&str> = vec!["getForgeClient"];
         if has_jobs {
-            helpers.push("createJobTracker");
+            helpers.push("createJobStore");
         }
         if has_workflows {
-            helpers.push("createWorkflowTracker");
+            helpers.push("createWorkflowStore");
         }
         output.push_str(&format!(
             "import {{ {} }} from \"@forge/svelte\";\n",
@@ -162,29 +147,79 @@ impl ApiGenerator {
     }
 }
 
+fn gen_rpc_binding(ts_name: &str, has_args: bool, args_type: &str, result_type: &str, func_name: &str) -> String {
+    if has_args {
+        format!(
+            "export const {} = (args: {}): Promise<{}> =>\n  getForgeClient().call(\"{}\", args);",
+            ts_name, args_type, result_type, func_name
+        )
+    } else {
+        format!(
+            "export const {} = (): Promise<{}> =>\n  getForgeClient().call(\"{}\", null);",
+            ts_name, result_type, func_name
+        )
+    }
+}
+
+fn gen_store_binding(factory_name: &str, has_args: bool, args_type: &str, output_type: &str, func_name: &str, store_fn: &str) -> String {
+    if has_args {
+        format!(
+            "export const {} = (args: {}) =>\n  {}<{}, {}>(\"{}\", args);",
+            factory_name, args_type, store_fn, args_type, output_type, func_name
+        )
+    } else {
+        format!(
+            "export const {} = () =>\n  {}<null, {}>(\"{}\", null);",
+            factory_name, store_fn, output_type, func_name
+        )
+    }
+}
+
 fn collect_custom_types(rust_type: &RustType, imports: &mut Vec<String>) {
     match rust_type {
         RustType::Custom(name) => {
-            if name != "()" && !name.starts_with("Vec<") && !name.starts_with("HashMap<") {
+            // Skip unit type, container types, and primitive-mapped types
+            let skip = name == "()"
+                || name.starts_with("Vec<")
+                || name.starts_with("HashMap<")
+                || matches!(name.as_str(), "Instant" | "LocalDate" | "LocalTime" | "Upload" | "Bytes");
+            if !skip {
                 imports.push(name.clone());
             }
         }
         RustType::Option(inner) | RustType::Vec(inner) => collect_custom_types(inner, imports),
+        RustType::Instant | RustType::LocalDate | RustType::LocalTime | RustType::Upload | RustType::Bytes => {}
         _ => {}
     }
 }
 
 fn rust_type_to_ts(rust_type: &RustType) -> String {
+    rust_type_to_ts_inner(rust_type, false)
+}
+
+fn rust_type_to_ts_return(rust_type: &RustType) -> String {
+    rust_type_to_ts_inner(rust_type, true)
+}
+
+fn rust_type_to_ts_inner(rust_type: &RustType, is_return: bool) -> String {
     match rust_type {
         RustType::String | RustType::Uuid | RustType::DateTime | RustType::Date => {
             "string".to_string()
         }
+        RustType::Instant | RustType::LocalDate | RustType::LocalTime => "string".to_string(),
+        RustType::Upload => "File | Blob".to_string(),
         RustType::I32 | RustType::I64 | RustType::F32 | RustType::F64 => "number".to_string(),
         RustType::Bool => "boolean".to_string(),
         RustType::Json => "unknown".to_string(),
-        RustType::Bytes => "Uint8Array".to_string(),
-        RustType::Option(inner) => format!("{} | null", rust_type_to_ts(inner)),
-        RustType::Vec(inner) => format!("{}[]", rust_type_to_ts(inner)),
+        RustType::Bytes => {
+            if is_return {
+                "Blob".to_string()
+            } else {
+                "Uint8Array".to_string()
+            }
+        }
+        RustType::Option(inner) => format!("{} | null", rust_type_to_ts_inner(inner, is_return)),
+        RustType::Vec(inner) => format!("{}[]", rust_type_to_ts_inner(inner, is_return)),
         RustType::Custom(name) => {
             if name == "()" {
                 return "void".to_string();
@@ -258,23 +293,17 @@ mod tests {
     use forge_core::schema::{FunctionArg, FunctionDef};
 
     #[test]
-    fn test_api_generator_creation() {
-        let generator = ApiGenerator::new("/tmp/forge");
-        assert_eq!(generator.output_dir, PathBuf::from("/tmp/forge"));
-    }
-
-    #[test]
     fn test_generate_empty_registry() {
-        let generator = ApiGenerator::new("/tmp/forge");
+        let generator = ApiGenerator::new();
         let registry = SchemaRegistry::new();
         let content = generator.generate(&registry).unwrap();
         assert!(content.contains("Auto-generated by FORGE"));
-        assert!(content.contains("import { createQuery, createMutation }"));
+        assert!(content.contains("import { getForgeClient }"));
     }
 
     #[test]
     fn test_generate_with_functions() {
-        let generator = ApiGenerator::new("/tmp/forge");
+        let generator = ApiGenerator::new();
         let registry = SchemaRegistry::new();
 
         // Add a query function
@@ -290,9 +319,11 @@ mod tests {
 
         let content = generator.generate(&registry).unwrap();
 
-        // Check that bindings are generated
-        assert!(content.contains("export const getUser = createQuery"));
-        assert!(content.contains("export const createUser = createMutation"));
+        // Check that bindings are generated as direct calls
+        assert!(content.contains("export const getUser = (args:"));
+        assert!(content.contains("getForgeClient().call(\"get_user\""));
+        assert!(content.contains("export const createUser = (args:"));
+        assert!(content.contains("getForgeClient().call(\"create_user\""));
     }
 
     #[test]
@@ -310,6 +341,28 @@ mod tests {
             "number[]"
         );
         assert_eq!(rust_type_to_ts(&RustType::Custom("()".to_string())), "void");
+    }
+
+    #[test]
+    fn test_new_datetime_types() {
+        // New datetime types should map to string
+        assert_eq!(rust_type_to_ts(&RustType::Instant), "string");
+        assert_eq!(rust_type_to_ts(&RustType::LocalDate), "string");
+        assert_eq!(rust_type_to_ts(&RustType::LocalTime), "string");
+    }
+
+    #[test]
+    fn test_upload_type() {
+        // Upload should map to File | Blob for args
+        assert_eq!(rust_type_to_ts(&RustType::Upload), "File | Blob");
+    }
+
+    #[test]
+    fn test_bytes_return_type() {
+        // Bytes as return type should map to Blob
+        assert_eq!(rust_type_to_ts_return(&RustType::Bytes), "Blob");
+        // Bytes as arg type should map to Uint8Array
+        assert_eq!(rust_type_to_ts(&RustType::Bytes), "Uint8Array");
     }
 
     #[test]

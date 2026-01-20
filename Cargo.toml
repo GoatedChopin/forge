@@ -39,11 +39,13 @@ serde_json = "1.0"
 toml = "0.9"
 
 # HTTP/WebSocket
-axum = { version = "0.8", features = ["ws"] }
+axum = { version = "0.8", features = ["ws", "multipart"] }
+axum-extra = { version = "0.10", features = ["typed-header"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip"] }
 hyper = { version = "1.8", features = ["full"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+async-stream = "0.3"
 
 # gRPC
 tonic = "0.14"
@@ -53,6 +55,7 @@ prost = "0.14"
 uuid = { version = "1.19", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
+bytes = "1.10"
 cron = "0.15"
 thiserror = "2.0"
 anyhow = "1.0"

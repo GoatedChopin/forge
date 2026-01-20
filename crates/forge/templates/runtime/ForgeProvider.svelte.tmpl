@@ -32,13 +32,15 @@
       props.onConnectionChange?.(state);
     });
 
-    (async () => {
-      try { await client.connect(); } catch {}
+    // Connect handles token resolution internally before establishing SSE
+    client.connect().then(async () => {
       if (props.getToken) {
         authState.token = await props.getToken();
       }
       authState.loading = false;
-    })();
+    }).catch(() => {
+      authState.loading = false;
+    });
 
     return unsubscribe;
   });

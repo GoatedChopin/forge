@@ -11,6 +11,7 @@ pub mod rate_limit;
 pub mod realtime;
 pub mod schema;
 pub mod tenant;
+pub mod types;
 pub mod workflow;
 
 // Testing utilities
@@ -42,3 +43,4 @@ pub use workflow::{
     ForgeWorkflow, ParallelBuilder, ParallelResults, SuspendReason, WorkflowContext, WorkflowEvent,
     WorkflowEventSender, WorkflowInfo, WorkflowStatus,
 };
+pub use types::{Instant, LocalDate, LocalTime, Upload};

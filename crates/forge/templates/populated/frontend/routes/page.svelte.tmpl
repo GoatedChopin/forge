@@ -1,23 +1,19 @@
 <script lang="ts">
-  import { subscribe, mutate } from "@forge/svelte";
   import {
-    getUsers,
     createUser,
     updateUser,
     deleteUser,
-    getIssLocation,
-    createExportUsersJob,
-    createAccountVerificationWorkflow,
+    trackExportUsers,
+    trackAccountVerification,
   } from "$lib/forge";
+  import { createSubscriptionStore } from "@forge/svelte";
   import type { User } from "$lib/forge/types";
-  import { onMount, onDestroy } from "svelte";
 
-  const ACTIVE_JOB_KEY = "forge_active_job_id";
-  const ACTIVE_WORKFLOW_KEY = "forge_active_workflow_id";
   const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8080";
 
-  const users = subscribe(getUsers, null);
-  const issLocation = subscribe(getIssLocation, null);
+  // Reactive subscriptions for real-time data
+  const users = createSubscriptionStore<null, User[]>("get_users", null);
+  const issLocation = createSubscriptionStore<null, { latitude: number; longitude: number; created_at: string } | null>("get_iss_location", null);
 
   let name = $state("");
   let email = $state("");
@@ -33,29 +29,9 @@
   // Delete confirmation popover state
   let deletePopoverUserId = $state<string | null>(null);
 
-  const exportUsersJob = createExportUsersJob();
-  const verifyAccountWorkflow = createAccountVerificationWorkflow();
-
-  onMount(() => {
-    const savedJobId = localStorage.getItem(ACTIVE_JOB_KEY);
-    if (savedJobId) {
-      exportUsersJob.resume(savedJobId, () => {
-        localStorage.removeItem(ACTIVE_JOB_KEY);
-      });
-    }
-
-    const savedWorkflowId = localStorage.getItem(ACTIVE_WORKFLOW_KEY);
-    if (savedWorkflowId) {
-      verifyAccountWorkflow.resume(savedWorkflowId, () => {
-        localStorage.removeItem(ACTIVE_WORKFLOW_KEY);
-      });
-    }
-  });
-
-  onDestroy(() => {
-    exportUsersJob.cleanup();
-    verifyAccountWorkflow.cleanup();
-  });
+  // Job and workflow stores (created on demand)
+  let exportJobStore = $state<ReturnType<typeof trackExportUsers> | null>(null);
+  let workflowStore = $state<ReturnType<typeof trackAccountVerification> | null>(null);
 
   async function handleCreateUser(e: Event) {
     e.preventDefault();
@@ -63,7 +39,7 @@
 
     isSubmitting = true;
     try {
-      await mutate(createUser, { name, email, role: null });
+      await createUser({ name, email, role: null });
       name = "";
       email = "";
     } catch (err) {
@@ -82,29 +58,19 @@
 
   async function confirmDeleteUser(id: string) {
     hideDeletePopover();
-    await mutate(deleteUser, id);
+    await deleteUser({ id });
     if (selectedUser?.id === id) selectedUser = null;
   }
 
-  async function startExportJob() {
-    try {
-      const jobId = await exportUsersJob.start({ format: "csv" });
-      localStorage.setItem(ACTIVE_JOB_KEY, jobId);
-    } catch (err) {
-      console.error("Failed to start job:", err);
-    }
+  function startExportJob() {
+    exportJobStore = trackExportUsers({ format: "csv" });
   }
 
-  async function startVerificationWorkflow() {
-    try {
-      const workflowId = await verifyAccountWorkflow.start({
-        user_id: selectedUser?.id || "demo-user",
-        email: selectedUser?.email || "demo@example.com",
-      });
-      localStorage.setItem(ACTIVE_WORKFLOW_KEY, workflowId);
-    } catch (err) {
-      console.error("Failed to start workflow:", err);
-    }
+  function startVerificationWorkflow() {
+    workflowStore = trackAccountVerification({
+      user_id: selectedUser?.id || "demo-user",
+      email: selectedUser?.email || "demo@example.com",
+    });
   }
 
   function startEditUser(user: User) {
@@ -120,7 +86,7 @@
 
     isEditing = true;
     try {
-      await mutate(updateUser, {
+      await updateUser({
         id: editingUserId,
         name: editName,
         email: editEmail,
@@ -246,24 +212,22 @@
       <h2>Export to CSV <span class="badge">job</span></h2>
       <p class="hint">Background job with real-time progress tracking</p>
 
-      {#if $exportUsersJob}
+      {#if exportJobStore && $exportJobStore}
         <div class="progress-container">
           <div class="progress-bar">
             <div
               class="progress-fill"
-              style="width: {$exportUsersJob.progress_percent || 0}%"
+              style="width: {$exportJobStore.progress || 0}%"
             ></div>
           </div>
           <p class="progress-text">
-            {$exportUsersJob.progress_percent || 0}% - {$exportUsersJob.progress_message ||
-              $exportUsersJob.status}
+            {$exportJobStore.progress || 0}% - {$exportJobStore.message || $exportJobStore.status}
           </p>
-          {#if $exportUsersJob.status === "retry"}
+          {#if $exportJobStore.status === "retry"}
             <p class="retry-info">Retrying (job will retry on failure)</p>
           {/if}
-          {#if $exportUsersJob.status === "completed" || $exportUsersJob.status === "failed" || $exportUsersJob.status === "pending"}
-            <button onclick={startExportJob} class="mt-sm">Start New Job</button
-            >
+          {#if $exportJobStore.status === "completed" || $exportJobStore.status === "failed" || $exportJobStore.status === "pending"}
+            <button onclick={startExportJob} class="mt-sm">Start New Job</button>
           {/if}
         </div>
       {:else}
@@ -275,9 +239,9 @@
       <h2>Verify Account <span class="badge">workflow</span></h2>
       <p class="hint">Multi-step verification with automatic recovery</p>
 
-      {#if $verifyAccountWorkflow}
+      {#if workflowStore && $workflowStore}
         <div class="steps-list">
-          {#each $verifyAccountWorkflow.steps as step (step.name)}
+          {#each $workflowStore.steps as step (step.name)}
             <div class="step-item {step.status}">
               <span class="step-icon">{stepIcon(step.status)}</span>
               <span class="step-name">{step.name}</span>
@@ -285,7 +249,7 @@
             </div>
           {/each}
         </div>
-        {#if $verifyAccountWorkflow.status === "completed" || $verifyAccountWorkflow.status === "failed" || $verifyAccountWorkflow.status === "compensated"}
+        {#if $workflowStore.status === "completed" || $workflowStore.status === "failed" || $workflowStore.status === "compensated"}
           <button onclick={startVerificationWorkflow} class="mt-sm"
             >Start New Workflow</button
           >
@@ -297,7 +261,7 @@
   </div>
 
   <section class="card">
-    <h2>Create User <span class="badge">mutate</span></h2>
+    <h2>Create User <span class="badge">mutation</span></h2>
     <form onsubmit={handleCreateUser}>
       <input type="text" placeholder="Name" bind:value={name} required />
       <input type="email" placeholder="Email" bind:value={email} required />

@@ -110,6 +110,8 @@ impl FunctionExecutor {
                 let (kind, value) = match route_result {
                     RouteResult::Query(v) => ("query", v),
                     RouteResult::Mutation(v) => ("mutation", v),
+                    RouteResult::Job(v) => ("job", v),
+                    RouteResult::Workflow(v) => ("workflow", v),
                 };
 
                 self.log_execution(log_level, function_name, kind, &args, duration, true, None);
@@ -140,14 +142,7 @@ impl FunctionExecutor {
                     Some(&e.to_string()),
                 );
 
-                Ok(ExecutionResult {
-                    function_name: function_name.to_string(),
-                    function_kind: kind,
-                    result: Value::Null,
-                    duration,
-                    success: false,
-                    error: Some(e.to_string()),
-                })
+                Err(e)
             }
         }
     }
@@ -164,122 +159,38 @@ impl FunctionExecutor {
         success: bool,
         error: Option<&str>,
     ) {
-        let duration_ms = duration.as_millis();
-        let input_str = input.to_string();
+        macro_rules! log_fn {
+            ($level:ident) => {
+                if success {
+                    $level!(
+                        function = function_name,
+                        kind = kind,
+                        input = %input,
+                        duration_ms = duration.as_millis() as u64,
+                        success = success,
+                        "Function executed"
+                    );
+                } else {
+                    $level!(
+                        function = function_name,
+                        kind = kind,
+                        input = %input,
+                        duration_ms = duration.as_millis() as u64,
+                        success = success,
+                        error = error,
+                        "Function failed"
+                    );
+                }
+            };
+        }
 
         match log_level {
             "off" => {}
-            "error" => {
-                if success {
-                    error!(
-                        function = function_name,
-                        kind = kind,
-                        input = input_str,
-                        duration_ms = duration_ms,
-                        success = success,
-                        "Function executed"
-                    );
-                } else {
-                    error!(
-                        function = function_name,
-                        kind = kind,
-                        input = input_str,
-                        duration_ms = duration_ms,
-                        success = success,
-                        error = error,
-                        "Function failed"
-                    );
-                }
-            }
-            "warn" => {
-                if success {
-                    warn!(
-                        function = function_name,
-                        kind = kind,
-                        input = input_str,
-                        duration_ms = duration_ms,
-                        success = success,
-                        "Function executed"
-                    );
-                } else {
-                    warn!(
-                        function = function_name,
-                        kind = kind,
-                        input = input_str,
-                        duration_ms = duration_ms,
-                        success = success,
-                        error = error,
-                        "Function failed"
-                    );
-                }
-            }
-            "info" => {
-                if success {
-                    info!(
-                        function = function_name,
-                        kind = kind,
-                        input = input_str,
-                        duration_ms = duration_ms,
-                        success = success,
-                        "Function executed"
-                    );
-                } else {
-                    info!(
-                        function = function_name,
-                        kind = kind,
-                        input = input_str,
-                        duration_ms = duration_ms,
-                        success = success,
-                        error = error,
-                        "Function failed"
-                    );
-                }
-            }
-            "debug" => {
-                if success {
-                    debug!(
-                        function = function_name,
-                        kind = kind,
-                        input = input_str,
-                        duration_ms = duration_ms,
-                        success = success,
-                        "Function executed"
-                    );
-                } else {
-                    debug!(
-                        function = function_name,
-                        kind = kind,
-                        input = input_str,
-                        duration_ms = duration_ms,
-                        success = success,
-                        error = error,
-                        "Function failed"
-                    );
-                }
-            }
-            // Default to trace
-            _ => {
-                if success {
-                    trace!(
-                        function = function_name,
-                        kind = kind,
-                        input = input_str,
-                        duration_ms = duration_ms,
-                        success = success,
-                        "Function executed"
-                    );
-                } else {
-                    trace!(
-                        function = function_name,
-                        kind = kind,
-                        input = input_str,
-                        duration_ms = duration_ms,
-                        success = success,
-                        error = error,
-                        "Function failed"
-                    );
-                }
-            }
+            "error" => log_fn!(error),
+            "warn" => log_fn!(warn),
+            "info" => log_fn!(info),
+            "debug" => log_fn!(debug),
+            _ => log_fn!(trace),
         }
     }
 

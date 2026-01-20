@@ -26,8 +26,8 @@ impl TypeScriptGenerator {
         Self {
             output_dir: output_dir.clone(),
             type_gen: TypeGenerator::new(output_dir.clone()),
-            api_gen: ApiGenerator::new(output_dir.clone()),
-            store_gen: StoreGenerator::new(output_dir),
+            api_gen: ApiGenerator::new(),
+            store_gen: StoreGenerator::new(),
         }
     }
 
@@ -100,5 +100,7 @@ mod tests {
         assert!(index.contains("'./api'"));
         assert!(index.contains("'./stores'"));
         assert!(index.contains("ForgeClient"));
+        assert!(index.contains("createForgeClient"));
+        assert!(index.contains("ForgeProvider"));
     }
 }

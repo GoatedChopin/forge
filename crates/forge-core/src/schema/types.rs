@@ -23,6 +23,8 @@ pub enum SqlType {
     Timestamptz,
     /// Date without time
     Date,
+    /// Time without timezone
+    Time,
     /// Decimal with precision and scale
     Decimal(u8, u8),
     /// JSONB for structured data
@@ -50,6 +52,7 @@ impl SqlType {
             SqlType::Boolean => "BOOLEAN".to_string(),
             SqlType::Timestamptz => "TIMESTAMPTZ".to_string(),
             SqlType::Date => "DATE".to_string(),
+            SqlType::Time => "TIME".to_string(),
             SqlType::Decimal(p, s) => format!("DECIMAL({}, {})", p, s),
             SqlType::Jsonb => "JSONB".to_string(),
             SqlType::Bytea => "BYTEA".to_string(),
@@ -76,10 +79,18 @@ pub enum RustType {
     F64,
     /// Boolean
     Bool,
-    /// Chrono DateTime
+    /// Chrono DateTime (deprecated, use Instant)
     DateTime,
-    /// Chrono NaiveDate
+    /// Chrono NaiveDate (deprecated, use LocalDate)
     Date,
+    /// UTC instant in time (compile-time safe, no naive datetime)
+    Instant,
+    /// Local date without time (YYYY-MM-DD)
+    LocalDate,
+    /// Local time without date (HH:MM:SS)
+    LocalTime,
+    /// File upload (runtime only, cannot be stored in DB)
+    Upload,
     /// serde_json::Value
     Json,
     /// Vec<u8>
@@ -104,9 +115,13 @@ impl RustType {
             "f64" => RustType::F64,
             "bool" => RustType::Bool,
             "DateTime<Utc>" | "Timestamp" => RustType::DateTime,
+            "Instant" => RustType::Instant,
             "NaiveDate" | "Date" => RustType::Date,
+            "LocalDate" => RustType::LocalDate,
+            "NaiveTime" | "LocalTime" => RustType::LocalTime,
+            "Upload" => RustType::Upload,
             "Value" | "Json" => RustType::Json,
-            "Vec<u8>" => RustType::Bytes,
+            "Vec<u8>" | "Bytes" => RustType::Bytes,
             s if s.starts_with("Option<") => {
                 if let Some(inner) = s.strip_prefix("Option<").and_then(|t| t.strip_suffix('>')) {
                     RustType::Option(Box::new(RustType::from_type_string(inner)))
@@ -135,8 +150,13 @@ impl RustType {
             RustType::F32 => SqlType::Real,
             RustType::F64 => SqlType::DoublePrecision,
             RustType::Bool => SqlType::Boolean,
-            RustType::DateTime => SqlType::Timestamptz,
-            RustType::Date => SqlType::Date,
+            RustType::DateTime | RustType::Instant => SqlType::Timestamptz,
+            RustType::Date | RustType::LocalDate => SqlType::Date,
+            RustType::LocalTime => SqlType::Time,
+            RustType::Upload => panic!(
+                "Upload type cannot be stored in database. \
+                Use Upload only in mutation arguments, then extract the bytes to store separately."
+            ),
             RustType::Json => SqlType::Jsonb,
             RustType::Bytes => SqlType::Bytea,
             RustType::Option(inner) => inner.to_sql_type(),
@@ -159,6 +179,8 @@ impl RustType {
             RustType::F32 | RustType::F64 => "number".to_string(),
             RustType::Bool => "boolean".to_string(),
             RustType::DateTime | RustType::Date => "string".to_string(),
+            RustType::Instant | RustType::LocalDate | RustType::LocalTime => "string".to_string(),
+            RustType::Upload => "File | Blob".to_string(),
             RustType::Json => "unknown".to_string(),
             RustType::Bytes => "Uint8Array".to_string(),
             RustType::Option(inner) => format!("{} | null", inner.to_typescript()),
@@ -167,7 +189,10 @@ impl RustType {
                 "Uuid" | "uuid::Uuid" => "string".to_string(),
                 "usize" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128" | "i8" | "i16"
                 | "i128" => "number".to_string(),
-                "Timestamp" | "NaiveDateTime" => "string".to_string(),
+                "Timestamp" | "NaiveDateTime" | "NaiveTime" => "string".to_string(),
+                "Instant" | "LocalDate" | "LocalTime" => "string".to_string(),
+                "Upload" => "File | Blob".to_string(),
+                "Bytes" => "Uint8Array".to_string(),
                 dt if dt.starts_with("DateTime<") => "string".to_string(),
                 opt if opt.starts_with("Option<") => {
                     if let Some(inner) = opt

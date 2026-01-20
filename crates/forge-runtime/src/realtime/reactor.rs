@@ -10,16 +10,29 @@ use forge_core::realtime::{Change, ReadSet, SessionId, SubscriptionId};
 use super::invalidation::{InvalidationConfig, InvalidationEngine};
 use super::listener::{ChangeListener, ListenerConfig};
 use super::manager::SubscriptionManager;
-use super::websocket::{WebSocketConfig, WebSocketMessage, WebSocketServer};
+use super::message::{JobData, RealtimeConfig, RealtimeMessage, SessionServer, WorkflowData, WorkflowStepData};
 use crate::function::{FunctionEntry, FunctionRegistry};
-use crate::gateway::websocket::{JobData, WorkflowData, WorkflowStepData};
 
-/// Reactor configuration.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ReactorConfig {
     pub listener: ListenerConfig,
     pub invalidation: InvalidationConfig,
-    pub websocket: WebSocketConfig,
+    pub realtime: RealtimeConfig,
+    pub max_listener_restarts: u32,
+    /// Doubles with each attempt for exponential backoff
+    pub listener_restart_delay_ms: u64,
+}
+
+impl Default for ReactorConfig {
+    fn default() -> Self {
+        Self {
+            listener: ListenerConfig::default(),
+            invalidation: InvalidationConfig::default(),
+            realtime: RealtimeConfig::default(),
+            max_listener_restarts: 5,
+            listener_restart_delay_ms: 1000,
+        }
+    }
 }
 
 /// Active subscription with execution context.
@@ -61,15 +74,13 @@ pub struct WorkflowSubscription {
     pub workflow_id: Uuid, // Validated UUID, not String
 }
 
-/// The Reactor orchestrates real-time reactivity.
-/// It connects: ChangeListener -> InvalidationEngine -> Query Re-execution -> WebSocket Push
+/// ChangeListener -> InvalidationEngine -> Query Re-execution -> SSE Push
 pub struct Reactor {
-    #[allow(dead_code)]
     node_id: NodeId,
     db_pool: sqlx::PgPool,
     registry: FunctionRegistry,
     subscription_manager: Arc<SubscriptionManager>,
-    ws_server: Arc<WebSocketServer>,
+    session_server: Arc<SessionServer>,
     change_listener: Arc<ChangeListener>,
     invalidation_engine: Arc<InvalidationEngine>,
     /// Active subscriptions with their execution context.
@@ -80,6 +91,9 @@ pub struct Reactor {
     workflow_subscriptions: Arc<RwLock<HashMap<Uuid, Vec<WorkflowSubscription>>>>,
     /// Shutdown signal.
     shutdown_tx: broadcast::Sender<()>,
+    /// Listener restart configuration
+    max_listener_restarts: u32,
+    listener_restart_delay_ms: u64,
 }
 
 impl Reactor {
@@ -91,9 +105,9 @@ impl Reactor {
         config: ReactorConfig,
     ) -> Self {
         let subscription_manager = Arc::new(SubscriptionManager::new(
-            config.websocket.max_subscriptions_per_connection,
+            config.realtime.max_subscriptions_per_session,
         ));
-        let ws_server = Arc::new(WebSocketServer::new(node_id, config.websocket));
+        let session_server = Arc::new(SessionServer::new(node_id, config.realtime.clone()));
         let change_listener = Arc::new(ChangeListener::new(db_pool.clone(), config.listener));
         let invalidation_engine = Arc::new(InvalidationEngine::new(
             subscription_manager.clone(),
@@ -106,13 +120,15 @@ impl Reactor {
             db_pool,
             registry,
             subscription_manager,
-            ws_server,
+            session_server,
             change_listener,
             invalidation_engine,
             active_subscriptions: Arc::new(RwLock::new(HashMap::new())),
             job_subscriptions: Arc::new(RwLock::new(HashMap::new())),
             workflow_subscriptions: Arc::new(RwLock::new(HashMap::new())),
             shutdown_tx,
+            max_listener_restarts: config.max_listener_restarts,
+            listener_restart_delay_ms: config.listener_restart_delay_ms,
         }
     }
 
@@ -121,9 +137,9 @@ impl Reactor {
         self.node_id
     }
 
-    /// Get the WebSocket server reference.
-    pub fn ws_server(&self) -> Arc<WebSocketServer> {
-        self.ws_server.clone()
+    /// Get the session server reference.
+    pub fn session_server(&self) -> Arc<SessionServer> {
+        self.session_server.clone()
     }
 
     /// Get the subscription manager reference.
@@ -136,19 +152,19 @@ impl Reactor {
         self.shutdown_tx.subscribe()
     }
 
-    /// Register a new WebSocket session.
+    /// Register a new session.
     pub async fn register_session(
         &self,
         session_id: SessionId,
-        sender: mpsc::Sender<WebSocketMessage>,
+        sender: mpsc::Sender<RealtimeMessage>,
     ) {
-        self.ws_server.register_connection(session_id, sender).await;
+        self.session_server.register_connection(session_id, sender).await;
         tracing::debug!(?session_id, "Session registered with reactor");
     }
 
     /// Remove a session and all its subscriptions.
     pub async fn remove_session(&self, session_id: SessionId) {
-        if let Some(subscription_ids) = self.ws_server.remove_connection(session_id).await {
+        if let Some(subscription_ids) = self.session_server.remove_connection(session_id).await {
             // Clean up query subscriptions
             for sub_id in subscription_ids {
                 self.subscription_manager.remove_subscription(sub_id).await;
@@ -195,7 +211,7 @@ impl Reactor {
 
         let subscription_id = sub_info.id;
 
-        self.ws_server
+        self.session_server
             .add_subscription(session_id, subscription_id)
             .await?;
 
@@ -239,7 +255,7 @@ impl Reactor {
 
     /// Unsubscribe from a query.
     pub async fn unsubscribe(&self, subscription_id: SubscriptionId) {
-        self.ws_server.remove_subscription(subscription_id).await;
+        self.session_server.remove_subscription(subscription_id).await;
         self.subscription_manager
             .remove_subscription(subscription_id)
             .await;
@@ -528,18 +544,12 @@ impl Reactor {
         let active_subscriptions = self.active_subscriptions.clone();
         let job_subscriptions = self.job_subscriptions.clone();
         let workflow_subscriptions = self.workflow_subscriptions.clone();
-        let ws_server = self.ws_server.clone();
+        let session_server = self.session_server.clone();
         let registry = self.registry.clone();
         let db_pool = self.db_pool.clone();
         let mut shutdown_rx = self.shutdown_tx.subscribe();
-
-        // Spawn change listener task
-        let listener_clone = listener.clone();
-        let listener_handle = tokio::spawn(async move {
-            if let Err(e) = listener_clone.run().await {
-                tracing::error!("Change listener error: {}", e);
-            }
-        });
+        let max_restarts = self.max_listener_restarts;
+        let base_delay_ms = self.listener_restart_delay_ms;
 
         // Subscribe to changes
         let mut change_rx = listener.subscribe();
@@ -548,9 +558,20 @@ impl Reactor {
         tokio::spawn(async move {
             tracing::info!("Reactor started, listening for changes");
 
+            let mut restart_count: u32 = 0;
+            let (listener_error_tx, mut listener_error_rx) = mpsc::channel::<String>(1);
+
+            // Start initial listener
+            let listener_clone = listener.clone();
+            let error_tx = listener_error_tx.clone();
+            let mut listener_handle = Some(tokio::spawn(async move {
+                if let Err(e) = listener_clone.run().await {
+                    let _ = error_tx.send(format!("Change listener error: {}", e)).await;
+                }
+            }));
+
             loop {
                 tokio::select! {
-                    // Process incoming changes
                     result = change_rx.recv() => {
                         match result {
                             Ok(change) => {
@@ -560,7 +581,7 @@ impl Reactor {
                                     &active_subscriptions,
                                     &job_subscriptions,
                                     &workflow_subscriptions,
-                                    &ws_server,
+                                    &session_server,
                                     &registry,
                                     &db_pool,
                                 ).await;
@@ -574,7 +595,39 @@ impl Reactor {
                             }
                         }
                     }
-                    // Handle shutdown
+                    Some(error_msg) = listener_error_rx.recv() => {
+                        tracing::error!("Listener failed: {}", error_msg);
+
+                        if restart_count >= max_restarts {
+                            tracing::error!(
+                                "Listener failed {} times, giving up. Real-time updates disabled.",
+                                restart_count
+                            );
+                            break;
+                        }
+
+                        restart_count += 1;
+                        let delay = base_delay_ms * 2u64.saturating_pow(restart_count - 1);
+                        tracing::warn!(
+                            "Restarting listener in {}ms (attempt {}/{})",
+                            delay, restart_count, max_restarts
+                        );
+
+                        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+
+                        // Restart listener
+                        let listener_clone = listener.clone();
+                        let error_tx = listener_error_tx.clone();
+                        if let Some(handle) = listener_handle.take() {
+                            handle.abort();
+                        }
+                        change_rx = listener.subscribe();
+                        listener_handle = Some(tokio::spawn(async move {
+                            if let Err(e) = listener_clone.run().await {
+                                let _ = error_tx.send(format!("Change listener error: {}", e)).await;
+                            }
+                        }));
+                    }
                     _ = shutdown_rx.recv() => {
                         tracing::info!("Reactor shutting down");
                         break;
@@ -582,7 +635,9 @@ impl Reactor {
                 }
             }
 
-            listener_handle.abort();
+            if let Some(handle) = listener_handle {
+                handle.abort();
+            }
         });
 
         Ok(())
@@ -596,7 +651,7 @@ impl Reactor {
         active_subscriptions: &Arc<RwLock<HashMap<SubscriptionId, ActiveSubscription>>>,
         job_subscriptions: &Arc<RwLock<HashMap<Uuid, Vec<JobSubscription>>>>,
         workflow_subscriptions: &Arc<RwLock<HashMap<Uuid, Vec<WorkflowSubscription>>>>,
-        ws_server: &Arc<WebSocketServer>,
+        session_server: &Arc<SessionServer>,
         registry: &FunctionRegistry,
         db_pool: &sqlx::PgPool,
     ) {
@@ -606,7 +661,7 @@ impl Reactor {
         match change.table.as_str() {
             "forge_jobs" => {
                 if let Some(job_id) = change.row_id {
-                    Self::handle_job_change(job_id, job_subscriptions, ws_server, db_pool).await;
+                    Self::handle_job_change(job_id, job_subscriptions, session_server, db_pool).await;
                 }
                 return; // Don't process through query invalidation
             }
@@ -615,7 +670,7 @@ impl Reactor {
                     Self::handle_workflow_change(
                         workflow_id,
                         workflow_subscriptions,
-                        ws_server,
+                        session_server,
                         db_pool,
                     )
                     .await;
@@ -628,7 +683,7 @@ impl Reactor {
                     Self::handle_workflow_step_change(
                         step_id,
                         workflow_subscriptions,
-                        ws_server,
+                        session_server,
                         db_pool,
                     )
                     .await;
@@ -662,6 +717,7 @@ impl Reactor {
                         (
                             *sub_id,
                             active.session_id,
+                            active.client_sub_id.clone(),
                             active.query_name.clone(),
                             active.args.clone(),
                             active.last_result_hash.clone(),
@@ -676,7 +732,9 @@ impl Reactor {
         let mut updates: Vec<(SubscriptionId, String)> = Vec::new();
 
         // Re-execute invalidated queries and push updates (without holding locks)
-        for (sub_id, session_id, query_name, args, last_hash, auth_context) in subs_to_process {
+        for (sub_id, session_id, client_sub_id, query_name, args, last_hash, auth_context) in
+            subs_to_process
+        {
             // Re-execute the query
             match Self::execute_query_static(registry, db_pool, &query_name, &args, &auth_context)
                 .await
@@ -686,23 +744,23 @@ impl Reactor {
 
                     // Only push if data changed
                     if last_hash.as_ref() != Some(&new_hash) {
-                        // Send updated data to client
-                        let message = WebSocketMessage::Data {
-                            subscription_id: sub_id,
+                        // Send updated data to client using client_sub_id for SSE target matching
+                        let message = RealtimeMessage::Data {
+                            subscription_id: client_sub_id.clone(),
                             data: new_data,
                         };
 
-                        if let Err(e) = ws_server.send_to_session(session_id, message).await {
-                            tracing::warn!(?sub_id, "Failed to send update: {}", e);
+                        if let Err(e) = session_server.send_to_session(session_id, message).await {
+                            tracing::warn!(client_id = %client_sub_id, "Failed to send update: {}", e);
                         } else {
-                            tracing::debug!(?sub_id, "Pushed update to client");
+                            tracing::debug!(client_id = %client_sub_id, "Pushed update to client");
                             // Track the hash update
                             updates.push((sub_id, new_hash));
                         }
                     }
                 }
                 Err(e) => {
-                    tracing::error!(?sub_id, "Failed to re-execute query: {}", e);
+                    tracing::error!(client_id = %client_sub_id, "Failed to re-execute query: {}", e);
                 }
             }
         }
@@ -722,7 +780,7 @@ impl Reactor {
     async fn handle_job_change(
         job_id: Uuid,
         job_subscriptions: &Arc<RwLock<HashMap<Uuid, Vec<JobSubscription>>>>,
-        ws_server: &Arc<WebSocketServer>,
+        session_server: &Arc<SessionServer>,
         db_pool: &sqlx::PgPool,
     ) {
         let subs = job_subscriptions.read().await;
@@ -743,12 +801,12 @@ impl Reactor {
 
         // Push to all subscribers
         for sub in subscribers {
-            let message = WebSocketMessage::JobUpdate {
+            let message = RealtimeMessage::JobUpdate {
                 client_sub_id: sub.client_sub_id.clone(),
                 job: job_data.clone(),
             };
 
-            if let Err(e) = ws_server.send_to_session(sub.session_id, message).await {
+            if let Err(e) = session_server.send_to_session(sub.session_id, message).await {
                 // Debug level because this commonly happens when session disconnects (page refresh)
                 tracing::debug!(
                     %job_id,
@@ -770,7 +828,7 @@ impl Reactor {
     async fn handle_workflow_change(
         workflow_id: Uuid,
         workflow_subscriptions: &Arc<RwLock<HashMap<Uuid, Vec<WorkflowSubscription>>>>,
-        ws_server: &Arc<WebSocketServer>,
+        session_server: &Arc<SessionServer>,
         db_pool: &sqlx::PgPool,
     ) {
         let subs = workflow_subscriptions.read().await;
@@ -791,12 +849,12 @@ impl Reactor {
 
         // Push to all subscribers
         for sub in subscribers {
-            let message = WebSocketMessage::WorkflowUpdate {
+            let message = RealtimeMessage::WorkflowUpdate {
                 client_sub_id: sub.client_sub_id.clone(),
                 workflow: workflow_data.clone(),
             };
 
-            if let Err(e) = ws_server.send_to_session(sub.session_id, message).await {
+            if let Err(e) = session_server.send_to_session(sub.session_id, message).await {
                 // Debug level because this commonly happens when session disconnects (page refresh)
                 tracing::debug!(
                     %workflow_id,
@@ -818,21 +876,27 @@ impl Reactor {
     async fn handle_workflow_step_change(
         step_id: Uuid,
         workflow_subscriptions: &Arc<RwLock<HashMap<Uuid, Vec<WorkflowSubscription>>>>,
-        ws_server: &Arc<WebSocketServer>,
+        session_server: &Arc<SessionServer>,
         db_pool: &sqlx::PgPool,
     ) {
         // Look up the workflow_run_id for this step
-        let workflow_id: Option<Uuid> =
-            sqlx::query_scalar("SELECT workflow_run_id FROM forge_workflow_steps WHERE id = $1")
-                .bind(step_id)
-                .fetch_optional(db_pool)
-                .await
-                .ok()
-                .flatten();
+        let workflow_id: Option<Uuid> = match sqlx::query_scalar(
+            "SELECT workflow_run_id FROM forge_workflow_steps WHERE id = $1",
+        )
+        .bind(step_id)
+        .fetch_optional(db_pool)
+        .await
+        {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::warn!(%step_id, "Failed to look up workflow_run_id for step: {}", e);
+                return;
+            }
+        };
 
         if let Some(wf_id) = workflow_id {
             // Delegate to workflow change handler
-            Self::handle_workflow_change(wf_id, workflow_subscriptions, ws_server, db_pool).await;
+            Self::handle_workflow_change(wf_id, workflow_subscriptions, session_server, db_pool).await;
         }
     }
 
@@ -1019,12 +1083,12 @@ impl Reactor {
 
     /// Get reactor statistics.
     pub async fn stats(&self) -> ReactorStats {
-        let ws_stats = self.ws_server.stats().await;
+        let session_stats = self.session_server.stats().await;
         let inv_stats = self.invalidation_engine.stats().await;
 
         ReactorStats {
-            connections: ws_stats.connections,
-            subscriptions: ws_stats.subscriptions,
+            connections: session_stats.connections,
+            subscriptions: session_stats.subscriptions,
             pending_invalidations: inv_stats.pending_subscriptions,
             listener_running: self.change_listener.is_running(),
         }
@@ -1049,6 +1113,8 @@ mod tests {
         let config = ReactorConfig::default();
         assert_eq!(config.listener.channel, "forge_changes");
         assert_eq!(config.invalidation.debounce_ms, 50);
+        assert_eq!(config.max_listener_restarts, 5);
+        assert_eq!(config.listener_restart_delay_ms, 1000);
     }
 
     #[test]

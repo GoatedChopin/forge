@@ -2,12 +2,15 @@ mod adaptive;
 mod invalidation;
 mod listener;
 mod manager;
+mod message;
 mod reactor;
-mod websocket;
 
 pub use adaptive::{AdaptiveTracker, AdaptiveTrackingConfig, AdaptiveTrackingStats};
 pub use invalidation::{InvalidationConfig, InvalidationEngine};
 pub use listener::{ChangeListener, ListenerConfig};
 pub use manager::{SessionManager, SubscriptionManager};
+pub use message::{
+    JobData, RealtimeConfig, RealtimeMessage, SessionServer, SessionStats, WorkflowData,
+    WorkflowStepData,
+};
 pub use reactor::{Reactor, ReactorConfig, ReactorStats};
-pub use websocket::{WebSocketConfig, WebSocketMessage, WebSocketServer};

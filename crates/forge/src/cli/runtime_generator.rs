@@ -19,7 +19,7 @@ const TYPES_TS: &str = include_str!("../../templates/runtime/types.ts.tmpl");
 const CLIENT_TS: &str = include_str!("../../templates/runtime/client.ts.tmpl");
 const CONTEXT_TS: &str = include_str!("../../templates/runtime/context.ts.tmpl");
 const STORES_TS: &str = include_str!("../../templates/runtime/stores.ts.tmpl");
-const API_TS: &str = include_str!("../../templates/runtime/api.ts.tmpl");
+const DATETIME_TS: &str = include_str!("../../templates/runtime/datetime.ts.tmpl");
 const FORGE_PROVIDER: &str = include_str!("../../templates/runtime/ForgeProvider.svelte.tmpl");
 const INDEX_TS: &str = include_str!("../../templates/runtime/index.ts.tmpl");
 
@@ -53,7 +53,7 @@ pub fn needs_update(frontend_dir: &Path) -> bool {
 /// - `.forge/svelte/client.ts` - ForgeClient class
 /// - `.forge/svelte/context.ts` - Svelte context utilities
 /// - `.forge/svelte/stores.ts` - Svelte store functions
-/// - `.forge/svelte/api.ts` - API helper functions
+/// - `.forge/svelte/datetime.ts` - Date/time utilities
 /// - `.forge/svelte/ForgeProvider.svelte` - Root provider component
 /// - `.forge/version` - Version tracking file
 pub fn generate_runtime(frontend_dir: &Path) -> Result<()> {
@@ -75,7 +75,7 @@ pub fn generate_runtime(frontend_dir: &Path) -> Result<()> {
     fs::write(svelte_dir.join("client.ts"), render(CLIENT_TS, &vars))?;
     fs::write(svelte_dir.join("context.ts"), render(CONTEXT_TS, &vars))?;
     fs::write(svelte_dir.join("stores.ts"), render(STORES_TS, &vars))?;
-    fs::write(svelte_dir.join("api.ts"), render(API_TS, &vars))?;
+    fs::write(svelte_dir.join("datetime.ts"), render(DATETIME_TS, &vars))?;
     fs::write(
         svelte_dir.join("ForgeProvider.svelte"),
         render(FORGE_PROVIDER, &vars),
@@ -153,7 +153,7 @@ mod tests {
         assert!(dir.path().join(".forge/svelte/client.ts").exists());
         assert!(dir.path().join(".forge/svelte/context.ts").exists());
         assert!(dir.path().join(".forge/svelte/stores.ts").exists());
-        assert!(dir.path().join(".forge/svelte/api.ts").exists());
+        assert!(dir.path().join(".forge/svelte/datetime.ts").exists());
         assert!(
             dir.path()
                 .join(".forge/svelte/ForgeProvider.svelte")

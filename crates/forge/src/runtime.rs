@@ -2,7 +2,7 @@
 //!
 //! Single binary runtime that provides:
 //! - HTTP Gateway with RPC endpoints
-//! - WebSocket server for real-time subscriptions
+//! - SSE server for real-time subscriptions
 //! - Background job workers
 //! - Cron scheduler
 //! - Workflow engine
@@ -39,7 +39,6 @@ use forge_runtime::function::FunctionRegistry;
 use forge_runtime::gateway::{AuthConfig, GatewayConfig as RuntimeGatewayConfig, GatewayServer};
 use forge_runtime::jobs::{JobDispatcher, JobQueue, JobRegistry, Worker, WorkerConfig};
 use forge_runtime::observability::{ObservabilityConfig, ObservabilityState};
-use forge_runtime::realtime::{WebSocketConfig, WebSocketServer};
 use forge_runtime::workflow::{
     EventStore, WorkflowExecutor, WorkflowRegistry, WorkflowScheduler, WorkflowSchedulerConfig,
 };
@@ -447,16 +446,6 @@ impl Forge {
             }));
 
             tracing::info!("HTTP gateway started on port {}", self.config.gateway.port);
-        }
-
-        // Start WebSocket server if gateway role
-        if roles.contains(&NodeRole::Gateway) {
-            let ws_config = WebSocketConfig::default();
-            let _ws_server = WebSocketServer::new(node_id, ws_config);
-
-            // WebSocket upgrade handling would be added to the gateway router
-            // For now, we just hold the server state
-            tracing::info!("WebSocket server initialized");
         }
 
         tracing::info!("FORGE runtime started successfully");

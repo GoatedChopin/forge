@@ -2,84 +2,58 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use serde::Serialize;
 use tokio::sync::{RwLock, mpsc};
 
 use forge_core::cluster::NodeId;
 use forge_core::realtime::{Delta, SessionId, SubscriptionId};
 
-use crate::gateway::websocket::{JobData, WorkflowData};
-
-/// WebSocket server configuration.
 #[derive(Debug, Clone)]
-pub struct WebSocketConfig {
-    /// Maximum subscriptions per connection.
-    pub max_subscriptions_per_connection: usize,
-    /// Subscription timeout.
-    pub subscription_timeout: Duration,
-    /// Rate limit for subscription creation (per minute).
-    pub subscription_rate_limit: usize,
-    /// Heartbeat interval for keepalive.
-    pub heartbeat_interval: Duration,
-    /// Maximum message size in bytes.
-    pub max_message_size: usize,
-    /// Reconnect settings.
-    pub reconnect: ReconnectConfig,
+pub struct RealtimeConfig {
+    pub max_subscriptions_per_session: usize,
 }
 
-impl Default for WebSocketConfig {
+impl Default for RealtimeConfig {
     fn default() -> Self {
         Self {
-            max_subscriptions_per_connection: 50,
-            subscription_timeout: Duration::from_secs(30),
-            subscription_rate_limit: 100,
-            heartbeat_interval: Duration::from_secs(30),
-            max_message_size: 1024 * 1024, // 1MB
-            reconnect: ReconnectConfig::default(),
+            max_subscriptions_per_session: 50,
         }
     }
 }
 
-/// Reconnection configuration.
+/// Job data sent to client (subset of internal JobRecord).
+#[derive(Debug, Clone, Serialize)]
+pub struct JobData {
+    pub job_id: String,
+    pub status: String,
+    pub progress_percent: Option<i32>,
+    pub progress_message: Option<String>,
+    pub output: Option<serde_json::Value>,
+    pub error: Option<String>,
+}
+
+/// Workflow data sent to client.
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkflowData {
+    pub workflow_id: String,
+    pub status: String,
+    pub current_step: Option<String>,
+    pub steps: Vec<WorkflowStepData>,
+    pub output: Option<serde_json::Value>,
+    pub error: Option<String>,
+}
+
+/// Workflow step data sent to client.
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkflowStepData {
+    pub name: String,
+    pub status: String,
+    pub error: Option<String>,
+}
+
+/// Message types for real-time communication.
 #[derive(Debug, Clone)]
-pub struct ReconnectConfig {
-    /// Whether reconnection is enabled.
-    pub enabled: bool,
-    /// Maximum reconnection attempts.
-    pub max_attempts: usize,
-    /// Initial delay between attempts.
-    pub delay: Duration,
-    /// Maximum delay between attempts.
-    pub max_delay: Duration,
-    /// Backoff strategy.
-    pub backoff: BackoffStrategy,
-}
-
-impl Default for ReconnectConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            max_attempts: 10,
-            delay: Duration::from_secs(1),
-            max_delay: Duration::from_secs(30),
-            backoff: BackoffStrategy::Exponential,
-        }
-    }
-}
-
-/// Backoff strategy for reconnection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BackoffStrategy {
-    /// Linear backoff.
-    Linear,
-    /// Exponential backoff.
-    Exponential,
-    /// Fixed delay.
-    Fixed,
-}
-
-/// Message types for WebSocket communication.
-#[derive(Debug, Clone)]
-pub enum WebSocketMessage {
+pub enum RealtimeMessage {
     /// Subscribe to a query.
     Subscribe {
         id: String,
@@ -94,12 +68,12 @@ pub enum WebSocketMessage {
     Pong,
     /// Initial data for subscription.
     Data {
-        subscription_id: SubscriptionId,
+        subscription_id: String,
         data: serde_json::Value,
     },
     /// Delta update for subscription.
     DeltaUpdate {
-        subscription_id: SubscriptionId,
+        subscription_id: String,
         delta: Delta<serde_json::Value>,
     },
     /// Job progress update.
@@ -123,26 +97,20 @@ pub enum WebSocketMessage {
     AuthFailed { reason: String },
 }
 
-/// Represents a connected WebSocket client.
 #[derive(Debug)]
-pub struct WebSocketConnection {
-    /// Session ID for this connection.
+pub struct RealtimeSession {
     #[allow(dead_code)]
     pub session_id: SessionId,
-    /// Active subscriptions.
     pub subscriptions: Vec<SubscriptionId>,
-    /// Sender for outgoing messages.
-    pub sender: mpsc::Sender<WebSocketMessage>,
-    /// When the connection was established.
+    pub sender: mpsc::Sender<RealtimeMessage>,
     #[allow(dead_code)]
     pub connected_at: chrono::DateTime<chrono::Utc>,
-    /// Last activity time.
     pub last_active: chrono::DateTime<chrono::Utc>,
 }
 
-impl WebSocketConnection {
-    /// Create a new connection.
-    pub fn new(session_id: SessionId, sender: mpsc::Sender<WebSocketMessage>) -> Self {
+impl RealtimeSession {
+    /// Create a new session.
+    pub fn new(session_id: SessionId, sender: mpsc::Sender<RealtimeMessage>) -> Self {
         let now = chrono::Utc::now();
         Self {
             session_id,
@@ -168,26 +136,24 @@ impl WebSocketConnection {
     /// Send a message to the client.
     pub async fn send(
         &self,
-        message: WebSocketMessage,
-    ) -> Result<(), mpsc::error::SendError<WebSocketMessage>> {
+        message: RealtimeMessage,
+    ) -> Result<(), mpsc::error::SendError<RealtimeMessage>> {
         self.sender.send(message).await
     }
 }
 
-/// WebSocket server for managing real-time connections.
-pub struct WebSocketServer {
-    #[allow(dead_code)]
-    config: WebSocketConfig,
+pub struct SessionServer {
+    config: RealtimeConfig,
     node_id: NodeId,
     /// Active connections by session ID.
-    connections: Arc<RwLock<HashMap<SessionId, WebSocketConnection>>>,
+    connections: Arc<RwLock<HashMap<SessionId, RealtimeSession>>>,
     /// Subscription to session mapping for fast lookup.
     subscription_sessions: Arc<RwLock<HashMap<SubscriptionId, SessionId>>>,
 }
 
-impl WebSocketServer {
-    /// Create a new WebSocket server.
-    pub fn new(node_id: NodeId, config: WebSocketConfig) -> Self {
+impl SessionServer {
+    /// Create a new session server.
+    pub fn new(node_id: NodeId, config: RealtimeConfig) -> Self {
         Self {
             config,
             node_id,
@@ -202,7 +168,7 @@ impl WebSocketServer {
     }
 
     /// Get the configuration.
-    pub fn config(&self) -> &WebSocketConfig {
+    pub fn config(&self) -> &RealtimeConfig {
         &self.config
     }
 
@@ -210,9 +176,9 @@ impl WebSocketServer {
     pub async fn register_connection(
         &self,
         session_id: SessionId,
-        sender: mpsc::Sender<WebSocketMessage>,
+        sender: mpsc::Sender<RealtimeMessage>,
     ) {
-        let connection = WebSocketConnection::new(session_id, sender);
+        let connection = RealtimeSession::new(session_id, sender);
         let mut connections = self.connections.write().await;
         connections.insert(session_id, connection);
     }
@@ -221,7 +187,6 @@ impl WebSocketServer {
     pub async fn remove_connection(&self, session_id: SessionId) -> Option<Vec<SubscriptionId>> {
         let mut connections = self.connections.write().await;
         if let Some(conn) = connections.remove(&session_id) {
-            // Clean up subscription mappings
             let mut sub_sessions = self.subscription_sessions.write().await;
             for sub_id in &conn.subscriptions {
                 sub_sessions.remove(sub_id);
@@ -243,17 +208,15 @@ impl WebSocketServer {
             .get_mut(&session_id)
             .ok_or_else(|| forge_core::ForgeError::Validation("Session not found".to_string()))?;
 
-        // Check subscription limit
-        if conn.subscriptions.len() >= self.config.max_subscriptions_per_connection {
+        if conn.subscriptions.len() >= self.config.max_subscriptions_per_session {
             return Err(forge_core::ForgeError::Validation(format!(
-                "Maximum subscriptions per connection ({}) exceeded",
-                self.config.max_subscriptions_per_connection
+                "Maximum subscriptions per session ({}) exceeded",
+                self.config.max_subscriptions_per_session
             )));
         }
 
         conn.add_subscription(subscription_id);
 
-        // Update subscription to session mapping
         let mut sub_sessions = self.subscription_sessions.write().await;
         sub_sessions.insert(subscription_id, session_id);
 
@@ -279,7 +242,7 @@ impl WebSocketServer {
     pub async fn send_to_session(
         &self,
         session_id: SessionId,
-        message: WebSocketMessage,
+        message: RealtimeMessage,
     ) -> forge_core::Result<()> {
         let connections = self.connections.read().await;
         let conn = connections
@@ -303,8 +266,8 @@ impl WebSocketServer {
         };
 
         if let Some(session_id) = session_id {
-            let message = WebSocketMessage::DeltaUpdate {
-                subscription_id,
+            let message = RealtimeMessage::DeltaUpdate {
+                subscription_id: subscription_id.to_string(),
                 delta,
             };
             self.send_to_session(session_id, message).await?;
@@ -324,11 +287,11 @@ impl WebSocketServer {
     }
 
     /// Get server statistics.
-    pub async fn stats(&self) -> WebSocketStats {
+    pub async fn stats(&self) -> SessionStats {
         let connections = self.connections.read().await;
         let total_subscriptions: usize = connections.values().map(|c| c.subscriptions.len()).sum();
 
-        WebSocketStats {
+        SessionStats {
             connections: connections.len(),
             subscriptions: total_subscriptions,
             node_id: self.node_id,
@@ -343,7 +306,6 @@ impl WebSocketServer {
 
         connections.retain(|_, conn| {
             if conn.last_active < cutoff {
-                // Clean up subscription mappings
                 for sub_id in &conn.subscriptions {
                     sub_sessions.remove(sub_id);
                 }
@@ -355,9 +317,9 @@ impl WebSocketServer {
     }
 }
 
-/// WebSocket server statistics.
+/// Session server statistics.
 #[derive(Debug, Clone)]
-pub struct WebSocketStats {
+pub struct SessionStats {
     /// Number of active connections.
     pub connections: usize,
     /// Total subscriptions across all connections.
@@ -371,25 +333,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_websocket_config_default() {
-        let config = WebSocketConfig::default();
-        assert_eq!(config.max_subscriptions_per_connection, 50);
-        assert_eq!(config.subscription_rate_limit, 100);
-        assert!(config.reconnect.enabled);
-    }
-
-    #[test]
-    fn test_reconnect_config_default() {
-        let config = ReconnectConfig::default();
-        assert!(config.enabled);
-        assert_eq!(config.max_attempts, 10);
-        assert_eq!(config.backoff, BackoffStrategy::Exponential);
+    fn test_realtime_config_default() {
+        let config = RealtimeConfig::default();
+        assert_eq!(config.max_subscriptions_per_session, 50);
     }
 
     #[tokio::test]
-    async fn test_websocket_server_creation() {
+    async fn test_session_server_creation() {
         let node_id = NodeId::new();
-        let server = WebSocketServer::new(node_id, WebSocketConfig::default());
+        let server = SessionServer::new(node_id, RealtimeConfig::default());
 
         assert_eq!(server.node_id(), node_id);
         assert_eq!(server.connection_count().await, 0);
@@ -397,9 +349,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_websocket_connection() {
+    async fn test_session_connection() {
         let node_id = NodeId::new();
-        let server = WebSocketServer::new(node_id, WebSocketConfig::default());
+        let server = SessionServer::new(node_id, RealtimeConfig::default());
         let session_id = SessionId::new();
         let (tx, _rx) = mpsc::channel(100);
 
@@ -412,9 +364,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_websocket_subscription() {
+    async fn test_session_subscription() {
         let node_id = NodeId::new();
-        let server = WebSocketServer::new(node_id, WebSocketConfig::default());
+        let server = SessionServer::new(node_id, RealtimeConfig::default());
         let session_id = SessionId::new();
         let subscription_id = SubscriptionId::new();
         let (tx, _rx) = mpsc::channel(100);
@@ -432,19 +384,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_websocket_subscription_limit() {
+    async fn test_session_subscription_limit() {
         let node_id = NodeId::new();
-        let config = WebSocketConfig {
-            max_subscriptions_per_connection: 2,
+        let config = RealtimeConfig {
+            max_subscriptions_per_session: 2,
             ..Default::default()
         };
-        let server = WebSocketServer::new(node_id, config);
+        let server = SessionServer::new(node_id, config);
         let session_id = SessionId::new();
         let (tx, _rx) = mpsc::channel(100);
 
         server.register_connection(session_id, tx).await;
 
-        // First two should succeed
         server
             .add_subscription(session_id, SubscriptionId::new())
             .await
@@ -454,7 +405,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Third should fail
         let result = server
             .add_subscription(session_id, SubscriptionId::new())
             .await;
@@ -462,9 +412,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_websocket_stats() {
+    async fn test_session_stats() {
         let node_id = NodeId::new();
-        let server = WebSocketServer::new(node_id, WebSocketConfig::default());
+        let server = SessionServer::new(node_id, RealtimeConfig::default());
         let session_id = SessionId::new();
         let (tx, _rx) = mpsc::channel(100);
 

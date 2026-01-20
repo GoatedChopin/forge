@@ -53,32 +53,14 @@ impl RpcHandler {
         auth: AuthContext,
         metadata: RequestMetadata,
     ) -> RpcResponse {
-        if !self.executor.has_function(&request.function) {
-            return RpcResponse::error(RpcError::not_found(format!(
-                "Function '{}' not found",
-                request.function
-            )))
-            .with_request_id(metadata.request_id.to_string());
-        }
-
+        // Don't check has_function early - let executor try jobs/workflows too
         match self
             .executor
             .execute(&request.function, request.args, auth, metadata.clone())
             .await
         {
-            Ok(exec_result) => {
-                if exec_result.success {
-                    RpcResponse::success(exec_result.result)
-                        .with_request_id(metadata.request_id.to_string())
-                } else {
-                    RpcResponse::error(RpcError::internal(
-                        exec_result
-                            .error
-                            .unwrap_or_else(|| "Unknown error".to_string()),
-                    ))
-                    .with_request_id(metadata.request_id.to_string())
-                }
-            }
+            Ok(exec_result) => RpcResponse::success(exec_result.result)
+                .with_request_id(metadata.request_id.to_string()),
             Err(e) => RpcResponse::error(RpcError::from(e))
                 .with_request_id(metadata.request_id.to_string()),
         }

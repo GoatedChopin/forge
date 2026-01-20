@@ -43,7 +43,8 @@ pub use observability::{
 pub use rate_limit::RateLimiter;
 pub use realtime::{
     AdaptiveTracker, AdaptiveTrackingConfig, AdaptiveTrackingStats, ChangeListener,
-    InvalidationEngine, SessionManager, SubscriptionManager, WebSocketConfig, WebSocketServer,
+    InvalidationEngine, RealtimeConfig, RealtimeMessage, SessionManager, SessionServer,
+    SubscriptionManager,
 };
 pub use workflow::{
     EventStore, WorkflowEntry, WorkflowExecutor, WorkflowRecord, WorkflowRegistry,

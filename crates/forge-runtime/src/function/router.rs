@@ -18,6 +18,10 @@ pub enum RouteResult {
     Query(Value),
     /// Mutation execution result.
     Mutation(Value),
+    /// Job dispatch result (returns job_id).
+    Job(Value),
+    /// Workflow dispatch result (returns workflow_id).
+    Workflow(Value),
 }
 
 /// Routes function calls to the appropriate handler.
@@ -84,56 +88,95 @@ impl FunctionRouter {
         auth: AuthContext,
         request: RequestMetadata,
     ) -> Result<RouteResult> {
-        let entry = self.registry.get(function_name).ok_or_else(|| {
-            ForgeError::NotFound(format!("Function '{}' not found", function_name))
-        })?;
+        // First, try to find in the function registry (queries/mutations)
+        if let Some(entry) = self.registry.get(function_name) {
+            // Check authorization
+            self.check_auth(entry.info(), &auth)?;
 
-        // Check authorization
-        self.check_auth(entry.info(), &auth)?;
+            // Check rate limit
+            self.check_rate_limit(entry.info(), function_name, &auth, &request)
+                .await?;
 
-        // Check rate limit
-        self.check_rate_limit(entry.info(), function_name, &auth, &request)
-            .await?;
+            return match entry {
+                FunctionEntry::Query { handler, info, .. } => {
+                    if let Some(ttl) = info.cache_ttl {
+                        if let Some(cached) = self.query_cache.get(function_name, &args) {
+                            return Ok(RouteResult::Query(cached));
+                        }
 
-        match entry {
-            FunctionEntry::Query { handler, info, .. } => {
-                // Check cache first if TTL is configured
-                if let Some(ttl) = info.cache_ttl {
-                    if let Some(cached) = self.query_cache.get(function_name, &args) {
-                        return Ok(RouteResult::Query(cached));
+                        // Execute and cache result
+                        let ctx = QueryContext::new(self.db_pool.clone(), auth, request);
+                        let result = handler(&ctx, args.clone()).await?;
+
+                        self.query_cache.set(
+                            function_name,
+                            &args,
+                            result.clone(),
+                            Duration::from_secs(ttl),
+                        );
+
+                        Ok(RouteResult::Query(result))
+                    } else {
+                        let ctx = QueryContext::new(self.db_pool.clone(), auth, request);
+                        let result = handler(&ctx, args).await?;
+                        Ok(RouteResult::Query(result))
                     }
-
-                    // Execute and cache result
-                    let ctx = QueryContext::new(self.db_pool.clone(), auth, request);
-                    let result = handler(&ctx, args.clone()).await?;
-
-                    self.query_cache.set(
-                        function_name,
-                        &args,
-                        result.clone(),
-                        Duration::from_secs(ttl),
-                    );
-
-                    Ok(RouteResult::Query(result))
-                } else {
-                    let ctx = QueryContext::new(self.db_pool.clone(), auth, request);
-                    let result = handler(&ctx, args).await?;
-                    Ok(RouteResult::Query(result))
                 }
+                FunctionEntry::Mutation { handler, .. } => {
+                    let ctx = MutationContext::with_dispatch(
+                        self.db_pool.clone(),
+                        auth,
+                        request,
+                        self.http_client.clone(),
+                        self.job_dispatcher.clone(),
+                        self.workflow_dispatcher.clone(),
+                    );
+                    let result = handler(&ctx, args).await?;
+                    Ok(RouteResult::Mutation(result))
+                }
+            };
+        }
+
+        // Try job/workflow dispatchers - auth checked before dispatch to prevent unauthorized execution
+        if let Some(ref job_dispatcher) = self.job_dispatcher {
+            if !auth.is_authenticated() {
+                return Err(ForgeError::Unauthorized("Authentication required".into()));
             }
-            FunctionEntry::Mutation { handler, .. } => {
-                let ctx = MutationContext::with_dispatch(
-                    self.db_pool.clone(),
-                    auth,
-                    request,
-                    self.http_client.clone(),
-                    self.job_dispatcher.clone(),
-                    self.workflow_dispatcher.clone(),
-                );
-                let result = handler(&ctx, args).await?;
-                Ok(RouteResult::Mutation(result))
+            match job_dispatcher
+                .dispatch_by_name(function_name, args.clone())
+                .await
+            {
+                Ok(job_id) => {
+                    return Ok(RouteResult::Job(serde_json::json!({ "job_id": job_id })));
+                }
+                Err(ForgeError::NotFound(_)) => {}
+                Err(e) => return Err(e),
             }
         }
+
+        if let Some(ref workflow_dispatcher) = self.workflow_dispatcher {
+            if !auth.is_authenticated() {
+                return Err(ForgeError::Unauthorized("Authentication required".into()));
+            }
+            match workflow_dispatcher
+                .start_by_name(function_name, args.clone())
+                .await
+            {
+                Ok(workflow_id) => {
+                    return Ok(RouteResult::Workflow(
+                        serde_json::json!({ "workflow_id": workflow_id }),
+                    ));
+                }
+                Err(ForgeError::NotFound(_)) => {}
+                Err(e) => return Err(e),
+            }
+        }
+
+        // Nothing found
+        Err(ForgeError::NotFound(format!(
+            "Function '{}' not found",
+            function_name
+        )))
     }
 
     /// Check authorization for a function call.
@@ -177,11 +220,18 @@ impl FunctionRouter {
         };
 
         // Build rate limit config
-        let key_type: RateLimitKey = info
-            .rate_limit_key
-            .unwrap_or("user")
-            .parse()
-            .unwrap_or_default();
+        let key_str = info.rate_limit_key.unwrap_or("user");
+        let key_type: RateLimitKey = match key_str.parse() {
+            Ok(k) => k,
+            Err(_) => {
+                tracing::warn!(
+                    function = %function_name,
+                    key = %key_str,
+                    "Invalid rate limit key, falling back to 'user'"
+                );
+                RateLimitKey::default()
+            }
+        };
 
         let config =
             RateLimitConfig::new(requests, Duration::from_secs(per_secs)).with_key(key_type);

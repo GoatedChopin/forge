@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::{
     Json, Router, middleware,
-    routing::{any, get, post},
+    routing::{get, post},
 };
 use serde::Serialize;
 use tower::ServiceBuilder;
@@ -13,9 +13,13 @@ use forge_core::function::{JobDispatch, WorkflowDispatch};
 
 use super::auth::{AuthConfig, AuthMiddleware, auth_middleware};
 use super::metrics::{MetricsState, metrics_middleware};
+use super::multipart::rpc_multipart_handler;
 use super::rpc::{RpcHandler, rpc_function_handler, rpc_handler};
+use super::sse::{
+    SseState, sse_handler, sse_job_subscribe_handler, sse_subscribe_handler,
+    sse_unsubscribe_handler, sse_workflow_subscribe_handler,
+};
 use super::tracing::TracingState;
-use super::websocket::{WsState, ws_handler};
 use crate::function::FunctionRegistry;
 use crate::observability::ObservabilityState;
 use crate::realtime::{Reactor, ReactorConfig};
@@ -181,12 +185,9 @@ impl GatewayServer {
             CorsLayer::new()
         };
 
-        // WebSocket state uses the reactor, db_pool, and auth middleware for session tracking
-        let node_id = self.reactor.node_id();
-        let ws_state = Arc::new(WsState::with_auth(
+        // SSE state for Server-Sent Events
+        let sse_state = Arc::new(SseState::new(
             self.reactor.clone(),
-            self.db_pool.clone(),
-            node_id,
             auth_middleware_state.clone(),
         ));
 
@@ -203,10 +204,28 @@ impl GatewayServer {
             .route("/ready", get(readiness_handler).with_state(readiness_state))
             // RPC endpoint
             .route("/rpc", post(rpc_handler))
-            // REST-style function endpoint
+            // REST-style function endpoint (JSON)
             .route("/rpc/{function}", post(rpc_function_handler))
             // Add state
+            .with_state(rpc_handler_state.clone());
+
+        // Multipart RPC router (separate state needed for multipart)
+        let multipart_router = Router::new()
+            .route("/rpc/{function}/upload", post(rpc_multipart_handler))
             .with_state(rpc_handler_state);
+
+        // SSE router
+        let sse_router = Router::new()
+            .route("/events", get(sse_handler))
+            .route("/subscribe", post(sse_subscribe_handler))
+            .route("/unsubscribe", post(sse_unsubscribe_handler))
+            .route("/subscribe-job", post(sse_job_subscribe_handler))
+            .route("/subscribe-workflow", post(sse_workflow_subscribe_handler))
+            .with_state(sse_state);
+
+        main_router = main_router
+            .merge(multipart_router)
+            .merge(sse_router);
 
         // Build middleware stack
         let service_builder = ServiceBuilder::new()
@@ -227,15 +246,7 @@ impl GatewayServer {
         }
 
         // Apply the remaining middleware layers
-        main_router = main_router.layer(service_builder);
-
-        // WebSocket router without auth middleware (just CORS)
-        let ws_router = Router::new()
-            .route("/ws", any(ws_handler).with_state(ws_state))
-            .layer(cors);
-
-        // Merge routers - WebSocket route is separate from middleware stack
-        main_router.merge(ws_router)
+        main_router.layer(service_builder)
     }
 
     /// Get the socket address to bind to.
