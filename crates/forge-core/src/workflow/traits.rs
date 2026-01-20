@@ -36,6 +36,10 @@ pub struct WorkflowInfo {
     pub timeout: Duration,
     /// Whether the workflow is deprecated.
     pub deprecated: bool,
+    /// Whether the workflow is public (no auth required).
+    pub is_public: bool,
+    /// Required role for authorization (implies auth required).
+    pub required_role: Option<&'static str>,
 }
 
 impl Default for WorkflowInfo {
@@ -45,6 +49,8 @@ impl Default for WorkflowInfo {
             version: 1,
             timeout: Duration::from_secs(86400), // 24 hours
             deprecated: false,
+            is_public: false,
+            required_role: None,
         }
     }
 }

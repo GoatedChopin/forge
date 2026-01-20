@@ -50,12 +50,20 @@ pub async fn rpc_multipart_handler(
         let field = match multipart.next_field().await {
             Ok(Some(f)) => f,
             Ok(None) => break,
-            Err(e) => return multipart_error(StatusCode::BAD_REQUEST, "MULTIPART_ERROR", e.to_string()),
+            Err(e) => {
+                return multipart_error(StatusCode::BAD_REQUEST, "MULTIPART_ERROR", e.to_string());
+            }
         };
 
         let name = match field.name().map(String::from).filter(|n| !n.is_empty()) {
             Some(n) => n,
-            None => return multipart_error(StatusCode::BAD_REQUEST, "INVALID_FIELD", "Field name is required"),
+            None => {
+                return multipart_error(
+                    StatusCode::BAD_REQUEST,
+                    "INVALID_FIELD",
+                    "Field name is required",
+                );
+            }
         };
 
         // Validate field name length
@@ -95,7 +103,10 @@ pub async fn rpc_multipart_handler(
                             return multipart_error(
                                 StatusCode::PAYLOAD_TOO_LARGE,
                                 "JSON_TOO_LARGE",
-                                format!("_json field exceeds maximum size of {} bytes", MAX_JSON_FIELD_SIZE),
+                                format!(
+                                    "_json field exceeds maximum size of {} bytes",
+                                    MAX_JSON_FIELD_SIZE
+                                ),
                             );
                         }
                         buffer.extend_from_slice(&chunk);
@@ -152,7 +163,10 @@ pub async fn rpc_multipart_handler(
                             return multipart_error(
                                 StatusCode::PAYLOAD_TOO_LARGE,
                                 "FILE_TOO_LARGE",
-                                format!("File '{}' exceeds maximum size of {} bytes", filename, MAX_FILE_SIZE),
+                                format!(
+                                    "File '{}' exceeds maximum size of {} bytes",
+                                    filename, MAX_FILE_SIZE
+                                ),
                             );
                         }
                         buffer.extend_from_slice(&chunk);

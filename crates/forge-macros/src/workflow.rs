@@ -8,6 +8,8 @@ struct WorkflowAttrs {
     version: Option<u32>,
     timeout: Option<String>,
     deprecated: bool,
+    is_public: bool,
+    required_role: Option<String>,
 }
 
 fn parse_workflow_attrs(attrs: &[syn::Attribute]) -> WorkflowAttrs {
@@ -38,6 +40,16 @@ fn parse_workflow_attrs(attrs: &[syn::Attribute]) -> WorkflowAttrs {
         }
         if attr.path().is_ident("deprecated") {
             result.deprecated = true;
+        }
+        if attr.path().is_ident("public") {
+            result.is_public = true;
+        }
+        if attr.path().is_ident("require_role") {
+            if let Meta::List(list) = &attr.meta {
+                let tokens = list.tokens.to_string();
+                let role = tokens.trim().trim_matches('"');
+                result.required_role = Some(role.to_string());
+            }
         }
     }
 
@@ -129,6 +141,12 @@ pub fn workflow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let version = attrs.version.unwrap_or(1);
     let deprecated = attrs.deprecated;
+    let is_public = attrs.is_public;
+    let required_role = if let Some(ref role) = attrs.required_role {
+        quote! { Some(#role) }
+    } else {
+        quote! { None }
+    };
 
     let timeout = if let Some(ref t) = attrs.timeout {
         parse_duration(t)
@@ -144,6 +162,8 @@ pub fn workflow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
             !a.path().is_ident("version")
                 && !a.path().is_ident("timeout")
                 && !a.path().is_ident("deprecated")
+                && !a.path().is_ident("public")
+                && !a.path().is_ident("require_role")
         })
         .collect();
 
@@ -161,6 +181,8 @@ pub fn workflow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                     version: #version,
                     timeout: #timeout,
                     deprecated: #deprecated,
+                    is_public: #is_public,
+                    required_role: #required_role,
                 }
             }
 

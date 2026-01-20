@@ -388,7 +388,6 @@ mod tests {
         let node_id = NodeId::new();
         let config = RealtimeConfig {
             max_subscriptions_per_session: 2,
-            ..Default::default()
         };
         let server = SessionServer::new(node_id, config);
         let session_id = SessionId::new();

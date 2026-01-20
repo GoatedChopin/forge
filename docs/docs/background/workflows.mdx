@@ -158,6 +158,53 @@ pub async fn onboard_user(ctx: &WorkflowContext, input: OnboardUserInput) -> Res
 | `timeout` | `#[timeout = "2h"]` | Max total workflow duration |
 | `version` | `#[version = 2]` | Workflow version for safe evolution |
 | `deprecated` | `#[deprecated]` | Mark workflow as deprecated |
+| `public` | `#[public]` | Allow unauthenticated dispatch |
+| `require_role` | `#[require_role("admin")]` | Require specific role to dispatch |
+
+## Authorization
+
+By default, workflows require authentication to start. You can control access with these attributes:
+
+### Public Workflows
+
+Allow anyone to start the workflow (no authentication required):
+
+```rust
+#[forge::workflow]
+#[version = 1]
+#[public]
+pub async fn public_onboarding(ctx: &WorkflowContext, input: OnboardInput) -> Result<()> {
+    // Can be started without authentication
+    Ok(())
+}
+```
+
+### Role-Based Access
+
+Require a specific role to start the workflow:
+
+```rust
+#[forge::workflow]
+#[version = 1]
+#[require_role("admin")]
+pub async fn admin_bulk_operation(ctx: &WorkflowContext, input: BulkInput) -> Result<()> {
+    // Only users with "admin" role can start this workflow
+    Ok(())
+}
+```
+
+### Default Behavior
+
+Without any auth attributes, workflows require authentication but no specific role:
+
+```rust
+#[forge::workflow]
+#[version = 1]
+pub async fn user_verification(ctx: &WorkflowContext, input: VerifyInput) -> Result<()> {
+    // Requires authentication, any authenticated user can start
+    Ok(())
+}
+```
 
 ### Workflow Versioning
 

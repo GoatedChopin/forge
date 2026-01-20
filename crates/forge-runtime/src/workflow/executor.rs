@@ -599,6 +599,10 @@ impl WorkflowExecutor {
 }
 
 impl WorkflowDispatch for WorkflowExecutor {
+    fn get_info(&self, workflow_name: &str) -> Option<forge_core::workflow::WorkflowInfo> {
+        self.registry.get(workflow_name).map(|e| e.info.clone())
+    }
+
     fn start_by_name(
         &self,
         workflow_name: &str,

@@ -43,6 +43,10 @@ pub struct JobInfo {
     pub idempotent: bool,
     /// Idempotency key field path.
     pub idempotency_key: Option<&'static str>,
+    /// Whether the job is public (no auth required).
+    pub is_public: bool,
+    /// Required role for authorization (implies auth required).
+    pub required_role: Option<&'static str>,
 }
 
 impl Default for JobInfo {
@@ -55,6 +59,8 @@ impl Default for JobInfo {
             worker_capability: None,
             idempotent: false,
             idempotency_key: None,
+            is_public: false,
+            required_role: None,
         }
     }
 }

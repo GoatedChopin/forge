@@ -24,7 +24,6 @@ pub fn expand_query(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[derive(Default)]
 struct QueryAttrs {
     cache_ttl: Option<u64>,
-    requires_auth: bool,
     required_role: Option<String>,
     is_public: bool,
     timeout: Option<u64>,
@@ -46,10 +45,6 @@ fn parse_query_attrs(attr: TokenStream) -> QueryAttrs {
         attrs.is_public = true;
     }
 
-    if attr_str.contains("require_auth") {
-        attrs.requires_auth = true;
-    }
-
     // Parse role requirement
     if let Some(role_start) = attr_str.find("require_role") {
         if let Some(paren_start) = attr_str[role_start..].find('(') {
@@ -57,7 +52,6 @@ fn parse_query_attrs(attr: TokenStream) -> QueryAttrs {
             if let Some(paren_end) = remaining.find(')') {
                 let role = remaining[..paren_end].trim().trim_matches('"');
                 attrs.required_role = Some(role.to_string());
-                attrs.requires_auth = true; // require_role implies require_auth
             }
         }
     }
@@ -334,7 +328,6 @@ fn expand_query_impl(input: ItemFn, attrs: QueryAttrs) -> syn::Result<TokenStrea
         None => quote! { None },
     };
 
-    let requires_auth = attrs.requires_auth;
     let is_public = attrs.is_public;
 
     let required_role = match &attrs.required_role {
@@ -479,7 +472,6 @@ fn expand_query_impl(input: ItemFn, attrs: QueryAttrs) -> syn::Result<TokenStrea
                     name: #fn_name_str,
                     description: None,
                     kind: forge::forge_core::FunctionKind::Query,
-                    requires_auth: #requires_auth,
                     required_role: #required_role,
                     is_public: #is_public,
                     cache_ttl: #cache_ttl,

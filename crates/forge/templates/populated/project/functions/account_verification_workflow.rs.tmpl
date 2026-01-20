@@ -26,6 +26,7 @@ pub struct AccountVerificationOutput {
 #[forge::workflow]
 #[version = 1]
 #[timeout = "24h"]
+#[public]
 pub async fn account_verification(
     ctx: &WorkflowContext,
     input: AccountVerificationInput,

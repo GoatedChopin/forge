@@ -89,13 +89,19 @@ impl fmt::Debug for Upload {
 
 impl fmt::Display for Upload {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} ({}, {} bytes)", self.name, self.content_type, self.len())
+        write!(
+            f,
+            "{} ({}, {} bytes)",
+            self.name,
+            self.content_type,
+            self.len()
+        )
     }
 }
 
 /// Serde helper for Bytes using base64 encoding.
 mod bytes_serde {
-    use base64::{engine::general_purpose::STANDARD, Engine};
+    use base64::{Engine, engine::general_purpose::STANDARD};
     use bytes::Bytes;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 

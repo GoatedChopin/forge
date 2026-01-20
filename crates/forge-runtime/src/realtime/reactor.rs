@@ -10,7 +10,9 @@ use forge_core::realtime::{Change, ReadSet, SessionId, SubscriptionId};
 use super::invalidation::{InvalidationConfig, InvalidationEngine};
 use super::listener::{ChangeListener, ListenerConfig};
 use super::manager::SubscriptionManager;
-use super::message::{JobData, RealtimeConfig, RealtimeMessage, SessionServer, WorkflowData, WorkflowStepData};
+use super::message::{
+    JobData, RealtimeConfig, RealtimeMessage, SessionServer, WorkflowData, WorkflowStepData,
+};
 use crate::function::{FunctionEntry, FunctionRegistry};
 
 #[derive(Debug, Clone)]
@@ -158,7 +160,9 @@ impl Reactor {
         session_id: SessionId,
         sender: mpsc::Sender<RealtimeMessage>,
     ) {
-        self.session_server.register_connection(session_id, sender).await;
+        self.session_server
+            .register_connection(session_id, sender)
+            .await;
         tracing::debug!(?session_id, "Session registered with reactor");
     }
 
@@ -255,7 +259,9 @@ impl Reactor {
 
     /// Unsubscribe from a query.
     pub async fn unsubscribe(&self, subscription_id: SubscriptionId) {
-        self.session_server.remove_subscription(subscription_id).await;
+        self.session_server
+            .remove_subscription(subscription_id)
+            .await;
         self.subscription_manager
             .remove_subscription(subscription_id)
             .await;
@@ -661,7 +667,8 @@ impl Reactor {
         match change.table.as_str() {
             "forge_jobs" => {
                 if let Some(job_id) = change.row_id {
-                    Self::handle_job_change(job_id, job_subscriptions, session_server, db_pool).await;
+                    Self::handle_job_change(job_id, job_subscriptions, session_server, db_pool)
+                        .await;
                 }
                 return; // Don't process through query invalidation
             }
@@ -806,7 +813,10 @@ impl Reactor {
                 job: job_data.clone(),
             };
 
-            if let Err(e) = session_server.send_to_session(sub.session_id, message).await {
+            if let Err(e) = session_server
+                .send_to_session(sub.session_id, message)
+                .await
+            {
                 // Debug level because this commonly happens when session disconnects (page refresh)
                 tracing::debug!(
                     %job_id,
@@ -854,7 +864,10 @@ impl Reactor {
                 workflow: workflow_data.clone(),
             };
 
-            if let Err(e) = session_server.send_to_session(sub.session_id, message).await {
+            if let Err(e) = session_server
+                .send_to_session(sub.session_id, message)
+                .await
+            {
                 // Debug level because this commonly happens when session disconnects (page refresh)
                 tracing::debug!(
                     %workflow_id,
@@ -896,7 +909,8 @@ impl Reactor {
 
         if let Some(wf_id) = workflow_id {
             // Delegate to workflow change handler
-            Self::handle_workflow_change(wf_id, workflow_subscriptions, session_server, db_pool).await;
+            Self::handle_workflow_change(wf_id, workflow_subscriptions, session_server, db_pool)
+                .await;
         }
     }
 

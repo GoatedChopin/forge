@@ -5,13 +5,13 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
-use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::IntoResponse;
-use axum::Json;
+use axum::response::sse::{Event, KeepAlive, Sse};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 use tokio_util::sync::CancellationToken;
 
 use forge_core::function::AuthContext;
@@ -25,7 +25,9 @@ use crate::realtime::RealtimeMessage;
 const MAX_CLIENT_SUB_ID_LEN: usize = 255;
 
 fn try_parse_session_id(session_id: &str) -> Option<SessionId> {
-    uuid::Uuid::parse_str(session_id).ok().map(SessionId::from_uuid)
+    uuid::Uuid::parse_str(session_id)
+        .ok()
+        .map(SessionId::from_uuid)
 }
 
 /// SSE configuration.
@@ -303,7 +305,10 @@ pub async fn sse_handler(
         match state.auth_middleware.validate_token(token) {
             Ok(claims) => super::auth::build_auth_context_from_claims(claims),
             Err(e) => {
-                tracing::debug!("SSE token validation failed, continuing unauthenticated: {}", e);
+                tracing::debug!(
+                    "SSE token validation failed, continuing unauthenticated: {}",
+                    e
+                );
                 forge_core::function::AuthContext::unauthenticated()
             }
         }
@@ -513,12 +518,19 @@ pub async fn sse_subscribe_handler(
         return subscribe_error(
             StatusCode::BAD_REQUEST,
             "INVALID_ID",
-            format!("Subscription ID too long (max {} chars)", MAX_CLIENT_SUB_ID_LEN),
+            format!(
+                "Subscription ID too long (max {} chars)",
+                MAX_CLIENT_SUB_ID_LEN
+            ),
         );
     }
 
     let Some(session_id) = try_parse_session_id(&request.session_id) else {
-        return subscribe_error(StatusCode::BAD_REQUEST, "INVALID_SESSION", "Invalid session ID format");
+        return subscribe_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_SESSION",
+            "Invalid session ID format",
+        );
     };
 
     // Get session data (auth context)
@@ -526,7 +538,11 @@ pub async fn sse_subscribe_handler(
     let session_data = match sessions.get(&session_id) {
         Some(data) => data.auth_context.clone(),
         None => {
-            return subscribe_error(StatusCode::NOT_FOUND, "SESSION_NOT_FOUND", "Session not found or expired");
+            return subscribe_error(
+                StatusCode::NOT_FOUND,
+                "SESSION_NOT_FOUND",
+                "Session not found or expired",
+            );
         }
     };
     drop(sessions);
@@ -578,7 +594,11 @@ pub async fn sse_subscribe_handler(
         }
         Err(e) => {
             tracing::warn!(%session_id, error = %e, "SSE subscription failed");
-            subscribe_error(StatusCode::INTERNAL_SERVER_ERROR, "SUBSCRIPTION_FAILED", e.to_string())
+            subscribe_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "SUBSCRIPTION_FAILED",
+                e.to_string(),
+            )
         }
     }
 }
@@ -589,7 +609,11 @@ pub async fn sse_unsubscribe_handler(
     Json(request): Json<SseUnsubscribeRequest>,
 ) -> impl IntoResponse {
     let Some(session_id) = try_parse_session_id(&request.session_id) else {
-        return unsubscribe_error(StatusCode::BAD_REQUEST, "INVALID_SESSION", "Invalid session ID format");
+        return unsubscribe_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_SESSION",
+            "Invalid session ID format",
+        );
     };
 
     // Look up internal subscription ID
@@ -601,7 +625,11 @@ pub async fn sse_unsubscribe_handler(
     };
 
     let Some(subscription_id) = subscription_id else {
-        return unsubscribe_error(StatusCode::NOT_FOUND, "SUBSCRIPTION_NOT_FOUND", "Subscription not found");
+        return unsubscribe_error(
+            StatusCode::NOT_FOUND,
+            "SUBSCRIPTION_NOT_FOUND",
+            "Subscription not found",
+        );
     };
 
     // Unsubscribe via reactor
@@ -639,19 +667,30 @@ pub async fn sse_job_subscribe_handler(
         return subscribe_error(
             StatusCode::BAD_REQUEST,
             "INVALID_ID",
-            format!("Subscription ID too long (max {} chars)", MAX_CLIENT_SUB_ID_LEN),
+            format!(
+                "Subscription ID too long (max {} chars)",
+                MAX_CLIENT_SUB_ID_LEN
+            ),
         );
     }
 
     let Some(session_id) = try_parse_session_id(&request.session_id) else {
-        return subscribe_error(StatusCode::BAD_REQUEST, "INVALID_SESSION", "Invalid session ID format");
+        return subscribe_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_SESSION",
+            "Invalid session ID format",
+        );
     };
 
     // Validate session exists
     {
         let sessions = state.sessions.read().await;
         if !sessions.contains_key(&session_id) {
-            return subscribe_error(StatusCode::NOT_FOUND, "SESSION_NOT_FOUND", "Session not found or expired");
+            return subscribe_error(
+                StatusCode::NOT_FOUND,
+                "SESSION_NOT_FOUND",
+                "Session not found or expired",
+            );
         }
     }
 
@@ -659,7 +698,11 @@ pub async fn sse_job_subscribe_handler(
     let job_uuid = match uuid::Uuid::parse_str(&request.job_id) {
         Ok(uuid) => uuid,
         Err(_) => {
-            return subscribe_error(StatusCode::BAD_REQUEST, "INVALID_JOB_ID", "Invalid job ID format");
+            return subscribe_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_JOB_ID",
+                "Invalid job ID format",
+            );
         }
     };
 
@@ -709,19 +752,30 @@ pub async fn sse_workflow_subscribe_handler(
         return subscribe_error(
             StatusCode::BAD_REQUEST,
             "INVALID_ID",
-            format!("Subscription ID too long (max {} chars)", MAX_CLIENT_SUB_ID_LEN),
+            format!(
+                "Subscription ID too long (max {} chars)",
+                MAX_CLIENT_SUB_ID_LEN
+            ),
         );
     }
 
     let Some(session_id) = try_parse_session_id(&request.session_id) else {
-        return subscribe_error(StatusCode::BAD_REQUEST, "INVALID_SESSION", "Invalid session ID format");
+        return subscribe_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_SESSION",
+            "Invalid session ID format",
+        );
     };
 
     // Validate session exists
     {
         let sessions = state.sessions.read().await;
         if !sessions.contains_key(&session_id) {
-            return subscribe_error(StatusCode::NOT_FOUND, "SESSION_NOT_FOUND", "Session not found or expired");
+            return subscribe_error(
+                StatusCode::NOT_FOUND,
+                "SESSION_NOT_FOUND",
+                "Session not found or expired",
+            );
         }
     }
 
@@ -729,7 +783,11 @@ pub async fn sse_workflow_subscribe_handler(
     let workflow_uuid = match uuid::Uuid::parse_str(&request.workflow_id) {
         Ok(uuid) => uuid,
         Err(_) => {
-            return subscribe_error(StatusCode::BAD_REQUEST, "INVALID_WORKFLOW_ID", "Invalid workflow ID format");
+            return subscribe_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_WORKFLOW_ID",
+                "Invalid workflow ID format",
+            );
         }
     };
 

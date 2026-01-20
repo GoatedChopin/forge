@@ -180,6 +180,10 @@ impl JobDispatcher {
 }
 
 impl JobDispatch for JobDispatcher {
+    fn get_info(&self, job_type: &str) -> Option<JobInfo> {
+        self.registry.get(job_type).map(|e| e.info.clone())
+    }
+
     fn dispatch_by_name(
         &self,
         job_type: &str,

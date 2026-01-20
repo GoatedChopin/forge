@@ -15,9 +15,7 @@ pub struct FunctionInfo {
     pub description: Option<&'static str>,
     /// Kind of function.
     pub kind: FunctionKind,
-    /// Whether authentication is required.
-    pub requires_auth: bool,
-    /// Required role (if any).
+    /// Required role (if any, implies auth required).
     pub required_role: Option<&'static str>,
     /// Whether this function is public (no auth).
     pub is_public: bool,
@@ -122,7 +120,6 @@ mod tests {
             name: "get_user",
             description: Some("Get a user by ID"),
             kind: FunctionKind::Query,
-            requires_auth: true,
             required_role: None,
             is_public: false,
             cache_ttl: Some(300),
@@ -137,7 +134,6 @@ mod tests {
 
         assert_eq!(info.name, "get_user");
         assert_eq!(info.kind, FunctionKind::Query);
-        assert!(info.requires_auth);
         assert_eq!(info.cache_ttl, Some(300));
         assert_eq!(info.rate_limit_requests, Some(100));
         assert_eq!(info.log_level, Some("debug"));

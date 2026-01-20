@@ -56,9 +56,13 @@ impl LocalDate {
     /// Add days to this date. Use negative values to subtract.
     pub fn add_days(self, days: i64) -> Option<Self> {
         if days >= 0 {
-            self.0.checked_add_days(chrono::Days::new(days as u64)).map(Self)
+            self.0
+                .checked_add_days(chrono::Days::new(days as u64))
+                .map(Self)
         } else {
-            self.0.checked_sub_days(chrono::Days::new(days.unsigned_abs())).map(Self)
+            self.0
+                .checked_sub_days(chrono::Days::new(days.unsigned_abs()))
+                .map(Self)
         }
     }
 

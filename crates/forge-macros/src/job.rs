@@ -14,6 +14,8 @@ struct JobAttrs {
     worker_capability: Option<String>,
     idempotent: bool,
     idempotency_key: Option<String>,
+    is_public: bool,
+    required_role: Option<String>,
 }
 
 fn parse_job_attrs(attrs: &[syn::Attribute]) -> JobAttrs {
@@ -107,6 +109,16 @@ fn parse_job_attrs(attrs: &[syn::Attribute]) -> JobAttrs {
                         }
                     }
                 }
+            }
+        }
+        if attr.path().is_ident("public") {
+            result.is_public = true;
+        }
+        if attr.path().is_ident("require_role") {
+            if let Meta::List(list) = &attr.meta {
+                let tokens = list.tokens.to_string();
+                let role = tokens.trim().trim_matches('"');
+                result.required_role = Some(role.to_string());
             }
         }
     }
@@ -241,6 +253,13 @@ pub fn job_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote! { None }
     };
 
+    let is_public = attrs.is_public;
+    let required_role = if let Some(ref role) = attrs.required_role {
+        quote! { Some(#role) }
+    } else {
+        quote! { None }
+    };
+
     let other_attrs: Vec<_> = input
         .attrs
         .iter()
@@ -252,6 +271,8 @@ pub fn job_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                 && !a.path().is_ident("worker_capability")
                 && !a.path().is_ident("idempotent")
                 && !a.path().is_ident("retry")
+                && !a.path().is_ident("public")
+                && !a.path().is_ident("require_role")
         })
         .collect();
 
@@ -277,6 +298,8 @@ pub fn job_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                     worker_capability: #worker_capability,
                     idempotent: #idempotent,
                     idempotency_key: #idempotency_key,
+                    is_public: #is_public,
+                    required_role: #required_role,
                 }
             }
 

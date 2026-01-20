@@ -137,38 +137,39 @@ impl FunctionRouter {
             };
         }
 
-        // Try job/workflow dispatchers - auth checked before dispatch to prevent unauthorized execution
+        // Try job dispatcher - check auth using job info
         if let Some(ref job_dispatcher) = self.job_dispatcher {
-            if !auth.is_authenticated() {
-                return Err(ForgeError::Unauthorized("Authentication required".into()));
-            }
-            match job_dispatcher
-                .dispatch_by_name(function_name, args.clone())
-                .await
-            {
-                Ok(job_id) => {
-                    return Ok(RouteResult::Job(serde_json::json!({ "job_id": job_id })));
+            if let Some(job_info) = job_dispatcher.get_info(function_name) {
+                self.check_job_auth(&job_info, &auth)?;
+                match job_dispatcher
+                    .dispatch_by_name(function_name, args.clone())
+                    .await
+                {
+                    Ok(job_id) => {
+                        return Ok(RouteResult::Job(serde_json::json!({ "job_id": job_id })));
+                    }
+                    Err(ForgeError::NotFound(_)) => {}
+                    Err(e) => return Err(e),
                 }
-                Err(ForgeError::NotFound(_)) => {}
-                Err(e) => return Err(e),
             }
         }
 
+        // Try workflow dispatcher - check auth using workflow info
         if let Some(ref workflow_dispatcher) = self.workflow_dispatcher {
-            if !auth.is_authenticated() {
-                return Err(ForgeError::Unauthorized("Authentication required".into()));
-            }
-            match workflow_dispatcher
-                .start_by_name(function_name, args.clone())
-                .await
-            {
-                Ok(workflow_id) => {
-                    return Ok(RouteResult::Workflow(
-                        serde_json::json!({ "workflow_id": workflow_id }),
-                    ));
+            if let Some(workflow_info) = workflow_dispatcher.get_info(function_name) {
+                self.check_workflow_auth(&workflow_info, &auth)?;
+                match workflow_dispatcher
+                    .start_by_name(function_name, args.clone())
+                    .await
+                {
+                    Ok(workflow_id) => {
+                        return Ok(RouteResult::Workflow(
+                            serde_json::json!({ "workflow_id": workflow_id }),
+                        ));
+                    }
+                    Err(ForgeError::NotFound(_)) => {}
+                    Err(e) => return Err(e),
                 }
-                Err(ForgeError::NotFound(_)) => {}
-                Err(e) => return Err(e),
             }
         }
 
@@ -186,14 +187,48 @@ impl FunctionRouter {
             return Ok(());
         }
 
-        // Check if auth is required
-        if info.requires_auth && !auth.is_authenticated() {
-            return Err(ForgeError::Unauthorized("Authentication required".into()));
+        // Check role requirement (implies auth required)
+        if let Some(role) = info.required_role {
+            if !auth.is_authenticated() {
+                return Err(ForgeError::Unauthorized("Authentication required".into()));
+            }
+            if !auth.has_role(role) {
+                return Err(ForgeError::Forbidden(format!("Role '{}' required", role)));
+            }
         }
 
-        // Check role requirement
+        Ok(())
+    }
+
+    /// Check authorization for a job dispatch.
+    fn check_job_auth(&self, info: &forge_core::job::JobInfo, auth: &AuthContext) -> Result<()> {
+        if info.is_public {
+            return Ok(());
+        }
+
         if let Some(role) = info.required_role {
-            // Role check implies authentication is required
+            if !auth.is_authenticated() {
+                return Err(ForgeError::Unauthorized("Authentication required".into()));
+            }
+            if !auth.has_role(role) {
+                return Err(ForgeError::Forbidden(format!("Role '{}' required", role)));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Check authorization for a workflow dispatch.
+    fn check_workflow_auth(
+        &self,
+        info: &forge_core::workflow::WorkflowInfo,
+        auth: &AuthContext,
+    ) -> Result<()> {
+        if info.is_public {
+            return Ok(());
+        }
+
+        if let Some(role) = info.required_role {
             if !auth.is_authenticated() {
                 return Err(ForgeError::Unauthorized("Authentication required".into()));
             }
@@ -268,7 +303,6 @@ mod tests {
             name: "test",
             description: None,
             kind: FunctionKind::Query,
-            requires_auth: false,
             required_role: None,
             is_public: true,
             cache_ttl: None,

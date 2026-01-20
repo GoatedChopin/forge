@@ -21,7 +21,6 @@ pub fn expand_mutation(attr: TokenStream, item: TokenStream) -> TokenStream {
 
 #[derive(Default)]
 struct MutationAttrs {
-    requires_auth: bool,
     required_role: Option<String>,
     timeout: Option<u64>,
     rate_limit_requests: Option<u32>,
@@ -40,10 +39,6 @@ fn parse_mutation_attrs(attr: TokenStream) -> MutationAttrs {
 
     let attr_str = attr.to_string();
 
-    if attr_str.contains("require_auth") {
-        attrs.requires_auth = true;
-    }
-
     if attr_str.contains("transactional") {
         attrs.transactional = true;
     }
@@ -55,7 +50,6 @@ fn parse_mutation_attrs(attr: TokenStream) -> MutationAttrs {
             if let Some(paren_end) = remaining.find(')') {
                 let role = remaining[..paren_end].trim().trim_matches('"');
                 attrs.required_role = Some(role.to_string());
-                attrs.requires_auth = true;
             }
         }
     }
@@ -284,8 +278,6 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
         None => quote! { None },
     };
 
-    let requires_auth = attrs.requires_auth;
-
     let required_role = match &attrs.required_role {
         Some(role) => quote! { Some(#role) },
         None => quote! { None },
@@ -422,7 +414,6 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
                     name: #fn_name_str,
                     description: None,
                     kind: forge::forge_core::FunctionKind::Mutation,
-                    requires_auth: #requires_auth,
                     required_role: #required_role,
                     is_public: false,
                     cache_ttl: None,

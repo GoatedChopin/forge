@@ -4,12 +4,17 @@ use std::pin::Pin;
 use uuid::Uuid;
 
 use crate::error::Result;
+use crate::job::JobInfo;
+use crate::workflow::WorkflowInfo;
 
 /// Trait for dispatching jobs from function contexts.
 ///
 /// This trait allows mutation and action contexts to dispatch background jobs
 /// without directly depending on the runtime's JobDispatcher.
 pub trait JobDispatch: Send + Sync {
+    /// Get job info by name for auth checking.
+    fn get_info(&self, job_type: &str) -> Option<JobInfo>;
+
     /// Dispatch a job by its registered name.
     ///
     /// # Arguments
@@ -30,6 +35,9 @@ pub trait JobDispatch: Send + Sync {
 /// This trait allows mutation and action contexts to start workflows
 /// without directly depending on the runtime's WorkflowExecutor.
 pub trait WorkflowDispatch: Send + Sync {
+    /// Get workflow info by name for auth checking.
+    fn get_info(&self, workflow_name: &str) -> Option<WorkflowInfo>;
+
     /// Start a workflow by its registered name.
     ///
     /// # Arguments

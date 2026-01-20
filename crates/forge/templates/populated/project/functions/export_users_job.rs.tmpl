@@ -27,6 +27,7 @@ pub struct ExportUsersOutput {
 #[retry(max_attempts = 3, backoff = "exponential")]
 #[idempotent]
 #[worker_capability = "general"]
+#[public]
 pub async fn export_users(ctx: &JobContext, input: ExportUsersInput) -> Result<ExportUsersOutput> {
     use std::time::Duration;
 

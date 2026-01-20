@@ -57,24 +57,50 @@ impl ApiGenerator {
                 FunctionKind::Query => {
                     let result_type = rust_type_to_ts_return(&func.return_type);
                     collect_custom_types(&func.return_type, &mut type_imports);
-                    queries.push(gen_rpc_binding(&ts_name, has_args, &args_type, &result_type, &func.name));
+                    queries.push(gen_rpc_binding(
+                        &ts_name,
+                        has_args,
+                        &args_type,
+                        &result_type,
+                        &func.name,
+                    ));
                 }
                 FunctionKind::Mutation => {
                     let result_type = rust_type_to_ts_return(&func.return_type);
                     collect_custom_types(&func.return_type, &mut type_imports);
-                    mutations.push(gen_rpc_binding(&ts_name, has_args, &args_type, &result_type, &func.name));
+                    mutations.push(gen_rpc_binding(
+                        &ts_name,
+                        has_args,
+                        &args_type,
+                        &result_type,
+                        &func.name,
+                    ));
                 }
                 FunctionKind::Job => {
                     let factory_name = format!("track{}", to_pascal_case(&func.name));
                     let output_type = rust_type_to_ts_return(&func.return_type);
                     collect_custom_types(&func.return_type, &mut type_imports);
-                    jobs.push(gen_store_binding(&factory_name, has_args, &args_type, &output_type, &func.name, "createJobStore"));
+                    jobs.push(gen_store_binding(
+                        &factory_name,
+                        has_args,
+                        &args_type,
+                        &output_type,
+                        &func.name,
+                        "createJobStore",
+                    ));
                 }
                 FunctionKind::Workflow => {
                     let factory_name = format!("track{}", to_pascal_case(&func.name));
                     let output_type = rust_type_to_ts_return(&func.return_type);
                     collect_custom_types(&func.return_type, &mut type_imports);
-                    workflows.push(gen_store_binding(&factory_name, has_args, &args_type, &output_type, &func.name, "createWorkflowStore"));
+                    workflows.push(gen_store_binding(
+                        &factory_name,
+                        has_args,
+                        &args_type,
+                        &output_type,
+                        &func.name,
+                        "createWorkflowStore",
+                    ));
                 }
                 FunctionKind::Cron => {}
             }
@@ -147,7 +173,13 @@ impl ApiGenerator {
     }
 }
 
-fn gen_rpc_binding(ts_name: &str, has_args: bool, args_type: &str, result_type: &str, func_name: &str) -> String {
+fn gen_rpc_binding(
+    ts_name: &str,
+    has_args: bool,
+    args_type: &str,
+    result_type: &str,
+    func_name: &str,
+) -> String {
     if has_args {
         format!(
             "export const {} = (args: {}): Promise<{}> =>\n  getForgeClient().call(\"{}\", args);",
@@ -161,7 +193,14 @@ fn gen_rpc_binding(ts_name: &str, has_args: bool, args_type: &str, result_type: 
     }
 }
 
-fn gen_store_binding(factory_name: &str, has_args: bool, args_type: &str, output_type: &str, func_name: &str, store_fn: &str) -> String {
+fn gen_store_binding(
+    factory_name: &str,
+    has_args: bool,
+    args_type: &str,
+    output_type: &str,
+    func_name: &str,
+    store_fn: &str,
+) -> String {
     if has_args {
         format!(
             "export const {} = (args: {}) =>\n  {}<{}, {}>(\"{}\", args);",
@@ -182,13 +221,20 @@ fn collect_custom_types(rust_type: &RustType, imports: &mut Vec<String>) {
             let skip = name == "()"
                 || name.starts_with("Vec<")
                 || name.starts_with("HashMap<")
-                || matches!(name.as_str(), "Instant" | "LocalDate" | "LocalTime" | "Upload" | "Bytes");
+                || matches!(
+                    name.as_str(),
+                    "Instant" | "LocalDate" | "LocalTime" | "Upload" | "Bytes"
+                );
             if !skip {
                 imports.push(name.clone());
             }
         }
         RustType::Option(inner) | RustType::Vec(inner) => collect_custom_types(inner, imports),
-        RustType::Instant | RustType::LocalDate | RustType::LocalTime | RustType::Upload | RustType::Bytes => {}
+        RustType::Instant
+        | RustType::LocalDate
+        | RustType::LocalTime
+        | RustType::Upload
+        | RustType::Bytes => {}
         _ => {}
     }
 }

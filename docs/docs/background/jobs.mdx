@@ -45,6 +45,50 @@ The macro generates `SendEmailJob` which implements the `ForgeJob` trait.
 | `retry` | `#[retry(max_attempts = 5)]` | Retry configuration |
 | `worker_capability` | `#[worker_capability = "gpu"]` | Required worker capability |
 | `idempotent` | `#[idempotent]` | Enable idempotency checking |
+| `public` | `#[public]` | Allow unauthenticated dispatch |
+| `require_role` | `#[require_role("admin")]` | Require specific role to dispatch |
+
+## Authorization
+
+By default, jobs require authentication to dispatch. You can control access with these attributes:
+
+### Public Jobs
+
+Allow anyone to dispatch the job (no authentication required):
+
+```rust
+#[forge::job]
+#[public]
+pub async fn process_public_data(ctx: &JobContext, input: DataInput) -> Result<()> {
+    // Can be dispatched without authentication
+    Ok(())
+}
+```
+
+### Role-Based Access
+
+Require a specific role to dispatch the job:
+
+```rust
+#[forge::job]
+#[require_role("admin")]
+pub async fn admin_cleanup(ctx: &JobContext, input: CleanupInput) -> Result<()> {
+    // Only users with "admin" role can dispatch this job
+    Ok(())
+}
+```
+
+### Default Behavior
+
+Without any auth attributes, jobs require authentication but no specific role:
+
+```rust
+#[forge::job]
+pub async fn user_export(ctx: &JobContext, input: ExportInput) -> Result<()> {
+    // Requires authentication, any authenticated user can dispatch
+    Ok(())
+}
+```
 
 ### Duration Format
 

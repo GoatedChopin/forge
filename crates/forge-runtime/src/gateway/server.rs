@@ -223,9 +223,7 @@ impl GatewayServer {
             .route("/subscribe-workflow", post(sse_workflow_subscribe_handler))
             .with_state(sse_state);
 
-        main_router = main_router
-            .merge(multipart_router)
-            .merge(sse_router);
+        main_router = main_router.merge(multipart_router).merge(sse_router);
 
         // Build middleware stack
         let service_builder = ServiceBuilder::new()
