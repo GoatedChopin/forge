@@ -288,7 +288,7 @@ const EMPTY_DOCKER_COMPOSE: &str =
     include_str!("../../templates/empty/project/docker-compose.yml.tmpl");
 const EMPTY_README: &str = include_str!("../../templates/empty/project/README.md.tmpl");
 const EMPTY_MIGRATION_INITIAL: &str =
-    include_str!("../../templates/empty/project/migrations/0001_initial.sql.tmpl");
+    include_str!("../../templates/empty/project/migrations/0001_initial.sql.example.tmpl");
 const EMPTY_SCHEMA_MOD: &str = include_str!("../../templates/empty/project/schema/mod.rs.tmpl");
 const EMPTY_FUNCTIONS_MOD: &str =
     include_str!("../../templates/empty/project/functions/mod.rs.tmpl");
@@ -581,7 +581,7 @@ pub fn create_project(dir: &Path, name: &str, demo: bool) -> Result<()> {
         fs::write(dir.join("README.md"), render(EMPTY_README, &vars))?;
         fs::write(dir.join("src/main.rs"), EMPTY_MAIN_RS)?;
         fs::write(
-            dir.join("migrations/0001_initial.sql"),
+            dir.join("migrations/0001_initial.sql.example"),
             EMPTY_MIGRATION_INITIAL,
         )?;
         fs::write(dir.join("src/schema/mod.rs"), EMPTY_SCHEMA_MOD)?;
@@ -759,7 +759,7 @@ mod tests {
         assert!(path.join("src/main.rs").exists());
         assert!(path.join("src/schema/mod.rs").exists());
         assert!(path.join("src/functions/mod.rs").exists());
-        assert!(path.join("migrations/0001_initial.sql").exists());
+        assert!(path.join("migrations/0001_initial.sql.example").exists());
         assert!(path.join("AGENTS.md").exists());
 
         // Example files should NOT exist

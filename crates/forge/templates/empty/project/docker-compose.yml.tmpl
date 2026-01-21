@@ -10,6 +10,7 @@ services:
       - .env
     environment:
       - DATABASE_URL=postgres://postgres:forge@db:5432/{{project_name}}
+    command: ["cargo", "watch", "--poll", "-i", "frontend/*", "-x", "run --no-default-features"]
     volumes:
       - .:/app
       - cargo_cache:/usr/local/cargo/registry
@@ -46,7 +47,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d {{project_name}}"]
       interval: 5s

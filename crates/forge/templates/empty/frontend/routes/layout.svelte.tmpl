@@ -1,16 +1,14 @@
 <script lang="ts">
   import { ForgeProvider } from "@forge/svelte";
+  import { PUBLIC_API_URL } from "$env/static/public";
 
   interface Props {
     children: import("svelte").Snippet;
   }
 
   let { children }: Props = $props();
-
-  // Read API URL from environment or use default
-  const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8080";
 </script>
 
-<ForgeProvider url={apiUrl}>
+<ForgeProvider url={PUBLIC_API_URL}>
   {@render children()}
 </ForgeProvider>
