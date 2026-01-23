@@ -50,7 +50,7 @@ impl Default for AuthConfig {
 impl AuthConfig {
     /// Create auth config from forge core config.
     pub fn from_forge_config(config: &forge_core::config::AuthConfig) -> Self {
-        let algorithm = JwtAlgorithm::from(config.algorithm);
+        let algorithm = JwtAlgorithm::from(config.jwt_algorithm);
 
         let jwks_client = config
             .jwks_url
@@ -61,8 +61,8 @@ impl AuthConfig {
             jwt_secret: config.jwt_secret.clone(),
             algorithm,
             jwks_client,
-            issuer: config.issuer.clone(),
-            audience: config.audience.clone(),
+            issuer: config.jwt_issuer.clone(),
+            audience: config.jwt_audience.clone(),
             allow_anonymous: config.allow_anonymous,
             skip_verification: false,
         }
@@ -195,24 +195,7 @@ impl AuthMiddleware {
         &self.config
     }
 
-    /// Validate a JWT token and extract claims (sync version for HMAC).
-    /// For RSA algorithms, use `validate_token_async`.
-    pub fn validate_token(&self, token: &str) -> Result<Claims, AuthError> {
-        if self.config.skip_verification {
-            return self.decode_without_verification(token);
-        }
-
-        if self.config.is_hmac() {
-            self.validate_hmac(token)
-        } else {
-            // RSA requires async - return error for sync call
-            Err(AuthError::InvalidToken(
-                "RSA validation requires async. Use validate_token_async.".to_string(),
-            ))
-        }
-    }
-
-    /// Validate a JWT token and extract claims (async version, supports RSA).
+    /// Validate a JWT token and extract claims.
     pub async fn validate_token_async(&self, token: &str) -> Result<Claims, AuthError> {
         if self.config.skip_verification {
             return self.decode_without_verification(token);
@@ -470,8 +453,8 @@ mod tests {
         assert!(middleware.config.skip_verification);
     }
 
-    #[test]
-    fn test_valid_token_with_correct_secret() {
+    #[tokio::test]
+    async fn test_valid_token_with_correct_secret() {
         let secret = "test-secret-key";
         let config = AuthConfig::with_secret(secret);
         let middleware = AuthMiddleware::new(config);
@@ -479,21 +462,21 @@ mod tests {
         let claims = create_test_claims(false);
         let token = create_test_token(&claims, secret);
 
-        let result = middleware.validate_token(&token);
+        let result = middleware.validate_token_async(&token).await;
         assert!(result.is_ok());
         let validated_claims = result.unwrap();
         assert_eq!(validated_claims.sub, "test-user-id");
     }
 
-    #[test]
-    fn test_valid_token_with_wrong_secret() {
+    #[tokio::test]
+    async fn test_valid_token_with_wrong_secret() {
         let config = AuthConfig::with_secret("correct-secret");
         let middleware = AuthMiddleware::new(config);
 
         let claims = create_test_claims(false);
         let token = create_test_token(&claims, "wrong-secret");
 
-        let result = middleware.validate_token(&token);
+        let result = middleware.validate_token_async(&token).await;
         assert!(result.is_err());
         match result {
             Err(AuthError::InvalidToken(_)) => {}
@@ -501,8 +484,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_expired_token() {
+    #[tokio::test]
+    async fn test_expired_token() {
         let secret = "test-secret";
         let config = AuthConfig::with_secret(secret);
         let middleware = AuthMiddleware::new(config);
@@ -510,7 +493,7 @@ mod tests {
         let claims = create_test_claims(true); // Expired
         let token = create_test_token(&claims, secret);
 
-        let result = middleware.validate_token(&token);
+        let result = middleware.validate_token_async(&token).await;
         assert!(result.is_err());
         match result {
             Err(AuthError::TokenExpired) => {}
@@ -518,8 +501,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_tampered_token() {
+    #[tokio::test]
+    async fn test_tampered_token() {
         let secret = "test-secret";
         let config = AuthConfig::with_secret(secret);
         let middleware = AuthMiddleware::new(config);
@@ -533,12 +516,12 @@ mod tests {
             token.push(replacement);
         }
 
-        let result = middleware.validate_token(&token);
+        let result = middleware.validate_token_async(&token).await;
         assert!(result.is_err());
     }
 
-    #[test]
-    fn test_dev_mode_skips_signature() {
+    #[tokio::test]
+    async fn test_dev_mode_skips_signature() {
         let config = AuthConfig::dev_mode();
         let middleware = AuthMiddleware::new(config);
 
@@ -547,19 +530,19 @@ mod tests {
         let token = create_test_token(&claims, "any-secret");
 
         // Should still validate in dev mode
-        let result = middleware.validate_token(&token);
+        let result = middleware.validate_token_async(&token).await;
         assert!(result.is_ok());
     }
 
-    #[test]
-    fn test_dev_mode_still_checks_expiration() {
+    #[tokio::test]
+    async fn test_dev_mode_still_checks_expiration() {
         let config = AuthConfig::dev_mode();
         let middleware = AuthMiddleware::new(config);
 
         let claims = create_test_claims(true); // Expired
         let token = create_test_token(&claims, "any-secret");
 
-        let result = middleware.validate_token(&token);
+        let result = middleware.validate_token_async(&token).await;
         assert!(result.is_err());
         match result {
             Err(AuthError::TokenExpired) => {}
@@ -567,12 +550,12 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_invalid_token_format() {
+    #[tokio::test]
+    async fn test_invalid_token_format() {
         let config = AuthConfig::with_secret("secret");
         let middleware = AuthMiddleware::new(config);
 
-        let result = middleware.validate_token("not-a-valid-jwt");
+        let result = middleware.validate_token_async("not-a-valid-jwt").await;
         assert!(result.is_err());
         match result {
             Err(AuthError::InvalidToken(_)) => {}

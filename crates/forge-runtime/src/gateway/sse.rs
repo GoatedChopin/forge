@@ -302,7 +302,7 @@ pub async fn sse_handler(
     let cancel_token = CancellationToken::new();
 
     let auth_context = if let Some(token) = &query.token {
-        match state.auth_middleware.validate_token(token) {
+        match state.auth_middleware.validate_token_async(token).await {
             Ok(claims) => super::auth::build_auth_context_from_claims(claims),
             Err(e) => {
                 tracing::debug!(

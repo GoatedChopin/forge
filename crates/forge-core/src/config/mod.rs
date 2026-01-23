@@ -48,6 +48,10 @@ pub struct ForgeConfig {
     /// Security configuration.
     #[serde(default)]
     pub security: SecurityConfig,
+
+    /// Authentication configuration.
+    #[serde(default)]
+    pub auth: AuthConfig,
 }
 
 impl ForgeConfig {
@@ -83,6 +87,7 @@ impl ForgeConfig {
             cluster: ClusterConfig::default(),
             observability: ObservabilityConfig::default(),
             security: SecurityConfig::default(),
+            auth: AuthConfig::default(),
         }
     }
 }
@@ -288,10 +293,6 @@ fn default_poll_interval() -> u64 {
 pub struct SecurityConfig {
     /// Secret key for signing.
     pub secret_key: Option<String>,
-
-    /// JWT configuration.
-    #[serde(default)]
-    pub auth: AuthConfig,
 }
 
 /// JWT signing algorithm.
@@ -316,27 +317,30 @@ pub enum JwtAlgorithm {
 /// Authentication configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthConfig {
-    /// JWT signing algorithm.
-    /// HMAC algorithms (HS256, HS384, HS512) require jwt_secret.
-    /// RSA algorithms (RS256, RS384, RS512) require jwks_url.
-    #[serde(default)]
-    pub algorithm: JwtAlgorithm,
-
     /// JWT secret for HMAC algorithms (HS256, HS384, HS512).
     /// Required when using HMAC algorithms.
     pub jwt_secret: Option<String>,
 
-    /// JWKS URL for RSA algorithms (RS256, RS384, RS512).
-    /// Keys are fetched and cached automatically.
-    pub jwks_url: Option<String>,
+    /// JWT signing algorithm.
+    /// HMAC algorithms (HS256, HS384, HS512) require jwt_secret.
+    /// RSA algorithms (RS256, RS384, RS512) require jwks_url.
+    #[serde(default)]
+    pub jwt_algorithm: JwtAlgorithm,
 
     /// Expected token issuer (iss claim).
     /// If set, tokens with a different issuer are rejected.
-    pub issuer: Option<String>,
+    pub jwt_issuer: Option<String>,
 
     /// Expected audience (aud claim).
     /// If set, tokens with a different audience are rejected.
-    pub audience: Option<String>,
+    pub jwt_audience: Option<String>,
+
+    /// Token expiry duration (e.g., "15m", "1h", "7d").
+    pub token_expiry: Option<String>,
+
+    /// JWKS URL for RSA algorithms (RS256, RS384, RS512).
+    /// Keys are fetched and cached automatically.
+    pub jwks_url: Option<String>,
 
     /// Allow unauthenticated requests to reach public functions.
     #[serde(default = "default_true")]
@@ -354,11 +358,12 @@ pub struct AuthConfig {
 impl Default for AuthConfig {
     fn default() -> Self {
         Self {
-            algorithm: JwtAlgorithm::default(),
             jwt_secret: None,
+            jwt_algorithm: JwtAlgorithm::default(),
+            jwt_issuer: None,
+            jwt_audience: None,
+            token_expiry: None,
             jwks_url: None,
-            issuer: None,
-            audience: None,
             allow_anonymous: true,
             jwks_cache_ttl_secs: default_jwks_cache_ttl(),
             session_ttl_secs: default_session_ttl(),
@@ -369,7 +374,7 @@ impl Default for AuthConfig {
 impl AuthConfig {
     /// Validate that the configuration is complete for the chosen algorithm.
     pub fn validate(&self) -> Result<()> {
-        match self.algorithm {
+        match self.jwt_algorithm {
             JwtAlgorithm::HS256 | JwtAlgorithm::HS384 | JwtAlgorithm::HS512 => {
                 if self.jwt_secret.is_none() {
                     return Err(ForgeError::Config(
@@ -391,7 +396,7 @@ impl AuthConfig {
     /// Check if this config uses HMAC (symmetric) algorithms.
     pub fn is_hmac(&self) -> bool {
         matches!(
-            self.algorithm,
+            self.jwt_algorithm,
             JwtAlgorithm::HS256 | JwtAlgorithm::HS384 | JwtAlgorithm::HS512
         )
     }
@@ -399,7 +404,7 @@ impl AuthConfig {
     /// Check if this config uses RSA (asymmetric) algorithms.
     pub fn is_rsa(&self) -> bool {
         matches!(
-            self.algorithm,
+            self.jwt_algorithm,
             JwtAlgorithm::RS256 | JwtAlgorithm::RS384 | JwtAlgorithm::RS512
         )
     }

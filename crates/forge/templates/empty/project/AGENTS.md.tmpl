@@ -161,6 +161,7 @@ forge check                          # Validate project
 | `tokio::sleep` in Workflow | `ctx.sleep()` |
 | Destructure `$props()` | Keep reference |
 | Poll with `query()` loop | `subscribe()` |
+| `refetch()` after mutations | `SELECT forge_enable_reactivity('table')` in migrations |
 | `ctx.auth.user_id().unwrap()` | `ctx.require_user_id()?` |
 | Edit `frontend/src/lib/forge/` | Run `forge generate` |
 | Dynamic SQL in subscribed query | Add `tables = [...]` for invalidation |
@@ -229,14 +230,7 @@ ForgeError::Database(msg)                   // 500
 
 ## External Auth (Firebase, Auth0, Clerk)
 
-Frontend: `<ForgeProvider getToken={() => firebase.currentUser?.getIdToken()}>`. Backend:
-
-```toml
-[auth]
-jwt_algorithm = "RS256"
-jwt_issuer = "https://securetoken.google.com/PROJECT_ID"  # or Auth0/Clerk issuer
-jwks_url = "https://www.googleapis.com/...jwk/securetoken@system.gserviceaccount.com"
-```
+Frontend: `<ForgeProvider getToken={() => firebase.currentUser?.getIdToken()}>`. Backend: Update forge.toml with provider config.
 
 ## Workflow
 
