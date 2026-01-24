@@ -56,9 +56,14 @@ export class ForgeClient {
   private eventListeners: Array<{ event: string; handler: EventListener }> = [];
   private connectionId = 0;
   private hasConnectedBefore = false;
+  private connectedTokenHash: string | null = null;
 
   constructor(config: ForgeClientConfig) {
     this.config = config;
+  }
+
+  private hashToken(token: string | null): string | null {
+    return token ? token.substring(0, 20) : null;
   }
 
   getUrl(): string {
@@ -129,6 +134,7 @@ export class ForgeClient {
         clearTimeout(timeoutId);
         const data = JSON.parse((e as MessageEvent).data) as SsePayload;
         this.sessionId = data.session_id ?? null;
+        this.connectedTokenHash = this.hashToken(token);
         this.setConnectionState("connected");
         this.reconnectAttempts = 0;
         this.hasConnectedBefore = true;
@@ -183,6 +189,26 @@ export class ForgeClient {
     this.setConnectionState("disconnected");
     this.subscriptions.clear();
     this.subscriptionMeta.clear();
+  }
+
+  async reconnect(): Promise<void> {
+    // Close current connection but preserve subscription metadata for re-registration
+    const savedMeta = new Map(this.subscriptionMeta);
+    const savedCallbacks = new Map(this.subscriptions);
+
+    this.connectionId++;
+    this.removeAllEventSourceListeners();
+    this.eventSource?.close();
+    this.eventSource = null;
+    this.sessionId = null;
+    this.setConnectionState("disconnected");
+    this.reconnectAttempts = 0;
+
+    // Restore subscriptions so they get re-registered on connect
+    this.subscriptionMeta = savedMeta;
+    this.subscriptions = savedCallbacks;
+
+    await this.connect();
   }
 
   private addEventSourceListener(event: string, handler: EventListener): void {
@@ -246,6 +272,13 @@ export class ForgeClient {
   }
 
   async _registerQuery(subscriptionId: string, functionName: string, args: unknown): Promise<unknown> {
+    // Check if auth changed since connection was established
+    const currentToken = await this.getToken();
+    const currentHash = this.hashToken(currentToken);
+    if (this.sessionId && currentHash !== this.connectedTokenHash) {
+      await this.reconnect();
+    }
+
     // Preserve info to re-register after reconnect
     this.subscriptionMeta.set(subscriptionId, { functionName, args, failedAttempts: 0 });
 

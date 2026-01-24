@@ -37,13 +37,30 @@ enabled = true
 # poll_interval = 1000  # milliseconds
 
 # [auth]
-# jwt_secret = "${JWT_SECRET}"      # Required for HMAC algorithms (HS256, HS384, HS512)
 # jwt_algorithm = "HS256"           # HS256, HS384, HS512, RS256, RS384, RS512
-# jwt_issuer = "forge"              # Expected issuer claim
-# jwt_audience = "your-project-id"  # Expected audience claim
-# token_expiry = "15m"              # Token lifetime (e.g., "15m", "1h", "7d")
-# jwks_url = ""                     # Required for RSA algorithms (RS256, RS384, RS512)
-# allow_anonymous = true            # Allow unauthenticated requests to public functions
+# allow_anonymous = true            # Allow unauthenticated requests to public endpoints
+#
+# --- HMAC (HS256/HS384/HS512) - symmetric, use for self-issued tokens ---
+# jwt_secret = "${JWT_SECRET}"      # Shared secret for signing/verifying
+#
+# --- RSA (RS256/RS384/RS512) - asymmetric, use for external providers ---
+# jwks_url = ""                     # Provider's JWKS endpoint for public keys
+#
+# --- Claims validation (recommended for external providers) ---
+# jwt_issuer = ""                   # Expected `iss` claim
+# jwt_audience = ""                 # Expected `aud` claim
+#
+# --- Common provider JWKS URLs ---
+# Firebase:  https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com
+# Auth0:     https://YOUR_DOMAIN.auth0.com/.well-known/jwks.json
+# Clerk:     https://YOUR_DOMAIN.clerk.accounts.dev/.well-known/jwks.json
+# Supabase:  https://YOUR_PROJECT.supabase.co/auth/v1/jwks
+#
+# Firebase example:
+#   jwt_algorithm = "RS256"
+#   jwks_url = "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com"
+#   jwt_issuer = "https://securetoken.google.com/YOUR_PROJECT_ID"
+#   jwt_audience = "YOUR_PROJECT_ID"
 
 # [rate_limit]
 # enabled = true
