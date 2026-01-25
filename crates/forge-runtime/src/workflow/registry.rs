@@ -7,7 +7,7 @@ use forge_core::workflow::{ForgeWorkflow, WorkflowContext, WorkflowInfo};
 use serde_json::Value;
 
 /// Normalize args for deserialization.
-/// - Converts empty objects `{}` to `null` to support unit type `()` deserialization.
+/// - Converts `null` to `{}` so both unit `()` and empty structs deserialize correctly.
 /// - Unwraps `{"args": ...}` or `{"input": ...}` wrapper if present.
 fn normalize_args(args: Value) -> Value {
     let unwrapped = match &args {
@@ -24,7 +24,7 @@ fn normalize_args(args: Value) -> Value {
     };
 
     match &unwrapped {
-        Value::Object(map) if map.is_empty() => Value::Null,
+        Value::Null => Value::Object(serde_json::Map::new()),
         _ => unwrapped,
     }
 }

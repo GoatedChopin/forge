@@ -22,8 +22,8 @@ cargo clippy --all-targets -- -D warnings && cargo test && bun lint && bun forma
 
 ```rust
 // Query: cache, public, require_auth, require_role("x"), timeout=30, rate_limit(...), tables=["t1","t2"] (explicit deps for subscribe())
-#[forge::query(cache = "5m", public)]
-pub async fn get_users(ctx: &QueryContext) -> Result<Vec<User>> { }
+#[forge::query(cache = "5m", require_auth)]
+pub async fn list_users(ctx: &QueryContext) -> Result<Vec<User>> { }
 
 // Mutation: require_auth, require_role("x"), timeout=30, rate_limit(...), transactional (opt-in TX wrapping)
 #[forge::mutation(require_role("admin"))]
