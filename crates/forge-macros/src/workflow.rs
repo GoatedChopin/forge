@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{ItemFn, Meta, parse_macro_input};
+use syn::{ItemFn, parse_macro_input};
 
 /// Workflow attributes.
 #[derive(Debug, Default)]
@@ -12,42 +12,53 @@ struct WorkflowAttrs {
     required_role: Option<String>,
 }
 
-fn parse_workflow_attrs(attrs: &[syn::Attribute]) -> WorkflowAttrs {
+fn parse_workflow_attrs(attr: TokenStream) -> WorkflowAttrs {
     let mut result = WorkflowAttrs::default();
+    let attr_str = attr.to_string();
 
-    for attr in attrs {
-        if attr.path().is_ident("version") {
-            if let Meta::NameValue(nv) = &attr.meta {
-                if let syn::Expr::Lit(syn::ExprLit {
-                    lit: syn::Lit::Int(i),
-                    ..
-                }) = &nv.value
-                {
-                    result.version = i.base10_parse().ok();
-                }
+    // Parse version = N
+    if let Some(version_start) = attr_str.find("version") {
+        if let Some(eq_pos) = attr_str[version_start..].find('=') {
+            let remaining = &attr_str[version_start + eq_pos + 1..];
+            if let Ok(v) = remaining
+                .split(&[',', ')'])
+                .next()
+                .unwrap_or("")
+                .trim()
+                .parse::<u32>()
+            {
+                result.version = Some(v);
             }
         }
-        if attr.path().is_ident("timeout") {
-            if let Meta::NameValue(nv) = &attr.meta {
-                if let syn::Expr::Lit(syn::ExprLit {
-                    lit: syn::Lit::Str(s),
-                    ..
-                }) = &nv.value
-                {
-                    result.timeout = Some(s.value());
-                }
+    }
+
+    // Parse timeout = "Xh" or timeout = "Xm" etc
+    if let Some(timeout_start) = attr_str.find("timeout") {
+        if let Some(quote_start) = attr_str[timeout_start..].find('"') {
+            let remaining = &attr_str[timeout_start + quote_start + 1..];
+            if let Some(quote_end) = remaining.find('"') {
+                let timeout_str = &remaining[..quote_end];
+                result.timeout = Some(timeout_str.to_string());
             }
         }
-        if attr.path().is_ident("deprecated") {
-            result.deprecated = true;
-        }
-        if attr.path().is_ident("public") {
-            result.is_public = true;
-        }
-        if attr.path().is_ident("require_role") {
-            if let Meta::List(list) = &attr.meta {
-                let tokens = list.tokens.to_string();
-                let role = tokens.trim().trim_matches('"');
+    }
+
+    // Parse deprecated flag
+    if attr_str.contains("deprecated") {
+        result.deprecated = true;
+    }
+
+    // Parse public flag
+    if attr_str.contains("public") {
+        result.is_public = true;
+    }
+
+    // Parse require_role("admin")
+    if let Some(role_start) = attr_str.find("require_role") {
+        if let Some(paren_start) = attr_str[role_start..].find('(') {
+            let remaining = &attr_str[role_start + paren_start + 1..];
+            if let Some(paren_end) = remaining.find(')') {
+                let role = remaining[..paren_end].trim().trim_matches('"');
                 result.required_role = Some(role.to_string());
             }
         }
@@ -83,9 +94,8 @@ fn parse_duration(s: &str) -> proc_macro2::TokenStream {
 }
 
 pub fn workflow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let _ = attr;
     let input = parse_macro_input!(item as ItemFn);
-    let attrs = parse_workflow_attrs(&input.attrs);
+    let attrs = parse_workflow_attrs(attr);
 
     let fn_name = &input.sig.ident;
     let fn_name_str = fn_name.to_string();
@@ -154,21 +164,10 @@ pub fn workflow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote! { std::time::Duration::from_secs(86400) } // 24 hours default
     };
 
-    // Filter out our custom attributes
-    let other_attrs: Vec<_> = input
-        .attrs
-        .iter()
-        .filter(|a| {
-            !a.path().is_ident("version")
-                && !a.path().is_ident("timeout")
-                && !a.path().is_ident("deprecated")
-                && !a.path().is_ident("public")
-                && !a.path().is_ident("require_role")
-        })
-        .collect();
+    let fn_attrs = &input.attrs;
 
     let expanded = quote! {
-        #(#other_attrs)*
+        #(#fn_attrs)*
         #vis struct #struct_name;
 
         impl forge::forge_core::workflow::ForgeWorkflow for #struct_name {

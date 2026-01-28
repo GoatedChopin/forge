@@ -18,39 +18,61 @@ cargo clippy --all-targets -- -D warnings && cargo test && bun lint && bun forma
 | Cron | Scheduled | Leader-only, catch-up, `ctx.http()`, `ctx.log` |
 | Workflow | Multi-step | Durable, compensatable, `ctx.step()`, `ctx.sleep()`, `ctx.http()` |
 
+## Authentication
+
+Default behavior requires authentication. Override with:
+- `public` - No auth required
+- `require_role("admin")` - Requires specific role
+
 ## Function Signatures & Attributes
 
 ```rust
-// Query: cache, public, require_auth, require_role("x"), timeout=30, rate_limit(...), tables=["t1","t2"] (explicit deps for subscribe())
-#[forge::query(cache = "5m", require_auth)]
+// Query: cache, public, require_role("x"), timeout, rate_limit(...), tables, log
+#[forge::query]  // Requires authenticated user (default)
 pub async fn list_users(ctx: &QueryContext) -> Result<Vec<User>> { }
 
-// Mutation: require_auth, require_role("x"), timeout=30, rate_limit(...), transactional (opt-in TX wrapping)
-#[forge::mutation(require_role("admin"))]
+#[forge::query(public)]  // No auth required
+pub async fn get_public_data(ctx: &QueryContext) -> Result<Data> { }
+
+#[forge::query(require_role("admin"), cache = "5m")]  // Requires admin role
+pub async fn admin_stats(ctx: &QueryContext) -> Result<Stats> { }
+
+#[forge::query(tables = ["users", "orders"])]  // Explicit table deps for dynamic SQL
+pub async fn search(ctx: &QueryContext, args: SearchArgs) -> Result<Vec<Item>> { }
+
+#[forge::query(rate_limit(requests = 100, per = "1m", key = "user"), log = "debug")]
+pub async fn rate_limited(ctx: &QueryContext) -> Result<Data> { }
+
+// Mutation: public, require_role("x"), timeout, rate_limit(...), transactional, log
+#[forge::mutation]  // Requires authenticated user (default)
+pub async fn update_profile(ctx: &MutationContext, input: ProfileInput) -> Result<Profile> { }
+
+#[forge::mutation(require_role("admin"))]  // Requires admin role
 pub async fn create_user(ctx: &MutationContext, input: CreateUserInput) -> Result<User> { }
 
 #[forge::mutation(transactional)]  // Wraps in BEGIN/COMMIT, jobs use outbox pattern
 pub async fn transfer_funds(ctx: &MutationContext, input: TransferInput) -> Result<()> { }
 
-// Job: timeout, priority, max_attempts, worker_capability, idempotent, retry
-#[forge::job]
-#[timeout = "30m"]
-#[priority = "high"]  // background, low, normal, high, critical
-#[retry(max_attempts = 5, backoff = "exponential", max_backoff = "5m")]
-#[idempotent(key = "input.email")]
+#[forge::mutation(public)]  // No auth required
+pub async fn submit_feedback(ctx: &MutationContext, input: FeedbackInput) -> Result<()> { }
+
+// Job: timeout, priority, retry, idempotent, worker_capability, public, require_role
+#[forge::job(timeout = "30m", priority = "high", retry(max_attempts = 5, backoff = "exponential", max_backoff = "5m"))]
 pub async fn process_order(ctx: &JobContext, input: OrderInput) -> Result<()> { }
 
-// Cron: timezone, timeout, catch_up, catch_up_limit
-#[forge::cron("0 9 * * *")]  // minute hour day month weekday
-#[timezone = "America/New_York"]
-#[catch_up]
+#[forge::job(worker_capability = "gpu", public)]  // Can be dispatched without auth
+pub async fn render_video(ctx: &JobContext, input: RenderInput) -> Result<()> { }
+
+// Cron: schedule (first arg), timezone, timeout, catch_up, catch_up_limit
+#[forge::cron("0 9 * * *", timezone = "America/New_York", timeout = "30m", catch_up, catch_up_limit = 5)]
 pub async fn daily_report(ctx: &CronContext) -> Result<()> { }
 
-// Workflow: version, timeout
-#[forge::workflow]
-#[version = 1]
-#[timeout = "7d"]
+// Workflow: version, timeout, public, require_role
+#[forge::workflow(version = 1, timeout = "7d")]  // Requires authenticated user (default)
 pub async fn onboarding(ctx: &WorkflowContext, user: User) -> Result<()> { }
+
+#[forge::workflow(require_role("admin"))]  // Requires admin role
+pub async fn admin_workflow(ctx: &WorkflowContext, input: AdminInput) -> Result<()> { }
 ```
 
 ## Context Methods

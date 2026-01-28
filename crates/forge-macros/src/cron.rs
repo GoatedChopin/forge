@@ -1,8 +1,7 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{ItemFn, Meta, parse_macro_input};
+use syn::{ItemFn, parse_macro_input};
 
-/// Cron attributes.
 #[derive(Debug, Default)]
 struct CronAttrs {
     schedule: Option<String>,
@@ -12,56 +11,70 @@ struct CronAttrs {
     timeout: Option<String>,
 }
 
-fn parse_cron_attrs(attrs: &[syn::Attribute], schedule_from_arg: Option<String>) -> CronAttrs {
-    let mut result = CronAttrs {
-        schedule: schedule_from_arg,
-        ..Default::default()
-    };
+fn parse_cron_attrs(attr: TokenStream) -> CronAttrs {
+    let mut result = CronAttrs::default();
+    let attr_str = attr.to_string();
 
-    for attr in attrs {
-        if attr.path().is_ident("timezone") {
-            if let Meta::NameValue(nv) = &attr.meta {
-                if let syn::Expr::Lit(syn::ExprLit {
-                    lit: syn::Lit::Str(s),
-                    ..
-                }) = &nv.value
-                {
-                    result.timezone = Some(s.value());
+    // Parse schedule from first quoted string argument
+    if let Some(quote_start) = attr_str.find('"') {
+        let remaining = &attr_str[quote_start + 1..];
+        if let Some(quote_end) = remaining.find('"') {
+            result.schedule = Some(remaining[..quote_end].to_string());
+        }
+    }
+
+    // Parse timezone = "America/New_York"
+    if let Some(tz_start) = attr_str.find("timezone") {
+        if let Some(eq_pos) = attr_str[tz_start..].find('=') {
+            let after_eq = &attr_str[tz_start + eq_pos + 1..];
+            if let Some(quote_start) = after_eq.find('"') {
+                let after_quote = &after_eq[quote_start + 1..];
+                if let Some(quote_end) = after_quote.find('"') {
+                    result.timezone = Some(after_quote[..quote_end].to_string());
                 }
             }
         }
-        if attr.path().is_ident("timeout") {
-            if let Meta::NameValue(nv) = &attr.meta {
-                if let syn::Expr::Lit(syn::ExprLit {
-                    lit: syn::Lit::Str(s),
-                    ..
-                }) = &nv.value
-                {
-                    result.timeout = Some(s.value());
+    }
+
+    // Parse timeout = "30m"
+    if let Some(timeout_start) = attr_str.find("timeout") {
+        if let Some(eq_pos) = attr_str[timeout_start..].find('=') {
+            let after_eq = &attr_str[timeout_start + eq_pos + 1..];
+            if let Some(quote_start) = after_eq.find('"') {
+                let after_quote = &after_eq[quote_start + 1..];
+                if let Some(quote_end) = after_quote.find('"') {
+                    result.timeout = Some(after_quote[..quote_end].to_string());
                 }
             }
         }
-        if attr.path().is_ident("catch_up") {
-            result.catch_up = true;
-            if let Meta::NameValue(nv) = &attr.meta {
-                if let syn::Expr::Lit(syn::ExprLit {
-                    lit: syn::Lit::Int(i),
-                    ..
-                }) = &nv.value
-                {
-                    result.catch_up_limit = i.base10_parse().ok();
-                }
+    }
+
+    // Parse catch_up_limit = 5 first (so catch_up doesn't match it)
+    if let Some(limit_start) = attr_str.find("catch_up_limit") {
+        if let Some(eq_pos) = attr_str[limit_start..].find('=') {
+            let after_eq = &attr_str[limit_start + eq_pos + 1..];
+            if let Ok(n) = after_eq
+                .split(&[',', ')'])
+                .next()
+                .unwrap_or("")
+                .trim()
+                .parse::<u32>()
+            {
+                result.catch_up_limit = Some(n);
             }
         }
-        if attr.path().is_ident("catch_up_limit") {
-            if let Meta::NameValue(nv) = &attr.meta {
-                if let syn::Expr::Lit(syn::ExprLit {
-                    lit: syn::Lit::Int(i),
-                    ..
-                }) = &nv.value
-                {
-                    result.catch_up_limit = i.base10_parse().ok();
-                }
+    }
+
+    // Parse catch_up (boolean flag)
+    if attr_str.contains("catch_up") {
+        // Make sure it's not just catch_up_limit
+        let catch_up_positions: Vec<_> = attr_str.match_indices("catch_up").collect();
+        for (pos, _) in catch_up_positions {
+            let after = &attr_str[pos + 8..];
+            // If it's followed by '_limit', skip it
+            if !after.starts_with("_limit") {
+                result.catch_up = true;
+                break;
             }
         }
     }
@@ -93,18 +106,7 @@ fn parse_duration(s: &str) -> proc_macro2::TokenStream {
 
 pub fn cron_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
-
-    // Parse schedule from attribute argument
-    let schedule_expr = if !attr.is_empty() {
-        let attr_str = attr.to_string();
-        // Remove quotes if present
-        let cleaned = attr_str.trim().trim_matches('"');
-        Some(cleaned.to_string())
-    } else {
-        None
-    };
-
-    let attrs = parse_cron_attrs(&input.attrs, schedule_expr);
+    let attrs = parse_cron_attrs(attr);
 
     let fn_name = &input.sig.ident;
     let fn_name_str = fn_name.to_string();
@@ -124,17 +126,7 @@ pub fn cron_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote! { std::time::Duration::from_secs(3600) }
     };
 
-    // Filter out our custom attributes
-    let other_attrs: Vec<_> = input
-        .attrs
-        .iter()
-        .filter(|a| {
-            !a.path().is_ident("timezone")
-                && !a.path().is_ident("timeout")
-                && !a.path().is_ident("catch_up")
-                && !a.path().is_ident("catch_up_limit")
-        })
-        .collect();
+    let other_attrs = &input.attrs;
 
     let expanded = quote! {
         #(#other_attrs)*

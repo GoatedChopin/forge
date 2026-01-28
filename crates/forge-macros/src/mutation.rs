@@ -22,16 +22,13 @@ pub fn expand_mutation(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[derive(Default)]
 struct MutationAttrs {
     required_role: Option<String>,
+    is_public: bool,
     timeout: Option<u64>,
     rate_limit_requests: Option<u32>,
     rate_limit_per_secs: Option<u64>,
     rate_limit_key: Option<String>,
     log_level: Option<String>,
     transactional: bool,
-    #[allow(dead_code)]
-    retry_on: Vec<String>,
-    #[allow(dead_code)]
-    max_retries: Option<u32>,
 }
 
 fn parse_mutation_attrs(attr: TokenStream) -> MutationAttrs {
@@ -41,6 +38,10 @@ fn parse_mutation_attrs(attr: TokenStream) -> MutationAttrs {
 
     if attr_str.contains("transactional") {
         attrs.transactional = true;
+    }
+
+    if attr_str.contains("public") {
+        attrs.is_public = true;
     }
 
     // Parse role requirement
@@ -304,6 +305,7 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
     };
 
     let transactional = attrs.transactional;
+    let is_public = attrs.is_public;
 
     // Check if we have a single custom args type (user-defined struct)
     // In this case, use it directly instead of wrapping it
@@ -415,7 +417,7 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
                     description: None,
                     kind: forge::forge_core::FunctionKind::Mutation,
                     required_role: #required_role,
-                    is_public: false,
+                    is_public: #is_public,
                     cache_ttl: None,
                     timeout: #timeout,
                     rate_limit_requests: #rate_limit_requests,

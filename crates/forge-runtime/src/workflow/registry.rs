@@ -8,7 +8,7 @@ use serde_json::Value;
 
 /// Normalize args for deserialization.
 /// - Converts `null` to `{}` so both unit `()` and empty structs deserialize correctly.
-/// - Unwraps `{"args": ...}` or `{"input": ...}` wrapper if present.
+/// - Unwraps `{"args": ...}` or `{"input": ...}` wrapper if present (callers may use either format).
 fn normalize_args(args: Value) -> Value {
     let unwrapped = match &args {
         Value::Object(map) if map.len() == 1 => {
@@ -106,8 +106,8 @@ impl WorkflowRegistry {
     }
 
     /// List all registered workflows.
-    pub fn list(&self) -> Vec<&WorkflowEntry> {
-        self.workflows.values().collect()
+    pub fn list(&self) -> impl Iterator<Item = &WorkflowEntry> {
+        self.workflows.values()
     }
 
     /// Get the number of registered workflows.
@@ -121,8 +121,8 @@ impl WorkflowRegistry {
     }
 
     /// Get all workflow names.
-    pub fn names(&self) -> Vec<&str> {
-        self.workflows.keys().map(|s| s.as_str()).collect()
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.workflows.keys().map(|s| s.as_str())
     }
 }
 

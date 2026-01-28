@@ -21,8 +21,7 @@ struct IssPosition {
 /// - Structured logging with ctx.log.info/warn/error/debug
 ///
 /// Polls the ISS location from Open Notify API and stores it in the database.
-#[forge::cron("* * * * *")]
-#[timezone = "UTC"]
+#[forge::cron("* * * * *", timezone = "UTC")]
 pub async fn iss_location(ctx: &CronContext) -> Result<()> {
     ctx.log.info(
         "Fetching ISS location",

@@ -134,7 +134,7 @@ fn parse_query_attrs(attr: TokenStream) -> QueryAttrs {
 
     // Parse log = "level" (trace, debug, info, warn, error, off)
     if let Some(log_start) = attr_str.find("log") {
-        // Make sure it's not "require_auth" or similar
+        // Make sure it's not part of another word
         let before = if log_start > 0 {
             attr_str.chars().nth(log_start - 1)
         } else {

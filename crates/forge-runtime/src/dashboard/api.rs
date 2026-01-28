@@ -2042,7 +2042,6 @@ pub async fn list_registered_workflows(
     let workflows: Vec<RegisteredWorkflow> = state
         .workflow_registry
         .list()
-        .into_iter()
         .map(|entry| RegisteredWorkflow {
             name: entry.info.name.to_string(),
             version: entry.info.version,

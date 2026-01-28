@@ -182,16 +182,16 @@ impl FunctionRouter {
 
     /// Check authorization for a function call.
     fn check_auth(&self, info: &FunctionInfo, auth: &AuthContext) -> Result<()> {
-        // Public functions don't require auth
         if info.is_public {
             return Ok(());
         }
 
-        // Check role requirement (implies auth required)
+        // Not public - requires authentication
+        if !auth.is_authenticated() {
+            return Err(ForgeError::Unauthorized("Authentication required".into()));
+        }
+
         if let Some(role) = info.required_role {
-            if !auth.is_authenticated() {
-                return Err(ForgeError::Unauthorized("Authentication required".into()));
-            }
             if !auth.has_role(role) {
                 return Err(ForgeError::Forbidden(format!("Role '{}' required", role)));
             }
@@ -206,10 +206,12 @@ impl FunctionRouter {
             return Ok(());
         }
 
+        // Not public - requires authentication
+        if !auth.is_authenticated() {
+            return Err(ForgeError::Unauthorized("Authentication required".into()));
+        }
+
         if let Some(role) = info.required_role {
-            if !auth.is_authenticated() {
-                return Err(ForgeError::Unauthorized("Authentication required".into()));
-            }
             if !auth.has_role(role) {
                 return Err(ForgeError::Forbidden(format!("Role '{}' required", role)));
             }
@@ -228,10 +230,12 @@ impl FunctionRouter {
             return Ok(());
         }
 
+        // Not public - requires authentication
+        if !auth.is_authenticated() {
+            return Err(ForgeError::Unauthorized("Authentication required".into()));
+        }
+
         if let Some(role) = info.required_role {
-            if !auth.is_authenticated() {
-                return Err(ForgeError::Unauthorized("Authentication required".into()));
-            }
             if !auth.has_role(role) {
                 return Err(ForgeError::Forbidden(format!("Role '{}' required", role)));
             }

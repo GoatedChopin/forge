@@ -1,8 +1,7 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{ItemFn, Meta, parse_macro_input};
+use syn::{ItemFn, parse_macro_input};
 
-/// Default attributes for job functions.
 #[derive(Debug, Default)]
 struct JobAttrs {
     name: Option<String>,
@@ -18,107 +17,205 @@ struct JobAttrs {
     required_role: Option<String>,
 }
 
-fn parse_job_attrs(attrs: &[syn::Attribute]) -> JobAttrs {
+fn parse_job_attrs(attr: TokenStream) -> JobAttrs {
     let mut result = JobAttrs::default();
+    let attr_str = attr.to_string();
 
-    for attr in attrs {
-        if attr.path().is_ident("name") {
-            if let Meta::NameValue(nv) = &attr.meta {
-                if let syn::Expr::Lit(syn::ExprLit {
-                    lit: syn::Lit::Str(s),
-                    ..
-                }) = &nv.value
-                {
-                    result.name = Some(s.value());
-                }
-            }
-        }
-        if attr.path().is_ident("timeout") {
-            if let Meta::NameValue(nv) = &attr.meta {
-                if let syn::Expr::Lit(syn::ExprLit {
-                    lit: syn::Lit::Str(s),
-                    ..
-                }) = &nv.value
-                {
-                    result.timeout = Some(s.value());
-                }
-            }
-        }
-        if attr.path().is_ident("priority") {
-            if let Meta::NameValue(nv) = &attr.meta {
-                if let syn::Expr::Lit(syn::ExprLit {
-                    lit: syn::Lit::Str(s),
-                    ..
-                }) = &nv.value
-                {
-                    result.priority = Some(s.value());
-                }
-            }
-        }
-        if attr.path().is_ident("max_attempts") {
-            if let Meta::NameValue(nv) = &attr.meta {
-                if let syn::Expr::Lit(syn::ExprLit {
-                    lit: syn::Lit::Int(i),
-                    ..
-                }) = &nv.value
-                {
-                    result.max_attempts = i.base10_parse().ok();
-                }
-            }
-        }
-        if attr.path().is_ident("worker_capability") {
-            if let Meta::NameValue(nv) = &attr.meta {
-                if let syn::Expr::Lit(syn::ExprLit {
-                    lit: syn::Lit::Str(s),
-                    ..
-                }) = &nv.value
-                {
-                    result.worker_capability = Some(s.value());
-                }
-            }
-        }
-        if attr.path().is_ident("idempotent") {
-            result.idempotent = true;
-            if let Meta::List(list) = &attr.meta {
-                let tokens = list.tokens.to_string();
-                if tokens.starts_with("key") {
-                    if let Some(key) = tokens.split('"').nth(1) {
-                        result.idempotency_key = Some(key.to_string());
-                    }
-                }
-            }
-        }
-        if attr.path().is_ident("retry") {
-            if let Meta::List(list) = &attr.meta {
-                let tokens = list.tokens.to_string();
-                for part in tokens.split(',') {
-                    let part = part.trim();
-                    if part.starts_with("max_attempts") {
-                        if let Some(val) = part.split('=').nth(1) {
-                            result.max_attempts = val.trim().parse().ok();
-                        }
-                    }
-                    if part.starts_with("backoff") {
-                        if let Some(val) = part.split('"').nth(1) {
-                            result.backoff = Some(val.to_string());
-                        }
-                    }
-                    if part.starts_with("max_backoff") {
-                        if let Some(val) = part.split('"').nth(1) {
-                            result.max_backoff = Some(val.to_string());
+    if attr_str.contains("public") {
+        result.is_public = true;
+    }
+
+    // Parse idempotent (check for bare flag or with key)
+    if let Some(idem_start) = attr_str.find("idempotent") {
+        result.idempotent = true;
+        // Check for idempotent(key = "...")
+        if let Some(paren_start) = attr_str[idem_start..].find('(') {
+            let remaining = &attr_str[idem_start + paren_start + 1..];
+            if let Some(paren_end) = remaining.find(')') {
+                let content = &remaining[..paren_end];
+                if let Some(key_start) = content.find("key") {
+                    if let Some(quote_start) = content[key_start..].find('"') {
+                        let after_quote = &content[key_start + quote_start + 1..];
+                        if let Some(quote_end) = after_quote.find('"') {
+                            result.idempotency_key = Some(after_quote[..quote_end].to_string());
                         }
                     }
                 }
             }
         }
-        if attr.path().is_ident("public") {
-            result.is_public = true;
-        }
-        if attr.path().is_ident("require_role") {
-            if let Meta::List(list) = &attr.meta {
-                let tokens = list.tokens.to_string();
-                let role = tokens.trim().trim_matches('"');
+    }
+
+    // Parse require_role("admin")
+    if let Some(role_start) = attr_str.find("require_role") {
+        if let Some(paren_start) = attr_str[role_start..].find('(') {
+            let remaining = &attr_str[role_start + paren_start + 1..];
+            if let Some(paren_end) = remaining.find(')') {
+                let role = remaining[..paren_end].trim().trim_matches('"');
                 result.required_role = Some(role.to_string());
+            }
+        }
+    }
+
+    // Parse name = "custom_name"
+    if let Some(name_start) = attr_str.find("name") {
+        // Ensure it's not part of another word
+        let before = if name_start > 0 {
+            attr_str.chars().nth(name_start - 1)
+        } else {
+            None
+        };
+        if before.is_none() || !before.unwrap().is_alphanumeric() {
+            if let Some(eq_pos) = attr_str[name_start..].find('=') {
+                let after_eq = &attr_str[name_start + eq_pos + 1..];
+                if let Some(quote_start) = after_eq.find('"') {
+                    let after_quote = &after_eq[quote_start + 1..];
+                    if let Some(quote_end) = after_quote.find('"') {
+                        result.name = Some(after_quote[..quote_end].to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // Parse timeout = "30m"
+    if let Some(timeout_start) = attr_str.find("timeout") {
+        if let Some(eq_pos) = attr_str[timeout_start..].find('=') {
+            let after_eq = &attr_str[timeout_start + eq_pos + 1..];
+            if let Some(quote_start) = after_eq.find('"') {
+                let after_quote = &after_eq[quote_start + 1..];
+                if let Some(quote_end) = after_quote.find('"') {
+                    result.timeout = Some(after_quote[..quote_end].to_string());
+                }
+            }
+        }
+    }
+
+    // Parse priority = "high"
+    if let Some(priority_start) = attr_str.find("priority") {
+        if let Some(eq_pos) = attr_str[priority_start..].find('=') {
+            let after_eq = &attr_str[priority_start + eq_pos + 1..];
+            if let Some(quote_start) = after_eq.find('"') {
+                let after_quote = &after_eq[quote_start + 1..];
+                if let Some(quote_end) = after_quote.find('"') {
+                    result.priority = Some(after_quote[..quote_end].to_string());
+                }
+            }
+        }
+    }
+
+    // Parse worker_capability = "media"
+    if let Some(cap_start) = attr_str.find("worker_capability") {
+        if let Some(eq_pos) = attr_str[cap_start..].find('=') {
+            let after_eq = &attr_str[cap_start + eq_pos + 1..];
+            if let Some(quote_start) = after_eq.find('"') {
+                let after_quote = &after_eq[quote_start + 1..];
+                if let Some(quote_end) = after_quote.find('"') {
+                    result.worker_capability = Some(after_quote[..quote_end].to_string());
+                }
+            }
+        }
+    }
+
+    // Parse max_attempts = 3 (can be inside retry() or standalone)
+    // First check for standalone max_attempts
+    if let Some(ma_start) = attr_str.find("max_attempts") {
+        if let Some(eq_pos) = attr_str[ma_start..].find('=') {
+            let after_eq = &attr_str[ma_start + eq_pos + 1..];
+            if let Ok(n) = after_eq
+                .split(&[',', ')'])
+                .next()
+                .unwrap_or("")
+                .trim()
+                .parse::<u32>()
+            {
+                result.max_attempts = Some(n);
+            }
+        }
+    }
+
+    // Parse backoff = "exponential" (standalone)
+    if let Some(backoff_start) = attr_str.find("backoff") {
+        // Ensure it's not max_backoff
+        let before = if backoff_start > 0 {
+            attr_str.chars().nth(backoff_start - 1)
+        } else {
+            None
+        };
+        if before.is_none() || before.unwrap() != '_' {
+            if let Some(eq_pos) = attr_str[backoff_start..].find('=') {
+                let after_eq = &attr_str[backoff_start + eq_pos + 1..];
+                if let Some(quote_start) = after_eq.find('"') {
+                    let after_quote = &after_eq[quote_start + 1..];
+                    if let Some(quote_end) = after_quote.find('"') {
+                        result.backoff = Some(after_quote[..quote_end].to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // Parse max_backoff = "5m" (standalone)
+    if let Some(mb_start) = attr_str.find("max_backoff") {
+        if let Some(eq_pos) = attr_str[mb_start..].find('=') {
+            let after_eq = &attr_str[mb_start + eq_pos + 1..];
+            if let Some(quote_start) = after_eq.find('"') {
+                let after_quote = &after_eq[quote_start + 1..];
+                if let Some(quote_end) = after_quote.find('"') {
+                    result.max_backoff = Some(after_quote[..quote_end].to_string());
+                }
+            }
+        }
+    }
+
+    // Parse retry(max_attempts = 3, backoff = "exponential", max_backoff = "5m")
+    if let Some(retry_start) = attr_str.find("retry") {
+        if let Some(paren_start) = attr_str[retry_start..].find('(') {
+            let remaining = &attr_str[retry_start + paren_start + 1..];
+            if let Some(paren_end) = remaining.find(')') {
+                let content = &remaining[..paren_end];
+
+                // Parse max_attempts inside retry()
+                if let Some(ma_start) = content.find("max_attempts") {
+                    if let Some(eq_pos) = content[ma_start..].find('=') {
+                        let after_eq = &content[ma_start + eq_pos + 1..];
+                        if let Ok(n) = after_eq
+                            .split(',')
+                            .next()
+                            .unwrap_or("")
+                            .trim()
+                            .parse::<u32>()
+                        {
+                            result.max_attempts = Some(n);
+                        }
+                    }
+                }
+
+                // Parse backoff inside retry()
+                if let Some(backoff_start) = content.find("backoff") {
+                    let before = if backoff_start > 0 {
+                        content.chars().nth(backoff_start - 1)
+                    } else {
+                        None
+                    };
+                    if before.is_none() || before.unwrap() != '_' {
+                        if let Some(quote_start) = content[backoff_start..].find('"') {
+                            let after_quote = &content[backoff_start + quote_start + 1..];
+                            if let Some(quote_end) = after_quote.find('"') {
+                                result.backoff = Some(after_quote[..quote_end].to_string());
+                            }
+                        }
+                    }
+                }
+
+                // Parse max_backoff inside retry()
+                if let Some(mb_start) = content.find("max_backoff") {
+                    if let Some(quote_start) = content[mb_start..].find('"') {
+                        let after_quote = &content[mb_start + quote_start + 1..];
+                        if let Some(quote_end) = after_quote.find('"') {
+                            result.max_backoff = Some(after_quote[..quote_end].to_string());
+                        }
+                    }
+                }
             }
         }
     }
@@ -149,9 +246,8 @@ fn parse_duration(s: &str) -> proc_macro2::TokenStream {
 }
 
 pub fn job_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let _ = attr;
     let input = parse_macro_input!(item as ItemFn);
-    let attrs = parse_job_attrs(&input.attrs);
+    let attrs = parse_job_attrs(attr);
 
     let fn_name = &input.sig.ident;
     let fn_name_str = attrs.name.unwrap_or_else(|| fn_name.to_string());
@@ -260,21 +356,7 @@ pub fn job_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote! { None }
     };
 
-    let other_attrs: Vec<_> = input
-        .attrs
-        .iter()
-        .filter(|a| {
-            !a.path().is_ident("name")
-                && !a.path().is_ident("timeout")
-                && !a.path().is_ident("priority")
-                && !a.path().is_ident("max_attempts")
-                && !a.path().is_ident("worker_capability")
-                && !a.path().is_ident("idempotent")
-                && !a.path().is_ident("retry")
-                && !a.path().is_ident("public")
-                && !a.path().is_ident("require_role")
-        })
-        .collect();
+    let other_attrs = &input.attrs;
 
     let expanded = quote! {
         #(#other_attrs)*

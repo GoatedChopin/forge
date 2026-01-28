@@ -45,10 +45,14 @@ pub fn forge_enum(attr: TokenStream, item: TokenStream) -> TokenStream {
 
 /// Marks a function as a query (read-only, cacheable, subscribable).
 ///
+/// # Authentication
+/// By default, queries require an authenticated user. Override with:
+/// - `public` - No authentication required
+/// - `require_role("admin")` - Require specific role
+///
 /// # Attributes
 /// - `cache = "5m"` - Cache TTL (duration like "30s", "5m", "1h")
-/// - `public` - No authentication required
-/// - `require_auth` - Require authentication
+/// - `log` - Enable logging for this query
 /// - `timeout = 30` - Timeout in seconds
 /// - `tables = ["users", "projects"]` - Explicit table dependencies (for dynamic SQL)
 ///
@@ -62,15 +66,19 @@ pub fn forge_enum(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// # Example
 /// ```ignore
-/// #[forge::query]
+/// #[forge::query]  // Requires authenticated user (default)
 /// pub async fn get_user(ctx: &QueryContext, user_id: Uuid) -> Result<User> {
 ///     // Tables automatically extracted from SQL
 /// }
 ///
-/// #[forge::query(cache = "5m", require_auth)]
-/// pub async fn get_profile(ctx: &QueryContext) -> Result<Profile> {
-///     let user_id = ctx.require_user_id()?;
+/// #[forge::query(public)]  // No auth required
+/// pub async fn get_public_data(ctx: &QueryContext) -> Result<Data> {
 ///     // ...
+/// }
+///
+/// #[forge::query(require_role("admin"), cache = "5m", log)]
+/// pub async fn admin_stats(ctx: &QueryContext) -> Result<Stats> {
+///     // Requires admin role
 /// }
 ///
 /// #[forge::query(tables = ["users", "audit_log"])]
@@ -87,17 +95,31 @@ pub fn query(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// Mutations run within a database transaction. All changes commit together or roll back on error.
 ///
-/// # Attributes
-/// - `require_auth` - Require authentication
+/// # Authentication
+/// By default, mutations require an authenticated user. Override with:
+/// - `public` - No authentication required
 /// - `require_role("admin")` - Require specific role
+///
+/// # Attributes
+/// - `log` - Enable logging for this mutation
 /// - `timeout = 30` - Timeout in seconds
 ///
 /// # Example
 /// ```ignore
-/// #[forge::mutation]
+/// #[forge::mutation]  // Requires authenticated user (default)
 /// pub async fn create_project(ctx: &MutationContext, input: CreateProjectInput) -> Result<Project> {
 ///     let user_id = ctx.require_user_id()?;
 ///     // ...
+/// }
+///
+/// #[forge::mutation(public)]  // No auth required
+/// pub async fn submit_feedback(ctx: &MutationContext, input: FeedbackInput) -> Result<()> {
+///     // ...
+/// }
+///
+/// #[forge::mutation(require_role("admin"), log)]
+/// pub async fn delete_user(ctx: &MutationContext, user_id: Uuid) -> Result<()> {
+///     // Requires admin role
 /// }
 /// ```
 #[proc_macro_attribute]
@@ -109,19 +131,38 @@ pub fn mutation(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// Jobs are durable background tasks that survive server restarts and automatically retry on failure.
 ///
+/// # Authentication
+/// By default, jobs require an authenticated user to dispatch. Override with:
+/// - `public` - Can be dispatched without authentication
+/// - `require_role("admin")` - Requires specific role to dispatch
+///
 /// # Attributes
-/// - `timeout = "30m"` - Job timeout
+/// - `timeout = "30m"` - Job timeout (supports s, m, h suffixes)
 /// - `priority = "normal"` - background, low, normal, high, critical
 /// - `max_attempts = 3` - Maximum retry attempts
-/// - `worker_capability = "general"` - Required worker capability
+/// - `backoff = "exponential"` - fixed, linear, or exponential
+/// - `max_backoff = "5m"` - Maximum backoff duration
+/// - `retry(max_attempts = 3, backoff = "exponential", max_backoff = "5m")` - Grouped retry config
+/// - `worker_capability = "media"` - Required worker capability
+/// - `idempotent` - Mark job as idempotent
+/// - `idempotent(key = "input.id")` - Idempotent with custom key
+/// - `name = "custom_name"` - Override job name
 ///
 /// # Example
 /// ```ignore
-/// #[forge::job]
-/// #[timeout = "30m"]
-/// #[priority = "high"]
+/// #[forge::job(timeout = "30m", priority = "high")]  // Requires authenticated user (default)
 /// pub async fn send_welcome_email(ctx: &JobContext, input: SendEmailInput) -> Result<()> {
 ///     // ...
+/// }
+///
+/// #[forge::job(public)]  // Can be dispatched without auth
+/// pub async fn process_webhook(ctx: &JobContext, input: WebhookInput) -> Result<()> {
+///     // ...
+/// }
+///
+/// #[forge::job(retry(max_attempts = 5, backoff = "exponential"), require_role("admin"))]
+/// pub async fn process_payment(ctx: &JobContext, input: PaymentInput) -> Result<()> {
+///     // Requires admin role to dispatch
 /// }
 /// ```
 #[proc_macro_attribute]
@@ -134,15 +175,16 @@ pub fn job(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Cron jobs run on a schedule, exactly once per scheduled time across the cluster.
 ///
 /// # Attributes
+/// All attributes are specified inline within the macro:
+/// - First argument: Cron schedule expression (required)
 /// - `timezone = "UTC"` - Timezone for the schedule
-/// - `catch_up` - Run missed executions after downtime
 /// - `timeout = "1h"` - Execution timeout
+/// - `catch_up` - Run missed executions after downtime
+/// - `catch_up_limit = 10` - Maximum number of catch-up runs
 ///
 /// # Example
 /// ```ignore
-/// #[forge::cron("0 0 * * *")]
-/// #[timezone = "UTC"]
-/// #[catch_up]
+/// #[forge::cron("0 0 * * *", timezone = "America/New_York", timeout = "30m", catch_up)]
 /// pub async fn daily_cleanup(ctx: &CronContext) -> Result<()> {
 ///     // ...
 /// }
@@ -156,18 +198,33 @@ pub fn cron(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// Workflows are multi-step processes that survive restarts and handle failures with compensation.
 ///
+/// # Authentication
+/// By default, workflows require an authenticated user to start. Override with:
+/// - `public` - Can be started without authentication
+/// - `require_role("admin")` - Requires specific role to start
+///
 /// # Attributes
 /// - `version = 1` - Workflow version (increment for breaking changes)
 /// - `timeout = "24h"` - Maximum execution time
+/// - `name = "custom_name"` - Override workflow name
 ///
 /// # Example
 /// ```ignore
-/// #[forge::workflow]
-/// #[version = 1]
+/// #[forge::workflow(version = 1, timeout = "24h")]  // Requires authenticated user (default)
 /// pub async fn user_onboarding(ctx: &WorkflowContext, input: OnboardingInput) -> Result<OnboardingResult> {
 ///     let user = ctx.step("create_user", || async { /* ... */ }).await?;
 ///     ctx.step("send_welcome", || async { /* ... */ }).await;
 ///     Ok(OnboardingResult { user })
+/// }
+///
+/// #[forge::workflow(public)]  // Can be started without auth
+/// pub async fn process_webhook(ctx: &WorkflowContext, input: WebhookInput) -> Result<()> {
+///     // ...
+/// }
+///
+/// #[forge::workflow(version = 2, require_role("admin"))]
+/// pub async fn admin_workflow(ctx: &WorkflowContext, input: AdminInput) -> Result<AdminResult> {
+///     // Requires admin role to start
 /// }
 /// ```
 #[proc_macro_attribute]

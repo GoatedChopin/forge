@@ -259,9 +259,7 @@ pub struct {pascal_name}Output {{
 /// - `timeout`: Maximum execution time (default: "5m")
 /// - `max_attempts`: Number of retry attempts (default: 3)
 /// - `backoff`: Retry backoff strategy: "exponential" or "linear" (default: "exponential")
-#[forge::job]
-#[timeout = "5m"]
-#[retry(max_attempts = 3, backoff = "exponential")]
+#[forge::job(timeout = "5m", retry(max_attempts = 3, backoff = "exponential"))]
 pub async fn {snake_name}(ctx: &JobContext, _input: {pascal_name}Input) -> Result<{pascal_name}Output> {{
     tracing::info!(job_id = %ctx.job_id, "Starting {snake_name} job");
 
@@ -330,12 +328,13 @@ use forge::prelude::*;
 
 /// {snake_name} scheduled task.
 ///
-/// Configuration options:
+/// Configuration options (all inline):
 /// - First argument: Cron expression (required)
-/// - `timezone`: Timezone for schedule (default: "UTC")
+/// - `timezone = "..."`: Timezone for schedule (default: "UTC")
+/// - `timeout = "..."`: Max execution time (default: "1h")
 /// - `catch_up`: Run missed executions on startup (default: false)
-#[forge::cron("0 0 * * *")]  // Daily at midnight UTC
-#[timezone = "UTC"]
+/// - `catch_up_limit = N`: Max catch-up runs (default: 10)
+#[forge::cron("0 0 * * *", timezone = "UTC")]
 pub async fn {snake_name}(ctx: &CronContext) -> Result<()> {{
     tracing::info!(run_id = %ctx.run_id, "Running {snake_name}");
 

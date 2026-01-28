@@ -9,11 +9,17 @@ use serde_json::Value;
 
 /// Normalize args for deserialization.
 /// - Converts `null` to `{}` so both unit `()` and empty structs deserialize correctly.
-/// - Unwraps `{"args": ...}` wrapper if present.
+/// - Unwraps `{"args": ...}` or `{"input": ...}` wrapper if present (callers may use either format).
 fn normalize_args(args: Value) -> Value {
     let unwrapped = match &args {
-        Value::Object(map) if map.len() == 1 && map.contains_key("args") => {
-            map.get("args").cloned().unwrap_or(Value::Null)
+        Value::Object(map) if map.len() == 1 => {
+            if map.contains_key("args") {
+                map.get("args").cloned().unwrap_or(Value::Null)
+            } else if map.contains_key("input") {
+                map.get("input").cloned().unwrap_or(Value::Null)
+            } else {
+                args
+            }
         }
         _ => args,
     };
