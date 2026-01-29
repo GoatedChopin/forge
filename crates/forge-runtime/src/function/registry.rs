@@ -9,10 +9,10 @@ use forge_core::{
 use serde_json::Value;
 
 /// Normalize args for deserialization.
-/// - Converts `null` to `{}` so both unit `()` and empty structs deserialize correctly.
+/// - Keeps `null` as-is so unit `()` deserializes correctly.
 /// - Unwraps `{"args": ...}` or `{"input": ...}` wrapper if present (callers may use either format).
 fn normalize_args(args: Value) -> Value {
-    let unwrapped = match &args {
+    match &args {
         Value::Object(map) if map.len() == 1 => {
             if map.contains_key("args") {
                 map.get("args").cloned().unwrap_or(Value::Null)
@@ -23,11 +23,6 @@ fn normalize_args(args: Value) -> Value {
             }
         }
         _ => args,
-    };
-
-    match &unwrapped {
-        Value::Null => Value::Object(serde_json::Map::new()),
-        _ => unwrapped,
     }
 }
 
