@@ -56,6 +56,9 @@ pub fn needs_update(frontend_dir: &Path) -> bool {
 /// - `.forge/svelte/datetime.ts` - Date/time utilities
 /// - `.forge/svelte/ForgeProvider.svelte` - Root provider component
 /// - `.forge/version` - Version tracking file
+///
+/// Note: runes.svelte.ts is generated in src/lib/forge/ by forge-codegen
+/// so Svelte can properly compile the $state runes.
 pub fn generate_runtime(frontend_dir: &Path) -> Result<()> {
     let forge_dir = frontend_dir.join(".forge");
     let svelte_dir = forge_dir.join("svelte");

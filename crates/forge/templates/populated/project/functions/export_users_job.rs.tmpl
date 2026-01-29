@@ -21,13 +21,7 @@ pub struct ExportUsersOutput {
 /// - Retry detection with ctx.is_retry() and ctx.is_last_attempt()
 /// - Priority levels (low, normal, high, critical, background)
 /// - Worker capability targeting (general, gpu, high_cpu)
-#[forge::job]
-#[timeout = "10m"]
-#[priority = "low"]
-#[retry(max_attempts = 3, backoff = "exponential")]
-#[idempotent]
-#[worker_capability = "general"]
-#[public]
+#[forge::job(timeout = "10m", priority = "low", retry(max_attempts = 3, backoff = "exponential"), idempotent, worker_capability = "general", public)]
 pub async fn export_users(ctx: &JobContext, input: ExportUsersInput) -> Result<ExportUsersOutput> {
     use std::time::Duration;
 

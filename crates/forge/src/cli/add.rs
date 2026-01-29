@@ -426,9 +426,7 @@ pub struct {pascal_name}Output {{
 /// Configuration options:
 /// - `version`: Workflow version for migrations (default: 1)
 /// - `timeout`: Maximum workflow duration (default: "1h")
-#[forge::workflow]
-#[version = 1]
-#[timeout = "1h"]
+#[forge::workflow(version = 1, timeout = "1h")]
 pub async fn {snake_name}(ctx: &WorkflowContext, _input: {pascal_name}Input) -> Result<{pascal_name}Output> {{
     tracing::info!(workflow_id = %ctx.run_id, "Starting {snake_name} workflow");
 

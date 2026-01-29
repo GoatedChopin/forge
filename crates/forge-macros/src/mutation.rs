@@ -171,6 +171,18 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
     let fn_block = &input.block;
     let fn_attrs = &input.attrs;
 
+    // Check for dispatch_job or start_workflow calls without transactional attribute
+    let block_str = quote! { #fn_block }.to_string();
+    let has_dispatch = block_str.contains("dispatch_job") || block_str.contains("start_workflow");
+    if has_dispatch && !attrs.transactional {
+        return Err(syn::Error::new_spanned(
+            &input.sig.ident,
+            "Mutations that call `dispatch_job()` or `start_workflow()` must use \
+             #[forge::mutation(transactional)] to ensure atomicity. Without it, \
+             jobs may be dispatched but database changes rolled back on error."
+        ));
+    }
+
     // Validate async
     if asyncness.is_none() {
         return Err(syn::Error::new_spanned(

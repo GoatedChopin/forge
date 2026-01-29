@@ -23,10 +23,7 @@ pub struct AccountVerificationOutput {
 ///
 /// For parallel execution, see ctx.parallel() in the docs.
 /// For fluent API, see ctx.step(name, fn).compensate(fn).timeout().run()
-#[forge::workflow]
-#[version = 1]
-#[timeout = "24h"]
-#[public]
+#[forge::workflow(version = 1, timeout = "24h", public)]
 pub async fn account_verification(
     ctx: &WorkflowContext,
     input: AccountVerificationInput,

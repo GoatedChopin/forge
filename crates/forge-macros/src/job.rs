@@ -17,7 +17,10 @@ struct JobAttrs {
     required_role: Option<String>,
 }
 
-fn parse_job_attrs(attr: TokenStream) -> JobAttrs {
+const VALID_PRIORITIES: &[&str] = &["background", "low", "normal", "high", "critical"];
+const VALID_BACKOFFS: &[&str] = &["fixed", "linear", "exponential"];
+
+fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
     let mut result = JobAttrs::default();
     let attr_str = attr.to_string();
 
@@ -97,7 +100,19 @@ fn parse_job_attrs(attr: TokenStream) -> JobAttrs {
             if let Some(quote_start) = after_eq.find('"') {
                 let after_quote = &after_eq[quote_start + 1..];
                 if let Some(quote_end) = after_quote.find('"') {
-                    result.priority = Some(after_quote[..quote_end].to_string());
+                    let priority = after_quote[..quote_end].to_string();
+                    let priority_lower = priority.to_lowercase();
+                    if !VALID_PRIORITIES.contains(&priority_lower.as_str()) {
+                        return Err(syn::Error::new(
+                            proc_macro2::Span::call_site(),
+                            format!(
+                                "Invalid job priority '{}'. Valid values: {}",
+                                priority,
+                                VALID_PRIORITIES.join(", ")
+                            )
+                        ));
+                    }
+                    result.priority = Some(priority);
                 }
             }
         }
@@ -147,7 +162,18 @@ fn parse_job_attrs(attr: TokenStream) -> JobAttrs {
                 if let Some(quote_start) = after_eq.find('"') {
                     let after_quote = &after_eq[quote_start + 1..];
                     if let Some(quote_end) = after_quote.find('"') {
-                        result.backoff = Some(after_quote[..quote_end].to_string());
+                        let backoff = after_quote[..quote_end].to_string();
+                        if !VALID_BACKOFFS.contains(&backoff.as_str()) {
+                            return Err(syn::Error::new(
+                                proc_macro2::Span::call_site(),
+                                format!(
+                                    "Invalid backoff strategy '{}'. Valid values: {}",
+                                    backoff,
+                                    VALID_BACKOFFS.join(", ")
+                                )
+                            ));
+                        }
+                        result.backoff = Some(backoff);
                     }
                 }
             }
@@ -201,7 +227,18 @@ fn parse_job_attrs(attr: TokenStream) -> JobAttrs {
                         if let Some(quote_start) = content[backoff_start..].find('"') {
                             let after_quote = &content[backoff_start + quote_start + 1..];
                             if let Some(quote_end) = after_quote.find('"') {
-                                result.backoff = Some(after_quote[..quote_end].to_string());
+                                let backoff = after_quote[..quote_end].to_string();
+                                if !VALID_BACKOFFS.contains(&backoff.as_str()) {
+                                    return Err(syn::Error::new(
+                                        proc_macro2::Span::call_site(),
+                                        format!(
+                                            "Invalid backoff strategy '{}'. Valid values: {}",
+                                            backoff,
+                                            VALID_BACKOFFS.join(", ")
+                                        )
+                                    ));
+                                }
+                                result.backoff = Some(backoff);
                             }
                         }
                     }
@@ -220,7 +257,7 @@ fn parse_job_attrs(attr: TokenStream) -> JobAttrs {
         }
     }
 
-    result
+    Ok(result)
 }
 
 fn parse_duration(s: &str) -> proc_macro2::TokenStream {
@@ -247,7 +284,10 @@ fn parse_duration(s: &str) -> proc_macro2::TokenStream {
 
 pub fn job_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
-    let attrs = parse_job_attrs(attr);
+    let attrs = match parse_job_attrs(attr) {
+        Ok(attrs) => attrs,
+        Err(e) => return e.to_compile_error().into(),
+    };
 
     let fn_name = &input.sig.ident;
     let fn_name_str = attrs.name.unwrap_or_else(|| fn_name.to_string());
@@ -430,5 +470,33 @@ mod tests {
     fn test_parse_duration_minutes() {
         let ts = parse_duration("5m");
         assert!(!ts.is_empty());
+    }
+
+    #[test]
+    fn test_valid_priorities() {
+        for p in VALID_PRIORITIES {
+            assert!(VALID_PRIORITIES.contains(p), "{} should be valid", p);
+        }
+    }
+
+    #[test]
+    fn test_valid_backoffs() {
+        for b in VALID_BACKOFFS {
+            assert!(VALID_BACKOFFS.contains(b), "{} should be valid", b);
+        }
+    }
+
+    #[test]
+    fn test_invalid_priority_not_in_list() {
+        assert!(!VALID_PRIORITIES.contains(&"invalid"));
+        assert!(!VALID_PRIORITIES.contains(&"super"));
+        assert!(!VALID_PRIORITIES.contains(&"urgent"));
+    }
+
+    #[test]
+    fn test_invalid_backoff_not_in_list() {
+        assert!(!VALID_BACKOFFS.contains(&"invalid"));
+        assert!(!VALID_BACKOFFS.contains(&"random"));
+        assert!(!VALID_BACKOFFS.contains(&"constant"));
     }
 }

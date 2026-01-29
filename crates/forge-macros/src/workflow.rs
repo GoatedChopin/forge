@@ -1,6 +1,126 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{ItemFn, parse_macro_input};
+use syn::visit::Visit;
+use syn::{ExprAwait, ExprCall, ItemFn, Lit, parse_macro_input};
+
+/// Minimum sleep duration (in seconds) that triggers the tokio::sleep warning.
+/// Sleeps shorter than this are allowed since they're typically used for polling/retry loops.
+const TOKIO_SLEEP_THRESHOLD_SECS: u64 = 100;
+
+/// Detects tokio::sleep calls with durations exceeding the threshold.
+/// Returns the span of the first violation found, if any.
+struct TokioSleepDetector {
+    violation_span: Option<proc_macro2::Span>,
+}
+
+impl TokioSleepDetector {
+    fn new() -> Self {
+        Self {
+            violation_span: None,
+        }
+    }
+
+    /// Try to extract a duration in seconds from common patterns.
+    fn extract_duration_secs(args: &syn::punctuated::Punctuated<syn::Expr, syn::token::Comma>) -> Option<u64> {
+        if args.len() != 1 {
+            return None;
+        }
+
+        if let syn::Expr::Call(call) = &args[0] {
+            if let syn::Expr::Path(path) = &*call.func {
+                let path_str: String = path
+                    .path
+                    .segments
+                    .iter()
+                    .map(|s| s.ident.to_string())
+                    .collect::<Vec<_>>()
+                    .join("::");
+
+                if path_str.ends_with("from_secs") {
+                    if let Some(syn::Expr::Lit(lit)) = call.args.first() {
+                        if let Lit::Int(int_lit) = &lit.lit {
+                            return int_lit.base10_parse::<u64>().ok();
+                        }
+                    }
+                } else if path_str.ends_with("from_millis") {
+                    if let Some(syn::Expr::Lit(lit)) = call.args.first() {
+                        if let Lit::Int(int_lit) = &lit.lit {
+                            return int_lit.base10_parse::<u64>().ok().map(|ms| ms / 1000);
+                        }
+                    }
+                } else if path_str.ends_with("from_days") {
+                    if let Some(syn::Expr::Lit(lit)) = call.args.first() {
+                        if let Lit::Int(int_lit) = &lit.lit {
+                            return int_lit.base10_parse::<u64>().ok().map(|d| d * 86400);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn check_sleep_call(&mut self, path_str: &str, args: &syn::punctuated::Punctuated<syn::Expr, syn::token::Comma>, span: proc_macro2::Span) {
+        if self.violation_span.is_some() {
+            return;
+        }
+
+        let is_tokio_sleep = path_str.contains("tokio") && path_str.contains("sleep")
+            || path_str == "sleep";
+
+        if !is_tokio_sleep {
+            return;
+        }
+
+        match Self::extract_duration_secs(args) {
+            Some(secs) if secs <= TOKIO_SLEEP_THRESHOLD_SECS => {}
+            _ => self.violation_span = Some(span),
+        }
+    }
+}
+
+impl<'ast> Visit<'ast> for TokioSleepDetector {
+    fn visit_expr_call(&mut self, node: &'ast ExprCall) {
+        if let syn::Expr::Path(path) = &*node.func {
+            let path_str: String = path
+                .path
+                .segments
+                .iter()
+                .map(|s| s.ident.to_string())
+                .collect::<Vec<_>>()
+                .join("::");
+
+            let span = path.path.segments.last()
+                .map(|s| s.ident.span())
+                .unwrap_or_else(proc_macro2::Span::call_site);
+
+            self.check_sleep_call(&path_str, &node.args, span);
+        }
+        syn::visit::visit_expr_call(self, node);
+    }
+
+    fn visit_expr_await(&mut self, node: &'ast ExprAwait) {
+        // Check for tokio::time::sleep(...).await pattern
+        if let syn::Expr::Call(call) = &*node.base {
+            if let syn::Expr::Path(path) = &*call.func {
+                let path_str: String = path
+                    .path
+                    .segments
+                    .iter()
+                    .map(|s| s.ident.to_string())
+                    .collect::<Vec<_>>()
+                    .join("::");
+
+                let span = path.path.segments.last()
+                    .map(|s| s.ident.span())
+                    .unwrap_or_else(proc_macro2::Span::call_site);
+
+                self.check_sleep_call(&path_str, &call.args, span);
+            }
+        }
+        syn::visit::visit_expr_await(self, node);
+    }
+}
 
 /// Workflow attributes.
 #[derive(Debug, Default)]
@@ -103,6 +223,18 @@ pub fn workflow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let vis = &input.vis;
     let block = &input.block;
+
+    // Detect tokio::sleep usage (only for long sleeps > 100s)
+    let mut sleep_detector = TokioSleepDetector::new();
+    sleep_detector.visit_block(block);
+    if let Some(span) = sleep_detector.violation_span {
+        return syn::Error::new(
+            span,
+            "Use `ctx.sleep()` instead of `tokio::sleep()` for long sleeps in workflows. \
+             Workflows require durable sleep that survives process restarts. \
+             Short sleeps (<100s) for polling are allowed with tokio::sleep."
+        ).to_compile_error().into();
+    }
 
     // Parse input type from function signature
     let mut input_type = quote! { () };

@@ -61,9 +61,12 @@ export function createConnectionStore(): ConnectionStatusStore {
   };
 }
 
+// Type helper to reject empty objects - use null for no-arg functions
+type RejectEmptyObject<T> = T extends Record<string, never> ? never : T;
+
 export function createQueryStore<TArgs, TResult>(
   functionName: string,
-  args: TArgs
+  args: RejectEmptyObject<TArgs>
 ): QueryStore<TResult> {
   const client = getForgeClient();
   const subscribers = new Set<(value: QueryResult<TResult>) => void>();
@@ -106,7 +109,7 @@ export function createQueryStore<TArgs, TResult>(
 
 export function createSubscriptionStore<TArgs, TResult>(
   functionName: string,
-  args: TArgs
+  args: RejectEmptyObject<TArgs>
 ): SubscriptionStore<TResult> {
   const client = getForgeClient();
   const subscribers = new Set<(value: SubscriptionResult<TResult>) => void>();
@@ -188,7 +191,7 @@ const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
 
 export function createJobStore<TArgs, TOutput>(
   functionName: string,
-  args: TArgs
+  args: RejectEmptyObject<TArgs>
 ): JobStore<TOutput> {
   const client = getForgeClient();
   const subscribers = new Set<(value: JobState<TOutput> & { loading: boolean }) => void>();
@@ -280,7 +283,7 @@ export function createJobStore<TArgs, TOutput>(
 
 export function createWorkflowStore<TArgs, TOutput>(
   functionName: string,
-  args: TArgs
+  args: RejectEmptyObject<TArgs>
 ): WorkflowStore<TOutput> {
   const client = getForgeClient();
   const subscribers = new Set<(value: WorkflowState<TOutput> & { loading: boolean }) => void>();

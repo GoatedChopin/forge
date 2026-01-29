@@ -5,15 +5,15 @@
     deleteUser,
     trackExportUsers,
     trackAccountVerification,
+    getUsers$,
+    getIssLocation$,
   } from "$lib/forge";
-  import { createSubscriptionStore } from "@forge/svelte";
-  import type { User } from "$lib/forge/types";
 
   const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8080";
 
   // Reactive subscriptions for real-time data
-  const users = createSubscriptionStore<null, User[]>("get_users", null);
-  const issLocation = createSubscriptionStore<null, { latitude: number; longitude: number; created_at: string } | null>("get_iss_location", null);
+  const users = getUsers$();
+  const issLocation = getIssLocation$();
 
   let name = $state("");
   let email = $state("");
