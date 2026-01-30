@@ -152,6 +152,7 @@ pub async fn account_verification(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use forge::testing::*;
 
     // Workflow test contexts track step completion, resumption state,
     // durable sleep calls, and deterministic time for reproducible tests.

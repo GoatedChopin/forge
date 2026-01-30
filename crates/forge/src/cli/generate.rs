@@ -208,7 +208,16 @@ impl GenerateCommand {
         if has_schema {
             // Use forge_codegen to generate TypeScript
             pb.set_message("Generating TypeScript from schema...");
-            let generator = forge_codegen::TypeScriptGenerator::new(&output_dir);
+
+            // Check if auth is configured in forge.toml
+            let generate_auth = forge_core::config::ForgeConfig::from_file("forge.toml")
+                .map(|c| c.auth.jwt_secret.is_some() || c.auth.jwks_url.is_some())
+                .unwrap_or(false);
+
+            let options = forge_codegen::GenerateOptions {
+                generate_auth_store: generate_auth,
+            };
+            let generator = forge_codegen::TypeScriptGenerator::with_options(&output_dir, options);
             generator.generate(&registry)?;
             pb.inc(4);
         } else {

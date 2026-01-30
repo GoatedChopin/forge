@@ -27,8 +27,6 @@ pub struct AuthConfig {
     pub issuer: Option<String>,
     /// Expected audience (aud claim).
     pub audience: Option<String>,
-    /// Whether to allow unauthenticated requests.
-    pub allow_anonymous: bool,
     /// Skip signature verification (DEV MODE ONLY - NEVER USE IN PRODUCTION).
     pub skip_verification: bool,
 }
@@ -41,7 +39,6 @@ impl Default for AuthConfig {
             jwks_client: None,
             issuer: None,
             audience: None,
-            allow_anonymous: true,
             skip_verification: false,
         }
     }
@@ -63,7 +60,6 @@ impl AuthConfig {
             jwks_client,
             issuer: config.jwt_issuer.clone(),
             audience: config.jwt_audience.clone(),
-            allow_anonymous: config.allow_anonymous,
             skip_verification: false,
         }
     }
@@ -85,7 +81,6 @@ impl AuthConfig {
             jwks_client: None,
             issuer: None,
             audience: None,
-            allow_anonymous: true,
             skip_verification: true,
         }
     }
@@ -435,7 +430,6 @@ mod tests {
     #[test]
     fn test_auth_config_default() {
         let config = AuthConfig::default();
-        assert!(config.allow_anonymous);
         assert_eq!(config.algorithm, JwtAlgorithm::HS256);
         assert!(!config.skip_verification);
     }
@@ -444,7 +438,6 @@ mod tests {
     fn test_auth_config_dev_mode() {
         let config = AuthConfig::dev_mode();
         assert!(config.skip_verification);
-        assert!(config.allow_anonymous);
     }
 
     #[test]

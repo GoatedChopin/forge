@@ -179,7 +179,7 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
             &input.sig.ident,
             "Mutations that call `dispatch_job()` or `start_workflow()` must use \
              #[forge::mutation(transactional)] to ensure atomicity. Without it, \
-             jobs may be dispatched but database changes rolled back on error."
+             jobs may be dispatched but database changes rolled back on error.",
         ));
     }
 

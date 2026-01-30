@@ -342,10 +342,6 @@ pub struct AuthConfig {
     /// Keys are fetched and cached automatically.
     pub jwks_url: Option<String>,
 
-    /// Allow unauthenticated requests to reach public functions.
-    #[serde(default = "default_true")]
-    pub allow_anonymous: bool,
-
     /// JWKS cache TTL in seconds.
     #[serde(default = "default_jwks_cache_ttl")]
     pub jwks_cache_ttl_secs: u64,
@@ -364,7 +360,6 @@ impl Default for AuthConfig {
             jwt_audience: None,
             token_expiry: None,
             jwks_url: None,
-            allow_anonymous: true,
             jwks_cache_ttl_secs: default_jwks_cache_ttl(),
             session_ttl_secs: default_session_ttl(),
         }
@@ -408,10 +403,6 @@ impl AuthConfig {
             JwtAlgorithm::RS256 | JwtAlgorithm::RS384 | JwtAlgorithm::RS512
         )
     }
-}
-
-fn default_true() -> bool {
-    true
 }
 
 fn default_jwks_cache_ttl() -> u64 {

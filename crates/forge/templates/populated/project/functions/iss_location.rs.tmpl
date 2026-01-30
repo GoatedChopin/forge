@@ -11,7 +11,7 @@ pub struct IssLocation {
 }
 
 /// Get the latest ISS location from the database
-#[forge::query]
+#[forge::query(public)]
 pub async fn get_iss_location(ctx: &QueryContext) -> Result<Option<IssLocation>> {
     let location: Option<IssLocation> = sqlx::query_as(
         "SELECT id, latitude, longitude, api_timestamp, created_at
@@ -28,6 +28,7 @@ pub async fn get_iss_location(ctx: &QueryContext) -> Result<Option<IssLocation>>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use forge::testing::*;
 
     #[tokio::test]
     async fn test_query_context_creation() {

@@ -418,7 +418,10 @@ mod tests {
         let generator = ApiGenerator::new();
         let registry = SchemaRegistry::new();
 
-        let func = FunctionDef::query("list_users", RustType::Vec(Box::new(RustType::Custom("User".to_string()))));
+        let func = FunctionDef::query(
+            "list_users",
+            RustType::Vec(Box::new(RustType::Custom("User".to_string()))),
+        );
         registry.register_function(func);
 
         let content = generator.generate(&registry).unwrap();

@@ -116,6 +116,8 @@ pub async fn delete_user(ctx: &MutationContext, id: Uuid) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use forge::testing::*;
+    use forge::forge_core::{assert_err, assert_job_dispatched, assert_job_not_dispatched, assert_workflow_started};
 
     // Test contexts simulate auth states, roles, and dispatch verification
     // without needing a database connection.

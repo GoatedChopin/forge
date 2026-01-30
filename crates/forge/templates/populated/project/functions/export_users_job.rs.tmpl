@@ -120,6 +120,7 @@ pub async fn export_users(ctx: &JobContext, input: ExportUsersInput) -> Result<E
 #[cfg(test)]
 mod tests {
     use super::*;
+    use forge::testing::*;
 
     // Job test contexts track retry state, progress updates, and heartbeats
     // for verifying job behavior across attempts.

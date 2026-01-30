@@ -109,7 +109,7 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
                                 "Invalid job priority '{}'. Valid values: {}",
                                 priority,
                                 VALID_PRIORITIES.join(", ")
-                            )
+                            ),
                         ));
                     }
                     result.priority = Some(priority);
@@ -170,7 +170,7 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
                                     "Invalid backoff strategy '{}'. Valid values: {}",
                                     backoff,
                                     VALID_BACKOFFS.join(", ")
-                                )
+                                ),
                             ));
                         }
                         result.backoff = Some(backoff);
@@ -235,7 +235,7 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
                                             "Invalid backoff strategy '{}'. Valid values: {}",
                                             backoff,
                                             VALID_BACKOFFS.join(", ")
-                                        )
+                                        ),
                                     ));
                                 }
                                 result.backoff = Some(backoff);

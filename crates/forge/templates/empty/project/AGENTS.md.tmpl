@@ -29,6 +29,7 @@ cargo clippy --all-targets -- -D warnings && cargo test && bun lint && bun forma
 | `let x = $state<T>(v)` | `let x: T = $state(v)` |
 | `{#if $store}` nullable | Copy to `$state` via `.subscribe()` |
 | `error: Error | null` | `error: ForgeError | null` |
+| `Header::default()` for JWT | `Header::new(Algorithm::HS256)` for HS256 |
 
 ---
 
@@ -335,6 +336,25 @@ mod tests {
 - Per-item loading: `let deleting = $state(false)` per component, not global
 - Friendly errors: map `"invalid-credential"` → `"Invalid email or password"`
 - Auth: call `getForgeClient().reconnect()` on login/logout state change
+
+---
+
+## Built-in Auth (HS256 JWT)
+
+```toml
+# forge.toml - jwt_secret via env var
+[auth]
+jwt_algorithm = "HS256"
+jwt_secret = "${JWT_SECRET}"
+```
+
+```rust
+// Generate token: ClaimsBuilder + Header::new(Algorithm::HS256)
+let claims = ClaimsBuilder::new().user_id(user.id).duration_secs(7 * 24 * 3600).build()?;
+let token = encode(&Header::new(Algorithm::HS256), &claims, &EncodingKey::from_secret(secret.as_bytes()))?;
+```
+
+`forge generate` auto-creates `auth.svelte.ts` with `getToken()` when auth configured.
 
 ---
 

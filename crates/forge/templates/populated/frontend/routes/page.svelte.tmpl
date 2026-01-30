@@ -7,6 +7,7 @@
     trackAccountVerification,
     getUsers$,
     getIssLocation$,
+    type User,
   } from "$lib/forge";
 
   const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8080";
@@ -177,26 +178,26 @@
       </div>
     </div>
 
-    {#if $issLocation.loading}
+    {#if issLocation.loading}
       <p>Loading ISS position...</p>
-    {:else if $issLocation.data}
+    {:else if issLocation.data}
       <div class="iss-stats">
         <div class="stat-item">
           <span class="stat-label">Latitude</span>
           <span class="stat-value"
-            >{formatCoordinate($issLocation.data.latitude, true)}</span
+            >{formatCoordinate(issLocation.data.latitude, true)}</span
           >
         </div>
         <div class="stat-item">
           <span class="stat-label">Longitude</span>
           <span class="stat-value"
-            >{formatCoordinate($issLocation.data.longitude, false)}</span
+            >{formatCoordinate(issLocation.data.longitude, false)}</span
           >
         </div>
         <div class="stat-item">
           <span class="stat-label">Last Update</span>
           <span class="stat-value timestamp"
-            >{formatTimestamp($issLocation.data.created_at)}</span
+            >{formatTimestamp(issLocation.data.created_at)}</span
           >
         </div>
       </div>
@@ -275,11 +276,11 @@
     <h2>User Directory <span class="badge live">subscribe</span></h2>
     <p class="hint">Live-updating list with inline editing</p>
 
-    {#if $users.loading}
+    {#if users.loading}
       <p>Loading...</p>
-    {:else if $users.error}
-      <p class="error">Error: {$users.error.message}</p>
-    {:else if !$users.data || $users.data.length === 0}
+    {:else if users.error}
+      <p class="error">Error: {users.error.message}</p>
+    {:else if !users.data || users.data.length === 0}
       <p class="muted">No users yet. Create one above!</p>
     {:else}
       <table>
@@ -291,7 +292,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each $users.data as user (user.id)}
+          {#each users.data as user (user.id)}
             {#if editingUserId === user.id}
               <tr class="editing-row">
                 <td>

@@ -21,7 +21,9 @@ impl TokioSleepDetector {
     }
 
     /// Try to extract a duration in seconds from common patterns.
-    fn extract_duration_secs(args: &syn::punctuated::Punctuated<syn::Expr, syn::token::Comma>) -> Option<u64> {
+    fn extract_duration_secs(
+        args: &syn::punctuated::Punctuated<syn::Expr, syn::token::Comma>,
+    ) -> Option<u64> {
         if args.len() != 1 {
             return None;
         }
@@ -60,13 +62,18 @@ impl TokioSleepDetector {
         None
     }
 
-    fn check_sleep_call(&mut self, path_str: &str, args: &syn::punctuated::Punctuated<syn::Expr, syn::token::Comma>, span: proc_macro2::Span) {
+    fn check_sleep_call(
+        &mut self,
+        path_str: &str,
+        args: &syn::punctuated::Punctuated<syn::Expr, syn::token::Comma>,
+        span: proc_macro2::Span,
+    ) {
         if self.violation_span.is_some() {
             return;
         }
 
-        let is_tokio_sleep = path_str.contains("tokio") && path_str.contains("sleep")
-            || path_str == "sleep";
+        let is_tokio_sleep =
+            path_str.contains("tokio") && path_str.contains("sleep") || path_str == "sleep";
 
         if !is_tokio_sleep {
             return;
@@ -90,7 +97,10 @@ impl<'ast> Visit<'ast> for TokioSleepDetector {
                 .collect::<Vec<_>>()
                 .join("::");
 
-            let span = path.path.segments.last()
+            let span = path
+                .path
+                .segments
+                .last()
                 .map(|s| s.ident.span())
                 .unwrap_or_else(proc_macro2::Span::call_site);
 
@@ -111,7 +121,10 @@ impl<'ast> Visit<'ast> for TokioSleepDetector {
                     .collect::<Vec<_>>()
                     .join("::");
 
-                let span = path.path.segments.last()
+                let span = path
+                    .path
+                    .segments
+                    .last()
                     .map(|s| s.ident.span())
                     .unwrap_or_else(proc_macro2::Span::call_site);
 
@@ -232,8 +245,10 @@ pub fn workflow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
             span,
             "Use `ctx.sleep()` instead of `tokio::sleep()` for long sleeps in workflows. \
              Workflows require durable sleep that survives process restarts. \
-             Short sleeps (<100s) for polling are allowed with tokio::sleep."
-        ).to_compile_error().into();
+             Short sleeps (<100s) for polling are allowed with tokio::sleep.",
+        )
+        .to_compile_error()
+        .into();
     }
 
     // Parse input type from function signature
