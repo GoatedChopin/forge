@@ -1,0 +1,143 @@
+# Project Anatomy
+
+A Forge project ships as a single Rust binary with an optional embedded frontend.
+
+## Directory Structure
+
+```
+my-app/
+├── forge.toml           # Configuration
+├── Cargo.toml           # Rust dependencies
+├── .env                 # Environment variables
+│
+├── src/
+│   ├── main.rs          # Application entry point
+│   ├── functions/       # Queries, mutations, jobs, workflows
+│   │   ├── mod.rs
+│   │   └── todos.rs
+│   └── schema/          # Data models
+│       ├── mod.rs
+│       └── todo.rs
+│
+├── migrations/          # SQL migrations (numbered, run automatically)
+│   └── 0001_todos.sql
+│
+└── frontend/            # SvelteKit app (optional)
+    ├── src/
+    │   ├── routes/      # Pages
+    │   └── lib/
+    │       └── forge/   # Generated client (forge generate)
+    │           ├── types.ts
+    │           ├── api.ts
+    │           └── index.ts
+    └── .forge/          # Runtime library (@forge/svelte)
+        └── svelte/
+```
+
+## Key Files
+
+### forge.toml
+
+Runtime configuration. Environment variables expand at startup.
+
+```toml
+[project]
+name = "my-app"
+
+[database]
+url = "${DATABASE_URL}"
+
+[gateway]
+port = 8080
+```
+
+### src/functions/
+
+Your backend logic. Each file can contain any combination of:
+
+```rust
+// Query - read data
+#[forge::query(tables = ["todos"])]
+pub async fn list_todos(ctx: &QueryContext) -> Result<Vec<Todo>> { ... }
+
+// Mutation - write data
+#[forge::mutation]
+pub async fn create_todo(ctx: &MutationContext, input: CreateTodoInput) -> Result<Todo> { ... }
+
+// Job - background work
+#[forge::job]
+pub async fn send_email(ctx: &JobContext, email: String) -> Result<()> { ... }
+
+// Cron - scheduled tasks
+#[forge::cron("0 9 * * *")]
+pub async fn daily_report(ctx: &CronContext) -> Result<()> { ... }
+
+// Workflow - durable multi-step processes
+#[forge::workflow]
+pub async fn onboarding(ctx: &WorkflowContext, user_id: Uuid) -> Result<()> { ... }
+
+// Daemon - persistent services
+#[forge::daemon]
+pub async fn event_processor(ctx: &DaemonContext) -> Result<()> { ... }
+
+// Webhook - incoming HTTP callbacks
+#[forge::webhook(path = "/hooks/stripe")]
+pub async fn stripe_webhook(ctx: &WebhookContext) -> Result<WebhookResult> { ... }
+```
+
+### src/schema/
+
+Data models with `#[forge::model]` generate TypeScript types automatically.
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[forge::model]
+pub struct Todo {
+    pub id: Uuid,
+    pub title: String,
+    pub completed: bool,
+    pub created_at: DateTime<Utc>,
+}
+```
+
+### migrations/
+
+SQL files prefixed with numbers. Run automatically on startup with distributed locking.
+
+```sql
+-- @up
+CREATE TABLE todos (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    title TEXT NOT NULL,
+    completed BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+SELECT forge_enable_reactivity('todos');
+
+-- @down
+SELECT forge_disable_reactivity('todos');
+DROP TABLE IF EXISTS todos;
+```
+
+The `forge_enable_reactivity()` function sets up LISTEN/NOTIFY triggers for real-time subscriptions.
+
+### frontend/src/lib/forge/
+
+Generated TypeScript client. Run `forge generate` after adding or modifying functions.
+
+```typescript
+// Auto-generated from your Rust functions
+import { listTodos$, createTodo, updateTodo, deleteTodo } from '$lib/forge';
+import type { Todo, CreateTodoInput } from '$lib/forge';
+```
+
+The `frontend/.forge/svelte/` directory contains the runtime library (`@forge/svelte`) that powers subscriptions and API calls.
+
+## Build Output
+
+```bash
+cargo build --release
+```
+
+Produces a single binary in `target/release/my-app`. Enable `embedded-frontend` feature to bundle the frontend build into the binary for single-artifact deployment.

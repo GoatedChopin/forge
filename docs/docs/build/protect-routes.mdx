@@ -1,0 +1,269 @@
+# Protect Routes
+
+Control who can call your functions.
+
+## The Code
+
+```rust
+#[forge::query]
+pub async fn get_user(ctx: &QueryContext, id: Uuid) -> Result<User> {
+    let user_id = ctx.auth.require_user_id()?;  // Returns 401 if not authenticated
+
+    sqlx::query_as!(User, "SELECT * FROM users WHERE id = $1", id)
+        .fetch_one(ctx.db())
+        .await
+        .map_err(Into::into)
+}
+```
+
+## What Happens
+
+All functions require authentication by default. The JWT token from the `Authorization: Bearer <token>` header is validated before your code runs. Missing or invalid tokens return 401 Unauthorized.
+
+Token validation checks expiry, signature, and optionally issuer/audience. Keys are cached to avoid latency on every request.
+
+## Attributes
+
+| Attribute | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `public` | flag | `false` | Skip authentication for this function |
+| `require_role("admin")` | string | - | Require the specified role (returns 403 if missing) |
+
+## Patterns
+
+### Public Endpoints
+
+```rust
+#[forge::query(public)]
+pub async fn get_public_stats(ctx: &QueryContext) -> Result<Stats> {
+    // Anyone can call this, no token required
+    sqlx::query_as!(Stats, "SELECT count(*) as total FROM orders")
+        .fetch_one(ctx.db())
+        .await
+        .map_err(Into::into)
+}
+```
+
+### Role-Based Access
+
+```rust
+#[forge::mutation(require_role("admin"))]
+pub async fn delete_user(ctx: &MutationContext, id: Uuid) -> Result<()> {
+    // Only users with "admin" role can call this
+    // Returns 403 Forbidden if role is missing
+    sqlx::query!("DELETE FROM users WHERE id = $1", id)
+        .execute(ctx.db())
+        .await?;
+    Ok(())
+}
+```
+
+### Checking Roles in Code
+
+```rust
+#[forge::query]
+pub async fn get_orders(ctx: &QueryContext) -> Result<Vec<Order>> {
+    let user_id = ctx.auth.require_user_id()?;
+
+    // Admins see all orders, regular users see only their own
+    if ctx.auth.has_role("admin") {
+        sqlx::query_as!(Order, "SELECT * FROM orders")
+            .fetch_all(ctx.db())
+            .await
+            .map_err(Into::into)
+    } else {
+        sqlx::query_as!(Order,
+            "SELECT * FROM orders WHERE user_id = $1",
+            user_id
+        )
+        .fetch_all(ctx.db())
+        .await
+        .map_err(Into::into)
+    }
+}
+```
+
+### Accessing Custom Claims
+
+```rust
+#[forge::query]
+pub async fn get_tenant_data(ctx: &QueryContext) -> Result<TenantData> {
+    // Access custom JWT claims
+    let org_id = ctx.auth
+        .claim("org_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ForgeError::Forbidden("Missing org_id claim".into()))?;
+
+    sqlx::query_as!(TenantData,
+        "SELECT * FROM tenant_data WHERE org_id = $1",
+        org_id
+    )
+    .fetch_one(ctx.db())
+    .await
+    .map_err(Into::into)
+}
+```
+
+### Non-UUID Auth Providers
+
+For providers like Firebase or Clerk that use string identifiers instead of UUIDs:
+
+```rust
+#[forge::query]
+pub async fn get_profile(ctx: &QueryContext) -> Result<Profile> {
+    // Use subject() for Firebase uid, Clerk user_xxx, or email subjects
+    let subject = ctx.auth.require_subject()?;
+
+    sqlx::query_as!(Profile,
+        "SELECT * FROM profiles WHERE external_id = $1",
+        subject
+    )
+    .fetch_one(ctx.db())
+    .await
+    .map_err(Into::into)
+}
+```
+
+## Context Methods
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `auth.is_authenticated()` | `bool` | Check if request has valid token |
+| `auth.user_id()` | `Option<Uuid>` | Get user ID (UUID format only) |
+| `auth.require_user_id()` | `Result<Uuid>` | Get user ID or return 401 |
+| `auth.subject()` | `Option<&str>` | Get raw subject claim (any format) |
+| `auth.require_subject()` | `Result<&str>` | Get subject or return 401 |
+| `auth.has_role("role")` | `bool` | Check if user has role |
+| `auth.require_role("role")` | `Result<()>` | Require role or return 403 |
+| `auth.claim("key")` | `Option<&Value>` | Get custom claim by key |
+| `auth.roles()` | `&[String]` | Get all roles |
+
+## Configuration
+
+Configure authentication in `forge.toml`:
+
+### HMAC Algorithms (Symmetric)
+
+```toml
+[auth]
+jwt_algorithm = "HS256"  # or HS384, HS512
+jwt_secret = "${JWT_SECRET}"
+jwt_issuer = "my-app"      # Optional: validate issuer
+jwt_audience = "my-api"    # Optional: validate audience
+```
+
+### RSA Algorithms with JWKS (Asymmetric)
+
+For Firebase, Clerk, Auth0, and other providers:
+
+```toml
+[auth]
+jwt_algorithm = "RS256"  # or RS384, RS512
+jwks_url = "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com"
+jwks_cache_ttl_secs = 3600  # Default: 1 hour
+jwt_issuer = "https://securetoken.google.com/my-project"
+jwt_audience = "my-project"
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `jwt_algorithm` | string | `HS256` | HS256, HS384, HS512, RS256, RS384, RS512 |
+| `jwt_secret` | string | - | Secret for HMAC algorithms |
+| `jwks_url` | string | - | JWKS endpoint for RSA algorithms |
+| `jwks_cache_ttl_secs` | u64 | `3600` | How long to cache public keys |
+| `jwt_issuer` | string | - | Expected issuer (validated if set) |
+| `jwt_audience` | string | - | Expected audience (validated if set) |
+
+## Frontend Auth Store
+
+When auth is configured, Forge generates a Svelte auth store with localStorage persistence:
+
+```typescript
+import { auth, getToken } from '$lib/forge';
+
+// After login
+auth.setAuth(token, { id: user.id, email: user.email });
+
+// Check auth state
+if (auth.isAuthenticated) {
+  console.log(auth.user.email);
+}
+
+// On logout
+auth.clearAuth();
+
+// The client uses getToken() automatically for requests
+```
+
+The generated store:
+
+```typescript
+interface AuthStore {
+  token: string | null;          // Current JWT
+  user: User | null;             // User object you passed to setAuth
+  isAuthenticated: boolean;      // true when token exists
+  setAuth(token: string, user: User): void;
+  clearAuth(): void;
+}
+
+export const auth: AuthStore;
+export function getToken(): string | null;
+```
+
+When `setAuth()` or `clearAuth()` is called, the client automatically reconnects with the new token.
+
+## Under the Hood
+
+Token validation runs this pipeline:
+
+1. **Extract** - Token from `Authorization: Bearer <token>` header
+2. **Decode** - Parse JWT header and payload
+3. **Validate expiry** - Check `exp` claim against current time (60s leeway for clock skew)
+4. **Validate issuer** - If configured, check `iss` claim matches
+5. **Validate audience** - If configured, check `aud` claim matches
+6. **Verify signature** - HMAC secret or RSA public key from JWKS
+
+For RSA algorithms, public keys are fetched from the JWKS endpoint and cached. Cache TTL defaults to 1 hour. Keys are matched by the `kid` (key ID) header in the token.
+
+Signature verification uses constant-time comparison to prevent timing attacks.
+
+## Testing
+
+```rust
+use forge::testing::TestQueryContext;
+
+#[tokio::test]
+async fn test_protected_query() {
+    let ctx = TestQueryContext::builder()
+        .as_user(Uuid::new_v4())
+        .with_role("admin")
+        .build()
+        .await;
+
+    let result = get_orders(&ctx).await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_unauthenticated() {
+    let ctx = TestQueryContext::builder()
+        .unauthenticated()
+        .build()
+        .await;
+
+    let result = get_user(&ctx, Uuid::new_v4()).await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_missing_role() {
+    let ctx = TestQueryContext::builder()
+        .as_user(Uuid::new_v4())
+        .with_role("user")  // Not admin
+        .build()
+        .await;
+
+    let result = delete_user(&ctx, Uuid::new_v4()).await;
+    assert!(matches!(result, Err(ForgeError::Forbidden(_))));
+}
+```

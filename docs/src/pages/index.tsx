@@ -18,7 +18,7 @@ function HomepageHeader() {
         <div className={styles.buttons}>
           <Link
             className="button button--secondary button--lg"
-            to="/docs/quick-start">
+            to="/docs/start/first-app">
             Get Started
           </Link>
           <Link
@@ -126,7 +126,7 @@ function CodeExample(): JSX.Element {
         <div className="row">
           <div className="col col--12">
             <Heading as="h2" className="text--center margin-bottom--lg">
-              Simple by Design
+              Code First
             </Heading>
           </div>
         </div>
@@ -160,8 +160,8 @@ pub async fn list_tasks(ctx: &QueryContext)
             <Heading as="h4">Use it in your frontend</Heading>
             <pre className={styles.codeBlock}>
 {`<script lang="ts">
-  import { subscribe } from '$lib/forge';
-  const tasks = subscribe('list_tasks', {});  // Auto-updates!
+  import { listTasksStore$ } from '$lib/forge';
+  const tasks = listTasksStore$({});  // Auto-updates!
 </script>
 
 {#each $tasks.data ?? [] as task}
@@ -188,18 +188,18 @@ function CTASection(): JSX.Element {
             <pre className={styles.codeBlock}>
 {`cargo install forgex
 forge new my-app --demo
-cd my-app && cargo run`}
+cd my-app && forge dev`}
             </pre>
             <div className={styles.buttons}>
               <Link
                 className="button button--primary button--lg"
-                to="/docs/quick-start">
-                Quick Start Guide
+                to="/docs/start/first-app">
+                Your First App
               </Link>
               <Link
                 className="button button--outline button--primary button--lg"
-                to="/tutorials">
-                View Tutorials
+                to="/docs/build/read-data">
+                Build Guide
               </Link>
             </div>
           </div>

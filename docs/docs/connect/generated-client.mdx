@@ -1,0 +1,363 @@
+# Generated Client
+
+Type-safe TypeScript bindings generated from your Rust code. Zero manual typing.
+
+## The Code
+
+Run codegen after adding or modifying functions:
+
+```bash
+forge generate
+```
+
+Your Rust types become TypeScript:
+
+```typescript
+// types.ts - generated from #[forge::model]
+export interface User {
+  id: string;
+  email: string;
+  created_at: string;
+}
+
+// api.ts - generated from #[forge::query] and #[forge::mutation]
+export const getUser = (args: { id: string }): Promise<User> =>
+  getForgeClient().call("get_user", args);
+
+export const createUser = (args: { name: string; email: string }): Promise<User> =>
+  getForgeClient().call("create_user", args);
+
+// Reactive subscription (Svelte store)
+export const getUserStore$ = (args: { id: string }) =>
+  createSubscriptionStore<{ id: string }, User>("get_user", args);
+```
+
+## What Happens
+
+The `forge generate` command:
+1. Scans your `src/` directory for models, enums, and functions
+2. Extracts type information from Rust macros
+3. Generates TypeScript interfaces with correct nullability
+4. Creates API bindings that call your functions with type safety
+5. Produces subscription factories for queries with real-time support
+
+Output goes to `frontend/src/lib/forge/` by default.
+
+## Type Mapping
+
+### Rust to TypeScript
+
+| Rust Type | TypeScript Type |
+|-----------|-----------------|
+| `String`, `&str` | `string` |
+| `Uuid` | `string` |
+| `i32`, `i64`, `f32`, `f64` | `number` |
+| `bool` | `boolean` |
+| `DateTime<Utc>`, `Instant` | `string` |
+| `LocalDate`, `LocalTime` | `string` |
+| `Option<T>` | `T \| null` |
+| `Vec<T>` | `T[]` |
+| `HashMap<K, V>` | `Record<string, V>` |
+| `Value` (JSON) | `unknown` |
+| `Upload` | `File \| Blob` |
+| `Bytes` (return) | `Blob` |
+| `Bytes` (arg) | `Uint8Array` |
+
+### Enums to Union Types
+
+Rust enums become TypeScript union types:
+
+```rust
+#[forge::forge_enum]
+pub enum TaskStatus {
+    Draft,
+    Active,
+    Completed,
+}
+```
+
+```typescript
+export type TaskStatus = 'draft' | 'active' | 'completed';
+```
+
+## Query Bindings
+
+### One-Shot RPC
+
+Call a query once and get the result:
+
+```typescript
+import { getUser, listTodos } from '$lib/forge';
+
+// With arguments
+const user = await getUser({ id: userId });
+
+// No arguments
+const todos = await listTodos();
+```
+
+Returns a `Promise<T>` that resolves with the data or rejects with a `ForgeClientError`.
+
+### Reactive Subscriptions
+
+Subscribe to query changes with automatic updates:
+
+```typescript
+import { getUserStore$ } from '$lib/forge';
+
+// Create a subscription store
+const userStore = getUserStore$({ id: userId });
+
+// Use in Svelte component
+$: ({ loading, data, error, stale } = $userStore);
+```
+
+### Svelte 5 Runes
+
+For Svelte 5 runes-based reactivity:
+
+```typescript
+import { getUser$ } from '$lib/forge';
+
+// Returns a reactive object
+const user = getUser$({ id: userId });
+
+// Access properties directly
+{#if user.loading}
+  Loading...
+{:else if user.error}
+  Error: {user.error.message}
+{:else}
+  Welcome, {user.data.name}
+{/if}
+```
+
+The `$` suffix functions use `$state` internally for fine-grained reactivity.
+
+## Subscription State
+
+All subscription stores expose the same shape:
+
+```typescript
+interface SubscriptionResult<T> {
+  loading: boolean;   // true until first data arrives
+  data: T | null;     // the query result
+  error: Error | null;
+  stale: boolean;     // true during reconnection
+}
+```
+
+| Field | When True |
+|-------|-----------|
+| `loading` | Initial fetch in progress |
+| `stale` | Connection lost, showing cached data |
+| `error` | Query failed (auth, network, server) |
+
+The `stale` flag lets you show a visual indicator that data may be outdated while maintaining UI responsiveness during reconnection.
+
+## Mutations
+
+Mutations return Promises. No subscription needed:
+
+```typescript
+import { createUser, updateTodo, deleteTodo } from '$lib/forge';
+
+// Create
+const user = await createUser({ name: 'Alice', email: 'alice@example.com' });
+
+// Update
+await updateTodo({ id: todoId, completed: true });
+
+// Delete
+await deleteTodo({ id: todoId });
+```
+
+On success, all active subscriptions that depend on affected tables re-evaluate automatically via server-side change detection.
+
+## File Uploads
+
+The `Upload` type maps to `File | Blob` on the client:
+
+```rust
+#[forge::mutation]
+pub async fn upload_avatar(
+    ctx: &MutationContext,
+    file: Upload,
+    user_id: Uuid,
+) -> Result<String> {
+    let bytes = file.bytes;
+    let filename = file.filename;
+    let content_type = file.content_type;
+    // Store file, return URL
+}
+```
+
+```typescript
+import { uploadAvatar } from '$lib/forge';
+
+// From file input
+const url = await uploadAvatar({
+  file: inputElement.files[0],
+  userId: currentUserId
+});
+
+// From Blob
+const blob = new Blob([data], { type: 'application/pdf' });
+await uploadDocument({ file: blob, name: 'report.pdf' });
+```
+
+When arguments contain `File` or `Blob`, the client automatically:
+- Switches to `multipart/form-data` encoding
+- Streams the file without buffering entirely in memory
+- Extracts filename and content type from the `File` object
+
+## Auto-Reconnect
+
+The client handles connection drops automatically:
+
+| Behavior | Value |
+|----------|-------|
+| Max attempts | 10 |
+| Initial delay | 1 second |
+| Backoff | Exponential with jitter |
+| Max delay | 30 seconds |
+
+During reconnection:
+- Subscriptions mark their data as `stale`
+- One-shot queries retry with backoff
+- On reconnect, subscriptions re-register and receive fresh data
+
+### Connection Lifecycle
+
+```typescript
+import { createConnectionStore } from '$lib/forge';
+
+const connection = createConnectionStore();
+
+$: state = $connection; // 'disconnected' | 'connecting' | 'connected'
+```
+
+Connection IDs prevent race conditions. If a reconnect starts while another is in progress, the stale attempt is cancelled.
+
+## Token Change Detection
+
+When the auth token changes, the client detects it and reconnects:
+
+```typescript
+// In auth.svelte.ts
+auth.setAuth(newToken, user);  // Triggers reconnect
+auth.clearAuth();              // Triggers reconnect
+```
+
+The client hashes the current token and compares it before each subscription registration. If the hash differs from the connected token, it triggers a full reconnect to re-authenticate subscriptions.
+
+This handles:
+- User login (token acquired)
+- Token refresh (token replaced)
+- User logout (token cleared)
+
+## Generated Files
+
+After `forge generate`, you get:
+
+| File | Contents |
+|------|----------|
+| `types.ts` | Interfaces from `#[forge::model]`, union types from `#[forge::forge_enum]` |
+| `api.ts` | Query and mutation bindings |
+| `stores.ts` | Re-exports from `@forge/svelte` |
+| `runes.svelte.ts` | Svelte 5 `toReactive()` helper |
+| `reactive.svelte.ts` | Runes-based subscription functions (`getUser$`) |
+| `auth.svelte.ts` | Auth store (when auth configured) |
+| `index.ts` | Barrel export |
+
+## CLI Options
+
+```bash
+forge generate [OPTIONS]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--force` | Regenerate even if files exist |
+| `--output, -o` | Output directory (default: `frontend/src/lib/forge`) |
+| `--src, -s` | Source directory to scan (default: `src`) |
+| `--skip-runtime` | Only regenerate types, skip `@forge/svelte` update |
+| `-y, --yes` | Auto-accept prompts (for CI) |
+
+## Usage in Components
+
+```svelte
+<script lang="ts">
+  import { listTodos$, createTodo, toggleTodo } from '$lib/forge';
+
+  const todos = listTodos$();
+
+  async function addTodo(title: string) {
+    await createTodo({ title });
+    // No manual refetch needed - subscription updates automatically
+  }
+
+  async function toggle(id: string, completed: boolean) {
+    await toggleTodo({ id, completed });
+  }
+</script>
+
+{#if todos.loading}
+  <p>Loading...</p>
+{:else if todos.error}
+  <p>Error: {todos.error.message}</p>
+{:else}
+  {#if todos.stale}
+    <p class="warning">Connection lost, data may be outdated</p>
+  {/if}
+  <ul>
+    {#each todos.data as todo}
+      <li>
+        <input
+          type="checkbox"
+          checked={todo.completed}
+          on:change={() => toggle(todo.id, !todo.completed)}
+        />
+        {todo.title}
+      </li>
+    {/each}
+  </ul>
+{/if}
+```
+
+## Under the Hood
+
+### SSE Transport
+
+Subscriptions use Server-Sent Events with a dedicated connection. The client:
+1. Opens an EventSource to `/events` with the auth token
+2. Receives a session ID on connection
+3. Registers each subscription via POST to `/subscribe`
+4. Receives updates via the SSE channel with `target` routing
+
+SSE was chosen over WebSocket for:
+- HTTP/2 multiplexing support
+- No special proxy configuration
+- Automatic reconnection built into EventSource
+- Simpler firewall traversal
+
+### Subscription Re-registration
+
+On reconnect, the client re-registers all active subscriptions. Each subscription tracks:
+- Function name and arguments
+- Failed attempt count
+- Callback reference
+
+After 3 consecutive re-registration failures, the subscription emits a `MAX_RETRIES_EXCEEDED` error and stops retrying.
+
+### Connection ID Pattern
+
+Each `connect()` call increments a connection ID. All async operations check this ID before modifying state:
+
+```typescript
+const currentConnectionId = ++this.connectionId;
+// ... async work ...
+if (currentConnectionId !== this.connectionId) return;  // Stale, abort
+```
+
+This prevents race conditions when rapid reconnects overlap.

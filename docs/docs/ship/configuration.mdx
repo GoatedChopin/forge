@@ -1,0 +1,456 @@
+# Configuration
+
+Control database connections, authentication, workers, clustering, and node roles from a single file.
+
+## The Code
+
+```toml
+[project]
+name = "my-app"
+
+[database]
+url = "${DATABASE_URL}"
+pool_size = 50
+replica_urls = ["${DATABASE_REPLICA_URL}"]
+
+[gateway]
+port = 8080
+
+[worker]
+max_concurrent_jobs = 10
+poll_interval_ms = 100
+
+[auth]
+jwt_algorithm = "RS256"
+jwks_url = "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com"
+jwt_issuer = "https://securetoken.google.com/my-project"
+
+[node]
+roles = ["Gateway", "Worker", "Scheduler"]
+worker_capabilities = ["general", "media"]
+```
+
+## What Happens
+
+Forge reads `forge.toml` at startup and substitutes environment variables. Each section configures a different subsystem. Sections you omit use sensible defaults.
+
+Environment variables use `${VAR_NAME}` syntax (uppercase letters, numbers, underscores). Unset variables remain as literal strings.
+
+## Sections
+
+### [project]
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `name` | string | `"forge-app"` | Project identifier |
+| `version` | string | `"0.1.0"` | Project version |
+
+### [database]
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `url` | string | - | PostgreSQL connection URL |
+| `embedded` | bool | `false` | Use embedded PostgreSQL |
+| `data_dir` | string | `.forge/postgres` | Data directory for embedded mode |
+| `pool_size` | u32 | `50` | Connection pool size |
+| `pool_timeout_secs` | u64 | `30` | Pool checkout timeout |
+| `statement_timeout_secs` | u64 | `30` | Query timeout |
+| `replica_urls` | string[] | `[]` | Read replica URLs |
+| `read_from_replica` | bool | `false` | Route reads to replicas |
+
+#### Embedded PostgreSQL
+
+For development or small deployments, Forge bundles PostgreSQL:
+
+```toml
+[database]
+embedded = true
+data_dir = ".forge/data"
+```
+
+No Docker. No external database. Data persists in `data_dir`. Requires the `embedded-db` feature.
+
+#### Read Replicas
+
+```toml
+[database]
+url = "${DATABASE_URL}"
+replica_urls = [
+    "${DATABASE_REPLICA_1}",
+    "${DATABASE_REPLICA_2}"
+]
+read_from_replica = true
+```
+
+Queries route to replicas via round-robin. Mutations always use the primary. If all replicas fail, reads fall back to primary.
+
+#### Pool Isolation (Bulkhead)
+
+Separate connection pools prevent runaway workloads from starving others:
+
+```toml
+[database]
+url = "${DATABASE_URL}"
+pool_size = 50
+
+[database.pools.default]
+size = 30
+timeout_secs = 30
+
+[database.pools.jobs]
+size = 15
+timeout_secs = 60
+statement_timeout_secs = 300
+
+[database.pools.analytics]
+size = 5
+timeout_secs = 120
+statement_timeout_secs = 600
+```
+
+A slow analytics query exhausting 5 connections cannot touch the 30 connections reserved for user requests. Each pool has independent size limits and statement timeouts.
+
+### [gateway]
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `port` | u16 | `8080` | HTTP port |
+| `grpc_port` | u16 | `9000` | Inter-node communication port |
+| `max_connections` | usize | `10000` | Maximum concurrent connections |
+| `request_timeout_secs` | u64 | `30` | Request timeout |
+
+### [auth]
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `jwt_algorithm` | string | `"HS256"` | Signing algorithm |
+| `jwt_secret` | string | - | Secret for HMAC algorithms |
+| `jwks_url` | string | - | JWKS endpoint for RSA algorithms |
+| `jwks_cache_ttl_secs` | u64 | `3600` | Public key cache duration |
+| `jwt_issuer` | string | - | Expected issuer (optional) |
+| `jwt_audience` | string | - | Expected audience (optional) |
+| `token_expiry` | string | - | Token lifetime (e.g., `"15m"`, `"7d"`) |
+| `session_ttl_secs` | u64 | `604800` | WebSocket session TTL (7 days) |
+
+#### HMAC (Symmetric)
+
+```toml
+[auth]
+jwt_algorithm = "HS256"  # or HS384, HS512
+jwt_secret = "${JWT_SECRET}"
+```
+
+#### RSA with JWKS (Asymmetric)
+
+```toml
+[auth]
+jwt_algorithm = "RS256"  # or RS384, RS512
+jwks_url = "https://your-provider.com/.well-known/jwks.json"
+jwt_issuer = "https://your-provider.com"
+jwt_audience = "your-app-id"
+```
+
+Common JWKS URLs:
+
+| Provider | JWKS URL |
+|----------|----------|
+| Firebase | `https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com` |
+| Auth0 | `https://YOUR_DOMAIN.auth0.com/.well-known/jwks.json` |
+| Clerk | `https://YOUR_DOMAIN.clerk.accounts.dev/.well-known/jwks.json` |
+| Supabase | `https://YOUR_PROJECT.supabase.co/auth/v1/jwks` |
+
+### [worker]
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `max_concurrent_jobs` | usize | `50` | Concurrent job limit per worker |
+| `job_timeout_secs` | u64 | `3600` | Default job timeout (1 hour) |
+| `poll_interval_ms` | u64 | `100` | Queue polling interval |
+
+Workers maintain a semaphore sized to `max_concurrent_jobs`. They only poll when permits are available. Backpressure propagates naturally.
+
+### [cluster]
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `name` | string | `"default"` | Cluster identifier |
+| `discovery` | string | `"postgres"` | Discovery method |
+| `heartbeat_interval_secs` | u64 | `5` | Heartbeat frequency |
+| `dead_threshold_secs` | u64 | `15` | Missing heartbeats before dead |
+| `seed_nodes` | string[] | `[]` | Static node addresses |
+| `dns_name` | string | - | DNS name for discovery |
+
+#### Discovery Methods
+
+**postgres** (default)
+
+Nodes register in a database table. No external service required. Works everywhere PostgreSQL works.
+
+```toml
+[cluster]
+discovery = "postgres"
+```
+
+**dns**
+
+Query DNS for node addresses. Useful with service meshes.
+
+```toml
+[cluster]
+discovery = "dns"
+dns_name = "forge-nodes.default.svc.cluster.local"
+```
+
+**kubernetes**
+
+Use Kubernetes API for pod discovery.
+
+```toml
+[cluster]
+discovery = "kubernetes"
+```
+
+**static**
+
+Hardcoded node list. Useful for testing or fixed infrastructure.
+
+```toml
+[cluster]
+discovery = "static"
+seed_nodes = ["10.0.1.1:9000", "10.0.1.2:9000"]
+```
+
+### [node]
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `roles` | string[] | all roles | Roles this node assumes |
+| `worker_capabilities` | string[] | `["general"]` | Job routing capabilities |
+
+#### Node Roles
+
+| Role | Responsibility |
+|------|----------------|
+| `Gateway` | HTTP/gRPC endpoints, WebSocket connections |
+| `Function` | Query and mutation execution |
+| `Worker` | Background job processing |
+| `Scheduler` | Cron scheduling, leader election |
+
+Single-node deployment (default):
+
+```toml
+[node]
+roles = ["Gateway", "Function", "Worker", "Scheduler"]
+```
+
+API-only node:
+
+```toml
+[node]
+roles = ["Gateway", "Function"]
+```
+
+Worker-only node:
+
+```toml
+[node]
+roles = ["Worker"]
+worker_capabilities = ["gpu", "ml"]
+```
+
+Scheduler node (singleton per cluster):
+
+```toml
+[node]
+roles = ["Scheduler"]
+```
+
+Multiple nodes can run Scheduler. Advisory locks ensure only one is active. Others wait as standbys.
+
+#### Worker Capabilities
+
+Route jobs to specific workers:
+
+```toml
+# GPU worker
+[node]
+roles = ["Worker"]
+worker_capabilities = ["gpu"]
+
+# General purpose worker
+[node]
+roles = ["Worker"]
+worker_capabilities = ["general", "media"]
+```
+
+Jobs requiring `worker_capability = "gpu"` only run on workers with that capability. Jobs without a capability requirement run on any worker.
+
+## Patterns
+
+### Development
+
+```toml
+[project]
+name = "my-app"
+
+[database]
+embedded = true
+
+[gateway]
+port = 3000
+
+[observability]
+logging.level = "debug"
+```
+
+### Production Single Node
+
+```toml
+[project]
+name = "my-app"
+
+[database]
+url = "${DATABASE_URL}"
+pool_size = 100
+
+[gateway]
+port = 8080
+
+[auth]
+jwt_algorithm = "RS256"
+jwks_url = "${JWKS_URL}"
+jwt_issuer = "${JWT_ISSUER}"
+jwt_audience = "${JWT_AUDIENCE}"
+
+[worker]
+max_concurrent_jobs = 20
+```
+
+### Production Multi-Node
+
+API nodes:
+
+```toml
+[database]
+url = "${DATABASE_URL}"
+replica_urls = ["${DATABASE_REPLICA_URL}"]
+read_from_replica = true
+
+[database.pools.default]
+size = 40
+
+[node]
+roles = ["Gateway", "Function"]
+
+[cluster]
+discovery = "kubernetes"
+```
+
+Worker nodes:
+
+```toml
+[database]
+url = "${DATABASE_URL}"
+
+[database.pools.jobs]
+size = 30
+statement_timeout_secs = 600
+
+[node]
+roles = ["Worker"]
+worker_capabilities = ["general"]
+
+[worker]
+max_concurrent_jobs = 25
+
+[cluster]
+discovery = "kubernetes"
+```
+
+### Specialized Workers
+
+GPU processing node:
+
+```toml
+[node]
+roles = ["Worker"]
+worker_capabilities = ["gpu"]
+
+[worker]
+max_concurrent_jobs = 4  # GPU memory limits concurrency
+job_timeout_secs = 7200  # 2 hours for training jobs
+```
+
+## Under the Hood
+
+### Environment Variable Substitution
+
+Variables match the pattern `${VAR_NAME}` where `VAR_NAME` contains uppercase letters, numbers, and underscores:
+
+```rust
+let re = Regex::new(r"\$\{([A-Z_][A-Z0-9_]*)\}")?;
+```
+
+Substitution happens at parse time. Unset variables remain as literal `${VAR_NAME}` strings (useful for detecting misconfiguration).
+
+### Bulkhead Isolation
+
+Connection pools isolate workloads:
+
+```
+┌─────────────────────────────────────────────────┐
+│                   PostgreSQL                    │
+└─────────────────────────────────────────────────┘
+         ▲              ▲              ▲
+         │              │              │
+    ┌────┴────┐    ┌────┴────┐    ┌────┴────┐
+    │ default │    │  jobs   │    │analytics│
+    │ 30 conn │    │ 15 conn │    │  5 conn │
+    │  30s TO │    │ 300s TO │    │ 600s TO │
+    └────┬────┘    └────┬────┘    └────┬────┘
+         │              │              │
+         ▼              ▼              ▼
+    ┌─────────┐   ┌─────────┐   ┌─────────┐
+    │ Queries │   │  Jobs   │   │ Reports │
+    │Mutations│   │         │   │         │
+    └─────────┘   └─────────┘   └─────────┘
+```
+
+A runaway batch job cannot exhaust connections needed for user requests. Each pool enforces independent:
+
+- Connection count limits
+- Checkout timeouts
+- Statement timeouts
+
+### Cluster Discovery
+
+All discovery methods populate the same internal node registry:
+
+```rust
+pub enum DiscoveryMethod {
+    Postgres,   // SELECT * FROM forge_nodes WHERE last_heartbeat > NOW() - INTERVAL '15s'
+    Dns,        // DNS SRV/A record lookup
+    Kubernetes, // Kubernetes API pod listing
+    Static,     // Configured seed_nodes list
+}
+```
+
+PostgreSQL discovery is the default because it requires no additional infrastructure. Nodes insert their address on startup, update on heartbeat, and get cleaned up when dead_threshold passes.
+
+### Node Role Enforcement
+
+Roles determine which subsystems start:
+
+```rust
+if config.node.roles.contains(&NodeRole::Gateway) {
+    start_http_server(&config.gateway).await?;
+}
+if config.node.roles.contains(&NodeRole::Worker) {
+    start_job_worker(&config.worker).await?;
+}
+if config.node.roles.contains(&NodeRole::Scheduler) {
+    start_cron_scheduler().await?;
+}
+```
+
+Omitted roles mean those subsystems never start. A Worker-only node never binds the HTTP port. A Gateway-only node never polls the job queue.

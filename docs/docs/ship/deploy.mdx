@@ -1,0 +1,427 @@
+# Deploy
+
+Ship a single binary with embedded frontend, automatic migrations, and zero-downtime updates.
+
+## The Build
+
+```bash
+# Build frontend
+cd frontend && bun install && bun run build && cd ..
+
+# Build release binary (frontend embedded by default)
+cargo build --release
+```
+
+Output: `target/release/my-app`
+
+One binary. Backend, frontend, migrations.
+
+## What Happens
+
+Forge bundles the frontend build directory into the binary at compile time using `rust-embed`. On startup, the runtime connects to PostgreSQL, acquires an advisory lock for migrations, runs any pending schema changes, then starts serving HTTP traffic. On SIGTERM, the node stops accepting new work, drains in-flight requests (30 second timeout), deregisters from the cluster, and exits.
+
+## Embedded Frontend
+
+The `embedded-frontend` feature bundles your SvelteKit build into the binary.
+
+```rust
+// src/main.rs
+#[cfg(feature = "embedded-frontend")]
+mod embedded {
+    use axum::{body::Body, http::{header, Request, StatusCode}, response::{IntoResponse, Response}};
+    use rust_embed::Embed;
+    use std::{future::Future, pin::Pin};
+
+    #[derive(Embed)]
+    #[folder = "frontend/build"]
+    pub struct Assets;
+
+    async fn serve_frontend_inner(req: Request<Body>) -> Response {
+        let path = req.uri().path().trim_start_matches('/');
+        let path = if path.is_empty() { "index.html" } else { path };
+
+        match Assets::get(path) {
+            Some(content) => {
+                let mime = mime_guess::from_path(path).first_or_octet_stream();
+                ([(header::CONTENT_TYPE, mime.as_ref())], content.data).into_response()
+            }
+            None => {
+                // SPA fallback for client-side routing
+                match Assets::get("index.html") {
+                    Some(content) => ([(header::CONTENT_TYPE, "text/html")], content.data).into_response(),
+                    None => (StatusCode::NOT_FOUND, "not found").into_response(),
+                }
+            }
+        }
+    }
+
+    pub fn serve_frontend(req: Request<Body>) -> Pin<Box<dyn Future<Output = Response> + Send>> {
+        Box::pin(serve_frontend_inner(req))
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let mut builder = Forge::builder();
+
+    #[cfg(feature = "embedded-frontend")]
+    builder.frontend_handler(embedded::serve_frontend);
+
+    builder.config(config).build()?.run().await
+}
+```
+
+```toml
+# Cargo.toml
+[features]
+default = ["embedded-frontend"]
+embedded-frontend = ["dep:rust-embed", "dep:mime_guess"]
+
+[dependencies]
+rust-embed = { version = "8", optional = true }
+mime_guess = { version = "2", optional = true }
+```
+
+During development, disable the feature to serve frontend separately:
+
+```bash
+cargo run --no-default-features
+```
+
+## Auto Migrations
+
+Migrations run automatically on startup with distributed locking.
+
+```sql
+-- migrations/0001_create_users.sql
+-- @up
+CREATE TABLE users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email TEXT UNIQUE NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- @down
+DROP TABLE users;
+```
+
+Forge acquires a PostgreSQL advisory lock before running migrations:
+
+```sql
+SELECT pg_advisory_lock(0x464F524745)
+```
+
+The lock ID (`0x464F524745`) is derived from "FORGE" in hex. Only one node holds this lock at a time. Other nodes block until migrations complete. The lock releases automatically when the connection closes.
+
+Multiple nodes can start simultaneously. First node runs migrations. Others wait. No race conditions.
+
+## Health Endpoints
+
+| Endpoint | Purpose | Response |
+|----------|---------|----------|
+| `/_api/health` | Liveness probe | `200 { status: "healthy", version: "0.1.0" }` |
+| `/_api/ready` | Readiness probe | `200/503 { ready: bool, database: bool, version: "0.1.0" }` |
+
+The readiness probe queries the database:
+
+```sql
+SELECT 1
+```
+
+Returns `503 Service Unavailable` if the database connection fails. Use this for load balancer health checks.
+
+```yaml
+# kubernetes
+livenessProbe:
+  httpGet:
+    path: /_api/health
+    port: 8080
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /_api/ready
+    port: 8080
+  periodSeconds: 5
+```
+
+## Dashboard
+
+Forge includes a built-in dashboard at `/_dashboard` for monitoring jobs, workflows, crons, and cluster state.
+
+| Path | View |
+|------|------|
+| `/_dashboard` | Overview |
+| `/_dashboard/jobs` | Job queue, status, dead letter |
+| `/_dashboard/workflows` | Active and completed workflows |
+| `/_dashboard/crons` | Scheduled tasks, history |
+| `/_dashboard/cluster` | Node status, leader election |
+| `/_dashboard/metrics` | Request metrics, latency |
+| `/_dashboard/logs` | Structured logs |
+| `/_dashboard/traces` | Distributed traces |
+
+The dashboard API is available at `/_api/*` for custom integrations.
+
+## Docker Deployment
+
+```dockerfile
+FROM rust:1-slim-bookworm AS dev
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y \
+    pkg-config libssl-dev curl && rm -rf /var/lib/apt/lists/*
+
+RUN cargo install cargo-watch --locked
+
+# Development: watch for changes, no frontend embedding
+CMD ["cargo", "watch", "-x", "run --no-default-features"]
+
+FROM oven/bun:1-alpine AS frontend-builder
+
+WORKDIR /app/frontend
+COPY frontend/package.json frontend/bun.lock* ./
+RUN bun install --frozen-lockfile || bun install
+COPY frontend ./
+RUN bun run build
+
+FROM rust:1-alpine AS builder
+
+WORKDIR /app
+RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static pkgconf
+
+COPY Cargo.toml Cargo.lock* ./
+
+# Cache dependencies
+RUN mkdir -p src && \
+    echo "fn main() {}" > src/main.rs && \
+    cargo build --release --no-default-features && \
+    rm -rf src
+
+COPY src ./src
+COPY migrations ./migrations
+COPY --from=frontend-builder /app/frontend/build ./frontend/build
+
+# Build with embedded frontend
+RUN touch src/main.rs && cargo build --release
+
+FROM alpine:3.21 AS production
+
+WORKDIR /app
+RUN apk add --no-cache ca-certificates libgcc
+
+COPY --from=builder /app/target/release/my-app /app/my-app
+COPY --from=builder /app/migrations /app/migrations
+
+EXPOSE 8080
+
+ENV RUST_LOG=info
+ENV HOST=0.0.0.0
+ENV PORT=8080
+
+CMD ["/app/my-app"]
+```
+
+Multi-stage build: frontend compiled with Bun, backend with Rust, final image is Alpine (~30MB base).
+
+### Docker Compose
+
+```yaml
+services:
+  app:
+    build:
+      context: .
+      target: production
+    ports:
+      - "8080:8080"
+    environment:
+      - DATABASE_URL=postgres://postgres:password@db:5432/app
+      - RUST_LOG=info
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/_api/ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: app
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+```
+
+## Graceful Shutdown
+
+On SIGTERM, Forge performs an orderly shutdown:
+
+1. **Stop accepting work**: `shutdown_requested` flag set, new requests rejected
+2. **Drain in-flight requests**: Wait up to 30 seconds for active requests to complete
+3. **Release leadership**: Advisory locks released, standby nodes can acquire
+4. **Deregister from cluster**: Node removed from `forge_nodes` table
+5. **Close connections**: Database pool drained
+
+```rust
+// Shutdown sequence (internal)
+pub async fn shutdown(&self) -> Result<()> {
+    self.shutdown_requested.store(true, Ordering::SeqCst);
+
+    // Set status to draining
+    self.registry.set_status(NodeStatus::Draining).await?;
+
+    // Wait for in-flight requests (30s timeout)
+    self.wait_for_drain().await;
+
+    // Deregister from cluster
+    self.registry.deregister().await?;
+
+    Ok(())
+}
+```
+
+In-flight requests tracked with atomic counter. RAII guard ensures accurate counting:
+
+```rust
+// Each request increments on entry, decrements on exit
+let _guard = InFlightGuard::try_new(shutdown.clone())?;
+```
+
+## Zero-Downtime Deploy
+
+Rolling update pattern:
+
+1. Start new nodes (migrations run once, others wait)
+2. New nodes register in cluster, begin accepting traffic
+3. Send SIGTERM to old nodes
+4. Old nodes drain (stop accepting, complete in-flight)
+5. Load balancer routes to new nodes via readiness probe
+6. Old nodes exit after drain completes
+
+```bash
+# Kubernetes rolling update
+kubectl set image deployment/app app=myregistry/my-app:v2
+```
+
+```yaml
+# deployment.yaml
+spec:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    spec:
+      terminationGracePeriodSeconds: 45  # > drain timeout (30s)
+      containers:
+        - name: app
+          readinessProbe:
+            httpGet:
+              path: /_api/ready
+              port: 8080
+            periodSeconds: 2
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]  # Allow LB to deregister
+```
+
+Key settings:
+
+| Setting | Value | Reason |
+|---------|-------|--------|
+| `terminationGracePeriodSeconds` | 45 | Exceeds drain timeout (30s) to allow completion |
+| `maxUnavailable` | 0 | Always maintain capacity during rollout |
+| `preStop` sleep | 5s | Time for load balancer to stop routing |
+
+## Under the Hood
+
+### Migration Locking
+
+Forge uses a PostgreSQL advisory lock to serialize migrations across the cluster:
+
+```sql
+-- Acquire (blocks until available)
+SELECT pg_advisory_lock(0x464F524745)
+
+-- Run migrations...
+
+-- Release
+SELECT pg_advisory_unlock(0x464F524745)
+```
+
+Advisory locks are session-scoped. If the node crashes mid-migration, the lock releases automatically when the connection terminates. No manual cleanup needed.
+
+### Connection Draining
+
+The drain timeout (30 seconds) balances two concerns:
+
+- **Too short**: Active requests terminated mid-flight, user sees errors
+- **Too long**: Deploys take forever, resource waste
+
+Each handler increments an atomic counter on entry:
+
+```rust
+pub fn try_new(shutdown: Arc<GracefulShutdown>) -> Option<Self> {
+    if shutdown.should_accept_work() {
+        shutdown.increment_in_flight();
+        Some(Self { shutdown })
+    } else {
+        None  // Reject new work during shutdown
+    }
+}
+```
+
+The counter decrements on drop (RAII). Shutdown waits until counter reaches zero or timeout expires.
+
+### Cluster Deregistration
+
+Before exit, nodes deregister from the cluster table:
+
+```sql
+DELETE FROM forge_nodes WHERE id = $1
+```
+
+This allows:
+- Other nodes to claim orphaned jobs immediately
+- Load balancers to stop routing (if using database-based service discovery)
+- Accurate cluster state in dashboard
+
+### Write-Ahead Logging
+
+Forge inherits PostgreSQL's durability guarantees. All state changes (jobs, workflows, migrations) go through WAL. Committed transactions survive crashes. Point-in-time recovery possible. No data loss on unexpected termination.
+
+## Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DATABASE_URL` | Yes | PostgreSQL connection string |
+| `RUST_LOG` | No | Log level (`info`, `debug`, `trace`) |
+| `HOST` | No | Bind address (default: `0.0.0.0`) |
+| `PORT` | No | HTTP port (default: `8080`) |
+
+Additional variables can be accessed in handlers via `ctx.env("VAR_NAME")`.
+
+## Production Checklist
+
+- [ ] `cargo build --release` with optimizations
+- [ ] Frontend built and embedded (or served separately)
+- [ ] `DATABASE_URL` points to production PostgreSQL 18+
+- [ ] Connection pool sized for workload (`pool_size` in forge.toml)
+- [ ] Health checks configured in orchestrator
+- [ ] `terminationGracePeriodSeconds` exceeds drain timeout
+- [ ] Log aggregation configured (`RUST_LOG=info`)
+- [ ] Monitoring for `/_api/metrics` endpoints
+- [ ] Backup strategy for PostgreSQL

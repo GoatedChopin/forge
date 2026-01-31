@@ -32,14 +32,15 @@ const config: Config = {
           sidebarPath: './sidebars.ts',
           routeBasePath: '/docs',
         },
-        blog: {
-          showReadingTime: true,
-          blogTitle: 'FORGE Blog',
-          blogDescription: 'Updates, tutorials, and insights from the FORGE team',
-          routeBasePath: '/blog',
-        },
+        blog: false,
         theme: {
           customCss: './src/css/custom.css',
+        },
+        sitemap: {
+          changefreq: 'weekly',
+          priority: 0.5,
+          ignorePatterns: ['/tags/**'],
+          filename: 'sitemap.xml',
         },
       } satisfies Preset.Options,
     ],
@@ -63,11 +64,6 @@ const config: Config = {
           sidebarId: 'docsSidebar',
           position: 'left',
           label: 'Docs',
-        },
-        {
-          to: '/blog',
-          label: 'Blog',
-          position: 'left',
         },
         {
           href: 'https://github.com/isala404/forge',
@@ -113,10 +109,6 @@ const config: Config = {
           title: 'Community',
           items: [
             {
-              label: 'Discord',
-              href: 'https://discord.gg/forge',
-            },
-            {
               label: 'GitHub',
               href: 'https://github.com/isala404/forge',
             },
@@ -130,7 +122,13 @@ const config: Config = {
       darkTheme: prismThemes.dracula,
       additionalLanguages: ['rust', 'bash', 'typescript', 'sql', 'toml'],
     },
-    algolia: undefined,
+    algolia: {
+      appId: 'I7YUFVJ0LL',
+      apiKey: 'ce4a746b5b6be58663c139cf4f57eabb',
+      indexName: 'Forge Docs',
+      contextualSearch: true,
+      searchPagePath: 'search',
+    },
   } satisfies Preset.ThemeConfig,
 };
 

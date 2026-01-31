@@ -1,0 +1,361 @@
+# Errors
+
+Error types, codes, and HTTP status mappings.
+
+## ForgeError
+
+The core error type in Rust. All function errors convert to this type.
+
+```rust
+use forge::ForgeError;
+
+// Return an error from any function
+Err(ForgeError::NotFound("User not found".to_string()))
+```
+
+### Variants
+
+| Variant | HTTP Status | Error Code | Use Case |
+|---------|-------------|------------|----------|
+| `NotFound(String)` | 404 | `NOT_FOUND` | Resource does not exist |
+| `Unauthorized(String)` | 401 | `UNAUTHORIZED` | Authentication required or invalid |
+| `Forbidden(String)` | 403 | `FORBIDDEN` | Authenticated but insufficient permissions |
+| `Validation(String)` | 400 | `VALIDATION_ERROR` | Input validation failed |
+| `InvalidArgument(String)` | 400 | `INVALID_ARGUMENT` | Malformed or invalid arguments |
+| `Timeout(String)` | 504 | `TIMEOUT` | Operation exceeded time limit |
+| `RateLimitExceeded { retry_after, limit, remaining }` | 429 | `RATE_LIMITED` | Rate limit exceeded |
+| `Database(String)` | 500 | `INTERNAL_ERROR` | Database operation failed |
+| `Config(String)` | 500 | `INTERNAL_ERROR` | Configuration error |
+| `Function(String)` | 500 | `INTERNAL_ERROR` | Function execution failed |
+| `Job(String)` | 500 | `INTERNAL_ERROR` | Job execution failed |
+| `Cluster(String)` | 500 | `INTERNAL_ERROR` | Cluster communication failed |
+| `Serialization(String)` | 500 | `INTERNAL_ERROR` | Serialization failed |
+| `Deserialization(String)` | 500 | `INTERNAL_ERROR` | Deserialization failed |
+| `Io(std::io::Error)` | 500 | `INTERNAL_ERROR` | IO operation failed |
+| `Sql(sqlx::Error)` | 500 | `INTERNAL_ERROR` | SQL execution failed |
+| `Internal(String)` | 500 | `INTERNAL_ERROR` | Generic internal error |
+| `InvalidState(String)` | 500 | `INTERNAL_ERROR` | Invalid state transition |
+| `WorkflowSuspended` | - | - | Internal signal for workflow suspension |
+
+### RateLimitExceeded Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `retry_after` | `Duration` | Time until next request allowed |
+| `limit` | `u32` | Configured request limit |
+| `remaining` | `u32` | Tokens remaining (0 when exceeded) |
+
+## HTTP Response Format
+
+All errors serialize to the same JSON shape:
+
+```json
+{
+  "success": false,
+  "data": null,
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "User not found",
+    "details": null
+  },
+  "requestId": "abc123"
+}
+```
+
+### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `success` | `boolean` | Always `false` for errors |
+| `data` | `null` | Always `null` for errors |
+| `error.code` | `string` | Machine-readable error code |
+| `error.message` | `string` | Human-readable description |
+| `error.details` | `object \| null` | Additional context (optional) |
+| `requestId` | `string` | Request identifier for tracing |
+
+## TypeScript Error Types
+
+Generated client includes error types:
+
+```typescript
+// types.ts
+export interface ForgeError {
+  code: string;
+  message: string;
+  details?: Record<string, unknown>;
+}
+```
+
+### ForgeClientError
+
+Thrown by API calls when the server returns an error:
+
+```typescript
+import { ForgeClientError } from '$lib/forge';
+
+try {
+  await getUser({ id });
+} catch (e) {
+  if (e instanceof ForgeClientError) {
+    console.log(e.code);    // "NOT_FOUND"
+    console.log(e.message); // "User not found"
+    console.log(e.details); // { userId: "..." }
+  }
+}
+```
+
+### Error Codes
+
+| Code | HTTP Status | Description |
+|------|-------------|-------------|
+| `NOT_FOUND` | 404 | Requested resource does not exist |
+| `UNAUTHORIZED` | 401 | Authentication required or token invalid |
+| `FORBIDDEN` | 403 | User lacks required permissions |
+| `VALIDATION_ERROR` | 400 | Input failed validation |
+| `INVALID_ARGUMENT` | 400 | Argument format or value invalid |
+| `TIMEOUT` | 504 | Request exceeded configured timeout |
+| `RATE_LIMITED` | 429 | Too many requests |
+| `INTERNAL_ERROR` | 500 | Server-side error |
+| `UNKNOWN` | 500 | Unclassified error |
+
+## Creating Custom Errors
+
+### Return Specific Variants
+
+```rust
+#[forge::query]
+pub async fn get_user(ctx: &QueryContext, id: Uuid) -> Result<User> {
+    let user = sqlx::query_as("SELECT * FROM users WHERE id = $1")
+        .bind(id)
+        .fetch_optional(ctx.db())
+        .await?;
+
+    user.ok_or_else(|| ForgeError::NotFound(format!("User {} not found", id)))
+}
+```
+
+### With Details
+
+```rust
+#[forge::mutation]
+pub async fn create_order(ctx: &MutationContext, items: Vec<Item>) -> Result<Order> {
+    if items.is_empty() {
+        return Err(ForgeError::Validation("Order must contain at least one item".into()));
+    }
+
+    for item in &items {
+        if item.quantity == 0 {
+            return Err(ForgeError::InvalidArgument(
+                format!("Item {} has invalid quantity", item.id)
+            ));
+        }
+    }
+
+    // Create order...
+}
+```
+
+### Role Enforcement
+
+```rust
+#[forge::query]
+pub async fn get_audit_logs(ctx: &QueryContext) -> Result<Vec<AuditLog>> {
+    ctx.auth.require_role("admin")?;  // Returns ForgeError::Forbidden if missing
+
+    // Fetch logs...
+}
+```
+
+### From Database Errors
+
+```rust
+#[forge::mutation]
+pub async fn create_user(ctx: &MutationContext, email: String) -> Result<User> {
+    sqlx::query_as("INSERT INTO users (email) VALUES ($1) RETURNING *")
+        .bind(&email)
+        .fetch_one(ctx.db())
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("unique constraint") {
+                ForgeError::Validation(format!("Email {} already exists", email))
+            } else {
+                ForgeError::Database(e.to_string())
+            }
+        })
+}
+```
+
+## Error Handling Patterns
+
+### Frontend: Per-Query Errors
+
+Subscription stores expose error state:
+
+```svelte
+<script lang="ts">
+  import { getUser$ } from '$lib/forge';
+  const user = getUser$({ id });
+</script>
+
+{#if user.loading}
+  <p>Loading...</p>
+{:else if user.error}
+  {#if user.error.code === 'NOT_FOUND'}
+    <p>User not found</p>
+  {:else if user.error.code === 'FORBIDDEN'}
+    <p>You don't have access to this user</p>
+  {:else}
+    <p>Error: {user.error.message}</p>
+  {/if}
+{:else}
+  <p>Welcome, {user.data.name}</p>
+{/if}
+```
+
+### Frontend: Mutation Errors
+
+Catch errors from mutations:
+
+```typescript
+async function submit() {
+  try {
+    await createUser({ email });
+  } catch (e) {
+    if (e instanceof ForgeClientError) {
+      if (e.code === 'VALIDATION_ERROR') {
+        showValidationError(e.message);
+      } else if (e.code === 'UNAUTHORIZED') {
+        redirectToLogin();
+      } else {
+        showGenericError(e.message);
+      }
+    }
+  }
+}
+```
+
+### Frontend: Global Auth Error Handler
+
+Configure a handler for auth errors across all requests:
+
+```typescript
+import { initForge } from '$lib/forge';
+
+initForge({
+  url: 'http://localhost:3000',
+  getToken: () => localStorage.getItem('token'),
+  onAuthError: (error) => {
+    // Called when any request returns UNAUTHORIZED
+    localStorage.removeItem('token');
+    window.location.href = '/login';
+  }
+});
+```
+
+### Backend: Error Conversion
+
+Implement `From` for domain errors:
+
+```rust
+pub enum OrderError {
+    InsufficientStock(String),
+    PaymentFailed(String),
+    ShippingUnavailable(String),
+}
+
+impl From<OrderError> for ForgeError {
+    fn from(e: OrderError) -> Self {
+        match e {
+            OrderError::InsufficientStock(msg) =>
+                ForgeError::Validation(format!("Insufficient stock: {}", msg)),
+            OrderError::PaymentFailed(msg) =>
+                ForgeError::Internal(format!("Payment failed: {}", msg)),
+            OrderError::ShippingUnavailable(msg) =>
+                ForgeError::Validation(format!("Shipping unavailable: {}", msg)),
+        }
+    }
+}
+```
+
+Then use `?` to propagate:
+
+```rust
+#[forge::mutation]
+pub async fn create_order(ctx: &MutationContext, items: Vec<Item>) -> Result<Order> {
+    check_stock(&items).map_err(OrderError::InsufficientStock)?;
+    // Automatically converts to ForgeError::Validation
+}
+```
+
+## Rate Limit Errors
+
+When rate limiting triggers, the error includes retry information:
+
+```rust
+ForgeError::RateLimitExceeded {
+    retry_after: Duration::from_secs(30),
+    limit: 100,
+    remaining: 0,
+}
+```
+
+Handle on the frontend:
+
+```typescript
+try {
+  await expensiveQuery();
+} catch (e) {
+  if (e instanceof ForgeClientError && e.code === 'RATE_LIMITED') {
+    const retryAfter = e.details?.retry_after ?? 60;
+    showMessage(`Rate limited. Try again in ${retryAfter} seconds`);
+  }
+}
+```
+
+## sqlx::Error Conversion
+
+SQLx errors automatically convert to `ForgeError::Sql`:
+
+```rust
+#[forge::query]
+pub async fn get_user(ctx: &QueryContext, id: Uuid) -> Result<User> {
+    sqlx::query_as("SELECT * FROM users WHERE id = $1")
+        .bind(id)
+        .fetch_one(ctx.db())
+        .await
+        .map_err(Into::into)  // sqlx::Error -> ForgeError::Sql
+}
+```
+
+To preserve the original error type for matching:
+
+```rust
+#[forge::query]
+pub async fn get_user(ctx: &QueryContext, id: Uuid) -> Result<User> {
+    match sqlx::query_as("SELECT * FROM users WHERE id = $1")
+        .bind(id)
+        .fetch_one(ctx.db())
+        .await
+    {
+        Ok(user) => Ok(user),
+        Err(sqlx::Error::RowNotFound) =>
+            Err(ForgeError::NotFound(format!("User {} not found", id))),
+        Err(e) => Err(e.into()),
+    }
+}
+```
+
+## Error Logging
+
+All errors are logged server-side with context:
+
+```
+ERROR forge::function: Function error
+  function=get_user
+  request_id=abc-123
+  user_id=Some(user-456)
+  error="User not found"
+  error_code=NOT_FOUND
+```
+
+Client errors (4xx) log at WARN level. Server errors (5xx) log at ERROR level.

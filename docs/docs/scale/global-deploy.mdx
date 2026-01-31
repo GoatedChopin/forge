@@ -1,0 +1,310 @@
+# Global Deploy
+
+Deploy Forge nodes across multiple regions with read replicas for low-latency reads worldwide.
+
+## The Code
+
+```toml
+[database]
+url = "${DATABASE_PRIMARY_URL}"
+replica_urls = [
+    "${DATABASE_REPLICA_US_EAST}",
+    "${DATABASE_REPLICA_EU_WEST}",
+    "${DATABASE_REPLICA_APAC}"
+]
+read_from_replica = true
+pool_size = 50
+```
+
+## What Happens
+
+Forge maintains separate connection pools for the primary database and each replica. Queries route to replicas via round-robin distribution using an atomic counter. Mutations always go to the primary. If a replica becomes unavailable, that pool is skipped and reads continue from remaining replicas or fall back to the primary.
+
+All cluster coordination happens through PostgreSQL. Nodes in different regions find each other via the shared `forge_nodes` table. No service mesh, no separate discovery service.
+
+## Configuration
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `url` | `string` | required | Primary database URL |
+| `replica_urls` | `string[]` | `[]` | Read replica URLs |
+| `read_from_replica` | `bool` | `false` | Route queries to replicas |
+| `pool_size` | `u32` | `50` | Primary pool size (replicas get half) |
+| `pool_timeout_secs` | `u64` | `30` | Connection acquire timeout |
+
+## Multi-Region Pattern
+
+### 1. Set Up Geo-Replicated PostgreSQL
+
+Use a managed database with automatic geo-replication:
+
+**PlanetScale**
+```
+Primary: us-east-1
+Replicas: eu-west-1, ap-northeast-1
+```
+
+**Neon**
+```
+Primary: aws-us-east-1
+Read Replicas: aws-eu-west-1, aws-ap-southeast-1
+```
+
+**Supabase**
+```
+Primary: us-east-1
+Read Replicas: Configure via dashboard
+```
+
+Any PostgreSQL-compatible service with read replicas works. Forge connects via standard Postgres wire protocol.
+
+### 2. Deploy Nodes Per Region
+
+Deploy Forge to each region, pointing to the local replica:
+
+**US East (Virginia)**
+```toml
+[database]
+url = "${PRIMARY_URL}"
+replica_urls = ["${REPLICA_US_EAST}"]
+read_from_replica = true
+
+[cluster]
+discovery = "postgres"
+```
+
+**EU West (Frankfurt)**
+```toml
+[database]
+url = "${PRIMARY_URL}"
+replica_urls = ["${REPLICA_EU_WEST}"]
+read_from_replica = true
+
+[cluster]
+discovery = "postgres"
+```
+
+**APAC (Tokyo)**
+```toml
+[database]
+url = "${PRIMARY_URL}"
+replica_urls = ["${REPLICA_APAC}"]
+read_from_replica = true
+
+[cluster]
+discovery = "postgres"
+```
+
+### 3. Route Traffic to Nearest Region
+
+Use your CDN or load balancer to route users to the closest region:
+
+```
+User in London  → EU West node  → EU replica (low latency read)
+User in Tokyo   → APAC node     → APAC replica (low latency read)
+User in NYC     → US East node  → US East replica (low latency read)
+
+All writes → Primary (single leader)
+```
+
+## Patterns
+
+### Region-Local Reads with Global Writes
+
+The default behavior. Queries read from the local replica, mutations write to the primary.
+
+```toml
+[database]
+url = "postgres://primary.db.example.com/app"
+replica_urls = ["postgres://replica-local.db.example.com/app"]
+read_from_replica = true
+```
+
+Replication lag is typically under 100ms for managed databases. For most applications, eventual consistency on reads is acceptable.
+
+### Multiple Replicas Per Region
+
+For high-read workloads, configure multiple replicas per node:
+
+```toml
+[database]
+url = "${PRIMARY_URL}"
+replica_urls = [
+    "postgres://replica-1.local.example.com/app",
+    "postgres://replica-2.local.example.com/app",
+    "postgres://replica-3.local.example.com/app"
+]
+read_from_replica = true
+pool_size = 100
+```
+
+The atomic counter distributes reads evenly across all three replicas.
+
+### Isolated Pools for Workloads
+
+Separate connection pools prevent one workload from starving another:
+
+```toml
+[database]
+url = "${PRIMARY_URL}"
+replica_urls = ["${REPLICA_LOCAL}"]
+read_from_replica = true
+
+[database.pools.default]
+size = 30
+timeout_secs = 10
+
+[database.pools.jobs]
+size = 20
+timeout_secs = 60
+statement_timeout_secs = 300
+
+[database.pools.analytics]
+size = 10
+timeout_secs = 120
+statement_timeout_secs = 600
+```
+
+A runaway analytics query cannot exhaust connections needed for user requests.
+
+### Cross-Region Cluster Discovery
+
+Nodes discover each other through the primary database:
+
+```toml
+[cluster]
+discovery = "postgres"
+heartbeat_interval_secs = 5
+dead_threshold_secs = 15
+```
+
+Each node registers in `forge_nodes` on startup:
+
+```sql
+INSERT INTO forge_nodes (id, hostname, ip_address, http_port, roles, status, ...)
+ON CONFLICT (id) DO UPDATE SET last_heartbeat = NOW()
+```
+
+Nodes query this table to find peers. Leader election uses PostgreSQL advisory locks. No external coordination service required.
+
+## Under the Hood
+
+### Round-Robin Distribution
+
+Read queries distribute across replicas via atomic counter:
+
+```rust
+let idx = replica_counter.fetch_add(1, Ordering::Relaxed) % replicas.len();
+replicas[idx]
+```
+
+Lock-free, O(1) selection. Each query goes to the next replica in rotation. Uniform distribution regardless of query complexity or duration.
+
+### Separate Connection Pools
+
+Primary and replicas maintain independent pools:
+
+```rust
+let primary = PgPoolOptions::new()
+    .max_connections(pool_size)
+    .connect(primary_url).await?;
+
+for replica_url in &config.replica_urls {
+    let pool = PgPoolOptions::new()
+        .max_connections(pool_size / 2)  // Replicas get half
+        .connect(replica_url).await?;
+    replicas.push(pool);
+}
+```
+
+Primary pool handles all writes. Replica pools handle reads when `read_from_replica = true`. Pool exhaustion on replicas does not affect write capacity.
+
+### Graceful Degradation
+
+If a replica connection fails:
+
+1. Pool marks connection as unhealthy
+2. Next read skips that pool in rotation
+3. If all replicas fail, reads fall back to primary
+4. Replica reconnects automatically when healthy
+
+No configuration change needed. No manual failover. Reads continue with higher latency until replicas recover.
+
+### Write Path
+
+Mutations always use the primary pool:
+
+```rust
+// Mutation context
+ctx.db()  // → primary pool
+
+// Query context (with read_from_replica = true)
+ctx.db()  // → round-robin replica pool
+```
+
+The primary receives all writes, replicates to replicas via PostgreSQL streaming replication. Forge does not manage replication, only connection routing.
+
+### Cluster Coordination via PostgreSQL
+
+All coordination flows through the database:
+
+| Concern | Mechanism |
+|---------|-----------|
+| Node discovery | `forge_nodes` table |
+| Leader election | `pg_try_advisory_lock()` |
+| Job distribution | `FOR UPDATE SKIP LOCKED` |
+| Real-time sync | `LISTEN/NOTIFY` |
+| Cron scheduling | `UNIQUE(cron_name, scheduled_time)` |
+
+Nodes in Tokyo, Frankfurt, and Virginia coordinate through the same primary database. Cross-region latency affects coordination but not local reads.
+
+## Testing
+
+### Local Multi-Region Simulation
+
+Run multiple nodes pointing to different replicas:
+
+```bash
+# Terminal 1 - Simulating US East
+DATABASE_PRIMARY_URL=postgres://localhost/app \
+DATABASE_REPLICA_US_EAST=postgres://localhost:5433/app \
+forge run
+
+# Terminal 2 - Simulating EU West
+DATABASE_PRIMARY_URL=postgres://localhost/app \
+DATABASE_REPLICA_EU_WEST=postgres://localhost:5434/app \
+forge run
+```
+
+### Verify Replica Routing
+
+Check which pool handles queries:
+
+```rust
+#[forge::query]
+pub async fn debug_replica(ctx: &QueryContext) -> Result<String> {
+    let row = sqlx::query_scalar::<_, String>("SELECT inet_server_addr()::text")
+        .fetch_one(ctx.db())
+        .await?;
+    Ok(row)
+}
+```
+
+With `read_from_replica = true`, consecutive calls return different replica addresses.
+
+### Failure Simulation
+
+Stop a replica and verify degradation:
+
+```bash
+# Stop replica
+docker stop postgres-replica-1
+
+# Queries continue on remaining replicas
+curl http://localhost:3000/api/query
+
+# Restart replica
+docker start postgres-replica-1
+
+# Replica rejoins rotation automatically
+```
