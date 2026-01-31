@@ -1,12 +1,14 @@
 use proc_macro::TokenStream;
 
 mod cron;
+mod daemon;
 mod enum_type;
 mod job;
 mod model;
 mod mutation;
 mod query;
 mod sql_extractor;
+mod webhook;
 mod workflow;
 
 /// Marks a struct as a FORGE model, generating schema metadata for TypeScript codegen.
@@ -230,4 +232,102 @@ pub fn cron(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn workflow(attr: TokenStream, item: TokenStream) -> TokenStream {
     workflow::workflow_impl(attr, item)
+}
+
+/// Marks a function as a long-running daemon.
+///
+/// Daemons are singleton background tasks that run continuously. They support
+/// leader election (only one instance runs across the cluster), automatic restart
+/// on panic, and graceful shutdown handling.
+///
+/// # Attributes
+/// - `leader_elected = true` - Only one instance runs across cluster (default: true)
+/// - `restart_on_panic = true` - Restart if daemon panics (default: true)
+/// - `restart_delay = "5s"` - Delay before restart after failure
+/// - `startup_delay = "10s"` - Delay before first execution after startup
+/// - `max_restarts = 10` - Maximum restart attempts (default: unlimited)
+///
+/// # Shutdown Handling
+/// Daemons must handle graceful shutdown by checking `ctx.shutdown_signal()`:
+///
+/// ```ignore
+/// loop {
+///     // Do work
+///     tokio::select! {
+///         _ = tokio::time::sleep(Duration::from_secs(60)) => {}
+///         _ = ctx.shutdown_signal() => break,
+///     }
+/// }
+/// ```
+///
+/// # Example
+/// ```ignore
+/// #[forge::daemon(startup_delay = "5s", restart_on_panic = true)]
+/// pub async fn heartbeat_daemon(ctx: &DaemonContext) -> Result<()> {
+///     loop {
+///         // Update heartbeat
+///         sqlx::query("UPDATE app_status SET heartbeat = NOW()").execute(ctx.db()).await?;
+///
+///         tokio::select! {
+///             _ = tokio::time::sleep(Duration::from_secs(30)) => {}
+///             _ = ctx.shutdown_signal() => break,
+///         }
+///     }
+///     Ok(())
+/// }
+///
+/// #[forge::daemon(leader_elected = false, max_restarts = 5)]
+/// pub async fn worker_daemon(ctx: &DaemonContext) -> Result<()> {
+///     // Runs on all nodes, limited restarts
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn daemon(attr: TokenStream, item: TokenStream) -> TokenStream {
+    daemon::daemon_impl(attr, item)
+}
+
+/// Marks a function as a webhook handler.
+///
+/// Webhooks are HTTP endpoints for receiving external events (e.g., from Stripe, GitHub).
+/// They support signature validation, idempotency, and bypass authentication middleware.
+///
+/// # Attributes
+/// - `path = "/webhooks/stripe"` - URL path (required)
+/// - `signature = WebhookSignature::hmac_sha256("Header", "SECRET_ENV")` - Signature validation
+/// - `idempotency = "header:X-Request-Id"` - Idempotency key source
+/// - `timeout = "30s"` - Request timeout
+///
+/// # Signature Validation
+/// Use `WebhookSignature` helper for common patterns:
+/// - `WebhookSignature::hmac_sha256("X-Hub-Signature-256", "GITHUB_SECRET")` - GitHub
+/// - `WebhookSignature::hmac_sha256("X-Stripe-Signature", "STRIPE_SECRET")` - Stripe
+/// - `WebhookSignature::hmac_sha1("X-Signature", "SECRET")` - Legacy SHA1
+///
+/// # Idempotency
+/// Specify source as `"header:Header-Name"` or `"body:$.json.path"`:
+/// - `"header:X-GitHub-Delivery"` - From header
+/// - `"body:$.id"` - From JSON body field
+///
+/// # Example
+/// ```ignore
+/// #[forge::webhook(
+///     path = "/webhooks/github",
+///     signature = WebhookSignature::hmac_sha256("X-Hub-Signature-256", "GITHUB_SECRET"),
+///     idempotency = "header:X-GitHub-Delivery",
+/// )]
+/// pub async fn github_webhook(ctx: &WebhookContext, payload: Value) -> Result<WebhookResult> {
+///     let event_type = ctx.header("X-GitHub-Event").unwrap_or("unknown");
+///     ctx.dispatch_job("process_github_event", &payload).await?;
+///     Ok(WebhookResult::Accepted)
+/// }
+///
+/// #[forge::webhook(path = "/webhooks/stripe", timeout = "60s")]
+/// pub async fn stripe_webhook(ctx: &WebhookContext, payload: Value) -> Result<WebhookResult> {
+///     // Process Stripe event
+///     Ok(WebhookResult::Ok)
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn webhook(attr: TokenStream, item: TokenStream) -> TokenStream {
+    webhook::webhook_impl(attr, item)
 }

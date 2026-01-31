@@ -26,6 +26,10 @@ pub const LEGACY_MIGRATION_NAME: &str = "0000_forge_internal";
 /// Creates all core tables for jobs, workflows, crons, observability, etc.
 const V001_INITIAL: &str = include_str!("../../migrations/system/v001_initial.sql");
 
+/// System migration v002: Daemons and webhooks.
+/// Adds tables for daemon tracking and webhook idempotency.
+const V002_DAEMON_WEBHOOK: &str = include_str!("../../migrations/system/v002_daemon_webhook.sql");
+
 /// A system migration with a version number.
 #[derive(Debug, Clone)]
 pub struct SystemMigration {
@@ -53,11 +57,18 @@ impl SystemMigration {
 ///
 /// These are applied in order before any user migrations.
 pub fn get_system_migrations() -> Vec<SystemMigration> {
-    vec![SystemMigration {
-        version: 1,
-        sql: V001_INITIAL,
-        description: "Initial FORGE schema with jobs, workflows, crons, and observability",
-    }]
+    vec![
+        SystemMigration {
+            version: 1,
+            sql: V001_INITIAL,
+            description: "Initial FORGE schema with jobs, workflows, crons, and observability",
+        },
+        SystemMigration {
+            version: 2,
+            sql: V002_DAEMON_WEBHOOK,
+            description: "Daemon tracking and webhook idempotency tables",
+        },
+    ]
 }
 
 /// Get system migrations as Migration structs.

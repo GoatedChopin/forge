@@ -11,15 +11,19 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 mod cron;
+mod daemon;
 mod job;
 mod mutation;
 mod query;
+mod webhook;
 mod workflow;
 
 pub use cron::{TestCronContext, TestCronContextBuilder};
+pub use daemon::{TestDaemonContext, TestDaemonContextBuilder};
 pub use job::{TestJobContext, TestJobContextBuilder, TestProgressUpdate};
 pub use mutation::{TestMutationContext, TestMutationContextBuilder};
 pub use query::{TestQueryContext, TestQueryContextBuilder};
+pub use webhook::{TestWebhookContext, TestWebhookContextBuilder};
 pub use workflow::{TestWorkflowContext, TestWorkflowContextBuilder};
 
 /// Build an AuthContext from test builder fields.

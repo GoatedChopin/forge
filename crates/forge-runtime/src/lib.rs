@@ -2,6 +2,7 @@ pub use sqlx;
 
 pub mod cluster;
 pub mod cron;
+pub mod daemon;
 pub mod dashboard;
 pub mod db;
 pub mod function;
@@ -12,6 +13,7 @@ pub mod observability;
 pub mod rate_limit;
 pub mod realtime;
 pub mod testing;
+pub mod webhook;
 pub mod workflow;
 
 pub use cluster::{
@@ -19,6 +21,7 @@ pub use cluster::{
     LeaderGuard, NodeCounts, NodeRegistry, ShutdownConfig,
 };
 pub use cron::{CronEntry, CronRecord, CronRegistry, CronRunner, CronStatus};
+pub use daemon::{DaemonEntry, DaemonRegistry, DaemonRunner, DaemonRunnerConfig};
 pub use dashboard::{
     DashboardApi, DashboardAssets, DashboardConfig, DashboardPages, DashboardState,
     create_api_router, create_dashboard_router,
@@ -46,6 +49,7 @@ pub use realtime::{
     InvalidationEngine, RealtimeConfig, RealtimeMessage, SessionManager, SessionServer,
     SubscriptionManager,
 };
+pub use webhook::{WebhookEntry, WebhookRegistry, WebhookState, webhook_handler};
 pub use workflow::{
     EventStore, WorkflowEntry, WorkflowExecutor, WorkflowRecord, WorkflowRegistry,
     WorkflowScheduler, WorkflowSchedulerConfig, WorkflowStepRecord,

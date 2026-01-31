@@ -1,8 +1,7 @@
 use crate::schema::{User, UserRole};
 use forge::prelude::*;
 
-/// Public query - no authentication required
-/// Cached for 30 seconds to reduce database load
+/// List all users with reactive subscription support
 #[forge::query(cache = "30s", public)]
 pub async fn get_users(ctx: &QueryContext) -> Result<Vec<User>> {
     sqlx::query_as::<_, User>("SELECT * FROM users ORDER BY created_at DESC")
@@ -11,9 +10,8 @@ pub async fn get_users(ctx: &QueryContext) -> Result<Vec<User>> {
         .map_err(Into::into)
 }
 
-/// Query with explicit timeout
-/// Returns None if user not found (no error)
-#[forge::query(timeout = 10)]
+/// Get single user by ID
+#[forge::query(timeout = 10, public)]
 pub async fn get_user(ctx: &QueryContext, id: Uuid) -> Result<Option<User>> {
     sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
         .bind(id)
@@ -22,10 +20,7 @@ pub async fn get_user(ctx: &QueryContext, id: Uuid) -> Result<Option<User>> {
         .map_err(Into::into)
 }
 
-/// Mutation demonstrating:
-/// - Public mutation for demo (use `#[forge::mutation]` for auth-required)
-/// - Optional parameters with defaults
-/// - Returning created entity
+/// Create a new user
 #[forge::mutation(public)]
 pub async fn create_user(
     ctx: &MutationContext,
@@ -37,7 +32,7 @@ pub async fn create_user(
     let now = Utc::now();
     let role = role.unwrap_or_default();
 
-    let user = sqlx::query_as::<_, User>(
+    sqlx::query_as::<_, User>(
         "INSERT INTO users (id, email, name, role, created_at, updated_at) \
          VALUES ($1, $2, $3, $4, $5, $6) RETURNING *",
     )
@@ -48,13 +43,11 @@ pub async fn create_user(
     .bind(now)
     .bind(now)
     .fetch_one(ctx.db())
-    .await?;
-
-    Ok(user)
+    .await
+    .map_err(Into::into)
 }
 
-/// Mutation with partial updates
-/// Only provided fields are updated
+/// Update user with partial fields
 #[forge::mutation(timeout = 30, public)]
 pub async fn update_user(
     ctx: &MutationContext,
@@ -63,29 +56,24 @@ pub async fn update_user(
     name: Option<String>,
     role: Option<UserRole>,
 ) -> Result<User> {
-    let now = Utc::now();
-
-    let user = sqlx::query_as::<_, User>(
+    sqlx::query_as::<_, User>(
         "UPDATE users SET \
          email = COALESCE($2, email), \
          name = COALESCE($3, name), \
          role = COALESCE($4, role), \
-         updated_at = $5 \
-         WHERE id = $1 \
-         RETURNING *",
+         updated_at = NOW() \
+         WHERE id = $1 RETURNING *",
     )
     .bind(id)
     .bind(email)
     .bind(name)
     .bind(role)
-    .bind(now)
     .fetch_one(ctx.db())
-    .await?;
-
-    Ok(user)
+    .await
+    .map_err(Into::into)
 }
 
-/// Mutation returning boolean success indicator
+/// Delete user by ID
 #[forge::mutation(public)]
 pub async fn delete_user(ctx: &MutationContext, id: Uuid) -> Result<bool> {
     let result = sqlx::query("DELETE FROM users WHERE id = $1")
@@ -94,132 +82,4 @@ pub async fn delete_user(ctx: &MutationContext, id: Uuid) -> Result<bool> {
         .await?;
 
     Ok(result.rows_affected() > 0)
-}
-
-// Example of role-protected mutation (uncomment to use):
-// #[forge::mutation(require_auth, require_role("admin"))]
-// pub async fn admin_reset_user(
-//     ctx: &MutationContext,
-//     id: Uuid,
-// ) -> Result<User> {
-//     // Only admins can call this mutation
-//     // ctx.auth.require_role("admin")? is enforced automatically
-//     sqlx::query_as::<_, User>(
-//         "UPDATE users SET role = 'guest', updated_at = NOW() WHERE id = $1 RETURNING *"
-//     )
-//     .bind(id)
-//     .fetch_one(ctx.db())
-//     .await
-//     .map_err(Into::into)
-// }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use forge::testing::*;
-    use forge::forge_core::{assert_err, assert_job_dispatched, assert_job_not_dispatched, assert_workflow_started};
-
-    // Test contexts simulate auth states, roles, and dispatch verification
-    // without needing a database connection.
-
-    #[tokio::test]
-    async fn test_unauthenticated_access() {
-        let ctx = TestQueryContext::minimal();
-        assert_err!(ctx.require_user_id());
-    }
-
-    #[tokio::test]
-    async fn test_authenticated_user() {
-        let user_id = Uuid::new_v4();
-        let ctx = TestQueryContext::authenticated(user_id);
-
-        assert!(ctx.auth.is_authenticated());
-        assert_eq!(ctx.require_user_id().unwrap(), user_id);
-    }
-
-    #[tokio::test]
-    async fn test_admin_role() {
-        let ctx = TestQueryContext::builder()
-            .as_user(Uuid::new_v4())
-            .with_role("admin")
-            .build();
-
-        assert!(ctx.auth.has_role("admin"));
-        assert!(!ctx.auth.has_role("superuser"));
-    }
-
-    #[tokio::test]
-    async fn test_multiple_roles() {
-        let ctx = TestQueryContext::builder()
-            .as_user(Uuid::new_v4())
-            .with_role("admin")
-            .with_role("moderator")
-            .build();
-
-        assert!(ctx.auth.has_role("admin"));
-        assert!(ctx.auth.has_role("moderator"));
-    }
-
-    #[tokio::test]
-    async fn test_custom_claims() {
-        let org_id = Uuid::new_v4();
-        let ctx = TestQueryContext::builder()
-            .as_user(Uuid::new_v4())
-            .with_claim("org_id", serde_json::json!(org_id.to_string()))
-            .with_claim("tier", serde_json::json!("premium"))
-            .build();
-
-        assert_eq!(ctx.auth.claim("tier"), Some(&serde_json::json!("premium")));
-        assert_eq!(ctx.auth.claim("org_id"), Some(&serde_json::json!(org_id.to_string())));
-    }
-
-    #[tokio::test]
-    async fn test_tenant_isolation() {
-        let tenant_id = Uuid::new_v4();
-        let ctx = TestQueryContext::builder()
-            .as_user(Uuid::new_v4())
-            .with_tenant(tenant_id)
-            .build();
-
-        assert_eq!(ctx.tenant_id(), Some(tenant_id));
-    }
-
-    #[tokio::test]
-    async fn test_mutation_dispatches_job() {
-        let ctx = TestMutationContext::builder()
-            .as_user(Uuid::new_v4())
-            .build();
-
-        ctx.dispatch_job("send_welcome_email", serde_json::json!({
-            "email": "new@example.com"
-        })).await.unwrap();
-
-        assert_job_dispatched!(ctx, "send_welcome_email");
-        ctx.job_dispatch().assert_dispatched_with("send_welcome_email", |args| {
-            args["email"] == "new@example.com"
-        });
-    }
-
-    #[tokio::test]
-    async fn test_mutation_starts_workflow() {
-        let ctx = TestMutationContext::builder()
-            .as_user(Uuid::new_v4())
-            .build();
-
-        ctx.start_workflow("user_onboarding", serde_json::json!({
-            "user_id": "123"
-        })).await.unwrap();
-
-        assert_workflow_started!(ctx, "user_onboarding");
-    }
-
-    #[tokio::test]
-    async fn test_no_job_on_validation_failure() {
-        let ctx = TestMutationContext::builder()
-            .as_user(Uuid::new_v4())
-            .build();
-
-        // Validation failed, so no job should be dispatched
-        assert_job_not_dispatched!(ctx, "send_welcome_email");
-    }
 }

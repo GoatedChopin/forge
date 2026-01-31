@@ -31,6 +31,8 @@ use forge_runtime::cluster::{
     ShutdownConfig,
 };
 use forge_runtime::cron::{CronRegistry, CronRunner, CronRunnerConfig};
+use forge_runtime::daemon::{DaemonRegistry, DaemonRunner};
+use forge_runtime::webhook::{WebhookRegistry, WebhookState, webhook_handler};
 use forge_runtime::dashboard::{
     DashboardConfig, DashboardState, create_api_router, create_dashboard_router,
 };
@@ -72,6 +74,8 @@ pub mod prelude {
     pub use forge_core::job::{ForgeJob, JobContext, JobPriority};
     pub use forge_core::realtime::Delta;
     pub use forge_core::schema::{FieldDef, ModelMeta, SchemaRegistry, TableDef};
+    pub use forge_core::daemon::{DaemonContext, ForgeDaemon};
+    pub use forge_core::webhook::{ForgeWebhook, WebhookContext, WebhookResult, WebhookSignature};
     pub use forge_core::workflow::{ForgeWorkflow, WorkflowContext};
 
     pub use crate::{Forge, ForgeBuilder};
@@ -86,6 +90,8 @@ pub struct Forge {
     job_registry: JobRegistry,
     cron_registry: Arc<CronRegistry>,
     workflow_registry: WorkflowRegistry,
+    daemon_registry: Arc<DaemonRegistry>,
+    webhook_registry: Arc<WebhookRegistry>,
     shutdown_tx: broadcast::Sender<()>,
     /// Path to user migrations directory (default: ./migrations).
     migrations_dir: PathBuf,
@@ -146,6 +152,16 @@ impl Forge {
     /// Get the workflow registry mutably.
     pub fn workflow_registry_mut(&mut self) -> &mut WorkflowRegistry {
         &mut self.workflow_registry
+    }
+
+    /// Get the daemon registry.
+    pub fn daemon_registry(&self) -> Arc<DaemonRegistry> {
+        self.daemon_registry.clone()
+    }
+
+    /// Get the webhook registry.
+    pub fn webhook_registry(&self) -> Arc<WebhookRegistry> {
+        self.webhook_registry.clone()
     }
 
     /// Get the observability state (available after run() starts).
@@ -363,6 +379,30 @@ impl Forge {
             tracing::info!("Workflow scheduler started");
         }
 
+        // Start daemon runner if scheduler role (daemons run as singletons)
+        if roles.contains(&NodeRole::Scheduler) && !self.daemon_registry.is_empty() {
+            let daemon_registry = self.daemon_registry.clone();
+            let daemon_pool = pool.clone();
+            let daemon_http = http_client.clone();
+            let daemon_shutdown_rx = self.shutdown_tx.subscribe();
+
+            let daemon_runner = DaemonRunner::new(
+                daemon_registry,
+                daemon_pool,
+                daemon_http,
+                node_id.as_uuid(),
+                daemon_shutdown_rx,
+            );
+
+            handles.push(tokio::spawn(async move {
+                if let Err(e) = daemon_runner.run().await {
+                    tracing::error!("Daemon runner error: {}", e);
+                }
+            }));
+
+            tracing::info!("Daemon runner started");
+        }
+
         // Reactor handle for shutdown
         let mut reactor_handle = None;
 
@@ -393,6 +433,8 @@ impl Forge {
                 job_registry: self.job_registry.clone(),
                 cron_registry: self.cron_registry.clone(),
                 workflow_registry: self.workflow_registry.clone(),
+                daemon_registry: self.daemon_registry.clone(),
+                webhook_registry: self.webhook_registry.clone(),
                 job_dispatcher: Some(job_dispatcher.clone()),
                 workflow_executor: Some(workflow_executor.clone()),
             };
@@ -417,6 +459,26 @@ impl Forge {
             }
 
             let mut router = gateway.router();
+
+            // Mount webhook routes (bypasses auth middleware)
+            if !self.webhook_registry.is_empty() {
+                use axum::routing::post;
+
+                let webhook_state = Arc::new(
+                    WebhookState::new(self.webhook_registry.clone(), pool.clone())
+                        .with_job_dispatcher(job_dispatcher.clone()),
+                );
+
+                router = router.route(
+                    "/webhooks/{*path}",
+                    post(webhook_handler).with_state(webhook_state),
+                );
+
+                tracing::info!(
+                    "Webhook routes registered: {:?}",
+                    self.webhook_registry.paths().collect::<Vec<_>>()
+                );
+            }
 
             // Mount dashboard at /_dashboard and API at /_api
             router = router
@@ -512,6 +574,8 @@ pub struct ForgeBuilder {
     job_registry: JobRegistry,
     cron_registry: CronRegistry,
     workflow_registry: WorkflowRegistry,
+    daemon_registry: DaemonRegistry,
+    webhook_registry: WebhookRegistry,
     migrations_dir: PathBuf,
     extra_migrations: Vec<Migration>,
     frontend_handler: Option<FrontendHandler>,
@@ -526,6 +590,8 @@ impl ForgeBuilder {
             job_registry: JobRegistry::new(),
             cron_registry: CronRegistry::new(),
             workflow_registry: WorkflowRegistry::new(),
+            daemon_registry: DaemonRegistry::new(),
+            webhook_registry: WebhookRegistry::new(),
             migrations_dir: PathBuf::from("migrations"),
             extra_migrations: Vec::new(),
             frontend_handler: None,
@@ -585,6 +651,16 @@ impl ForgeBuilder {
         &mut self.workflow_registry
     }
 
+    /// Get mutable access to the daemon registry.
+    pub fn daemon_registry_mut(&mut self) -> &mut DaemonRegistry {
+        &mut self.daemon_registry
+    }
+
+    /// Get mutable access to the webhook registry.
+    pub fn webhook_registry_mut(&mut self) -> &mut WebhookRegistry {
+        &mut self.webhook_registry
+    }
+
     /// Build the FORGE runtime.
     pub fn build(self) -> Result<Forge> {
         let config = self
@@ -601,6 +677,8 @@ impl ForgeBuilder {
             job_registry: self.job_registry,
             cron_registry: Arc::new(self.cron_registry),
             workflow_registry: self.workflow_registry,
+            daemon_registry: Arc::new(self.daemon_registry),
+            webhook_registry: Arc::new(self.webhook_registry),
             shutdown_tx,
             migrations_dir: self.migrations_dir,
             extra_migrations: self.extra_migrations,

@@ -16,7 +16,9 @@ use sqlx::PgPool;
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::cron::CronRegistry;
+use crate::daemon::DaemonRegistry;
 use crate::jobs::{JobDispatcher, JobRegistry};
+use crate::webhook::WebhookRegistry;
 use crate::workflow::{WorkflowExecutor, WorkflowRegistry};
 
 /// Dashboard configuration.
@@ -58,6 +60,8 @@ pub struct DashboardState {
     pub job_registry: JobRegistry,
     pub cron_registry: Arc<CronRegistry>,
     pub workflow_registry: WorkflowRegistry,
+    pub daemon_registry: Arc<DaemonRegistry>,
+    pub webhook_registry: Arc<WebhookRegistry>,
     /// Optional job dispatcher for dispatching jobs from dashboard.
     pub job_dispatcher: Option<Arc<JobDispatcher>>,
     /// Optional workflow executor for starting workflows from dashboard.
@@ -148,6 +152,14 @@ pub fn create_api_router(state: DashboardState) -> Router {
         // System API
         .route("/system/info", get(api::get_system_info))
         .route("/system/stats", get(api::get_system_stats))
+        // Daemons API
+        .route("/daemons", get(api::list_daemons))
+        .route("/daemons/registered", get(api::list_registered_daemons))
+        // Webhooks API
+        .route("/webhooks", get(api::list_webhooks))
+        .route("/webhooks/registered", get(api::list_registered_webhooks))
+        .route("/webhooks/events", get(api::list_webhook_events))
+        .route("/webhooks/{name}/trigger", post(api::trigger_webhook))
         .layer(cors)
         .with_state(state)
 }

@@ -2140,6 +2140,397 @@ pub async fn start_workflow(
     }
 }
 
+// ============================================================================
+// Daemons API
+// ============================================================================
+
+/// Daemon status summary.
+#[derive(Debug, Clone, Serialize)]
+pub struct DaemonSummary {
+    pub name: String,
+    pub status: String,
+    pub leader_elected: bool,
+    pub restart_on_panic: bool,
+    pub restart_delay_secs: u64,
+    pub startup_delay_secs: u64,
+    pub max_restarts: Option<u32>,
+    pub restarts: i32,
+    pub node_id: Option<String>,
+    pub instance_id: Option<String>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub last_heartbeat: Option<DateTime<Utc>>,
+    pub last_error: Option<String>,
+}
+
+/// Registered daemon info.
+#[derive(Debug, Clone, Serialize)]
+pub struct RegisteredDaemon {
+    pub name: String,
+    pub leader_elected: bool,
+    pub restart_on_panic: bool,
+    pub restart_delay_secs: u64,
+    pub startup_delay_secs: u64,
+    pub max_restarts: Option<u32>,
+}
+
+/// List daemons with their runtime status.
+pub async fn list_daemons(
+    State(state): State<DashboardState>,
+) -> Json<ApiResponse<Vec<DaemonSummary>>> {
+    // Get runtime status from database
+    let db_result = sqlx::query(
+        r#"
+        SELECT name, node_id, instance_id, status, restarts, last_error, started_at, last_heartbeat
+        FROM forge_daemons
+        ORDER BY name
+        "#,
+    )
+    .fetch_all(&state.pool)
+    .await;
+
+    let db_daemons: HashMap<String, sqlx::postgres::PgRow> = match db_result {
+        Ok(rows) => rows
+            .into_iter()
+            .map(|row| {
+                let name: String = row.get("name");
+                (name, row)
+            })
+            .collect(),
+        Err(_) => HashMap::new(),
+    };
+
+    // Merge with registered daemons
+    let daemons: Vec<DaemonSummary> = state
+        .daemon_registry
+        .daemons()
+        .map(|(name, entry)| {
+            let db_row = db_daemons.get(name);
+            DaemonSummary {
+                name: name.to_string(),
+                status: db_row
+                    .map(|r| r.get::<String, _>("status"))
+                    .unwrap_or_else(|| "pending".to_string()),
+                leader_elected: entry.info.leader_elected,
+                restart_on_panic: entry.info.restart_on_panic,
+                restart_delay_secs: entry.info.restart_delay.as_secs(),
+                startup_delay_secs: entry.info.startup_delay.as_secs(),
+                max_restarts: entry.info.max_restarts,
+                restarts: db_row.map(|r| r.get("restarts")).unwrap_or(0),
+                node_id: db_row.and_then(|r| r.get::<Option<uuid::Uuid>, _>("node_id").map(|id| id.to_string())),
+                instance_id: db_row.and_then(|r| r.get::<Option<uuid::Uuid>, _>("instance_id").map(|id| id.to_string())),
+                started_at: db_row.and_then(|r| r.get("started_at")),
+                last_heartbeat: db_row.and_then(|r| r.get("last_heartbeat")),
+                last_error: db_row.and_then(|r| r.get("last_error")),
+            }
+        })
+        .collect();
+
+    Json(ApiResponse::success(daemons))
+}
+
+/// List registered daemon types.
+pub async fn list_registered_daemons(
+    State(state): State<DashboardState>,
+) -> Json<ApiResponse<Vec<RegisteredDaemon>>> {
+    let daemons: Vec<RegisteredDaemon> = state
+        .daemon_registry
+        .daemons()
+        .map(|(_, entry)| RegisteredDaemon {
+            name: entry.info.name.to_string(),
+            leader_elected: entry.info.leader_elected,
+            restart_on_panic: entry.info.restart_on_panic,
+            restart_delay_secs: entry.info.restart_delay.as_secs(),
+            startup_delay_secs: entry.info.startup_delay.as_secs(),
+            max_restarts: entry.info.max_restarts,
+        })
+        .collect();
+    Json(ApiResponse::success(daemons))
+}
+
+// ============================================================================
+// Webhooks API
+// ============================================================================
+
+/// Webhook summary.
+#[derive(Debug, Clone, Serialize)]
+pub struct WebhookSummary {
+    pub name: String,
+    pub path: String,
+    pub has_signature: bool,
+    pub signature_algorithm: Option<String>,
+    pub has_idempotency: bool,
+    pub timeout_secs: u64,
+}
+
+/// Webhook event record.
+#[derive(Debug, Clone, Serialize)]
+pub struct WebhookEvent {
+    pub idempotency_key: String,
+    pub webhook_name: String,
+    pub processed_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+}
+
+/// Registered webhook info.
+#[derive(Debug, Clone, Serialize)]
+pub struct RegisteredWebhook {
+    pub name: String,
+    pub path: String,
+    pub has_signature: bool,
+    pub signature_algorithm: Option<String>,
+    pub signature_header: Option<String>,
+    pub has_idempotency: bool,
+    pub timeout_secs: u64,
+}
+
+/// List webhooks.
+pub async fn list_webhooks(
+    State(state): State<DashboardState>,
+) -> Json<ApiResponse<Vec<WebhookSummary>>> {
+    let webhooks: Vec<WebhookSummary> = state
+        .webhook_registry
+        .webhooks()
+        .map(|(_, entry)| WebhookSummary {
+            name: entry.info.name.to_string(),
+            path: entry.info.path.to_string(),
+            has_signature: entry.info.signature.is_some(),
+            signature_algorithm: entry.info.signature.as_ref().map(|s| format!("{:?}", s.algorithm)),
+            has_idempotency: entry.info.idempotency.is_some(),
+            timeout_secs: entry.info.timeout.as_secs(),
+        })
+        .collect();
+    Json(ApiResponse::success(webhooks))
+}
+
+/// List registered webhook types.
+pub async fn list_registered_webhooks(
+    State(state): State<DashboardState>,
+) -> Json<ApiResponse<Vec<RegisteredWebhook>>> {
+    let webhooks: Vec<RegisteredWebhook> = state
+        .webhook_registry
+        .webhooks()
+        .map(|(_, entry)| RegisteredWebhook {
+            name: entry.info.name.to_string(),
+            path: entry.info.path.to_string(),
+            has_signature: entry.info.signature.is_some(),
+            signature_algorithm: entry.info.signature.as_ref().map(|s| format!("{:?}", s.algorithm)),
+            signature_header: entry.info.signature.as_ref().map(|s| s.header_name.to_string()),
+            has_idempotency: entry.info.idempotency.is_some(),
+            timeout_secs: entry.info.timeout.as_secs(),
+        })
+        .collect();
+    Json(ApiResponse::success(webhooks))
+}
+
+/// List recent webhook events.
+pub async fn list_webhook_events(
+    State(state): State<DashboardState>,
+    Query(pagination): Query<PaginationQuery>,
+) -> Json<ApiResponse<Vec<WebhookEvent>>> {
+    let limit = pagination.get_limit();
+    let offset = pagination.get_offset();
+
+    let result = sqlx::query(
+        r#"
+        SELECT idempotency_key, webhook_name, processed_at, expires_at
+        FROM forge_webhook_events
+        ORDER BY processed_at DESC
+        LIMIT $1 OFFSET $2
+        "#,
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&state.pool)
+    .await;
+
+    match result {
+        Ok(rows) => {
+            let events: Vec<WebhookEvent> = rows
+                .into_iter()
+                .map(|row| WebhookEvent {
+                    idempotency_key: row.get("idempotency_key"),
+                    webhook_name: row.get("webhook_name"),
+                    processed_at: row.get("processed_at"),
+                    expires_at: row.get("expires_at"),
+                })
+                .collect();
+            Json(ApiResponse::success(events))
+        }
+        Err(_) => {
+            // Table may not exist yet
+            Json(ApiResponse::success(vec![]))
+        }
+    }
+}
+
+/// Request body for triggering a webhook (test mode).
+#[derive(Debug, Deserialize)]
+pub struct TriggerWebhookRequest {
+    /// JSON payload to send to the webhook.
+    pub payload: serde_json::Value,
+    /// Idempotency key for testing deduplication.
+    pub idempotency_key: Option<String>,
+}
+
+/// Response from webhook trigger.
+#[derive(Debug, Serialize)]
+pub struct TriggerWebhookResponse {
+    pub status: String,
+    pub status_code: u16,
+    pub body: serde_json::Value,
+}
+
+/// Trigger a webhook for testing (bypasses signature validation).
+pub async fn trigger_webhook(
+    State(state): State<DashboardState>,
+    Path(webhook_name): Path<String>,
+    Json(request): Json<TriggerWebhookRequest>,
+) -> Json<ApiResponse<TriggerWebhookResponse>> {
+    use forge_core::webhook::{IdempotencySource, WebhookContext};
+
+    // Find webhook by name
+    let entry = match state.webhook_registry.get(&webhook_name) {
+        Some(e) => e,
+        None => {
+            return Json(ApiResponse::error(&format!(
+                "Webhook '{}' not found",
+                webhook_name
+            )));
+        }
+    };
+
+    let info = &entry.info;
+    let request_id = uuid::Uuid::new_v4().to_string();
+
+    // Use provided idempotency key or generate one
+    let idempotency_key = request.idempotency_key.or_else(|| {
+        if let Some(ref idem_config) = info.idempotency {
+            match &idem_config.source {
+                IdempotencySource::Body(json_path) => {
+                    extract_json_path(&request.payload, json_path)
+                }
+                IdempotencySource::Header(_) => Some(format!("test-{}", chrono::Utc::now().timestamp_millis())),
+            }
+        } else {
+            None
+        }
+    });
+
+    // Check idempotency if key exists
+    if let Some(ref key) = idempotency_key {
+        match check_idempotency(&state.pool, info.name, key).await {
+            Ok(true) => {
+                return Json(ApiResponse::success(TriggerWebhookResponse {
+                    status: "already_processed".to_string(),
+                    status_code: 200,
+                    body: serde_json::json!({"status": "already_processed"}),
+                }));
+            }
+            Ok(false) => {}
+            Err(e) => {
+                tracing::warn!(webhook = info.name, error = %e, "Failed to check idempotency");
+            }
+        }
+    }
+
+    // Create context (no signature validation in test mode)
+    let mut ctx = WebhookContext::new(
+        info.name.to_string(),
+        request_id.clone(),
+        std::collections::HashMap::new(),
+        state.pool.clone(),
+        reqwest::Client::new(),
+    )
+    .with_idempotency_key(idempotency_key.clone());
+
+    // Add job dispatcher if available
+    if let Some(ref dispatcher) = state.job_dispatcher {
+        ctx = ctx.with_job_dispatch(dispatcher.clone());
+    }
+
+    // Execute handler with timeout
+    let result = tokio::time::timeout(info.timeout, (entry.handler)(&ctx, request.payload)).await;
+
+    match result {
+        Ok(Ok(webhook_result)) => {
+            // Record idempotency on success
+            if let Some(ref key) = idempotency_key {
+                if let Some(ref idem_config) = info.idempotency {
+                    if let Err(e) = record_idempotency(&state.pool, info.name, key, idem_config.ttl).await {
+                        tracing::warn!(webhook = info.name, error = %e, "Failed to record idempotency");
+                    }
+                }
+            }
+
+            Json(ApiResponse::success(TriggerWebhookResponse {
+                status: "success".to_string(),
+                status_code: webhook_result.status_code(),
+                body: webhook_result.body(),
+            }))
+        }
+        Ok(Err(e)) => Json(ApiResponse::error(&format!("Webhook error: {}", e))),
+        Err(_) => Json(ApiResponse::error("Webhook timeout")),
+    }
+}
+
+/// Extract value from JSON using a simple path (e.g., "$.id" or "$.data.id").
+fn extract_json_path(value: &serde_json::Value, path: &str) -> Option<String> {
+    let path = path.strip_prefix("$.").unwrap_or(path);
+    let parts: Vec<&str> = path.split('.').collect();
+
+    let mut current = value;
+    for part in parts {
+        current = current.get(part)?;
+    }
+
+    match current {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        _ => Some(current.to_string()),
+    }
+}
+
+/// Check if idempotency key was already processed.
+async fn check_idempotency(pool: &sqlx::PgPool, webhook_name: &str, key: &str) -> Result<bool, sqlx::Error> {
+    let result: Option<(i32,)> = sqlx::query_as(
+        r#"
+        SELECT 1 FROM forge_webhook_events
+        WHERE webhook_name = $1 AND idempotency_key = $2 AND expires_at > NOW()
+        "#,
+    )
+    .bind(webhook_name)
+    .bind(key)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(result.is_some())
+}
+
+/// Record idempotency key after successful processing.
+async fn record_idempotency(
+    pool: &sqlx::PgPool,
+    webhook_name: &str,
+    key: &str,
+    ttl: std::time::Duration,
+) -> Result<(), sqlx::Error> {
+    let expires_at = chrono::Utc::now() + chrono::Duration::from_std(ttl).unwrap_or(chrono::Duration::hours(24));
+
+    sqlx::query(
+        r#"
+        INSERT INTO forge_webhook_events (idempotency_key, webhook_name, processed_at, expires_at)
+        VALUES ($1, $2, NOW(), $3)
+        ON CONFLICT (idempotency_key) DO NOTHING
+        "#,
+    )
+    .bind(key)
+    .bind(webhook_name)
+    .bind(expires_at)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
