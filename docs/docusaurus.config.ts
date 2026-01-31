@@ -4,7 +4,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
   title: 'FORGE',
-  tagline: 'From Schema to Ship in a Single Day',
+  tagline: 'What if PostgreSQL was enough?',
   favicon: 'img/favicon.svg',
 
   future: {
@@ -45,18 +45,6 @@ const config: Config = {
     ],
   ],
 
-  plugins: [
-    [
-      '@docusaurus/plugin-content-docs',
-      {
-        id: 'tutorials',
-        path: 'tutorials',
-        routeBasePath: '/tutorials',
-        sidebarPath: './sidebarsTutorials.ts',
-      },
-    ],
-  ],
-
   themeConfig: {
     image: 'img/forge-social-card.jpg',
     colorMode: {
@@ -77,11 +65,6 @@ const config: Config = {
           label: 'Docs',
         },
         {
-          to: '/tutorials',
-          label: 'Tutorials',
-          position: 'left',
-        },
-        {
           to: '/blog',
           label: 'Blog',
           position: 'left',
@@ -97,19 +80,15 @@ const config: Config = {
       style: 'dark',
       links: [
         {
-          title: 'Learn',
+          title: 'Start',
           items: [
             {
-              label: 'Quick Start',
-              to: '/docs/quick-start',
+              label: 'Your First App',
+              to: '/docs/start/first-app',
             },
             {
-              label: 'Tutorials',
-              to: '/tutorials',
-            },
-            {
-              label: 'Core Concepts',
-              to: '/docs/concepts/how-it-works',
+              label: 'Project Anatomy',
+              to: '/docs/start/anatomy',
             },
           ],
         },
@@ -117,16 +96,16 @@ const config: Config = {
           title: 'Reference',
           items: [
             {
-              label: 'API Reference',
-              to: '/docs/api',
+              label: 'CLI',
+              to: '/docs/reference/cli',
             },
             {
-              label: 'CLI Reference',
-              to: '/docs/cli',
+              label: 'Contexts',
+              to: '/docs/reference/contexts',
             },
             {
-              label: 'Blog',
-              to: '/blog',
+              label: 'Attributes',
+              to: '/docs/reference/attributes',
             },
           ],
         },
@@ -144,7 +123,7 @@ const config: Config = {
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} FORGE. Built with Docusaurus.`,
+      copyright: `Copyright © ${new Date().getFullYear()} FORGE. MIT License.`,
     },
     prism: {
       theme: prismThemes.github,
