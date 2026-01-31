@@ -1,6 +1,5 @@
 mod auth;
 pub mod jwks;
-mod metrics;
 mod multipart;
 mod request;
 mod response;
@@ -11,7 +10,6 @@ mod tracing;
 
 pub use auth::{AuthConfig, AuthMiddleware, build_auth_context_from_claims};
 pub use jwks::{JwksClient, JwksError};
-pub use metrics::{MetricsState, metrics_middleware};
 pub use multipart::rpc_multipart_handler;
 pub use request::RpcRequest;
 pub use response::{RpcError, RpcResponse};

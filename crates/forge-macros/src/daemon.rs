@@ -19,11 +19,7 @@ fn parse_daemon_attrs(attr: TokenStream) -> DaemonAttrs {
     if let Some(le_start) = attr_str.find("leader_elected") {
         if let Some(eq_pos) = attr_str[le_start..].find('=') {
             let after_eq = &attr_str[le_start + eq_pos + 1..];
-            let value = after_eq
-                .split(&[',', ')'])
-                .next()
-                .unwrap_or("")
-                .trim();
+            let value = after_eq.split(&[',', ')']).next().unwrap_or("").trim();
             result.leader_elected = Some(value == "true");
         }
     }
@@ -32,11 +28,7 @@ fn parse_daemon_attrs(attr: TokenStream) -> DaemonAttrs {
     if let Some(rop_start) = attr_str.find("restart_on_panic") {
         if let Some(eq_pos) = attr_str[rop_start..].find('=') {
             let after_eq = &attr_str[rop_start + eq_pos + 1..];
-            let value = after_eq
-                .split(&[',', ')'])
-                .next()
-                .unwrap_or("")
-                .trim();
+            let value = after_eq.split(&[',', ')']).next().unwrap_or("").trim();
             result.restart_on_panic = Some(value == "true");
         }
     }

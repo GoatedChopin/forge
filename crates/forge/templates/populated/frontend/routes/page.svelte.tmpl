@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import {
     createUser,
     updateUser,
@@ -34,51 +33,55 @@
   let exportJobStore = $state<ReturnType<typeof trackExportUsers> | null>(null);
   let workflowStore = $state<ReturnType<typeof trackAccountVerification> | null>(null);
 
-  interface Webhook {
-    name: string;
-    path: string;
-    has_signature: boolean;
-    has_idempotency: boolean;
-  }
-
-  let webhooks = $state<Webhook[]>([]);
   let idempotencyKey = $state(generateKey());
   let keyUsed = $state(false);
+  let webhookError = $state<string | null>(null);
 
   function generateKey(): string {
     return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   }
 
-  async function fetchWebhooks() {
-    const res = await fetch(`${apiUrl}/_api/dashboard-webhooks`);
-    const json = await res.json();
-    if (json.success) webhooks = json.data || [];
-  }
+  async function triggerWebhook() {
+    webhookError = null;
+    const secret = "demo-secret";
+    const payload = JSON.stringify({ action: "test", ts: Date.now() });
 
-  async function triggerWebhook(webhook: Webhook) {
-    const res = await fetch(`${apiUrl}/_api/dashboard-webhooks/${webhook.name}/trigger`, {
+    // Generate HMAC-SHA256 signature
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      "raw",
+      encoder.encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+    const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(payload));
+    const signatureHex = Array.from(new Uint8Array(signature))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+
+    const res = await fetch(`${apiUrl}/_api/webhooks/demo`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        payload: { action: "test", ts: Date.now() },
-        idempotency_key: idempotencyKey,
-      }),
+      headers: {
+        "Content-Type": "application/json",
+        "X-Webhook-Signature": signatureHex,
+        "X-Idempotency-Key": idempotencyKey,
+      },
+      body: payload,
     });
 
-    const json = await res.json();
-    if (json.success && json.data?.status === "processed") {
+    if (res.ok) {
       keyUsed = true;
+    } else {
+      webhookError = `Error: ${res.status}`;
     }
   }
 
   function newKey() {
     idempotencyKey = generateKey();
     keyUsed = false;
+    webhookError = null;
   }
-
-  onMount(() => {
-    fetchWebhooks();
-  });
 
   async function handleCreateUser(e: Event) {
     e.preventDefault();
@@ -182,8 +185,7 @@
             <button onclick={startExportJob}>Run Again</button>
           {/if}
         {:else}
-          <div class="progress-bar"><div class="fill" style="width:0%"></div></div>
-          <p class="progress-text">Ready to export users to CSV</p>
+          <p class="muted small export-desc">Ready to export users to CSV</p>
           <button onclick={startExportJob}>Start Export</button>
         {/if}
       </section>
@@ -192,7 +194,7 @@
         <h2>Verification <span class="badge purple">workflow</span></h2>
         {#if workflowStore && $workflowStore}
           <div class="steps">
-            {#each $workflowStore.steps as step}
+            {#each $workflowStore.steps as step (step.name)}
               <div class="step {step.status}">
                 <span class="icon">{stepIcon(step.status)}</span>
                 <span>{step.name}</span>
@@ -248,27 +250,25 @@
 
       <section class="card">
         <h2>Webhook <span class="badge">webhook</span></h2>
-        {#if webhooks.length > 0}
-          {@const webhook = webhooks[0]}
-          <label class="input-label">Idempotency Key</label>
-          <div class="webhook-row">
-            <input type="text" class="key-input" class:used={keyUsed} value={idempotencyKey} readonly />
-            <button class="small" onclick={newKey}>New</button>
-            <button onclick={() => triggerWebhook(webhook)}>Send</button>
+        <label class="input-label">Idempotency Key</label>
+        <div class="webhook-row">
+          <input type="text" class="key-input" class:used={keyUsed} value={idempotencyKey} readonly />
+          <button class="small" onclick={newKey}>New</button>
+          <button onclick={triggerWebhook} disabled={keyUsed}>Send</button>
+        </div>
+        {#if keyUsed}
+          <p class="hint success">Webhook processed. Generate a new key to send another.</p>
+        {/if}
+        {#if webhookError}
+          <p class="hint warning">{webhookError}</p>
+        {/if}
+        {#if webhookEvents.data && webhookEvents.data.length > 0}
+          <label class="input-label events-label">Recent Events</label>
+          <div class="events">
+            {#each webhookEvents.data as ev (ev.id)}
+              <div class="event"><span class="mono">{ev.idempotency_key}</span><span class="time">{formatTime(ev.processed_at)}</span></div>
+            {/each}
           </div>
-          {#if keyUsed}
-            <p class="hint warning">Key already used. Generate a new key to send another request.</p>
-          {/if}
-          {#if webhookEvents.data && webhookEvents.data.length > 0}
-            <label class="input-label events-label">Recent Events</label>
-            <div class="events">
-              {#each webhookEvents.data as ev (ev.id)}
-                <div class="event"><span class="mono">{ev.idempotency_key}</span><span class="time">{formatTime(ev.processed_at)}</span></div>
-              {/each}
-            </div>
-          {/if}
-        {:else}
-          <p class="muted">No webhooks registered</p>
         {/if}
       </section>
     </div>
@@ -327,7 +327,8 @@
   h2 { margin: 0 0 0.75rem; font-size: 1rem; }
   h1 { margin-bottom: 1.5rem; }
 
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem; align-items: start; }
+  .grid > .stack { min-height: 100%; display: flex; flex-direction: column; justify-content: space-between; }
   .stack { display: flex; flex-direction: column; gap: 1.5rem; }
 
   .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
@@ -346,6 +347,7 @@
   .muted { color: #999; font-style: italic; margin: 0; }
   .muted.small { font-size: 0.85rem; margin-top: 0.5rem; }
   .muted.workflow-desc { margin-bottom: 0.75rem; }
+  .muted.export-desc { margin-bottom: 0.75rem; }
   .mono { font-family: monospace; }
   .path { font-size: 0.85rem; color: #666; margin: 0 0 0.75rem; }
 
@@ -360,9 +362,10 @@
   .events-label { margin-top: 1rem; }
   .webhook-row { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; }
   .key-input { flex: 1; padding: 0.5rem 0.75rem; font-size: 0.85rem; font-family: monospace; border: 1px solid #d1d5db; border-radius: 6px; background: #fafafa; }
-  .key-input.used { border-color: #ef4444; border-width: 2px; background: #fef2f2; color: #991b1b; }
+  .key-input.used { border-color: #16a34a; border-width: 2px; background: #f0fdf4; color: #166534; }
   .hint { font-size: 0.8rem; margin: 0 0 0.5rem; }
   .hint.warning { color: #b45309; }
+  .hint.success { color: #166534; }
   .events { display: flex; flex-direction: column; gap: 0.35rem; }
   .event { display: flex; justify-content: space-between; font-size: 0.85rem; padding: 0.5rem 0.75rem; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; }
   .event .time { color: #64748b; }
@@ -395,5 +398,15 @@
   .popover { position: absolute; right: 0; top: 100%; margin-top: 4px; background: white; border: 1px solid #e0e0e0; border-radius: 6px; padding: 0.5rem; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 100; display: flex; gap: 0.5rem; }
   td:last-child { position: relative; white-space: nowrap; }
 
-  @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } }
+  @media (max-width: 700px) {
+    .grid { grid-template-columns: 1fr; }
+    .grid > .stack { min-height: auto; justify-content: flex-start; }
+    form { flex-wrap: wrap; }
+    form input { flex: 1 1 100%; min-width: 0; }
+    form button { flex: 1 1 100%; }
+    table { font-size: 0.85rem; }
+    th, td { padding: 0.5rem 0.25rem; }
+    td:last-child { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+    .popover { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); right: auto; }
+  }
 </style>

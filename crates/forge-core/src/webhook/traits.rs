@@ -124,7 +124,10 @@ mod tests {
 
     #[test]
     fn test_webhook_result_body() {
-        assert_eq!(WebhookResult::Ok.body(), serde_json::json!({"status": "ok"}));
+        assert_eq!(
+            WebhookResult::Ok.body(),
+            serde_json::json!({"status": "ok"})
+        );
         assert_eq!(
             WebhookResult::Accepted.body(),
             serde_json::json!({"status": "accepted"})

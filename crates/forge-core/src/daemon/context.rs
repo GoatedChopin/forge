@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tokio::sync::{watch, Mutex};
+use tokio::sync::{Mutex, watch};
 use uuid::Uuid;
 
 use crate::env::{EnvAccess, EnvProvider, RealEnvProvider};
@@ -166,12 +166,9 @@ mod tests {
         });
 
         // Wait for shutdown signal
-        tokio::time::timeout(
-            std::time::Duration::from_millis(200),
-            ctx.shutdown_signal(),
-        )
-        .await
-        .expect("Shutdown signal should complete");
+        tokio::time::timeout(std::time::Duration::from_millis(200), ctx.shutdown_signal())
+            .await
+            .expect("Shutdown signal should complete");
 
         assert!(ctx.is_shutdown_requested());
     }

@@ -5,13 +5,16 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use forge_core::webhook::{ForgeWebhook, WebhookContext, WebhookInfo, WebhookResult};
 use forge_core::Result;
+use forge_core::webhook::{ForgeWebhook, WebhookContext, WebhookInfo, WebhookResult};
 use serde_json::Value;
 
 /// Type alias for boxed webhook handler functions.
 pub type BoxedWebhookHandler = Arc<
-    dyn Fn(&WebhookContext, Value) -> Pin<Box<dyn Future<Output = Result<WebhookResult>> + Send + '_>>
+    dyn Fn(
+            &WebhookContext,
+            Value,
+        ) -> Pin<Box<dyn Future<Output = Result<WebhookResult>> + Send + '_>>
         + Send
         + Sync,
 >;
@@ -47,7 +50,8 @@ impl WebhookRegistry {
         let handler: BoxedWebhookHandler = Arc::new(move |ctx, payload| W::execute(ctx, payload));
 
         self.by_path.insert(path, name.clone());
-        self.webhooks.insert(name, Arc::new(WebhookEntry { info, handler }));
+        self.webhooks
+            .insert(name, Arc::new(WebhookEntry { info, handler }));
     }
 
     /// Get a webhook entry by name.

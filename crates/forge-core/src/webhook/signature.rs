@@ -152,7 +152,10 @@ mod tests {
     #[test]
     fn test_idempotency_source_parsing() {
         let header = IdempotencySource::parse("header:X-Request-Id");
-        assert!(matches!(header, Some(IdempotencySource::Header("X-Request-Id"))));
+        assert!(matches!(
+            header,
+            Some(IdempotencySource::Header("X-Request-Id"))
+        ));
 
         let body = IdempotencySource::parse("body:$.id");
         assert!(matches!(body, Some(IdempotencySource::Body("$.id"))));

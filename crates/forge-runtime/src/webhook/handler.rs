@@ -4,11 +4,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
+    Json,
     body::Bytes,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
-    Json,
 };
 use forge_core::function::JobDispatch;
 use forge_core::webhook::{IdempotencySource, SignatureAlgorithm, WebhookContext};
@@ -219,8 +219,8 @@ pub async fn webhook_handler(
                 }
             }
 
-            let status = StatusCode::from_u16(webhook_result.status_code())
-                .unwrap_or(StatusCode::OK);
+            let status =
+                StatusCode::from_u16(webhook_result.status_code()).unwrap_or(StatusCode::OK);
             (status, Json(webhook_result.body()))
         }
         Ok(Err(e)) => {
@@ -245,7 +245,12 @@ pub async fn webhook_handler(
 }
 
 /// Validate HMAC signature.
-fn validate_signature(algorithm: SignatureAlgorithm, body: &[u8], secret: &str, signature: &str) -> bool {
+fn validate_signature(
+    algorithm: SignatureAlgorithm,
+    body: &[u8],
+    secret: &str,
+    signature: &str,
+) -> bool {
     // Strip algorithm prefix if present (e.g., "sha256=")
     let sig_hex = signature
         .strip_prefix(algorithm.prefix())
@@ -297,7 +302,11 @@ fn extract_json_path(value: &Value, path: &str) -> Option<String> {
 }
 
 /// Check if idempotency key was already processed.
-async fn check_idempotency(pool: &PgPool, webhook_name: &str, key: &str) -> Result<bool, sqlx::Error> {
+async fn check_idempotency(
+    pool: &PgPool,
+    webhook_name: &str,
+    key: &str,
+) -> Result<bool, sqlx::Error> {
     let result: Option<(i32,)> = sqlx::query_as(
         r#"
         SELECT 1 FROM forge_webhook_events
@@ -319,7 +328,8 @@ async fn record_idempotency(
     key: &str,
     ttl: std::time::Duration,
 ) -> Result<(), sqlx::Error> {
-    let expires_at = chrono::Utc::now() + chrono::Duration::from_std(ttl).unwrap_or(chrono::Duration::hours(24));
+    let expires_at =
+        chrono::Utc::now() + chrono::Duration::from_std(ttl).unwrap_or(chrono::Duration::hours(24));
 
     sqlx::query(
         r#"
@@ -344,7 +354,10 @@ mod tests {
     #[test]
     fn test_extract_json_path_simple() {
         let value = json!({"id": "test-123"});
-        assert_eq!(extract_json_path(&value, "$.id"), Some("test-123".to_string()));
+        assert_eq!(
+            extract_json_path(&value, "$.id"),
+            Some("test-123".to_string())
+        );
     }
 
     #[test]

@@ -56,7 +56,7 @@ pub fn get_system_migrations() -> Vec<SystemMigration> {
     vec![SystemMigration {
         version: 1,
         sql: V001_INITIAL,
-        description: "Initial FORGE schema with jobs, workflows, crons, observability, daemons, and webhooks",
+        description: "Initial FORGE schema with jobs, workflows, crons, daemons, and webhooks",
     }]
 }
 
@@ -129,13 +129,8 @@ mod tests {
         assert!(sql.contains("CREATE TABLE IF NOT EXISTS forge_cron_runs"));
         assert!(sql.contains("CREATE TABLE IF NOT EXISTS forge_workflow_runs"));
         assert!(sql.contains("CREATE TABLE IF NOT EXISTS forge_workflow_steps"));
-        assert!(sql.contains("CREATE TABLE IF NOT EXISTS forge_metrics"));
-        assert!(sql.contains("CREATE TABLE IF NOT EXISTS forge_logs"));
-        assert!(sql.contains("CREATE TABLE IF NOT EXISTS forge_traces"));
         assert!(sql.contains("CREATE TABLE IF NOT EXISTS forge_sessions"));
         assert!(sql.contains("CREATE TABLE IF NOT EXISTS forge_subscriptions"));
-        assert!(sql.contains("CREATE TABLE IF NOT EXISTS forge_alert_rules"));
-        assert!(sql.contains("CREATE TABLE IF NOT EXISTS forge_alerts"));
         assert!(sql.contains("CREATE TABLE IF NOT EXISTS forge_daemons"));
         assert!(sql.contains("CREATE TABLE IF NOT EXISTS forge_webhook_events"));
     }

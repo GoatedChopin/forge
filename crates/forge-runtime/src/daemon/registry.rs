@@ -5,14 +5,12 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use forge_core::daemon::{DaemonContext, DaemonInfo, ForgeDaemon};
 use forge_core::Result;
+use forge_core::daemon::{DaemonContext, DaemonInfo, ForgeDaemon};
 
 /// Type alias for boxed daemon handler functions.
 pub type BoxedDaemonHandler = Arc<
-    dyn Fn(&DaemonContext) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>
-        + Send
-        + Sync,
+    dyn Fn(&DaemonContext) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> + Send + Sync,
 >;
 
 /// Entry in the daemon registry.
@@ -42,7 +40,8 @@ impl DaemonRegistry {
 
         let handler: BoxedDaemonHandler = Arc::new(move |ctx| D::execute(ctx));
 
-        self.daemons.insert(name, Arc::new(DaemonEntry { info, handler }));
+        self.daemons
+            .insert(name, Arc::new(DaemonEntry { info, handler }));
     }
 
     /// Get a daemon entry by name.

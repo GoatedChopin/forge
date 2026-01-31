@@ -138,7 +138,8 @@ impl TestWebhookContextBuilder {
 
     /// Add a request header.
     pub fn with_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
-        self.headers.insert(name.into().to_lowercase(), value.into());
+        self.headers
+            .insert(name.into().to_lowercase(), value.into());
         self
     }
 
@@ -193,7 +194,9 @@ impl TestWebhookContextBuilder {
     pub fn build(self) -> TestWebhookContext {
         TestWebhookContext {
             webhook_name: self.webhook_name,
-            request_id: self.request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
+            request_id: self
+                .request_id
+                .unwrap_or_else(|| Uuid::new_v4().to_string()),
             idempotency_key: self.idempotency_key,
             headers: self.headers,
             pool: self.pool,

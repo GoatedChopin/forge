@@ -6,7 +6,6 @@
 //! - Background job workers
 //! - Cron scheduler
 //! - Workflow engine
-//! - Observability dashboard
 //! - Cluster coordination
 
 use std::future::Future;
@@ -16,10 +15,10 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::Router;
 use axum::body::Body;
 use axum::http::Request;
 use axum::response::Response;
-use axum::Router;
 use tokio::sync::broadcast;
 
 use forge_core::cluster::{LeaderRole, NodeId, NodeInfo, NodeRole, NodeStatus};
@@ -33,15 +32,11 @@ use forge_runtime::cluster::{
 };
 use forge_runtime::cron::{CronRegistry, CronRunner, CronRunnerConfig};
 use forge_runtime::daemon::{DaemonRegistry, DaemonRunner};
-use forge_runtime::webhook::{WebhookRegistry, WebhookState, webhook_handler};
-use forge_runtime::dashboard::{
-    DashboardConfig, DashboardState, create_api_router, create_dashboard_router,
-};
 use forge_runtime::db::Database;
 use forge_runtime::function::FunctionRegistry;
 use forge_runtime::gateway::{AuthConfig, GatewayConfig as RuntimeGatewayConfig, GatewayServer};
 use forge_runtime::jobs::{JobDispatcher, JobQueue, JobRegistry, Worker, WorkerConfig};
-use forge_runtime::observability::{ObservabilityConfig, ObservabilityState};
+use forge_runtime::webhook::{WebhookRegistry, WebhookState, webhook_handler};
 use forge_runtime::workflow::{
     EventStore, WorkflowExecutor, WorkflowRegistry, WorkflowScheduler, WorkflowSchedulerConfig,
 };
@@ -67,6 +62,7 @@ pub mod prelude {
     pub use forge_core::cluster::NodeRole;
     pub use forge_core::config::ForgeConfig;
     pub use forge_core::cron::{CronContext, ForgeCron};
+    pub use forge_core::daemon::{DaemonContext, ForgeDaemon};
     pub use forge_core::env::EnvAccess;
     pub use forge_core::error::{ForgeError, Result};
     pub use forge_core::function::{
@@ -75,7 +71,6 @@ pub mod prelude {
     pub use forge_core::job::{ForgeJob, JobContext, JobPriority};
     pub use forge_core::realtime::Delta;
     pub use forge_core::schema::{FieldDef, ModelMeta, SchemaRegistry, TableDef};
-    pub use forge_core::daemon::{DaemonContext, ForgeDaemon};
     pub use forge_core::webhook::{ForgeWebhook, WebhookContext, WebhookResult, WebhookSignature};
     pub use forge_core::workflow::{ForgeWorkflow, WorkflowContext};
 
@@ -98,8 +93,6 @@ pub struct Forge {
     migrations_dir: PathBuf,
     /// Additional migrations provided programmatically.
     extra_migrations: Vec<Migration>,
-    /// Observability state (created during run()).
-    observability: Option<ObservabilityState>,
     /// Optional frontend handler for embedded SPA.
     frontend_handler: Option<FrontendHandler>,
 }
@@ -165,11 +158,6 @@ impl Forge {
         self.webhook_registry.clone()
     }
 
-    /// Get the observability state (available after run() starts).
-    pub fn observability(&self) -> Option<&ObservabilityState> {
-        self.observability.as_ref()
-    }
-
     /// Run the FORGE server.
     pub async fn run(mut self) -> Result<()> {
         tracing::info!("FORGE runtime starting");
@@ -191,18 +179,6 @@ impl Forge {
 
         runner.run(user_migrations).await?;
         tracing::info!("Migrations completed");
-
-        // Create observability state
-        let obs_config = ObservabilityConfig::default();
-        let observability = ObservabilityState::new(obs_config, pool.clone());
-        self.observability = Some(observability.clone());
-
-        // Start observability background tasks
-        let obs_handles = observability.start_background_tasks();
-        tracing::info!(
-            "Observability collectors started ({} background tasks)",
-            obs_handles.len()
-        );
 
         // Get local node info
         let hostname = hostname::get()
@@ -306,12 +282,11 @@ impl Forge {
                 ..Default::default()
             };
 
-            let mut worker = Worker::with_observability(
+            let mut worker = Worker::new(
                 worker_config,
                 job_queue,
                 self.job_registry.clone(),
                 pool.clone(),
-                observability.clone(),
             );
 
             handles.push(tokio::spawn(async move {
@@ -339,13 +314,7 @@ impl Forge {
                 is_leader,
             };
 
-            let cron_runner = CronRunner::with_observability(
-                cron_registry,
-                cron_pool,
-                cron_http,
-                cron_config,
-                observability.clone(),
-            );
+            let cron_runner = CronRunner::new(cron_registry, cron_pool, cron_http, cron_config);
 
             handles.push(tokio::spawn(async move {
                 if let Err(e) = cron_runner.run().await {
@@ -427,28 +396,11 @@ impl Forge {
                 auth: AuthConfig::from_forge_config(&self.config.auth),
             };
 
-            // Create dashboard state with registries and dispatchers
-            let dashboard_state = DashboardState {
-                pool: pool.clone(),
-                config: DashboardConfig::default(),
-                job_registry: self.job_registry.clone(),
-                cron_registry: self.cron_registry.clone(),
-                workflow_registry: self.workflow_registry.clone(),
-                daemon_registry: self.daemon_registry.clone(),
-                webhook_registry: self.webhook_registry.clone(),
-                job_dispatcher: Some(job_dispatcher.clone()),
-                workflow_executor: Some(workflow_executor.clone()),
-            };
-
-            // Build gateway router with dashboard and observability
-            let gateway = GatewayServer::with_observability(
-                gateway_config,
-                self.function_registry.clone(),
-                pool.clone(),
-                observability.clone(),
-            )
-            .with_job_dispatcher(job_dispatcher.clone())
-            .with_workflow_dispatcher(workflow_executor.clone());
+            // Build gateway server
+            let gateway =
+                GatewayServer::new(gateway_config, self.function_registry.clone(), pool.clone())
+                    .with_job_dispatcher(job_dispatcher.clone())
+                    .with_workflow_dispatcher(workflow_executor.clone());
 
             // Start the reactor for real-time updates
             let reactor = gateway.reactor();
@@ -459,29 +411,33 @@ impl Forge {
                 reactor_handle = Some(reactor);
             }
 
-            // Build API router: gateway + dashboard API (all under /_api)
-            let api_router = gateway
-                .router()
-                .merge(create_api_router(dashboard_state.clone()));
+            // Build API router (all under /_api)
+            let api_router = gateway.router();
 
-            // Build final router with dashboard pages and API
-            let mut router = Router::new()
-                .nest("/_dashboard", create_dashboard_router(dashboard_state))
-                .nest("/_api", api_router);
+            // Build final router with API
+            let mut router = Router::new().nest("/_api", api_router);
 
             // Mount webhook routes under /_api (bypasses gateway auth middleware)
             if !self.webhook_registry.is_empty() {
                 use axum::routing::post;
+                use tower_http::cors::{Any, CorsLayer};
 
                 let webhook_state = Arc::new(
                     WebhookState::new(self.webhook_registry.clone(), pool.clone())
                         .with_job_dispatcher(job_dispatcher.clone()),
                 );
 
-                router = router.route(
-                    "/_api/webhooks/{*path}",
-                    post(webhook_handler).with_state(webhook_state),
-                );
+                // Webhook routes need their own CORS layer since they're outside the API router
+                let webhook_cors = CorsLayer::new()
+                    .allow_origin(Any)
+                    .allow_methods(Any)
+                    .allow_headers(Any);
+
+                let webhook_router = Router::new()
+                    .route("/{*path}", post(webhook_handler).with_state(webhook_state))
+                    .layer(webhook_cors);
+
+                router = router.nest("/_api/webhooks", webhook_router);
 
                 tracing::info!(
                     "Webhook routes registered: {:?}",
@@ -548,10 +504,6 @@ impl Forge {
             reactor.stop();
             tracing::info!("Reactor stopped");
         }
-
-        // Shutdown observability (final flush)
-        observability.shutdown().await;
-        tracing::info!("Observability shutdown complete");
 
         // Close database connections
         if let Some(ref db) = self.db {
@@ -683,7 +635,6 @@ impl ForgeBuilder {
             shutdown_tx,
             migrations_dir: self.migrations_dir,
             extra_migrations: self.extra_migrations,
-            observability: None,
             frontend_handler: self.frontend_handler,
         })
     }

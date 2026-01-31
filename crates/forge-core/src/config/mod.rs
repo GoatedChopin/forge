@@ -1,10 +1,8 @@
 mod cluster;
 mod database;
-mod observability;
 
 pub use cluster::ClusterConfig;
 pub use database::DatabaseConfig;
-pub use observability::ObservabilityConfig;
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -40,10 +38,6 @@ pub struct ForgeConfig {
     /// Cluster configuration.
     #[serde(default)]
     pub cluster: ClusterConfig,
-
-    /// Observability configuration.
-    #[serde(default)]
-    pub observability: ObservabilityConfig,
 
     /// Security configuration.
     #[serde(default)]
@@ -85,7 +79,6 @@ impl ForgeConfig {
             function: FunctionConfig::default(),
             worker: WorkerConfig::default(),
             cluster: ClusterConfig::default(),
-            observability: ObservabilityConfig::default(),
             security: SecurityConfig::default(),
             auth: AuthConfig::default(),
         }

@@ -243,8 +243,7 @@ const SCHEMA_USER: &str = include_str!("../../templates/populated/project/schema
 const FUNCTIONS_MOD: &str = include_str!("../../templates/populated/project/functions/mod.rs.tmpl");
 const FUNCTIONS_USERS: &str =
     include_str!("../../templates/populated/project/functions/users.rs.tmpl");
-const FUNCTIONS_ISS: &str =
-    include_str!("../../templates/populated/project/functions/iss.rs.tmpl");
+const FUNCTIONS_ISS: &str = include_str!("../../templates/populated/project/functions/iss.rs.tmpl");
 const FUNCTIONS_TRADES: &str =
     include_str!("../../templates/populated/project/functions/trades.rs.tmpl");
 const FUNCTIONS_EXPORT: &str =
@@ -539,7 +538,10 @@ pub fn create_project(dir: &Path, name: &str, demo: bool) -> Result<()> {
         fs::write(dir.join("src/functions/iss.rs"), FUNCTIONS_ISS)?;
         fs::write(dir.join("src/functions/trades.rs"), FUNCTIONS_TRADES)?;
         fs::write(dir.join("src/functions/export.rs"), FUNCTIONS_EXPORT)?;
-        fs::write(dir.join("src/functions/verification.rs"), FUNCTIONS_VERIFICATION)?;
+        fs::write(
+            dir.join("src/functions/verification.rs"),
+            FUNCTIONS_VERIFICATION,
+        )?;
         fs::write(dir.join("src/functions/webhook.rs"), FUNCTIONS_WEBHOOK)?;
         fs::write(dir.join("AGENTS.md"), AGENTS_MD)?;
         // Demo frontend

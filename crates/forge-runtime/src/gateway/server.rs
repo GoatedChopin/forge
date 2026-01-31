@@ -12,7 +12,6 @@ use forge_core::cluster::NodeId;
 use forge_core::function::{JobDispatch, WorkflowDispatch};
 
 use super::auth::{AuthConfig, AuthMiddleware, auth_middleware};
-use super::metrics::{MetricsState, metrics_middleware};
 use super::multipart::rpc_multipart_handler;
 use super::rpc::{RpcHandler, rpc_function_handler, rpc_handler};
 use super::sse::{
@@ -21,7 +20,6 @@ use super::sse::{
 };
 use super::tracing::TracingState;
 use crate::function::FunctionRegistry;
-use crate::observability::ObservabilityState;
 use crate::realtime::{Reactor, ReactorConfig};
 
 /// Gateway server configuration.
@@ -81,7 +79,6 @@ pub struct GatewayServer {
     registry: FunctionRegistry,
     db_pool: sqlx::PgPool,
     reactor: Arc<Reactor>,
-    observability: Option<ObservabilityState>,
     job_dispatcher: Option<Arc<dyn JobDispatch>>,
     workflow_dispatcher: Option<Arc<dyn WorkflowDispatch>>,
 }
@@ -102,33 +99,6 @@ impl GatewayServer {
             registry,
             db_pool,
             reactor,
-            observability: None,
-            job_dispatcher: None,
-            workflow_dispatcher: None,
-        }
-    }
-
-    /// Create a new gateway server with observability.
-    pub fn with_observability(
-        config: GatewayConfig,
-        registry: FunctionRegistry,
-        db_pool: sqlx::PgPool,
-        observability: ObservabilityState,
-    ) -> Self {
-        let node_id = NodeId::new();
-        let reactor = Arc::new(Reactor::new(
-            node_id,
-            db_pool.clone(),
-            registry.clone(),
-            ReactorConfig::default(),
-        ));
-
-        Self {
-            config,
-            registry,
-            db_pool,
-            reactor,
-            observability: Some(observability),
             job_dispatcher: None,
             workflow_dispatcher: None,
         }
@@ -233,15 +203,6 @@ impl GatewayServer {
                 auth_middleware,
             ))
             .layer(middleware::from_fn(tracing_middleware));
-
-        // Add metrics middleware if observability is enabled
-        if let Some(ref observability) = self.observability {
-            let metrics_state = Arc::new(MetricsState::new(observability.clone()));
-            main_router = main_router.layer(middleware::from_fn_with_state(
-                metrics_state,
-                metrics_middleware,
-            ));
-        }
 
         // Apply the remaining middleware layers
         main_router.layer(service_builder)

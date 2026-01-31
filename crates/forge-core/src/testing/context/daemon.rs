@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use sqlx::PgPool;
-use tokio::sync::{watch, Mutex};
+use tokio::sync::{Mutex, watch};
 use uuid::Uuid;
 
 use super::super::mock_http::{MockHttp, MockRequest, MockResponse};
@@ -219,12 +219,9 @@ mod tests {
         });
 
         // Wait for shutdown signal
-        tokio::time::timeout(
-            std::time::Duration::from_millis(200),
-            ctx.shutdown_signal(),
-        )
-        .await
-        .expect("Shutdown signal should complete");
+        tokio::time::timeout(std::time::Duration::from_millis(200), ctx.shutdown_signal())
+            .await
+            .expect("Shutdown signal should complete");
 
         assert!(ctx.is_shutdown_requested());
     }

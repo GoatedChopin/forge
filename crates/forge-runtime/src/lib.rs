@@ -3,13 +3,11 @@ pub use sqlx;
 pub mod cluster;
 pub mod cron;
 pub mod daemon;
-pub mod dashboard;
 pub mod db;
 pub mod function;
 pub mod gateway;
 pub mod jobs;
 pub mod migrations;
-pub mod observability;
 pub mod rate_limit;
 pub mod realtime;
 pub mod testing;
@@ -22,10 +20,6 @@ pub use cluster::{
 };
 pub use cron::{CronEntry, CronRecord, CronRegistry, CronRunner, CronStatus};
 pub use daemon::{DaemonEntry, DaemonRegistry, DaemonRunner, DaemonRunnerConfig};
-pub use dashboard::{
-    DashboardApi, DashboardAssets, DashboardConfig, DashboardPages, DashboardState,
-    create_api_router, create_dashboard_router,
-};
 pub use db::Database;
 pub use function::{FunctionExecutor, FunctionRegistry, FunctionRouter, RouteResult};
 pub use gateway::{
@@ -36,13 +30,6 @@ pub use jobs::{
     JobDispatcher, JobExecutor, JobQueue, JobRecord, JobRegistry, Worker, WorkerConfig,
 };
 pub use migrations::{MigrationExecutor, MigrationGenerator, SchemaDiff};
-pub use observability::{
-    Alert, AlertCondition, AlertEvaluator, AlertRule, AlertSeverity, AlertStatus, AlertStore,
-    ForgeTracingLayer, LogCollector, LogStore, LogsConfig, MetricsCollector, MetricsConfig,
-    MetricsStore, ObservabilityConfig, ObservabilityState, PartitionConfig, PartitionGranularity,
-    PartitionManager, SystemMetricsCollector, SystemMetricsSnapshot, TraceCollector, TraceStore,
-    TraceSummary, TracesConfig,
-};
 pub use rate_limit::RateLimiter;
 pub use realtime::{
     AdaptiveTracker, AdaptiveTrackingConfig, AdaptiveTrackingStats, ChangeListener,

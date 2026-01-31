@@ -1,14 +1,12 @@
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use forge_core::observability::{Metric, Span, SpanKind};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use super::executor::JobExecutor;
 use super::queue::JobQueue;
 use super::registry::JobRegistry;
-use crate::observability::ObservabilityState;
 
 /// Worker configuration.
 #[derive(Debug, Clone)]
@@ -50,7 +48,6 @@ pub struct Worker {
     queue: JobQueue,
     executor: Arc<JobExecutor>,
     shutdown_tx: Option<mpsc::Sender<()>>,
-    observability: Option<ObservabilityState>,
 }
 
 impl Worker {
@@ -70,28 +67,6 @@ impl Worker {
             queue,
             executor,
             shutdown_tx: None,
-            observability: None,
-        }
-    }
-
-    /// Create a new worker with observability.
-    pub fn with_observability(
-        config: WorkerConfig,
-        queue: JobQueue,
-        registry: JobRegistry,
-        db_pool: sqlx::PgPool,
-        observability: ObservabilityState,
-    ) -> Self {
-        let id = config.id.unwrap_or_else(Uuid::new_v4);
-        let executor = Arc::new(JobExecutor::new(queue.clone(), registry, db_pool));
-
-        Self {
-            id,
-            config,
-            queue,
-            executor,
-            shutdown_tx: None,
-            observability: Some(observability),
         }
     }
 
@@ -160,25 +135,14 @@ impl Worker {
                         }
                     };
 
-                    // Record jobs claimed metric
-                    if let Some(ref obs) = self.observability {
-                        let mut metric = Metric::counter("jobs_dispatched_total", jobs.len() as f64);
-                        metric.labels.insert("worker_id".to_string(), self.id.to_string());
-                        obs.record_metric(metric).await;
-                    }
-
                     // Process each job
                     for job in jobs {
                         let permit = semaphore.clone().acquire_owned().await.unwrap();
                         let executor = self.executor.clone();
                         let job_id = job.id;
                         let job_type = job.job_type.clone();
-                        let observability = self.observability.clone();
-                        let worker_id = self.id;
 
                         tokio::spawn(async move {
-                            let start = Instant::now();
-
                             tracing::debug!(
                                 job_id = %job_id,
                                 job_type = %job_type,
@@ -186,54 +150,6 @@ impl Worker {
                             );
 
                             let result = executor.execute(&job).await;
-                            let duration = start.elapsed();
-
-                            // Record job duration metric
-                            if let Some(ref obs) = observability {
-                                let mut duration_metric = Metric::gauge(
-                                    "job_duration_seconds",
-                                    duration.as_secs_f64(),
-                                );
-                                duration_metric.labels.insert("job_type".to_string(), job_type.clone());
-                                duration_metric.labels.insert("worker_id".to_string(), worker_id.to_string());
-                                obs.record_metric(duration_metric).await;
-                            }
-
-                            // Record job execution span
-                            if let Some(ref obs) = observability {
-                                let mut span = Span::new(format!("job.{}", job_type));
-                                span.kind = SpanKind::Consumer;
-                                span.attributes.insert(
-                                    "job.id".to_string(),
-                                    serde_json::Value::String(job_id.to_string()),
-                                );
-                                span.attributes.insert(
-                                    "job.type".to_string(),
-                                    serde_json::Value::String(job_type.clone()),
-                                );
-                                span.attributes.insert(
-                                    "job.worker_id".to_string(),
-                                    serde_json::Value::String(worker_id.to_string()),
-                                );
-                                span.attributes.insert(
-                                    "job.duration_ms".to_string(),
-                                    serde_json::Value::Number(serde_json::Number::from(duration.as_millis() as u64)),
-                                );
-
-                                match &result {
-                                    super::executor::ExecutionResult::Completed { .. } => {
-                                        span.end_ok();
-                                    }
-                                    super::executor::ExecutionResult::Failed { error, .. } => {
-                                        span.end_error(error);
-                                    }
-                                    super::executor::ExecutionResult::TimedOut { .. } => {
-                                        span.end_error("Job timed out");
-                                    }
-                                }
-
-                                obs.record_span(span).await;
-                            }
 
                             match &result {
                                 super::executor::ExecutionResult::Completed { .. } => {
@@ -242,14 +158,6 @@ impl Worker {
                                         job_type = %job_type,
                                         "Job completed"
                                     );
-
-                                    // Record completed metric
-                                    if let Some(ref obs) = observability {
-                                        let mut metric = Metric::counter("jobs_completed_total", 1.0);
-                                        metric.labels.insert("job_type".to_string(), job_type.clone());
-                                        metric.labels.insert("worker_id".to_string(), worker_id.to_string());
-                                        obs.record_metric(metric).await;
-                                    }
                                 }
                                 super::executor::ExecutionResult::Failed { error, retryable } => {
                                     if *retryable {
@@ -267,15 +175,6 @@ impl Worker {
                                             "Job failed permanently"
                                         );
                                     }
-
-                                    // Record failed metric
-                                    if let Some(ref obs) = observability {
-                                        let mut metric = Metric::counter("jobs_failed_total", 1.0);
-                                        metric.labels.insert("job_type".to_string(), job_type.clone());
-                                        metric.labels.insert("worker_id".to_string(), worker_id.to_string());
-                                        metric.labels.insert("retryable".to_string(), retryable.to_string());
-                                        obs.record_metric(metric).await;
-                                    }
                                 }
                                 super::executor::ExecutionResult::TimedOut { retryable } => {
                                     tracing::warn!(
@@ -284,14 +183,6 @@ impl Worker {
                                         will_retry = %retryable,
                                         "Job timed out"
                                     );
-
-                                    // Record timeout metric
-                                    if let Some(ref obs) = observability {
-                                        let mut metric = Metric::counter("jobs_timeout_total", 1.0);
-                                        metric.labels.insert("job_type".to_string(), job_type.clone());
-                                        metric.labels.insert("worker_id".to_string(), worker_id.to_string());
-                                        obs.record_metric(metric).await;
-                                    }
                                 }
                             }
 

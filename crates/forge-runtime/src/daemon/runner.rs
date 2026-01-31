@@ -4,9 +4,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use forge_core::Result;
 use forge_core::daemon::{DaemonContext, DaemonStatus};
 use futures_util::FutureExt;
-use forge_core::Result;
 use sqlx::PgPool;
 use tokio::sync::{broadcast, watch};
 use tracing::{error, info, warn};
@@ -389,24 +389,20 @@ async fn try_acquire_leadership(pool: &PgPool, daemon_name: &str, node_id: Uuid)
         .bytes()
         .fold(0i64, |acc, b| acc.wrapping_add(b as i64).wrapping_mul(31));
 
-    let result: (bool,) = sqlx::query_as(
-        "SELECT pg_try_advisory_lock($1)",
-    )
-    .bind(lock_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+    let result: (bool,) = sqlx::query_as("SELECT pg_try_advisory_lock($1)")
+        .bind(lock_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
 
     if result.0 {
         // Update daemon record with our node_id
-        sqlx::query(
-            "UPDATE forge_daemons SET node_id = $1 WHERE name = $2",
-        )
-        .bind(node_id)
-        .bind(daemon_name)
-        .execute(pool)
-        .await
-        .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+        sqlx::query("UPDATE forge_daemons SET node_id = $1 WHERE name = $2")
+            .bind(node_id)
+            .bind(daemon_name)
+            .execute(pool)
+            .await
+            .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
     }
 
     Ok(result.0)
@@ -427,14 +423,12 @@ async fn release_leadership(pool: &PgPool, daemon_name: &str, _node_id: Uuid) ->
 }
 
 async fn update_daemon_status(pool: &PgPool, name: &str, status: DaemonStatus) -> Result<()> {
-    sqlx::query(
-        "UPDATE forge_daemons SET status = $1, last_heartbeat = NOW() WHERE name = $2",
-    )
-    .bind(status.as_str())
-    .bind(name)
-    .execute(pool)
-    .await
-    .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+    sqlx::query("UPDATE forge_daemons SET status = $1, last_heartbeat = NOW() WHERE name = $2")
+        .bind(status.as_str())
+        .bind(name)
+        .execute(pool)
+        .await
+        .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
 
     Ok(())
 }

@@ -236,6 +236,7 @@ impl DevCommand {
             .env("RUST_LOG", "info,forge_runtime::function::executor=trace")
             .env("HOST", "0.0.0.0")
             .env("PORT", "8080")
+            .env("WEBHOOK_SECRET", "demo-secret")
             .stdin(Stdio::inherit())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

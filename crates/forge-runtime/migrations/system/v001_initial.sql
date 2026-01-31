@@ -150,60 +150,6 @@ CREATE TABLE IF NOT EXISTS forge_rate_limits (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_forge_rate_limits_bucket
     ON forge_rate_limits(bucket_key);
 
--- Observability: Metrics
-CREATE TABLE IF NOT EXISTS forge_metrics (
-    id BIGSERIAL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
-    kind VARCHAR(32) NOT NULL,
-    value DOUBLE PRECISION NOT NULL,
-    labels JSONB DEFAULT '{}',
-    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_forge_metrics_name_time
-    ON forge_metrics(name, timestamp DESC);
-
--- Observability: Logs
-CREATE TABLE IF NOT EXISTS forge_logs (
-    id BIGSERIAL PRIMARY KEY,
-    level VARCHAR(16) NOT NULL,
-    message TEXT NOT NULL,
-    target VARCHAR(255),
-    fields JSONB DEFAULT '{}',
-    trace_id VARCHAR(64),
-    span_id VARCHAR(32),
-    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_forge_logs_level_time
-    ON forge_logs(level, timestamp DESC);
-
-CREATE INDEX IF NOT EXISTS idx_forge_logs_trace_id
-    ON forge_logs(trace_id)
-    WHERE trace_id IS NOT NULL;
-
--- Observability: Traces
-CREATE TABLE IF NOT EXISTS forge_traces (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    trace_id VARCHAR(64) NOT NULL,
-    span_id VARCHAR(32) NOT NULL,
-    parent_span_id VARCHAR(32),
-    name VARCHAR(255) NOT NULL,
-    kind VARCHAR(32) NOT NULL DEFAULT 'internal',
-    status VARCHAR(32) NOT NULL DEFAULT 'unset',
-    attributes JSONB DEFAULT '{}',
-    events JSONB DEFAULT '[]',
-    started_at TIMESTAMPTZ NOT NULL,
-    ended_at TIMESTAMPTZ,
-    duration_ms INTEGER
-);
-
-CREATE INDEX IF NOT EXISTS idx_forge_traces_trace_id
-    ON forge_traces(trace_id);
-
-CREATE INDEX IF NOT EXISTS idx_forge_traces_started_at
-    ON forge_traces(started_at DESC);
-
 -- Realtime: Sessions
 CREATE TABLE IF NOT EXISTS forge_sessions (
     id UUID PRIMARY KEY,
@@ -293,55 +239,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Observability: Alert Rules
-CREATE TABLE IF NOT EXISTS forge_alert_rules (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name VARCHAR(255) NOT NULL UNIQUE,
-    description TEXT,
-    metric_name VARCHAR(255) NOT NULL,
-    condition VARCHAR(32) NOT NULL,  -- 'gt', 'gte', 'lt', 'lte', 'eq', 'ne'
-    threshold DOUBLE PRECISION NOT NULL,
-    duration_seconds INTEGER NOT NULL DEFAULT 0,  -- Condition must be true for this long
-    severity VARCHAR(32) NOT NULL DEFAULT 'warning',  -- 'info', 'warning', 'critical'
-    enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    labels JSONB DEFAULT '{}',  -- Labels to match on metric
-    notification_channels TEXT[] DEFAULT '{}',  -- ['email', 'slack', 'webhook']
-    cooldown_seconds INTEGER NOT NULL DEFAULT 300,  -- Wait this long before re-alerting
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_forge_alert_rules_enabled
-    ON forge_alert_rules(enabled)
-    WHERE enabled = TRUE;
-
--- Observability: Active Alerts
-CREATE TABLE IF NOT EXISTS forge_alerts (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    rule_id UUID NOT NULL REFERENCES forge_alert_rules(id) ON DELETE CASCADE,
-    rule_name VARCHAR(255) NOT NULL,
-    metric_value DOUBLE PRECISION NOT NULL,
-    threshold DOUBLE PRECISION NOT NULL,
-    severity VARCHAR(32) NOT NULL,
-    status VARCHAR(32) NOT NULL DEFAULT 'firing',  -- 'firing', 'resolved'
-    triggered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    resolved_at TIMESTAMPTZ,
-    acknowledged_at TIMESTAMPTZ,
-    acknowledged_by VARCHAR(255),
-    labels JSONB DEFAULT '{}',
-    annotations JSONB DEFAULT '{}'
-);
-
-CREATE INDEX IF NOT EXISTS idx_forge_alerts_status
-    ON forge_alerts(status)
-    WHERE status = 'firing';
-
-CREATE INDEX IF NOT EXISTS idx_forge_alerts_rule_id
-    ON forge_alerts(rule_id);
-
-CREATE INDEX IF NOT EXISTS idx_forge_alerts_triggered_at
-    ON forge_alerts(triggered_at DESC);
-
 -- GIN indexes for JSONB columns (enables efficient queries on JSON data)
 
 -- Jobs: Enable queries on input/output JSON
@@ -373,31 +270,9 @@ CREATE INDEX IF NOT EXISTS idx_forge_workflow_steps_result_gin
     ON forge_workflow_steps USING GIN (result)
     WHERE result IS NOT NULL;
 
--- Metrics: Enable label-based filtering
-CREATE INDEX IF NOT EXISTS idx_forge_metrics_labels_gin
-    ON forge_metrics USING GIN (labels);
-
--- Logs: Enable field-based filtering
-CREATE INDEX IF NOT EXISTS idx_forge_logs_fields_gin
-    ON forge_logs USING GIN (fields);
-
--- Traces: Enable attribute and event filtering
-CREATE INDEX IF NOT EXISTS idx_forge_traces_attributes_gin
-    ON forge_traces USING GIN (attributes);
-CREATE INDEX IF NOT EXISTS idx_forge_traces_events_gin
-    ON forge_traces USING GIN (events);
-
 -- Subscriptions: Enable args matching
 CREATE INDEX IF NOT EXISTS idx_forge_subscriptions_args_gin
     ON forge_subscriptions USING GIN (args);
-
--- Alerts: Enable label/annotation filtering
-CREATE INDEX IF NOT EXISTS idx_forge_alert_rules_labels_gin
-    ON forge_alert_rules USING GIN (labels);
-CREATE INDEX IF NOT EXISTS idx_forge_alerts_labels_gin
-    ON forge_alerts USING GIN (labels);
-CREATE INDEX IF NOT EXISTS idx_forge_alerts_annotations_gin
-    ON forge_alerts USING GIN (annotations);
 
 -- Enable reactivity on job/workflow tables for WebSocket subscriptions
 SELECT forge_enable_reactivity('forge_jobs');
