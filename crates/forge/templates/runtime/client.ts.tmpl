@@ -101,7 +101,7 @@ export class ForgeClient {
     const params = new URLSearchParams();
     if (token) params.set("token", token);
 
-    const sseUrl = `${this.config.url}/events${params.toString() ? `?${params}` : ""}`;
+    const sseUrl = `${this.config.url}/_api/events${params.toString() ? `?${params}` : ""}`;
 
     return new Promise((resolve) => {
       // Check again after any async work
@@ -231,7 +231,7 @@ export class ForgeClient {
 
     if (hasFiles) {
       const formData = this.buildFormData(args);
-      response = await fetch(`${this.config.url}/rpc/${functionName}/upload`, {
+      response = await fetch(`${this.config.url}/_api/rpc/${functionName}/upload`, {
         method: "POST",
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: formData,
@@ -242,7 +242,7 @@ export class ForgeClient {
           ? null
           : args;
 
-      response = await fetch(`${this.config.url}/rpc/${functionName}`, {
+      response = await fetch(`${this.config.url}/_api/rpc/${functionName}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -307,7 +307,7 @@ export class ForgeClient {
     args: unknown
   ): Promise<{ success: boolean; data?: unknown; error?: { code: string; message: string } }> {
     const token = await this.getToken();
-    const response = await fetch(`${this.config.url}/subscribe`, {
+    const response = await fetch(`${this.config.url}/_api/subscribe`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -333,7 +333,7 @@ export class ForgeClient {
 
   private async unregisterSseSubscription(id: string): Promise<void> {
     const token = await this.getToken();
-    await fetch(`${this.config.url}/unsubscribe`, {
+    await fetch(`${this.config.url}/_api/unsubscribe`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -349,7 +349,7 @@ export class ForgeClient {
   async _registerJob(clientSubId: string, jobId: string): Promise<void> {
     if (!this.sessionId) return;
     const token = await this.getToken();
-    await fetch(`${this.config.url}/subscribe-job`, {
+    await fetch(`${this.config.url}/_api/subscribe-job`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -366,7 +366,7 @@ export class ForgeClient {
   async _registerWorkflow(clientSubId: string, workflowId: string): Promise<void> {
     if (!this.sessionId) return;
     const token = await this.getToken();
-    await fetch(`${this.config.url}/subscribe-workflow`, {
+    await fetch(`${this.config.url}/_api/subscribe-workflow`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

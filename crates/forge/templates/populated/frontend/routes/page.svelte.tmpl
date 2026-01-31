@@ -50,13 +50,13 @@
   }
 
   async function fetchWebhooks() {
-    const res = await fetch(`${apiUrl}/_api/webhooks`);
+    const res = await fetch(`${apiUrl}/_api/dashboard-webhooks`);
     const json = await res.json();
     if (json.success) webhooks = json.data || [];
   }
 
   async function triggerWebhook(webhook: Webhook) {
-    const res = await fetch(`${apiUrl}/_api/webhooks/${webhook.name}/trigger`, {
+    const res = await fetch(`${apiUrl}/_api/dashboard-webhooks/${webhook.name}/trigger`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

@@ -459,10 +459,17 @@ impl Forge {
                 reactor_handle = Some(reactor);
             }
 
-            // Build API router: gateway + webhooks + dashboard API
-            let mut api_router = gateway.router();
+            // Build API router: gateway + dashboard API (all under /_api)
+            let api_router = gateway
+                .router()
+                .merge(create_api_router(dashboard_state.clone()));
 
-            // Mount webhook routes (bypasses gateway auth middleware)
+            // Build final router with dashboard pages and API
+            let mut router = Router::new()
+                .nest("/_dashboard", create_dashboard_router(dashboard_state))
+                .nest("/_api", api_router);
+
+            // Mount webhook routes under /_api (bypasses gateway auth middleware)
             if !self.webhook_registry.is_empty() {
                 use axum::routing::post;
 
@@ -471,8 +478,8 @@ impl Forge {
                         .with_job_dispatcher(job_dispatcher.clone()),
                 );
 
-                api_router = api_router.route(
-                    "/webhooks/{*path}",
+                router = router.route(
+                    "/_api/webhooks/{*path}",
                     post(webhook_handler).with_state(webhook_state),
                 );
 
@@ -481,14 +488,6 @@ impl Forge {
                     self.webhook_registry.paths().collect::<Vec<_>>()
                 );
             }
-
-            // Merge dashboard API routes
-            api_router = api_router.merge(create_api_router(dashboard_state.clone()));
-
-            // Build final router with dashboard pages and API
-            let mut router = Router::new()
-                .nest("/_dashboard", create_dashboard_router(dashboard_state))
-                .nest("/_api", api_router);
 
             // Add frontend handler as fallback if configured
             if let Some(handler) = self.frontend_handler {

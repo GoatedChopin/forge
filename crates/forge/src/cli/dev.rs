@@ -268,7 +268,7 @@ impl DevCommand {
         let mut backend_ready = false;
         for _ in 0..300 {
             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-            if let Ok(resp) = reqwest::get("http://localhost:8080/ready").await {
+            if let Ok(resp) = reqwest::get("http://localhost:8080/_api/ready").await {
                 if resp.status().is_success() {
                     println!(
                         "    {} Backend running on http://localhost:8080",

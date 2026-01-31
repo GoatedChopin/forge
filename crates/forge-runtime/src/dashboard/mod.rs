@@ -155,11 +155,11 @@ pub fn create_api_router(state: DashboardState) -> Router {
         // Daemons API
         .route("/daemons", get(api::list_daemons))
         .route("/daemons/registered", get(api::list_registered_daemons))
-        // Webhooks API
-        .route("/webhooks", get(api::list_webhooks))
-        .route("/webhooks/registered", get(api::list_registered_webhooks))
-        .route("/webhooks/events", get(api::list_webhook_events))
-        .route("/webhooks/{name}/trigger", post(api::trigger_webhook))
+        // Dashboard Webhooks API (prefixed to avoid conflict with actual webhook handler)
+        .route("/dashboard-webhooks", get(api::list_webhooks))
+        .route("/dashboard-webhooks/registered", get(api::list_registered_webhooks))
+        .route("/dashboard-webhooks/events", get(api::list_webhook_events))
+        .route("/dashboard-webhooks/{name}/trigger", post(api::trigger_webhook))
         .layer(cors)
         .with_state(state)
 }
