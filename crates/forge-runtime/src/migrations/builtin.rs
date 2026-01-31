@@ -6,7 +6,7 @@
 //!
 //! # Migration Naming
 //!
-//! - System migrations: `__forge_v001`, `__forge_v002`, etc.
+//! - System migrations: `__forge_v001`, `__forge_v002`, etc. (currently only v001)
 //! - User migrations: `0001_xxx`, `0002_xxx`, etc.
 //!
 //! System migrations are always applied before user migrations, regardless of
@@ -23,12 +23,8 @@ pub const SYSTEM_MIGRATION_PREFIX: &str = "__forge_v";
 pub const LEGACY_MIGRATION_NAME: &str = "0000_forge_internal";
 
 /// System migration v001: Initial FORGE schema.
-/// Creates all core tables for jobs, workflows, crons, observability, etc.
+/// Creates all core tables for jobs, workflows, crons, observability, daemons, webhooks, etc.
 const V001_INITIAL: &str = include_str!("../../migrations/system/v001_initial.sql");
-
-/// System migration v002: Daemons and webhooks.
-/// Adds tables for daemon tracking and webhook idempotency.
-const V002_DAEMON_WEBHOOK: &str = include_str!("../../migrations/system/v002_daemon_webhook.sql");
 
 /// A system migration with a version number.
 #[derive(Debug, Clone)]
@@ -57,18 +53,11 @@ impl SystemMigration {
 ///
 /// These are applied in order before any user migrations.
 pub fn get_system_migrations() -> Vec<SystemMigration> {
-    vec![
-        SystemMigration {
-            version: 1,
-            sql: V001_INITIAL,
-            description: "Initial FORGE schema with jobs, workflows, crons, and observability",
-        },
-        SystemMigration {
-            version: 2,
-            sql: V002_DAEMON_WEBHOOK,
-            description: "Daemon tracking and webhook idempotency tables",
-        },
-    ]
+    vec![SystemMigration {
+        version: 1,
+        sql: V001_INITIAL,
+        description: "Initial FORGE schema with jobs, workflows, crons, observability, daemons, and webhooks",
+    }]
 }
 
 /// Get system migrations as Migration structs.
@@ -147,6 +136,8 @@ mod tests {
         assert!(sql.contains("CREATE TABLE IF NOT EXISTS forge_subscriptions"));
         assert!(sql.contains("CREATE TABLE IF NOT EXISTS forge_alert_rules"));
         assert!(sql.contains("CREATE TABLE IF NOT EXISTS forge_alerts"));
+        assert!(sql.contains("CREATE TABLE IF NOT EXISTS forge_daemons"));
+        assert!(sql.contains("CREATE TABLE IF NOT EXISTS forge_webhook_events"));
     }
 
     #[test]

@@ -19,6 +19,7 @@ use std::time::Duration;
 use axum::body::Body;
 use axum::http::Request;
 use axum::response::Response;
+use axum::Router;
 use tokio::sync::broadcast;
 
 use forge_core::cluster::{LeaderRole, NodeId, NodeInfo, NodeRole, NodeStatus};
@@ -458,9 +459,10 @@ impl Forge {
                 reactor_handle = Some(reactor);
             }
 
-            let mut router = gateway.router();
+            // Build API router: gateway + webhooks + dashboard API
+            let mut api_router = gateway.router();
 
-            // Mount webhook routes (bypasses auth middleware)
+            // Mount webhook routes (bypasses gateway auth middleware)
             if !self.webhook_registry.is_empty() {
                 use axum::routing::post;
 
@@ -469,7 +471,7 @@ impl Forge {
                         .with_job_dispatcher(job_dispatcher.clone()),
                 );
 
-                router = router.route(
+                api_router = api_router.route(
                     "/webhooks/{*path}",
                     post(webhook_handler).with_state(webhook_state),
                 );
@@ -480,13 +482,13 @@ impl Forge {
                 );
             }
 
-            // Mount dashboard at /_dashboard and API at /_api
-            router = router
-                .nest(
-                    "/_dashboard",
-                    create_dashboard_router(dashboard_state.clone()),
-                )
-                .nest("/_api", create_api_router(dashboard_state));
+            // Merge dashboard API routes
+            api_router = api_router.merge(create_api_router(dashboard_state.clone()));
+
+            // Build final router with dashboard pages and API
+            let mut router = Router::new()
+                .nest("/_dashboard", create_dashboard_router(dashboard_state))
+                .nest("/_api", api_router);
 
             // Add frontend handler as fallback if configured
             if let Some(handler) = self.frontend_handler {
