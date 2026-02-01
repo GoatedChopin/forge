@@ -72,6 +72,7 @@ pub mod prelude {
     pub use forge_core::job::{ForgeJob, JobContext, JobPriority};
     pub use forge_core::realtime::Delta;
     pub use forge_core::schema::{FieldDef, ModelMeta, SchemaRegistry, TableDef};
+    pub use forge_core::types::Upload;
     pub use forge_core::webhook::{ForgeWebhook, WebhookContext, WebhookResult, WebhookSignature};
     pub use forge_core::workflow::{ForgeWorkflow, WorkflowContext};
 

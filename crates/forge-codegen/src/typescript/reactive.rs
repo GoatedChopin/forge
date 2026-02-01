@@ -150,6 +150,9 @@ fn rust_type_to_ts_inner(rust_type: &RustType, is_return: bool) -> String {
             if name == "()" {
                 return "void".to_string();
             }
+            if name == "Upload" {
+                return "File | Blob".to_string();
+            }
             if let Some(inner) = name.strip_prefix("Vec<").and_then(|s| s.strip_suffix('>')) {
                 return format!("{}[]", inner);
             }
