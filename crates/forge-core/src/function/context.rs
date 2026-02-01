@@ -1,10 +1,94 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
+use sqlx::postgres::{PgArguments, PgQueryResult, PgRow};
+use sqlx::{FromRow, Postgres, Transaction};
+use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
 
 use super::dispatch::{JobDispatch, WorkflowDispatch};
 use crate::env::{EnvAccess, EnvProvider, RealEnvProvider};
+use crate::job::JobInfo;
+
+/// Abstracts over pool and transaction connections so handlers can work with either.
+pub enum DbConn<'a> {
+    Pool(&'a sqlx::PgPool),
+    Transaction(Arc<AsyncMutex<Transaction<'static, Postgres>>>),
+}
+
+impl DbConn<'_> {
+    pub async fn fetch_one<'q, O>(
+        &self,
+        query: sqlx::query::QueryAs<'q, Postgres, O, PgArguments>,
+    ) -> sqlx::Result<O>
+    where
+        O: Send + Unpin + for<'r> FromRow<'r, PgRow>,
+    {
+        match self {
+            DbConn::Pool(pool) => query.fetch_one(*pool).await,
+            DbConn::Transaction(tx) => query.fetch_one(&mut **tx.lock().await).await,
+        }
+    }
+
+    pub async fn fetch_optional<'q, O>(
+        &self,
+        query: sqlx::query::QueryAs<'q, Postgres, O, PgArguments>,
+    ) -> sqlx::Result<Option<O>>
+    where
+        O: Send + Unpin + for<'r> FromRow<'r, PgRow>,
+    {
+        match self {
+            DbConn::Pool(pool) => query.fetch_optional(*pool).await,
+            DbConn::Transaction(tx) => query.fetch_optional(&mut **tx.lock().await).await,
+        }
+    }
+
+    pub async fn fetch_all<'q, O>(
+        &self,
+        query: sqlx::query::QueryAs<'q, Postgres, O, PgArguments>,
+    ) -> sqlx::Result<Vec<O>>
+    where
+        O: Send + Unpin + for<'r> FromRow<'r, PgRow>,
+    {
+        match self {
+            DbConn::Pool(pool) => query.fetch_all(*pool).await,
+            DbConn::Transaction(tx) => query.fetch_all(&mut **tx.lock().await).await,
+        }
+    }
+
+    pub async fn execute<'q>(
+        &self,
+        query: sqlx::query::Query<'q, Postgres, PgArguments>,
+    ) -> sqlx::Result<PgQueryResult> {
+        match self {
+            DbConn::Pool(pool) => query.execute(*pool).await,
+            DbConn::Transaction(tx) => query.execute(&mut **tx.lock().await).await,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingJob {
+    pub id: Uuid,
+    pub job_type: String,
+    pub args: serde_json::Value,
+    pub priority: i32,
+    pub max_attempts: i32,
+    pub worker_capability: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingWorkflow {
+    pub id: Uuid,
+    pub workflow_name: String,
+    pub input: serde_json::Value,
+}
+
+#[derive(Default)]
+pub struct OutboxBuffer {
+    pub jobs: Vec<PendingJob>,
+    pub workflows: Vec<PendingWorkflow>,
+}
 
 /// Authentication context available to all functions.
 #[derive(Debug, Clone)]
@@ -231,6 +315,9 @@ impl EnvAccess for QueryContext {
     }
 }
 
+/// Callback type for looking up job info by name.
+pub type JobInfoLookup = Arc<dyn Fn(&str) -> Option<JobInfo> + Send + Sync>;
+
 /// Context for mutation functions (transactional database access).
 pub struct MutationContext {
     /// Authentication context.
@@ -247,6 +334,12 @@ pub struct MutationContext {
     workflow_dispatch: Option<Arc<dyn WorkflowDispatch>>,
     /// Environment variable provider.
     env_provider: Arc<dyn EnvProvider>,
+    /// Transaction handle for transactional mutations.
+    tx: Option<Arc<AsyncMutex<Transaction<'static, Postgres>>>>,
+    /// Outbox buffer for jobs/workflows dispatched during transaction.
+    outbox: Option<Arc<Mutex<OutboxBuffer>>>,
+    /// Job info lookup for transactional dispatch.
+    job_info_lookup: Option<JobInfoLookup>,
 }
 
 impl MutationContext {
@@ -260,6 +353,9 @@ impl MutationContext {
             job_dispatch: None,
             workflow_dispatch: None,
             env_provider: Arc::new(RealEnvProvider::new()),
+            tx: None,
+            outbox: None,
+            job_info_lookup: None,
         }
     }
 
@@ -280,6 +376,9 @@ impl MutationContext {
             job_dispatch,
             workflow_dispatch,
             env_provider: Arc::new(RealEnvProvider::new()),
+            tx: None,
+            outbox: None,
+            job_info_lookup: None,
         }
     }
 
@@ -301,66 +400,132 @@ impl MutationContext {
             job_dispatch,
             workflow_dispatch,
             env_provider,
+            tx: None,
+            outbox: None,
+            job_info_lookup: None,
         }
     }
 
-    /// Get a reference to the database pool.
-    pub fn db(&self) -> &sqlx::PgPool {
+    /// Returns handles to transaction and outbox for the caller to commit/flush.
+    pub fn with_transaction(
+        db_pool: sqlx::PgPool,
+        tx: Transaction<'static, Postgres>,
+        auth: AuthContext,
+        request: RequestMetadata,
+        http_client: reqwest::Client,
+        job_info_lookup: JobInfoLookup,
+    ) -> (
+        Self,
+        Arc<AsyncMutex<Transaction<'static, Postgres>>>,
+        Arc<Mutex<OutboxBuffer>>,
+    ) {
+        let tx_handle = Arc::new(AsyncMutex::new(tx));
+        let outbox = Arc::new(Mutex::new(OutboxBuffer::default()));
+
+        let ctx = Self {
+            auth,
+            request,
+            db_pool,
+            http_client,
+            job_dispatch: None,
+            workflow_dispatch: None,
+            env_provider: Arc::new(RealEnvProvider::new()),
+            tx: Some(tx_handle.clone()),
+            outbox: Some(outbox.clone()),
+            job_info_lookup: Some(job_info_lookup),
+        };
+
+        (ctx, tx_handle, outbox)
+    }
+
+    pub fn is_transactional(&self) -> bool {
+        self.tx.is_some()
+    }
+
+    pub fn db(&self) -> DbConn<'_> {
+        match &self.tx {
+            Some(tx) => DbConn::Transaction(tx.clone()),
+            None => DbConn::Pool(&self.db_pool),
+        }
+    }
+
+    /// Direct pool access for operations that cannot run inside a transaction.
+    pub fn pool(&self) -> &sqlx::PgPool {
         &self.db_pool
     }
 
-    /// Get a reference to the HTTP client.
     pub fn http(&self) -> &reqwest::Client {
         &self.http_client
     }
 
-    /// Get the authenticated user ID or return an error.
     pub fn require_user_id(&self) -> crate::error::Result<Uuid> {
         self.auth.require_user_id()
     }
 
-    /// Like `require_user_id()` but for non-UUID auth providers.
     pub fn require_subject(&self) -> crate::error::Result<&str> {
         self.auth.require_subject()
     }
 
-    /// Dispatch a background job.
-    ///
-    /// # Arguments
-    /// * `job_type` - The registered name of the job type
-    /// * `args` - The arguments for the job (will be serialized to JSON)
-    ///
-    /// # Returns
-    /// The UUID of the dispatched job, or an error if dispatch is not available.
+    /// In transactional mode, buffers for atomic commit; otherwise dispatches immediately.
     pub async fn dispatch_job<T: serde::Serialize>(
         &self,
         job_type: &str,
         args: T,
     ) -> crate::error::Result<Uuid> {
+        let args_json = serde_json::to_value(args)?;
+
+        // Transactional mode: buffer the job for atomic commit
+        if let (Some(outbox), Some(job_info_lookup)) = (&self.outbox, &self.job_info_lookup) {
+            let job_info = job_info_lookup(job_type).ok_or_else(|| {
+                crate::error::ForgeError::NotFound(format!("Job type '{}' not found", job_type))
+            })?;
+
+            let pending = PendingJob {
+                id: Uuid::new_v4(),
+                job_type: job_type.to_string(),
+                args: args_json,
+                priority: job_info.priority.as_i32(),
+                max_attempts: job_info.retry.max_attempts as i32,
+                worker_capability: job_info.worker_capability.map(|s| s.to_string()),
+            };
+
+            let job_id = pending.id;
+            outbox.lock().unwrap().jobs.push(pending);
+            return Ok(job_id);
+        }
+
+        // Non-transactional mode: dispatch immediately
         let dispatcher = self.job_dispatch.as_ref().ok_or_else(|| {
             crate::error::ForgeError::Internal("Job dispatch not available".into())
         })?;
-        let args_json = serde_json::to_value(args)?;
         dispatcher.dispatch_by_name(job_type, args_json).await
     }
 
-    /// Start a workflow.
-    ///
-    /// # Arguments
-    /// * `workflow_name` - The registered name of the workflow
-    /// * `input` - The input for the workflow (will be serialized to JSON)
-    ///
-    /// # Returns
-    /// The UUID of the started workflow run, or an error if dispatch is not available.
+    /// In transactional mode, buffers for atomic commit; otherwise starts immediately.
     pub async fn start_workflow<T: serde::Serialize>(
         &self,
         workflow_name: &str,
         input: T,
     ) -> crate::error::Result<Uuid> {
+        let input_json = serde_json::to_value(input)?;
+
+        // Transactional mode: buffer the workflow for atomic commit
+        if let Some(outbox) = &self.outbox {
+            let pending = PendingWorkflow {
+                id: Uuid::new_v4(),
+                workflow_name: workflow_name.to_string(),
+                input: input_json,
+            };
+
+            let workflow_id = pending.id;
+            outbox.lock().unwrap().workflows.push(pending);
+            return Ok(workflow_id);
+        }
+
+        // Non-transactional mode: start immediately
         let dispatcher = self.workflow_dispatch.as_ref().ok_or_else(|| {
             crate::error::ForgeError::Internal("Workflow dispatch not available".into())
         })?;
-        let input_json = serde_json::to_value(input)?;
         dispatcher.start_by_name(workflow_name, input_json).await
     }
 }

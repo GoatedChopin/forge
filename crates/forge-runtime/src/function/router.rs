@@ -1,15 +1,19 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use chrono::Utc;
 use forge_core::{
     AuthContext, ForgeError, FunctionInfo, FunctionKind, JobDispatch, MutationContext,
-    QueryContext, RequestMetadata, Result, WorkflowDispatch,
+    OutboxBuffer, PendingJob, PendingWorkflow, QueryContext, RequestMetadata, Result,
+    WorkflowDispatch,
+    job::JobStatus,
     rate_limit::{RateLimitConfig, RateLimitKey},
+    workflow::WorkflowStatus,
 };
 use serde_json::Value;
 
 use super::cache::QueryCache;
-use super::registry::{FunctionEntry, FunctionRegistry};
+use super::registry::{BoxedMutationFn, FunctionEntry, FunctionRegistry};
 use crate::rate_limit::RateLimiter;
 
 /// Result of routing a function call.
@@ -80,7 +84,6 @@ impl FunctionRouter {
         self
     }
 
-    /// Route and execute a function call.
     pub async fn route(
         &self,
         function_name: &str,
@@ -88,12 +91,8 @@ impl FunctionRouter {
         auth: AuthContext,
         request: RequestMetadata,
     ) -> Result<RouteResult> {
-        // First, try to find in the function registry (queries/mutations)
         if let Some(entry) = self.registry.get(function_name) {
-            // Check authorization
             self.check_auth(entry.info(), &auth)?;
-
-            // Check rate limit
             self.check_rate_limit(entry.info(), function_name, &auth, &request)
                 .await?;
 
@@ -122,22 +121,26 @@ impl FunctionRouter {
                         Ok(RouteResult::Query(result))
                     }
                 }
-                FunctionEntry::Mutation { handler, .. } => {
-                    let ctx = MutationContext::with_dispatch(
-                        self.db_pool.clone(),
-                        auth,
-                        request,
-                        self.http_client.clone(),
-                        self.job_dispatcher.clone(),
-                        self.workflow_dispatcher.clone(),
-                    );
-                    let result = handler(&ctx, args).await?;
-                    Ok(RouteResult::Mutation(result))
+                FunctionEntry::Mutation { handler, info } => {
+                    if info.transactional {
+                        self.execute_transactional(handler, args, auth, request)
+                            .await
+                    } else {
+                        let ctx = MutationContext::with_dispatch(
+                            self.db_pool.clone(),
+                            auth,
+                            request,
+                            self.http_client.clone(),
+                            self.job_dispatcher.clone(),
+                            self.workflow_dispatcher.clone(),
+                        );
+                        let result = handler(&ctx, args).await?;
+                        Ok(RouteResult::Mutation(result))
+                    }
                 }
             };
         }
 
-        // Try job dispatcher - check auth using job info
         if let Some(ref job_dispatcher) = self.job_dispatcher {
             if let Some(job_info) = job_dispatcher.get_info(function_name) {
                 self.check_job_auth(&job_info, &auth)?;
@@ -154,7 +157,6 @@ impl FunctionRouter {
             }
         }
 
-        // Try workflow dispatcher - check auth using workflow info
         if let Some(ref workflow_dispatcher) = self.workflow_dispatcher {
             if let Some(workflow_info) = workflow_dispatcher.get_info(function_name) {
                 self.check_workflow_auth(&workflow_info, &auth)?;
@@ -173,20 +175,17 @@ impl FunctionRouter {
             }
         }
 
-        // Nothing found
         Err(ForgeError::NotFound(format!(
             "Function '{}' not found",
             function_name
         )))
     }
 
-    /// Check authorization for a function call.
     fn check_auth(&self, info: &FunctionInfo, auth: &AuthContext) -> Result<()> {
         if info.is_public {
             return Ok(());
         }
 
-        // Not public - requires authentication
         if !auth.is_authenticated() {
             return Err(ForgeError::Unauthorized("Authentication required".into()));
         }
@@ -200,13 +199,11 @@ impl FunctionRouter {
         Ok(())
     }
 
-    /// Check authorization for a job dispatch.
     fn check_job_auth(&self, info: &forge_core::job::JobInfo, auth: &AuthContext) -> Result<()> {
         if info.is_public {
             return Ok(());
         }
 
-        // Not public - requires authentication
         if !auth.is_authenticated() {
             return Err(ForgeError::Unauthorized("Authentication required".into()));
         }
@@ -220,7 +217,6 @@ impl FunctionRouter {
         Ok(())
     }
 
-    /// Check authorization for a workflow dispatch.
     fn check_workflow_auth(
         &self,
         info: &forge_core::workflow::WorkflowInfo,
@@ -230,7 +226,6 @@ impl FunctionRouter {
             return Ok(());
         }
 
-        // Not public - requires authentication
         if !auth.is_authenticated() {
             return Err(ForgeError::Unauthorized("Authentication required".into()));
         }
@@ -294,6 +289,122 @@ impl FunctionRouter {
     /// Check if a function exists.
     pub fn has_function(&self, function_name: &str) -> bool {
         self.registry.get(function_name).is_some()
+    }
+
+    async fn execute_transactional(
+        &self,
+        handler: &BoxedMutationFn,
+        args: Value,
+        auth: AuthContext,
+        request: RequestMetadata,
+    ) -> Result<RouteResult> {
+        let tx = self
+            .db_pool
+            .begin()
+            .await
+            .map_err(|e| ForgeError::Database(e.to_string()))?;
+
+        let job_dispatcher = self.job_dispatcher.clone();
+        let job_lookup: forge_core::JobInfoLookup =
+            Arc::new(move |name: &str| job_dispatcher.as_ref().and_then(|d| d.get_info(name)));
+
+        let (ctx, tx_handle, outbox) = MutationContext::with_transaction(
+            self.db_pool.clone(),
+            tx,
+            auth,
+            request,
+            self.http_client.clone(),
+            job_lookup,
+        );
+
+        match handler(&ctx, args).await {
+            Ok(value) => {
+                let buffer = {
+                    let guard = outbox.lock().unwrap();
+                    OutboxBuffer {
+                        jobs: guard.jobs.clone(),
+                        workflows: guard.workflows.clone(),
+                    }
+                };
+
+                let mut tx = Arc::try_unwrap(tx_handle)
+                    .map_err(|_| ForgeError::Internal("Transaction still in use".into()))?
+                    .into_inner();
+
+                for job in &buffer.jobs {
+                    Self::insert_job(&mut tx, job).await?;
+                }
+
+                for workflow in &buffer.workflows {
+                    Self::insert_workflow(&mut tx, workflow).await?;
+                }
+
+                tx.commit()
+                    .await
+                    .map_err(|e| ForgeError::Database(e.to_string()))?;
+
+                Ok(RouteResult::Mutation(value))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn insert_job(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        job: &PendingJob,
+    ) -> Result<()> {
+        let now = Utc::now();
+        sqlx::query(
+            r#"
+            INSERT INTO forge_jobs (
+                id, job_type, input, status, priority, attempts, max_attempts,
+                worker_capability, scheduled_at, created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            "#,
+        )
+        .bind(job.id)
+        .bind(&job.job_type)
+        .bind(&job.args)
+        .bind(JobStatus::Pending.as_str())
+        .bind(job.priority)
+        .bind(0i32)
+        .bind(job.max_attempts)
+        .bind(&job.worker_capability)
+        .bind(now)
+        .bind(now)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| ForgeError::Database(e.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn insert_workflow(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        workflow: &PendingWorkflow,
+    ) -> Result<()> {
+        let now = Utc::now();
+        sqlx::query(
+            r#"
+            INSERT INTO forge_workflow_runs (
+                id, workflow_name, input, status, current_step,
+                step_results, started_at, trace_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            "#,
+        )
+        .bind(workflow.id)
+        .bind(&workflow.workflow_name)
+        .bind(&workflow.input)
+        .bind(WorkflowStatus::Created.as_str())
+        .bind(Option::<String>::None)
+        .bind(serde_json::json!({}))
+        .bind(now)
+        .bind(workflow.id.to_string())
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| ForgeError::Database(e.to_string()))?;
+
+        Ok(())
     }
 }
 

@@ -26,8 +26,9 @@ pub use daemon::{DaemonContext, DaemonInfo, DaemonStatus, ForgeDaemon};
 pub use env::{EnvAccess, EnvProvider, MockEnvProvider, RealEnvProvider};
 pub use error::{ForgeError, Result};
 pub use function::{
-    AuthContext, ForgeMutation, ForgeQuery, FunctionInfo, FunctionKind, JobDispatch,
-    MutationContext, QueryContext, RequestMetadata, WorkflowDispatch,
+    AuthContext, DbConn, ForgeMutation, ForgeQuery, FunctionInfo, FunctionKind, JobDispatch,
+    JobInfoLookup, MutationContext, OutboxBuffer, PendingJob, PendingWorkflow, QueryContext,
+    RequestMetadata, WorkflowDispatch,
 };
 pub use job::{ForgeJob, JobContext, JobInfo, JobPriority, JobStatus, RetryConfig};
 pub use rate_limit::{RateLimitConfig, RateLimitHeaders, RateLimitKey, RateLimitResult};
