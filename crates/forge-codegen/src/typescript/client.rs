@@ -127,13 +127,51 @@ export class ForgeClient {
   async call<T>(functionName: string, args: unknown): Promise<T> {
     const token = await this.getToken();
 
-    const response = await fetch(`${this.config.url}/rpc/${functionName}`, {
+    const response = await fetch(`${this.config.url}/_api/rpc/${functionName}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
       },
       body: JSON.stringify({ args }),
+    });
+
+    const result: RpcResponse<T> = await response.json();
+
+    if (!result.success || result.error) {
+      const error = result.error || { code: 'UNKNOWN', message: 'Unknown error' };
+      if (error.code === 'UNAUTHORIZED' && this.config.onAuthError) {
+        this.config.onAuthError(error);
+      }
+      throw new ForgeClientError(error.code, error.message, error.details);
+    }
+
+    return result.data as T;
+  }
+
+  // Call a remote function with file uploads (multipart/form-data)
+  async callWithFiles<T>(functionName: string, args: Record<string, unknown>): Promise<T> {
+    const token = await this.getToken();
+    const formData = new FormData();
+    const jsonArgs: Record<string, unknown> = {};
+
+    for (const [key, value] of Object.entries(args)) {
+      if (value instanceof File || value instanceof Blob) {
+        formData.append(key, value);
+      } else {
+        jsonArgs[key] = value;
+      }
+    }
+
+    formData.append('_json', JSON.stringify(jsonArgs));
+
+    const response = await fetch(`${this.config.url}/_api/rpc/${functionName}/upload`, {
+      method: 'POST',
+      headers: {
+        // No Content-Type header - browser sets it with boundary for multipart
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+      },
+      body: formData,
     });
 
     const result: RpcResponse<T> = await response.json();
@@ -299,6 +337,7 @@ mod tests {
         assert!(content.contains("connect()"));
         assert!(content.contains("disconnect()"));
         assert!(content.contains("call<T>"));
+        assert!(content.contains("callWithFiles<T>"));
         assert!(content.contains("subscribe<T>"));
     }
 }

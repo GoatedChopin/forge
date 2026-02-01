@@ -8,6 +8,7 @@ use tracing::{debug, error, info, trace, warn};
 
 use super::registry::FunctionRegistry;
 use super::router::{FunctionRouter, RouteResult};
+use crate::db::Database;
 
 /// Executes functions with timeout and error handling.
 pub struct FunctionExecutor {
@@ -18,9 +19,9 @@ pub struct FunctionExecutor {
 
 impl FunctionExecutor {
     /// Create a new function executor.
-    pub fn new(registry: Arc<FunctionRegistry>, db_pool: sqlx::PgPool) -> Self {
+    pub fn new(registry: Arc<FunctionRegistry>, db: Database) -> Self {
         Self {
-            router: FunctionRouter::new(Arc::clone(&registry), db_pool),
+            router: FunctionRouter::new(Arc::clone(&registry), db),
             registry,
             default_timeout: Duration::from_secs(30),
         }
@@ -29,11 +30,11 @@ impl FunctionExecutor {
     /// Create a new function executor with custom timeout.
     pub fn with_timeout(
         registry: Arc<FunctionRegistry>,
-        db_pool: sqlx::PgPool,
+        db: Database,
         default_timeout: Duration,
     ) -> Self {
         Self {
-            router: FunctionRouter::new(Arc::clone(&registry), db_pool),
+            router: FunctionRouter::new(Arc::clone(&registry), db),
             registry,
             default_timeout,
         }
@@ -42,11 +43,11 @@ impl FunctionExecutor {
     /// Create a new function executor with dispatch capabilities.
     pub fn with_dispatch(
         registry: Arc<FunctionRegistry>,
-        db_pool: sqlx::PgPool,
+        db: Database,
         job_dispatcher: Option<Arc<dyn JobDispatch>>,
         workflow_dispatcher: Option<Arc<dyn WorkflowDispatch>>,
     ) -> Self {
-        let mut router = FunctionRouter::new(Arc::clone(&registry), db_pool);
+        let mut router = FunctionRouter::new(Arc::clone(&registry), db);
         if let Some(jd) = job_dispatcher {
             router = router.with_job_dispatcher(jd);
         }

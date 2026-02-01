@@ -276,6 +276,10 @@ fn parse_duration(s: &str) -> proc_macro2::TokenStream {
         let n: u64 = s.trim_end_matches('h').parse().unwrap_or(1);
         let secs = n * 3600;
         quote! { std::time::Duration::from_secs(#secs) }
+    } else if s.ends_with('d') {
+        let n: u64 = s.trim_end_matches('d').parse().unwrap_or(1);
+        let secs = n * 86400;
+        quote! { std::time::Duration::from_secs(#secs) }
     } else {
         let n: u64 = s.parse().unwrap_or(30);
         quote! { std::time::Duration::from_secs(#n) }

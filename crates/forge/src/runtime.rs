@@ -397,11 +397,14 @@ impl Forge {
                 auth: AuthConfig::from_forge_config(&self.config.auth),
             };
 
-            // Build gateway server
-            let gateway =
-                GatewayServer::new(gateway_config, self.function_registry.clone(), pool.clone())
-                    .with_job_dispatcher(job_dispatcher.clone())
-                    .with_workflow_dispatcher(workflow_executor.clone());
+            // Build gateway server (pass Database wrapper for read replica routing)
+            let gateway = GatewayServer::new(
+                gateway_config,
+                self.function_registry.clone(),
+                self.db.clone().expect("Database must be initialized"),
+            )
+            .with_job_dispatcher(job_dispatcher.clone())
+            .with_workflow_dispatcher(workflow_executor.clone());
 
             // Start the reactor for real-time updates
             let reactor = gateway.reactor();

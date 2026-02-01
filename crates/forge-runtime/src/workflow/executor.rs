@@ -81,7 +81,7 @@ impl WorkflowExecutor {
         // Execute workflow in background
         let registry = self.registry.clone();
         let pool = self.pool.clone();
-        let http_client = self.http_client.inner().clone();
+        let http_client = self.http_client.clone();
         let compensation_state = self.compensation_state.clone();
 
         tokio::spawn(async move {

@@ -147,6 +147,10 @@ fn parse_duration_to_secs(s: &str) -> Option<u64> {
     if s.is_empty() {
         return None;
     }
+    if let Some(num_str) = s.strip_suffix("ms") {
+        let num: u64 = num_str.parse().ok()?;
+        return Some(num / 1000);
+    }
     let (num_str, unit) = s.split_at(s.len() - 1);
     let num: u64 = num_str.parse().ok()?;
     match unit {

@@ -150,6 +150,18 @@ impl Database {
         }
     }
 
+    /// Create a Database wrapper from an existing pool (for testing).
+    #[cfg(test)]
+    pub fn from_pool(pool: PgPool) -> Self {
+        Self {
+            primary: Arc::new(pool),
+            replicas: Vec::new(),
+            config: DatabaseConfig::default(),
+            replica_counter: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            embedded: false,
+        }
+    }
+
     /// Check database connectivity.
     pub async fn health_check(&self) -> Result<()> {
         sqlx::query("SELECT 1")

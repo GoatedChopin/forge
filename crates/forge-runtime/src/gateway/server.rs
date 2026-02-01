@@ -12,6 +12,7 @@ use forge_core::cluster::NodeId;
 use forge_core::function::{JobDispatch, WorkflowDispatch};
 
 use super::auth::{AuthConfig, AuthMiddleware, auth_middleware};
+use crate::db::Database;
 use super::multipart::rpc_multipart_handler;
 use super::rpc::{RpcHandler, rpc_function_handler, rpc_handler};
 use super::sse::{
@@ -77,7 +78,7 @@ pub struct ReadinessState {
 pub struct GatewayServer {
     config: GatewayConfig,
     registry: FunctionRegistry,
-    db_pool: sqlx::PgPool,
+    db: Database,
     reactor: Arc<Reactor>,
     job_dispatcher: Option<Arc<dyn JobDispatch>>,
     workflow_dispatcher: Option<Arc<dyn WorkflowDispatch>>,
@@ -85,11 +86,11 @@ pub struct GatewayServer {
 
 impl GatewayServer {
     /// Create a new gateway server.
-    pub fn new(config: GatewayConfig, registry: FunctionRegistry, db_pool: sqlx::PgPool) -> Self {
+    pub fn new(config: GatewayConfig, registry: FunctionRegistry, db: Database) -> Self {
         let node_id = NodeId::new();
         let reactor = Arc::new(Reactor::new(
             node_id,
-            db_pool.clone(),
+            db.read_pool().clone(),
             registry.clone(),
             ReactorConfig::default(),
         ));
@@ -97,7 +98,7 @@ impl GatewayServer {
         Self {
             config,
             registry,
-            db_pool,
+            db,
             reactor,
             job_dispatcher: None,
             workflow_dispatcher: None,
@@ -125,7 +126,7 @@ impl GatewayServer {
     pub fn router(&self) -> Router {
         let rpc_handler_state = Arc::new(RpcHandler::with_dispatch(
             self.registry.clone(),
-            self.db_pool.clone(),
+            self.db.clone(),
             self.job_dispatcher.clone(),
             self.workflow_dispatcher.clone(),
         ));
@@ -163,7 +164,7 @@ impl GatewayServer {
 
         // Readiness state for DB health check
         let readiness_state = Arc::new(ReadinessState {
-            db_pool: self.db_pool.clone(),
+            db_pool: self.db.primary().clone(),
         });
 
         // Build the main router with middleware

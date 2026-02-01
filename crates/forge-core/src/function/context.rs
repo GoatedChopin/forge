@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use super::dispatch::{JobDispatch, WorkflowDispatch};
 use crate::env::{EnvAccess, EnvProvider, RealEnvProvider};
-use crate::http::{CircuitBreakerClient, CircuitBreakerConfig};
+use crate::http::CircuitBreakerClient;
 use crate::job::JobInfo;
 
 /// Abstracts over pool and transaction connections so handlers can work with either.

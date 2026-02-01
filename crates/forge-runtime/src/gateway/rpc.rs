@@ -10,6 +10,7 @@ use forge_core::function::{AuthContext, JobDispatch, RequestMetadata, WorkflowDi
 use super::request::RpcRequest;
 use super::response::{RpcError, RpcResponse};
 use super::tracing::TracingState;
+use crate::db::Database;
 use crate::function::{FunctionExecutor, FunctionRegistry};
 
 /// RPC handler for function invocations.
@@ -21,8 +22,8 @@ pub struct RpcHandler {
 
 impl RpcHandler {
     /// Create a new RPC handler.
-    pub fn new(registry: FunctionRegistry, db_pool: sqlx::PgPool) -> Self {
-        let executor = FunctionExecutor::new(Arc::new(registry), db_pool);
+    pub fn new(registry: FunctionRegistry, db: Database) -> Self {
+        let executor = FunctionExecutor::new(Arc::new(registry), db);
         Self {
             executor: Arc::new(executor),
         }
@@ -31,13 +32,13 @@ impl RpcHandler {
     /// Create a new RPC handler with dispatch capabilities.
     pub fn with_dispatch(
         registry: FunctionRegistry,
-        db_pool: sqlx::PgPool,
+        db: Database,
         job_dispatcher: Option<Arc<dyn JobDispatch>>,
         workflow_dispatcher: Option<Arc<dyn WorkflowDispatch>>,
     ) -> Self {
         let executor = FunctionExecutor::with_dispatch(
             Arc::new(registry),
-            db_pool,
+            db,
             job_dispatcher,
             workflow_dispatcher,
         );
@@ -155,8 +156,8 @@ mod tests {
 
     fn create_test_handler() -> RpcHandler {
         let registry = FunctionRegistry::new();
-        let db_pool = create_mock_pool();
-        RpcHandler::new(registry, db_pool)
+        let db = Database::from_pool(create_mock_pool());
+        RpcHandler::new(registry, db)
     }
 
     #[tokio::test]

@@ -703,10 +703,11 @@ impl Reactor {
         // Process change through invalidation engine for query subscriptions
         invalidation_engine.process_change(change.clone()).await;
 
-        // Flush all pending invalidations immediately for real-time updates
-        // Note: A more sophisticated approach would use the invalidation engine's run loop
-        // with proper debouncing for high-frequency changes
-        let invalidated = invalidation_engine.flush_all().await;
+        // Check for subscriptions ready to invalidate based on debounce windows:
+        // - 50ms quiet period after last change
+        // - 200ms max wait from first change
+        // This prevents flooding during high-frequency updates (bulk inserts, rapid edits)
+        let invalidated = invalidation_engine.check_pending().await;
 
         if invalidated.is_empty() {
             return;

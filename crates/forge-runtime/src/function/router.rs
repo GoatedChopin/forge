@@ -14,6 +14,7 @@ use serde_json::Value;
 
 use super::cache::QueryCache;
 use super::registry::{BoxedMutationFn, FunctionEntry, FunctionRegistry};
+use crate::db::Database;
 use crate::rate_limit::RateLimiter;
 
 /// Result of routing a function call.
@@ -31,7 +32,7 @@ pub enum RouteResult {
 /// Routes function calls to the appropriate handler.
 pub struct FunctionRouter {
     registry: Arc<FunctionRegistry>,
-    db_pool: sqlx::PgPool,
+    db: Database,
     http_client: CircuitBreakerClient,
     job_dispatcher: Option<Arc<dyn JobDispatch>>,
     workflow_dispatcher: Option<Arc<dyn WorkflowDispatch>>,
@@ -41,11 +42,11 @@ pub struct FunctionRouter {
 
 impl FunctionRouter {
     /// Create a new function router.
-    pub fn new(registry: Arc<FunctionRegistry>, db_pool: sqlx::PgPool) -> Self {
-        let rate_limiter = RateLimiter::new(db_pool.clone());
+    pub fn new(registry: Arc<FunctionRegistry>, db: Database) -> Self {
+        let rate_limiter = RateLimiter::new(db.primary().clone());
         Self {
             registry,
-            db_pool,
+            db,
             http_client: CircuitBreakerClient::with_defaults(reqwest::Client::new()),
             job_dispatcher: None,
             workflow_dispatcher: None,
@@ -57,13 +58,13 @@ impl FunctionRouter {
     /// Create a new function router with a custom HTTP client.
     pub fn with_http_client(
         registry: Arc<FunctionRegistry>,
-        db_pool: sqlx::PgPool,
+        db: Database,
         http_client: CircuitBreakerClient,
     ) -> Self {
-        let rate_limiter = RateLimiter::new(db_pool.clone());
+        let rate_limiter = RateLimiter::new(db.primary().clone());
         Self {
             registry,
-            db_pool,
+            db,
             http_client,
             job_dispatcher: None,
             workflow_dispatcher: None,
@@ -103,8 +104,9 @@ impl FunctionRouter {
                             return Ok(RouteResult::Query(cached));
                         }
 
-                        // Execute and cache result
-                        let ctx = QueryContext::new(self.db_pool.clone(), auth, request);
+                        // Execute and cache result (use read replica for queries)
+                        let ctx =
+                            QueryContext::new(self.db.read_pool().clone(), auth, request);
                         let result = handler(&ctx, args.clone()).await?;
 
                         self.query_cache.set(
@@ -116,7 +118,9 @@ impl FunctionRouter {
 
                         Ok(RouteResult::Query(result))
                     } else {
-                        let ctx = QueryContext::new(self.db_pool.clone(), auth, request);
+                        // Use read replica for queries
+                        let ctx =
+                            QueryContext::new(self.db.read_pool().clone(), auth, request);
                         let result = handler(&ctx, args).await?;
                         Ok(RouteResult::Query(result))
                     }
@@ -126,8 +130,9 @@ impl FunctionRouter {
                         self.execute_transactional(handler, args, auth, request)
                             .await
                     } else {
+                        // Use primary for mutations
                         let ctx = MutationContext::with_dispatch(
-                            self.db_pool.clone(),
+                            self.db.primary().clone(),
                             auth,
                             request,
                             self.http_client.clone(),
@@ -298,8 +303,9 @@ impl FunctionRouter {
         auth: AuthContext,
         request: RequestMetadata,
     ) -> Result<RouteResult> {
-        let tx = self
-            .db_pool
+        // Use primary for transactional mutations
+        let primary = self.db.primary();
+        let tx = primary
             .begin()
             .await
             .map_err(|e| ForgeError::Database(e.to_string()))?;
@@ -309,7 +315,7 @@ impl FunctionRouter {
             Arc::new(move |name: &str| job_dispatcher.as_ref().and_then(|d| d.get_info(name)));
 
         let (ctx, tx_handle, outbox) = MutationContext::with_transaction(
-            self.db_pool.clone(),
+            primary.clone(),
             tx,
             auth,
             request,

@@ -845,7 +845,7 @@ impl WorkflowContext {
     pub fn step<T, F, Fut>(&self, name: impl Into<String>, f: F) -> super::StepRunner<'_, T>
     where
         T: serde::Serialize + serde::de::DeserializeOwned + Clone + Send + Sync + 'static,
-        F: FnOnce() -> Fut + Send + 'static,
+        F: Fn() -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = crate::Result<T>> + Send + 'static,
     {
         super::StepRunner::new(self, name, f)

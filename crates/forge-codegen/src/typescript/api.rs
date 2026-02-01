@@ -54,6 +54,12 @@ impl ApiGenerator {
 
             let ts_name = to_camel_case(&func.name);
 
+            // Check if any argument contains an Upload type
+            let has_upload = func
+                .args
+                .iter()
+                .any(|arg| contains_upload(&arg.rust_type));
+
             match func.kind {
                 FunctionKind::Query => {
                     let result_type = rust_type_to_ts_return(&func.return_type);
@@ -64,6 +70,7 @@ impl ApiGenerator {
                         &args_type,
                         &result_type,
                         &func.name,
+                        false, // queries don't use file uploads
                     ));
                     subscriptions.push(gen_subscription_binding(
                         &ts_name,
@@ -82,6 +89,7 @@ impl ApiGenerator {
                         &args_type,
                         &result_type,
                         &func.name,
+                        has_upload,
                     ));
                 }
                 FunctionKind::Job => {
@@ -200,17 +208,29 @@ fn gen_rpc_binding(
     args_type: &str,
     result_type: &str,
     func_name: &str,
+    has_upload: bool,
 ) -> String {
+    let method = if has_upload { "callWithFiles" } else { "call" };
     if has_args {
         format!(
-            "export const {} = (args: {}): Promise<{}> =>\n  getForgeClient().call(\"{}\", args);",
-            ts_name, args_type, result_type, func_name
+            "export const {} = (args: {}): Promise<{}> =>\n  getForgeClient().{}(\"{}\", args);",
+            ts_name, args_type, result_type, method, func_name
         )
     } else {
         format!(
             "export const {} = (): Promise<{}> =>\n  getForgeClient().call(\"{}\", null);",
             ts_name, result_type, func_name
         )
+    }
+}
+
+/// Check if a RustType contains an Upload type (directly or nested).
+fn contains_upload(rust_type: &RustType) -> bool {
+    match rust_type {
+        RustType::Upload => true,
+        RustType::Option(inner) | RustType::Vec(inner) => contains_upload(inner),
+        RustType::Custom(name) => name == "Upload",
+        _ => false,
     }
 }
 
@@ -459,6 +479,41 @@ mod tests {
     fn test_upload_type() {
         // Upload should map to File | Blob for args
         assert_eq!(rust_type_to_ts(&RustType::Upload), "File | Blob");
+    }
+
+    #[test]
+    fn test_mutation_with_upload_uses_multipart() {
+        let generator = ApiGenerator::new();
+        let registry = SchemaRegistry::new();
+
+        // Mutation with Upload arg should use callWithFiles
+        let mut func =
+            FunctionDef::mutation("upload_avatar", RustType::Custom("User".to_string()));
+        func.args.push(FunctionArg::new("user_id", RustType::Uuid));
+        func.args.push(FunctionArg::new("file", RustType::Upload));
+        registry.register_function(func);
+
+        // Mutation without Upload should use regular call
+        let mut func = FunctionDef::mutation("update_name", RustType::Custom("User".to_string()));
+        func.args.push(FunctionArg::new("name", RustType::String));
+        registry.register_function(func);
+
+        let content = generator.generate(&registry).unwrap();
+
+        // Upload mutation should use callWithFiles
+        assert!(content.contains("getForgeClient().callWithFiles(\"upload_avatar\""));
+        // Non-upload mutation should use regular call
+        assert!(content.contains("getForgeClient().call(\"update_name\""));
+    }
+
+    #[test]
+    fn test_contains_upload() {
+        assert!(contains_upload(&RustType::Upload));
+        assert!(contains_upload(&RustType::Option(Box::new(RustType::Upload))));
+        assert!(contains_upload(&RustType::Vec(Box::new(RustType::Upload))));
+        assert!(contains_upload(&RustType::Custom("Upload".to_string())));
+        assert!(!contains_upload(&RustType::String));
+        assert!(!contains_upload(&RustType::Custom("User".to_string())));
     }
 
     #[test]

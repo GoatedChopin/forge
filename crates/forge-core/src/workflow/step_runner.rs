@@ -3,8 +3,11 @@
 //! Provides a chainable API for defining and executing workflow steps:
 //!
 //! ```ignore
-//! // Simple step
-//! let result = ctx.step("fetch_data", || async { fetch_data().await }).run().await?;
+//! // Simple step - returns Some(result) on success
+//! let result = ctx.step("fetch_data", || async { fetch_data().await })
+//!     .run()
+//!     .await?
+//!     .expect("required step always succeeds");
 //!
 //! // Step with timeout
 //! ctx.step("slow_op", || async { slow_operation().await })
@@ -23,6 +26,12 @@
 //!     .compensate(|result| async move { refund(&result.charge_id).await })
 //!     .run()
 //!     .await?;
+//!
+//! // Optional step - returns None on failure instead of propagating error
+//! let notification = ctx.step("send_notification", || async { notify_slack().await })
+//!     .optional()
+//!     .run()
+//!     .await?; // Returns Ok(None) if notification fails
 //! ```
 
 use std::future::Future;
@@ -142,13 +151,18 @@ where
     /// Mark step as optional.
     ///
     /// If an optional step fails, the workflow continues without triggering
-    /// compensation of previous steps.
+    /// compensation of previous steps. The step returns `Ok(None)` on failure
+    /// instead of propagating the error.
     ///
     /// ```ignore
-    /// ctx.step("send_notification", || async { notify_slack().await })
+    /// let result = ctx.step("send_notification", || async { notify_slack().await })
     ///     .optional()
     ///     .run()
-    ///     .await?; // Won't fail workflow if notification fails
+    ///     .await?; // Returns Ok(None) if notification fails
+    ///
+    /// if let Some(notification_id) = result {
+    ///     println!("Notification sent: {}", notification_id);
+    /// }
     /// ```
     pub fn optional(mut self) -> Self {
         self.optional = true;
@@ -158,8 +172,9 @@ where
     /// Execute the step.
     ///
     /// This runs the step with configured timeout, retry, and compensation settings.
-    /// Returns the step result or an error.
-    pub async fn run(mut self) -> Result<T> {
+    /// Returns `Ok(Some(result))` on success. For optional steps, returns `Ok(None)`
+    /// on failure instead of propagating the error.
+    pub async fn run(mut self) -> Result<Option<T>> {
         let step_fn = self
             .step_fn
             .take()
@@ -169,7 +184,7 @@ where
         if self.ctx.is_step_completed(&self.name) {
             if let Some(result) = self.ctx.get_step_result::<T>(&self.name) {
                 tracing::debug!(step = %self.name, "Step already completed, returning cached result");
-                return Ok(result);
+                return Ok(Some(result));
             }
         }
 
@@ -199,7 +214,7 @@ where
                         );
                     }
 
-                    return Ok(value);
+                    return Ok(Some(value));
                 }
                 Err(e) => {
                     last_error = Some(e);
@@ -232,6 +247,7 @@ where
                 attempts = total_attempts,
                 "Optional step failed after all retries, continuing workflow"
             );
+            return Ok(None);
         }
 
         Err(error)
