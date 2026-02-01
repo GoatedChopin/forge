@@ -32,19 +32,21 @@ pub async fn create_user(
     let now = Utc::now();
     let role = role.unwrap_or_default();
 
-    sqlx::query_as::<_, User>(
-        "INSERT INTO users (id, email, name, role, created_at, updated_at) \
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *",
-    )
-    .bind(id)
-    .bind(&email)
-    .bind(&name)
-    .bind(role)
-    .bind(now)
-    .bind(now)
-    .fetch_one(ctx.db())
-    .await
-    .map_err(Into::into)
+    ctx.db()
+        .fetch_one(
+            sqlx::query_as::<_, User>(
+                "INSERT INTO users (id, email, name, role, created_at, updated_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6) RETURNING *",
+            )
+            .bind(id)
+            .bind(&email)
+            .bind(&name)
+            .bind(role)
+            .bind(now)
+            .bind(now),
+        )
+        .await
+        .map_err(Into::into)
 }
 
 /// Update user with partial fields
@@ -56,30 +58,211 @@ pub async fn update_user(
     name: Option<String>,
     role: Option<UserRole>,
 ) -> Result<User> {
-    sqlx::query_as::<_, User>(
-        "UPDATE users SET \
-         email = COALESCE($2, email), \
-         name = COALESCE($3, name), \
-         role = COALESCE($4, role), \
-         updated_at = NOW() \
-         WHERE id = $1 RETURNING *",
-    )
-    .bind(id)
-    .bind(email)
-    .bind(name)
-    .bind(role)
-    .fetch_one(ctx.db())
-    .await
-    .map_err(Into::into)
+    ctx.db()
+        .fetch_one(
+            sqlx::query_as::<_, User>(
+                "UPDATE users SET \
+                 email = COALESCE($2, email), \
+                 name = COALESCE($3, name), \
+                 role = COALESCE($4, role), \
+                 updated_at = NOW() \
+                 WHERE id = $1 RETURNING *",
+            )
+            .bind(id)
+            .bind(email)
+            .bind(name)
+            .bind(role),
+        )
+        .await
+        .map_err(Into::into)
 }
 
 /// Delete user by ID
 #[forge::mutation(public)]
 pub async fn delete_user(ctx: &MutationContext, id: Uuid) -> Result<bool> {
-    let result = sqlx::query("DELETE FROM users WHERE id = $1")
-        .bind(id)
-        .execute(ctx.db())
+    let result = ctx
+        .db()
+        .execute(sqlx::query("DELETE FROM users WHERE id = $1").bind(id))
         .await?;
 
     Ok(result.rows_affected() > 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use forge::testing::{IsolatedTestDb, TestDatabase};
+    use forge::forge_core::function::{AuthContext, RequestMetadata};
+
+    async fn setup_db() -> IsolatedTestDb {
+        let base = TestDatabase::embedded().await.unwrap();
+        let db = base.isolated("users_test").await.unwrap();
+
+        // Create table directly (avoids forge_enable_reactivity in migrations)
+        sqlx::query(
+            "DO $$ BEGIN
+                CREATE TYPE user_role AS ENUM ('admin', 'member', 'guest');
+            EXCEPTION WHEN duplicate_object THEN NULL;
+            END $$"
+        )
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS users (
+                id UUID PRIMARY KEY,
+                email VARCHAR(255) NOT NULL,
+                name VARCHAR(255) NOT NULL,
+                role user_role NOT NULL DEFAULT 'member',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )"
+        )
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+        db
+    }
+
+    fn query_ctx(pool: sqlx::PgPool) -> QueryContext {
+        QueryContext::new(pool, AuthContext::unauthenticated(), RequestMetadata::default())
+    }
+
+    fn mutation_ctx(pool: sqlx::PgPool) -> MutationContext {
+        MutationContext::new(pool, AuthContext::unauthenticated(), RequestMetadata::default())
+    }
+
+    #[tokio::test]
+    async fn test_create_user() {
+        let db = setup_db().await;
+        let ctx = mutation_ctx(db.pool().clone());
+
+        let user = create_user(&ctx, "test@example.com".into(), "Test User".into(), None)
+            .await
+            .unwrap();
+
+        assert_eq!(user.email, "test@example.com");
+        assert_eq!(user.name, "Test User");
+        assert_eq!(user.role, UserRole::default());
+        db.cleanup().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_create_user_with_role() {
+        let db = setup_db().await;
+        let ctx = mutation_ctx(db.pool().clone());
+
+        let user = create_user(&ctx, "admin@example.com".into(), "Admin".into(), Some(UserRole::Admin))
+            .await
+            .unwrap();
+
+        assert_eq!(user.role, UserRole::Admin);
+        db.cleanup().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_get_users() {
+        let db = setup_db().await;
+        let m_ctx = mutation_ctx(db.pool().clone());
+
+        create_user(&m_ctx, "a@test.com".into(), "User A".into(), None).await.unwrap();
+        create_user(&m_ctx, "b@test.com".into(), "User B".into(), None).await.unwrap();
+
+        let q_ctx = query_ctx(db.pool().clone());
+        let users = get_users(&q_ctx).await.unwrap();
+        assert!(users.len() >= 2);
+        db.cleanup().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_get_user_by_id() {
+        let db = setup_db().await;
+        let m_ctx = mutation_ctx(db.pool().clone());
+
+        let created = create_user(&m_ctx, "find@test.com".into(), "Find Me".into(), None)
+            .await
+            .unwrap();
+
+        let q_ctx = query_ctx(db.pool().clone());
+        let found = get_user(&q_ctx, created.id).await.unwrap();
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().id, created.id);
+        db.cleanup().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_get_user_not_found() {
+        let db = setup_db().await;
+        let ctx = query_ctx(db.pool().clone());
+
+        let result = get_user(&ctx, Uuid::new_v4()).await.unwrap();
+        assert!(result.is_none());
+        db.cleanup().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_update_user() {
+        let db = setup_db().await;
+        let ctx = mutation_ctx(db.pool().clone());
+
+        let user = create_user(&ctx, "update@test.com".into(), "Original".into(), None)
+            .await
+            .unwrap();
+
+        let updated = update_user(&ctx, user.id, Some("new@test.com".into()), Some("Updated".into()), None)
+            .await
+            .unwrap();
+
+        assert_eq!(updated.email, "new@test.com");
+        assert_eq!(updated.name, "Updated");
+        db.cleanup().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_update_user_partial() {
+        let db = setup_db().await;
+        let ctx = mutation_ctx(db.pool().clone());
+
+        let user = create_user(&ctx, "partial@test.com".into(), "Partial".into(), None)
+            .await
+            .unwrap();
+
+        let updated = update_user(&ctx, user.id, None, Some("New Name".into()), None)
+            .await
+            .unwrap();
+
+        assert_eq!(updated.email, "partial@test.com");
+        assert_eq!(updated.name, "New Name");
+        db.cleanup().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_delete_user() {
+        let db = setup_db().await;
+        let ctx = mutation_ctx(db.pool().clone());
+
+        let user = create_user(&ctx, "delete@test.com".into(), "Delete Me".into(), None)
+            .await
+            .unwrap();
+
+        let deleted = delete_user(&ctx, user.id).await.unwrap();
+        assert!(deleted);
+
+        let q_ctx = query_ctx(db.pool().clone());
+        let found = get_user(&q_ctx, user.id).await.unwrap();
+        assert!(found.is_none());
+        db.cleanup().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_delete_user_not_found() {
+        let db = setup_db().await;
+        let ctx = mutation_ctx(db.pool().clone());
+
+        let deleted = delete_user(&ctx, Uuid::new_v4()).await.unwrap();
+        assert!(!deleted);
+        db.cleanup().await.unwrap();
+    }
 }

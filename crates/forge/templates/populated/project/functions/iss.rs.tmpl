@@ -81,3 +81,71 @@ pub async fn iss_location(ctx: &CronContext) -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Duration;
+    use forge::testing::TestCronContext;
+
+    #[test]
+    fn test_cron_context_creation() {
+        let ctx = TestCronContext::builder("iss_location").build();
+
+        assert_eq!(ctx.cron_name, "iss_location");
+        assert!(!ctx.is_catch_up);
+        assert!(!ctx.is_late());
+    }
+
+    #[test]
+    fn test_cron_logging() {
+        let ctx = TestCronContext::builder("iss_location").build();
+
+        ctx.log.info("Starting");
+        ctx.log.warn("Warning message");
+        ctx.log.error("Error occurred");
+
+        let entries = ctx.log.entries();
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].level, "info");
+        assert_eq!(entries[1].level, "warn");
+        assert_eq!(entries[2].level, "error");
+    }
+
+    #[test]
+    fn test_cron_late_detection() {
+        let ctx = TestCronContext::builder("iss_location")
+            .scheduled_at(Utc::now() - Duration::minutes(5))
+            .build();
+
+        assert!(ctx.is_late());
+        assert!(ctx.delay() >= Duration::minutes(4));
+    }
+
+    #[test]
+    fn test_cron_on_time() {
+        let ctx = TestCronContext::builder("iss_location")
+            .scheduled_at(Utc::now())
+            .build();
+
+        assert!(!ctx.is_late());
+    }
+
+    #[test]
+    fn test_cron_catch_up_mode() {
+        let ctx = TestCronContext::builder("iss_location")
+            .as_catch_up()
+            .build();
+
+        assert!(ctx.is_catch_up);
+    }
+
+    #[test]
+    fn test_cron_timezone() {
+        let ctx = TestCronContext::builder("iss_location")
+            .with_timezone("America/New_York")
+            .build();
+
+        assert_eq!(ctx.timezone, "America/New_York");
+    }
+}

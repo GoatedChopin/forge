@@ -42,9 +42,83 @@ jobs:
       - name: Run tests
         run: cargo test --all-features
 
+  integration-test:
+    name: Integration Tests
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build forge CLI
+        run: cargo build --release
+
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Scaffold demo project
+        run: |
+          ./target/release/forge new /tmp/forge-integration-test --demo
+          ls -la /tmp/forge-integration-test
+
+      - name: Install Playwright
+        working-directory: /tmp/forge-integration-test/frontend
+        run: |
+          bun install
+          bunx playwright install chromium --with-deps
+
+      - name: Start backend and run tests
+        working-directory: /tmp/forge-integration-test
+        run: |
+          # Start forge dev in background
+          ${{ github.workspace }}/target/release/forge dev &
+          FORGE_PID=$!
+
+          # Wait for backend to be ready (up to 3 minutes for compilation)
+          echo "Waiting for backend..."
+          for i in {1..180}; do
+            if curl -s http://localhost:8080/_api/health | grep -q "healthy"; then
+              echo "Backend is ready!"
+              break
+            fi
+            if [ $i -eq 180 ]; then
+              echo "Backend failed to start"
+              kill $FORGE_PID 2>/dev/null || true
+              exit 1
+            fi
+            sleep 1
+          done
+
+          # Wait for frontend
+          echo "Waiting for frontend..."
+          for i in {1..60}; do
+            if curl -s http://localhost:5173 > /dev/null 2>&1; then
+              echo "Frontend is ready!"
+              break
+            fi
+            sleep 1
+          done
+
+          # Run Playwright tests
+          cd frontend
+          bunx playwright test tests/home.spec.ts --reporter=line
+          TEST_EXIT=$?
+
+          # Cleanup
+          kill $FORGE_PID 2>/dev/null || true
+
+          exit $TEST_EXIT
+
   bump-versions:
     name: Bump Versions
-    needs: validate
+    needs: [validate, integration-test]
     runs-on: ubuntu-latest
     outputs:
       commit_sha: ${{ steps.commit.outputs.sha }}

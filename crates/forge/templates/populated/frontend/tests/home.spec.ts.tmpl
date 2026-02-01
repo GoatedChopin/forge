@@ -1,0 +1,287 @@
+import { test, expect } from "@playwright/test";
+
+test.describe("Forge Demo - Regression Tests", () => {
+  // ============================================
+  // BASIC LOAD TESTS
+  // ============================================
+
+  test("homepage loads with all sections visible", async ({ page }) => {
+    await page.goto("/");
+
+    // All major sections should be present
+    await expect(page.getByText("Forge Demo")).toBeVisible();
+    await expect(page.getByText("ISS Location")).toBeVisible();
+    await expect(page.getByText("Live Trades")).toBeVisible();
+    await expect(page.getByText("Export Job")).toBeVisible();
+    await expect(page.getByText("Verification")).toBeVisible();
+    await expect(page.getByText("Webhook").first()).toBeVisible();
+    await expect(page.getByRole("heading", { name: /users/i })).toBeVisible();
+  });
+
+  test("backend health check responds", async ({ request }) => {
+    const response = await request.get("http://localhost:8080/_api/health");
+    expect(response.ok()).toBeTruthy();
+
+    const data = await response.json();
+    expect(data.status).toBe("healthy");
+  });
+
+  // ============================================
+  // REACTIVITY TESTS - User CRUD
+  // ============================================
+
+  test("creating user appears in list without page refresh (reactivity)", async ({
+    page,
+  }) => {
+    await page.goto("/");
+
+    const uniqueName = `TestUser-${Date.now()}`;
+    const uniqueEmail = `test-${Date.now()}@example.com`;
+
+    // Fill form
+    await page.getByPlaceholder("Name").fill(uniqueName);
+    await page.getByPlaceholder("Email").fill(uniqueEmail);
+
+    // Click create
+    await page.getByRole("button", { name: "Create" }).click();
+
+    // User should appear in list WITHOUT page refresh - this tests SSE reactivity
+    await expect(page.getByText(uniqueName)).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText(uniqueEmail)).toBeVisible({ timeout: 5000 });
+  });
+
+  test("deleting user removes from list without page refresh (reactivity)", async ({
+    page,
+  }) => {
+    await page.goto("/");
+
+    // First create a user to delete
+    const uniqueName = `ToDelete-${Date.now()}`;
+    const uniqueEmail = `delete-${Date.now()}@example.com`;
+
+    await page.getByPlaceholder("Name").fill(uniqueName);
+    await page.getByPlaceholder("Email").fill(uniqueEmail);
+    await page.getByRole("button", { name: "Create" }).click();
+
+    // Wait for user to appear
+    await expect(page.getByText(uniqueName)).toBeVisible({ timeout: 5000 });
+
+    // Find and click delete button for this user
+    const userRow = page.locator("tr", { hasText: uniqueName });
+    await userRow.getByRole("button", { name: "Delete" }).click();
+
+    // Confirm the deletion
+    await userRow.getByRole("button", { name: "Confirm" }).click();
+
+    // User should disappear WITHOUT page refresh - this tests SSE reactivity
+    await expect(page.getByText(uniqueName)).not.toBeVisible({ timeout: 10000 });
+  });
+
+  // ============================================
+  // CRON TESTS - ISS Location
+  // ============================================
+
+  test("ISS location displays coordinates from cron", async ({ page }) => {
+    await page.goto("/");
+
+    // Wait for coordinates to appear (cron runs every minute)
+    // Should see actual latitude numbers with N/S indicator
+    await expect(
+      page.getByText(/\d+\.\d+\s*[NS]/i).first()
+    ).toBeVisible({ timeout: 70000 });
+  });
+
+  // ============================================
+  // DAEMON TESTS - Live Trades WebSocket
+  // ============================================
+
+  test("live trades stream data from WebSocket daemon", async ({ page }) => {
+    await page.goto("/");
+
+    // Wait for trades to appear (WebSocket connection)
+    // Should see EURUSDT symbol and prices
+    await expect(page.getByText("EURUSDT").first()).toBeVisible({
+      timeout: 15000,
+    });
+
+    // Verify price format (number with decimals)
+    await expect(page.getByText(/\d+\.\d{4,}/).first()).toBeVisible({
+      timeout: 5000,
+    });
+  });
+
+  // ============================================
+  // JOB TESTS - Export with Progress
+  // ============================================
+
+  test("export job shows progress updates", async ({ page }) => {
+    await page.goto("/");
+
+    // Click Start Export
+    await page.getByRole("button", { name: "Start Export" }).click();
+
+    // Should see progress indicator or completion
+    // Progress goes through stages: 0%, 10%, 20%... 100%
+    await expect(
+      page
+        .getByText(/\d+%/)
+        .or(page.getByText(/complete/i))
+        .or(page.getByText(/progress/i))
+    ).toBeVisible({ timeout: 15000 });
+  });
+
+  // ============================================
+  // WORKFLOW TESTS - Verification Steps
+  // ============================================
+
+  test("verification workflow starts successfully", async ({ page }) => {
+    await page.goto("/");
+
+    // Click Start Workflow
+    await page.getByRole("button", { name: "Start Workflow" }).click();
+
+    // Button should change to indicate workflow started (disabled or text change)
+    // Or workflow section should show some status change
+    await page.waitForTimeout(2000);
+
+    // No error should appear
+    const errorVisible = await page.getByText(/error|failed/i).isVisible();
+    expect(errorVisible).toBeFalsy();
+  });
+
+  // ============================================
+  // WEBHOOK TESTS
+  // ============================================
+
+  test("webhook trigger sends request successfully", async ({ page }) => {
+    await page.goto("/");
+
+    // Click New to generate fresh idempotency key
+    await page.getByRole("button", { name: "New" }).click();
+
+    // Click Send to trigger webhook
+    await page.getByRole("button", { name: "Send" }).click();
+
+    // Should not show error (button may change state or show success)
+    // The Send button should either stay enabled for retry or show success state
+    await page.waitForTimeout(2000);
+
+    // No error messages should appear
+    const errorVisible = await page.getByText(/error|failed/i).isVisible();
+    expect(errorVisible).toBeFalsy();
+  });
+
+  // ============================================
+  // SSE CONNECTION TESTS
+  // ============================================
+
+  test("SSE connection establishes for real-time updates", async ({ page }) => {
+    // Monitor network for SSE connection
+    const sseRequests: string[] = [];
+
+    page.on("request", (request) => {
+      if (request.url().includes("/events") || request.url().includes("/_api/events")) {
+        sseRequests.push(request.url());
+      }
+    });
+
+    await page.goto("/");
+    await page.waitForTimeout(3000);
+
+    // Should have attempted SSE connection
+    expect(sseRequests.length).toBeGreaterThan(0);
+  });
+
+  // ============================================
+  // API ENDPOINT TESTS
+  // ============================================
+
+  test("RPC endpoints respond correctly", async ({ request }) => {
+    // Test get_users query (no args needed)
+    const usersResponse = await request.post(
+      "http://localhost:8080/_api/rpc/get_users",
+      {
+        headers: { "Content-Type": "application/json" },
+        data: {},
+      }
+    );
+    expect(usersResponse.ok()).toBeTruthy();
+
+    const usersData = await usersResponse.json();
+    expect(usersData.success).toBe(true);
+    expect(Array.isArray(usersData.data)).toBe(true);
+  });
+
+  test("mutation endpoints work correctly", async ({ request }) => {
+    const uniqueEmail = `api-test-${Date.now()}@example.com`;
+
+    // Create user via API
+    const createResponse = await request.post(
+      "http://localhost:8080/_api/rpc/create_user",
+      {
+        headers: { "Content-Type": "application/json" },
+        data: { args: { email: uniqueEmail, name: "API Test User" } },
+      }
+    );
+    expect(createResponse.ok()).toBeTruthy();
+
+    const createData = await createResponse.json();
+    expect(createData.success).toBe(true);
+    expect(createData.data.email).toBe(uniqueEmail);
+    expect(createData.data.id).toBeDefined();
+
+    // Delete user via API
+    const deleteResponse = await request.post(
+      "http://localhost:8080/_api/rpc/delete_user",
+      {
+        headers: { "Content-Type": "application/json" },
+        data: { args: { id: createData.data.id } },
+      }
+    );
+    expect(deleteResponse.ok()).toBeTruthy();
+  });
+
+  // ============================================
+  // ERROR HANDLING TESTS
+  // ============================================
+
+  test("no console errors on page load", async ({ page }) => {
+    const errors: string[] = [];
+
+    page.on("console", (msg) => {
+      if (msg.type() === "error") {
+        // Ignore favicon and expected SSE reconnection messages
+        const text = msg.text();
+        if (
+          !text.includes("favicon") &&
+          !text.includes("net::ERR") &&
+          !text.includes("EventSource")
+        ) {
+          errors.push(text);
+        }
+      }
+    });
+
+    await page.goto("/");
+    await page.waitForTimeout(5000); // Wait for async operations
+
+    expect(errors).toHaveLength(0);
+  });
+
+  test("invalid mutation returns proper error", async ({ request }) => {
+    // Try to delete non-existent user
+    const response = await request.post(
+      "http://localhost:8080/_api/rpc/delete_user",
+      {
+        headers: { "Content-Type": "application/json" },
+        data: { args: { id: "00000000-0000-0000-0000-000000000000" } },
+      }
+    );
+
+    // Should return success:true but data:false (no rows deleted)
+    expect(response.ok()).toBeTruthy();
+    const data = await response.json();
+    expect(data.success).toBe(true);
+    expect(data.data).toBe(false);
+  });
+});
