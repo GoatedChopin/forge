@@ -27,10 +27,12 @@ interface SsePayload {
 
 export class ForgeClientError extends Error {
   code: string;
-  constructor(code: string, message: string) {
+  details?: Record<string, unknown>;
+  constructor(code: string, message: string, details?: Record<string, unknown>) {
     super(message);
     this.name = "ForgeClientError";
     this.code = code;
+    this.details = details;
   }
 }
 

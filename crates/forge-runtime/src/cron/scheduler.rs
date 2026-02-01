@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 use super::registry::CronRegistry;
 use forge_core::cron::CronContext;
+use forge_core::CircuitBreakerClient;
 
 /// Cron run status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,7 +118,7 @@ impl Default for CronRunnerConfig {
 pub struct CronRunner {
     registry: Arc<CronRegistry>,
     pool: sqlx::PgPool,
-    http_client: reqwest::Client,
+    http_client: CircuitBreakerClient,
     config: CronRunnerConfig,
     is_running: Arc<RwLock<bool>>,
 }
@@ -127,7 +128,7 @@ impl CronRunner {
     pub fn new(
         registry: Arc<CronRegistry>,
         pool: sqlx::PgPool,
-        http_client: reqwest::Client,
+        http_client: CircuitBreakerClient,
         config: CronRunnerConfig,
     ) -> Self {
         Self {
@@ -285,7 +286,7 @@ impl CronRunner {
             info.timezone.to_string(),
             is_catch_up,
             self.pool.clone(),
-            self.http_client.clone(),
+            self.http_client.inner().clone(),
         );
 
         // Execute with timeout

@@ -12,6 +12,7 @@ use axum::{
 };
 use forge_core::function::JobDispatch;
 use forge_core::webhook::{IdempotencySource, SignatureAlgorithm, WebhookContext};
+use forge_core::CircuitBreakerClient;
 use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
 use sha1::Sha1;
@@ -27,7 +28,7 @@ use super::registry::WebhookRegistry;
 pub struct WebhookState {
     registry: Arc<WebhookRegistry>,
     pool: PgPool,
-    http_client: reqwest::Client,
+    http_client: CircuitBreakerClient,
     job_dispatcher: Option<Arc<dyn JobDispatch>>,
 }
 
@@ -37,7 +38,7 @@ impl WebhookState {
         Self {
             registry,
             pool,
-            http_client: reqwest::Client::new(),
+            http_client: CircuitBreakerClient::with_defaults(reqwest::Client::new()),
             job_dispatcher: None,
         }
     }
@@ -195,7 +196,7 @@ pub async fn webhook_handler(
         request_id.clone(),
         header_map,
         state.pool.clone(),
-        state.http_client.clone(),
+        state.http_client.inner().clone(),
     )
     .with_idempotency_key(idempotency_key.clone());
 

@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use forge_core::Result;
 use forge_core::daemon::{DaemonContext, DaemonStatus};
+use forge_core::CircuitBreakerClient;
 use futures_util::FutureExt;
 use sqlx::PgPool;
 use tokio::sync::{broadcast, watch};
@@ -36,7 +37,7 @@ impl Default for DaemonRunnerConfig {
 pub struct DaemonRunner {
     registry: Arc<DaemonRegistry>,
     pool: PgPool,
-    http_client: reqwest::Client,
+    http_client: CircuitBreakerClient,
     node_id: Uuid,
     config: DaemonRunnerConfig,
     shutdown_rx: broadcast::Receiver<()>,
@@ -47,7 +48,7 @@ impl DaemonRunner {
     pub fn new(
         registry: Arc<DaemonRegistry>,
         pool: PgPool,
-        http_client: reqwest::Client,
+        http_client: CircuitBreakerClient,
         node_id: Uuid,
         shutdown_rx: broadcast::Receiver<()>,
     ) -> Self {
@@ -217,7 +218,7 @@ async fn run_daemon_loop(
     name: String,
     entry: Arc<super::registry::DaemonEntry>,
     pool: PgPool,
-    http_client: reqwest::Client,
+    http_client: CircuitBreakerClient,
     mut shutdown_rx: watch::Receiver<bool>,
     node_id: Uuid,
     startup_delay: Duration,
@@ -300,7 +301,7 @@ async fn run_daemon_loop(
             name.clone(),
             instance_id,
             pool.clone(),
-            http_client.clone(),
+            http_client.inner().clone(),
             daemon_shutdown_rx,
         );
 

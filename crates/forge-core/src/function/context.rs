@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 use super::dispatch::{JobDispatch, WorkflowDispatch};
 use crate::env::{EnvAccess, EnvProvider, RealEnvProvider};
+use crate::http::{CircuitBreakerClient, CircuitBreakerConfig};
 use crate::job::JobInfo;
 
 /// Abstracts over pool and transaction connections so handlers can work with either.
@@ -326,8 +327,8 @@ pub struct MutationContext {
     pub request: RequestMetadata,
     /// Database pool for transactional operations.
     db_pool: sqlx::PgPool,
-    /// HTTP client for external requests.
-    http_client: reqwest::Client,
+    /// HTTP client with circuit breaker for external requests.
+    http_client: CircuitBreakerClient,
     /// Optional job dispatcher for dispatching background jobs.
     job_dispatch: Option<Arc<dyn JobDispatch>>,
     /// Optional workflow dispatcher for starting workflows.
@@ -349,7 +350,7 @@ impl MutationContext {
             auth,
             request,
             db_pool,
-            http_client: reqwest::Client::new(),
+            http_client: CircuitBreakerClient::with_defaults(reqwest::Client::new()),
             job_dispatch: None,
             workflow_dispatch: None,
             env_provider: Arc::new(RealEnvProvider::new()),
@@ -364,7 +365,7 @@ impl MutationContext {
         db_pool: sqlx::PgPool,
         auth: AuthContext,
         request: RequestMetadata,
-        http_client: reqwest::Client,
+        http_client: CircuitBreakerClient,
         job_dispatch: Option<Arc<dyn JobDispatch>>,
         workflow_dispatch: Option<Arc<dyn WorkflowDispatch>>,
     ) -> Self {
@@ -387,7 +388,7 @@ impl MutationContext {
         db_pool: sqlx::PgPool,
         auth: AuthContext,
         request: RequestMetadata,
-        http_client: reqwest::Client,
+        http_client: CircuitBreakerClient,
         job_dispatch: Option<Arc<dyn JobDispatch>>,
         workflow_dispatch: Option<Arc<dyn WorkflowDispatch>>,
         env_provider: Arc<dyn EnvProvider>,
@@ -412,7 +413,7 @@ impl MutationContext {
         tx: Transaction<'static, Postgres>,
         auth: AuthContext,
         request: RequestMetadata,
-        http_client: reqwest::Client,
+        http_client: CircuitBreakerClient,
         job_info_lookup: JobInfoLookup,
     ) -> (
         Self,
@@ -454,7 +455,17 @@ impl MutationContext {
         &self.db_pool
     }
 
+    /// Get the HTTP client for external requests.
+    ///
+    /// The client includes circuit breaker protection that tracks failure rates
+    /// per host. After repeated failures, requests fail fast to prevent cascade
+    /// failures when downstream services are unhealthy.
     pub fn http(&self) -> &reqwest::Client {
+        self.http_client.inner()
+    }
+
+    /// Get the circuit breaker client directly for advanced usage.
+    pub fn http_with_circuit_breaker(&self) -> &CircuitBreakerClient {
         &self.http_client
     }
 

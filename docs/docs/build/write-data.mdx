@@ -1,6 +1,6 @@
 # Write Data
 
-Mutations change your database state with built-in transactional guarantees.
+Mutations change your database state. Add the `transactional` attribute for automatic transaction wrapping and rollback guarantees.
 
 ## The Code
 
@@ -31,7 +31,9 @@ pub async fn create_order(ctx: &MutationContext, input: CreateOrderInput) -> Res
 
 ## What Happens
 
-Forge wraps the mutation in a database transaction. If the function returns `Ok`, changes commit. If it returns `Err` or panics, everything rolls back.
+By default, mutations execute directly against the database pool without a transaction wrapper. For single-statement mutations, this is fine since individual SQL statements are atomic.
+
+For multi-statement mutations or when dispatching jobs/workflows, add `#[forge::mutation(transactional)]` to wrap everything in a database transaction. If the function returns `Err` or panics, the entire transaction rolls back.
 
 The generated TypeScript client calls this mutation as a type-safe RPC.
 
@@ -43,7 +45,7 @@ The generated TypeScript client calls this mutation as a type-safe RPC.
 | `require_role("x")` | string | - | Require specific role |
 | `timeout` | seconds | 30 | Request timeout |
 | `rate_limit(...)` | - | - | Token bucket rate limiting |
-| `transactional` | flag | - | Explicit transaction with outbox pattern |
+| `transactional` | flag | - | Wrap in database transaction with outbox pattern for jobs/workflows |
 | `log` | string | - | Log level override |
 
 ## Patterns
@@ -199,7 +201,7 @@ Rate limit keys: `user` (per authenticated user), `ip` (per client IP), `tenant`
 
 | Method | Return Type | Description |
 |--------|-------------|-------------|
-| `ctx.db()` | `&PgPool` | Database connection pool |
+| `ctx.db()` | `DbConn<'_>` | Database connection (pool or transaction handle) |
 | `ctx.http()` | `&reqwest::Client` | HTTP client for external APIs |
 | `ctx.require_user_id()` | `Result<Uuid>` | Authenticated user ID or error |
 | `ctx.require_subject()` | `Result<&str>` | Raw subject claim (Firebase, Clerk) |
@@ -244,7 +246,14 @@ This pattern guarantees exactly-once semantics for the mutation + job combinatio
 
 ### Circuit Breaker for HTTP
 
-The HTTP client (`ctx.http()`) tracks failure rates per host. After repeated failures, it fails fast rather than waiting for timeouts. This prevents cascade failures when downstream services are unhealthy.
+The HTTP client (`ctx.http()`) includes circuit breaker protection that tracks failure rates per host. After repeated failures (default: 5), requests fail fast rather than waiting for timeouts. This prevents cascade failures when downstream services are unhealthy.
+
+The circuit breaker has three states:
+- **Closed**: Normal operation, requests pass through
+- **Open**: After threshold failures, requests fail immediately
+- **Half-Open**: After backoff timeout, limited requests allowed to test recovery
+
+Configuration uses exponential backoff (30s base, 1.5x multiplier, 10min max) to gradually retry unhealthy services.
 
 ### Write-Ahead Logging
 

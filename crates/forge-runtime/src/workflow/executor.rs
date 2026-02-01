@@ -10,6 +10,7 @@ use super::registry::WorkflowRegistry;
 use super::state::{WorkflowRecord, WorkflowStepRecord};
 use forge_core::function::WorkflowDispatch;
 use forge_core::workflow::{CompensationHandler, StepStatus, WorkflowContext, WorkflowStatus};
+use forge_core::CircuitBreakerClient;
 
 /// Workflow execution result.
 #[derive(Debug)]
@@ -34,7 +35,7 @@ struct CompensationState {
 pub struct WorkflowExecutor {
     registry: Arc<WorkflowRegistry>,
     pool: sqlx::PgPool,
-    http_client: reqwest::Client,
+    http_client: CircuitBreakerClient,
     /// Compensation state for active workflows (run_id -> state).
     compensation_state: Arc<RwLock<HashMap<Uuid, CompensationState>>>,
 }
@@ -44,7 +45,7 @@ impl WorkflowExecutor {
     pub fn new(
         registry: Arc<WorkflowRegistry>,
         pool: sqlx::PgPool,
-        http_client: reqwest::Client,
+        http_client: CircuitBreakerClient,
     ) -> Self {
         Self {
             registry,
@@ -80,7 +81,7 @@ impl WorkflowExecutor {
         // Execute workflow in background
         let registry = self.registry.clone();
         let pool = self.pool.clone();
-        let http_client = self.http_client.clone();
+        let http_client = self.http_client.inner().clone();
         let compensation_state = self.compensation_state.clone();
 
         tokio::spawn(async move {
@@ -123,7 +124,7 @@ impl WorkflowExecutor {
             entry.info.name.to_string(),
             entry.info.version,
             self.pool.clone(),
-            self.http_client.clone(),
+            self.http_client.inner().clone(),
         );
 
         // Execute workflow with timeout
@@ -210,7 +211,7 @@ impl WorkflowExecutor {
             entry.info.version,
             started_at,
             self.pool.clone(),
-            self.http_client.clone(),
+            self.http_client.inner().clone(),
         )
         .with_step_states(step_states);
 

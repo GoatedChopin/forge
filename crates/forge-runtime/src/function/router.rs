@@ -3,9 +3,9 @@ use std::time::Duration;
 
 use chrono::Utc;
 use forge_core::{
-    AuthContext, ForgeError, FunctionInfo, FunctionKind, JobDispatch, MutationContext,
-    OutboxBuffer, PendingJob, PendingWorkflow, QueryContext, RequestMetadata, Result,
-    WorkflowDispatch,
+    AuthContext, CircuitBreakerClient, ForgeError, FunctionInfo, FunctionKind, JobDispatch,
+    MutationContext, OutboxBuffer, PendingJob, PendingWorkflow, QueryContext, RequestMetadata,
+    Result, WorkflowDispatch,
     job::JobStatus,
     rate_limit::{RateLimitConfig, RateLimitKey},
     workflow::WorkflowStatus,
@@ -32,7 +32,7 @@ pub enum RouteResult {
 pub struct FunctionRouter {
     registry: Arc<FunctionRegistry>,
     db_pool: sqlx::PgPool,
-    http_client: reqwest::Client,
+    http_client: CircuitBreakerClient,
     job_dispatcher: Option<Arc<dyn JobDispatch>>,
     workflow_dispatcher: Option<Arc<dyn WorkflowDispatch>>,
     rate_limiter: RateLimiter,
@@ -46,7 +46,7 @@ impl FunctionRouter {
         Self {
             registry,
             db_pool,
-            http_client: reqwest::Client::new(),
+            http_client: CircuitBreakerClient::with_defaults(reqwest::Client::new()),
             job_dispatcher: None,
             workflow_dispatcher: None,
             rate_limiter,
@@ -58,7 +58,7 @@ impl FunctionRouter {
     pub fn with_http_client(
         registry: Arc<FunctionRegistry>,
         db_pool: sqlx::PgPool,
-        http_client: reqwest::Client,
+        http_client: CircuitBreakerClient,
     ) -> Self {
         let rate_limiter = RateLimiter::new(db_pool.clone());
         Self {

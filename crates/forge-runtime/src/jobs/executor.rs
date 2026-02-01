@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use forge_core::job::{JobContext, ProgressUpdate};
+use forge_core::CircuitBreakerClient;
 use tokio::time::timeout;
 
 use super::queue::{JobQueue, JobRecord};
@@ -11,7 +12,7 @@ pub struct JobExecutor {
     queue: JobQueue,
     registry: Arc<JobRegistry>,
     db_pool: sqlx::PgPool,
-    http_client: reqwest::Client,
+    http_client: CircuitBreakerClient,
 }
 
 impl JobExecutor {
@@ -21,7 +22,7 @@ impl JobExecutor {
             queue,
             registry: Arc::new(registry),
             db_pool,
-            http_client: reqwest::Client::new(),
+            http_client: CircuitBreakerClient::with_defaults(reqwest::Client::new()),
         }
     }
 
@@ -90,7 +91,7 @@ impl JobExecutor {
             job.attempts as u32,
             job.max_attempts as u32,
             self.db_pool.clone(),
-            self.http_client.clone(),
+            self.http_client.inner().clone(),
         )
         .with_progress(progress_tx);
 

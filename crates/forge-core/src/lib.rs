@@ -6,6 +6,7 @@ pub mod daemon;
 pub mod env;
 pub mod error;
 pub mod function;
+pub mod http;
 pub mod job;
 pub mod rate_limit;
 pub mod realtime;
@@ -46,4 +47,8 @@ pub use webhook::{
 pub use workflow::{
     ForgeWorkflow, ParallelBuilder, ParallelResults, SuspendReason, WorkflowContext, WorkflowEvent,
     WorkflowEventSender, WorkflowInfo, WorkflowStatus,
+};
+pub use http::{
+    CircuitBreakerClient, CircuitBreakerConfig, CircuitBreakerError, CircuitBreakerOpen,
+    CircuitState, CircuitStatus,
 };

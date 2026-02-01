@@ -12,6 +12,12 @@
 //!     .run()
 //!     .await?;
 //!
+//! // Step with retry
+//! ctx.step("flaky_api", || async { call_external_api().await })
+//!     .retry(3, Duration::from_secs(5))
+//!     .run()
+//!     .await?;
+//!
 //! // Step with compensation (rollback on later failure)
 //! ctx.step("charge_card", || async { charge(&card).await })
 //!     .compensate(|result| async move { refund(&result.charge_id).await })
@@ -29,8 +35,8 @@ use serde::{Serialize, de::DeserializeOwned};
 use super::context::WorkflowContext;
 use crate::Result;
 
-/// Type alias for the step function.
-type StepFn<T> = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = Result<T>> + Send>> + Send>;
+/// Type alias for the step function (Fn to support retries).
+type StepFn<T> = Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<T>> + Send>> + Send + Sync>;
 
 /// Type alias for the compensation function.
 type CompensateFn<T> =
@@ -48,6 +54,8 @@ where
     step_fn: Option<StepFn<T>>,
     compensate_fn: Option<CompensateFn<T>>,
     timeout: Option<Duration>,
+    retry_count: u32,
+    retry_delay: Duration,
     optional: bool,
 }
 
@@ -56,13 +64,16 @@ where
     T: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
 {
     /// Create a new step runner.
+    ///
+    /// The closure must implement `Fn` (not just `FnOnce`) to support retries.
+    /// For closures that capture moved values, wrap them in `Arc` or use `Clone`.
     pub(crate) fn new<F, Fut>(ctx: &'a WorkflowContext, name: impl Into<String>, f: F) -> Self
     where
-        F: FnOnce() -> Fut + Send + 'static,
+        F: Fn() -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<T>> + Send + 'static,
     {
         let name = name.into();
-        let step_fn: StepFn<T> = Box::new(move || Box::pin(f()));
+        let step_fn: StepFn<T> = Arc::new(move || Box::pin(f()));
 
         Self {
             ctx,
@@ -70,6 +81,8 @@ where
             step_fn: Some(step_fn),
             compensate_fn: None,
             timeout: None,
+            retry_count: 0,
+            retry_delay: Duration::from_secs(0),
             optional: false,
         }
     }
@@ -109,6 +122,23 @@ where
         self
     }
 
+    /// Configure retry behavior for this step.
+    ///
+    /// If the step fails, it will be retried up to `count` times with a fixed
+    /// `delay` between attempts. The step succeeds if any attempt succeeds.
+    ///
+    /// ```ignore
+    /// ctx.step("call_flaky_api", || async { external_api_call().await })
+    ///     .retry(3, Duration::from_secs(5))  // 3 retries, 5 second delay
+    ///     .run()
+    ///     .await?;
+    /// ```
+    pub fn retry(mut self, count: u32, delay: Duration) -> Self {
+        self.retry_count = count;
+        self.retry_delay = delay;
+        self
+    }
+
     /// Mark step as optional.
     ///
     /// If an optional step fails, the workflow continues without triggering
@@ -127,12 +157,8 @@ where
 
     /// Execute the step.
     ///
-    /// This runs the step with configured timeout and compensation settings.
+    /// This runs the step with configured timeout, retry, and compensation settings.
     /// Returns the step result or an error.
-    ///
-    /// Note: For retry support with the fluent API, consider using a retryable
-    /// wrapper inside your step function, or use the low-level API with manual
-    /// retry logic.
     pub async fn run(mut self) -> Result<T> {
         let step_fn = self
             .step_fn
@@ -150,41 +176,69 @@ where
         // Record step start
         self.ctx.record_step_start(&self.name);
 
-        // Execute the step (with timeout if configured)
-        let result = self.execute_with_timeout(step_fn).await;
+        // Execute with retry logic
+        let total_attempts = self.retry_count + 1; // Initial attempt + retries
+        let mut last_error = None;
 
-        match result {
-            Ok(value) => {
-                // Success - record completion
-                let json_value = serde_json::to_value(&value).unwrap_or(serde_json::Value::Null);
-                self.ctx.record_step_complete(&self.name, json_value);
+        for attempt in 1..=total_attempts {
+            let result = self.execute_with_timeout(&step_fn).await;
 
-                // Register compensation handler if provided
-                if let Some(compensate_fn) = self.compensate_fn.take() {
-                    let value_clone = value.clone();
-                    self.ctx.register_compensation(
-                        &self.name,
-                        Arc::new(move |_| compensate_fn(value_clone.clone())),
-                    );
+            match result {
+                Ok(value) => {
+                    // Success - record completion
+                    let json_value =
+                        serde_json::to_value(&value).unwrap_or(serde_json::Value::Null);
+                    self.ctx.record_step_complete(&self.name, json_value);
+
+                    // Register compensation handler if provided
+                    if let Some(compensate_fn) = self.compensate_fn.take() {
+                        let value_clone = value.clone();
+                        self.ctx.register_compensation(
+                            &self.name,
+                            Arc::new(move |_| compensate_fn(value_clone.clone())),
+                        );
+                    }
+
+                    return Ok(value);
                 }
+                Err(e) => {
+                    last_error = Some(e);
 
-                Ok(value)
-            }
-            Err(e) => {
-                let error_msg = e.to_string();
-                self.ctx.record_step_failure(&self.name, &error_msg);
-
-                if self.optional {
-                    tracing::warn!(step = %self.name, error = %error_msg, "Optional step failed, continuing workflow");
+                    // Check if we should retry
+                    if attempt < total_attempts {
+                        tracing::warn!(
+                            step = %self.name,
+                            attempt = attempt,
+                            max_attempts = total_attempts,
+                            delay_ms = self.retry_delay.as_millis() as u64,
+                            error = %last_error.as_ref().unwrap(),
+                            "Step failed, retrying"
+                        );
+                        tokio::time::sleep(self.retry_delay).await;
+                    }
                 }
-
-                Err(e)
             }
         }
+
+        // All attempts failed
+        let error = last_error.unwrap();
+        let error_msg = error.to_string();
+        self.ctx.record_step_failure(&self.name, &error_msg);
+
+        if self.optional {
+            tracing::warn!(
+                step = %self.name,
+                error = %error_msg,
+                attempts = total_attempts,
+                "Optional step failed after all retries, continuing workflow"
+            );
+        }
+
+        Err(error)
     }
 
     /// Execute step function with optional timeout.
-    async fn execute_with_timeout(&self, step_fn: StepFn<T>) -> Result<T> {
+    async fn execute_with_timeout(&self, step_fn: &StepFn<T>) -> Result<T> {
         let fut = step_fn();
 
         if let Some(timeout_duration) = self.timeout {
