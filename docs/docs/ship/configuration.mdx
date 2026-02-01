@@ -174,50 +174,16 @@ Workers maintain a semaphore sized to `max_concurrent_jobs`. They only poll when
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `name` | string | `"default"` | Cluster identifier |
-| `discovery` | string | `"postgres"` | Discovery method |
 | `heartbeat_interval_secs` | u64 | `5` | Heartbeat frequency |
 | `dead_threshold_secs` | u64 | `15` | Missing heartbeats before dead |
-| `seed_nodes` | string[] | `[]` | Static node addresses |
-| `dns_name` | string | - | DNS name for discovery |
 
-#### Discovery Methods
+#### Discovery
 
-**postgres** (default)
-
-Nodes register in a database table. No external service required. Works everywhere PostgreSQL works.
+Nodes register in the `forge_nodes` database table. No external service required.
 
 ```toml
 [cluster]
 discovery = "postgres"
-```
-
-**dns**
-
-Query DNS for node addresses. Useful with service meshes.
-
-```toml
-[cluster]
-discovery = "dns"
-dns_name = "forge-nodes.default.svc.cluster.local"
-```
-
-**kubernetes**
-
-Use Kubernetes API for pod discovery.
-
-```toml
-[cluster]
-discovery = "kubernetes"
-```
-
-**static**
-
-Hardcoded node list. Useful for testing or fixed infrastructure.
-
-```toml
-[cluster]
-discovery = "static"
-seed_nodes = ["10.0.1.1:9000", "10.0.1.2:9000"]
 ```
 
 ### [node]
@@ -298,9 +264,6 @@ embedded = true
 
 [gateway]
 port = 3000
-
-[observability]
-logging.level = "debug"
 ```
 
 ### Production Single Node
@@ -343,7 +306,7 @@ size = 40
 roles = ["Gateway", "Function"]
 
 [cluster]
-discovery = "kubernetes"
+discovery = "postgres"
 ```
 
 Worker nodes:
@@ -364,7 +327,7 @@ worker_capabilities = ["general"]
 max_concurrent_jobs = 25
 
 [cluster]
-discovery = "kubernetes"
+discovery = "postgres"
 ```
 
 ### Specialized Workers
@@ -424,18 +387,13 @@ A runaway batch job cannot exhaust connections needed for user requests. Each po
 
 ### Cluster Discovery
 
-All discovery methods populate the same internal node registry:
+Nodes discover each other through PostgreSQL:
 
-```rust
-pub enum DiscoveryMethod {
-    Postgres,   // SELECT * FROM forge_nodes WHERE last_heartbeat > NOW() - INTERVAL '15s'
-    Dns,        // DNS SRV/A record lookup
-    Kubernetes, // Kubernetes API pod listing
-    Static,     // Configured seed_nodes list
-}
+```sql
+SELECT * FROM forge_nodes WHERE last_heartbeat > NOW() - INTERVAL '15s'
 ```
 
-PostgreSQL discovery is the default because it requires no additional infrastructure. Nodes insert their address on startup, update on heartbeat, and get cleaned up when dead_threshold passes.
+Nodes insert their address on startup, update on heartbeat, and get cleaned up when dead_threshold passes. No additional infrastructure required.
 
 ### Node Role Enforcement
 

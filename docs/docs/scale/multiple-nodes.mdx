@@ -75,17 +75,12 @@ Role specialization is optional. Most deployments run all roles on every node.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `discovery` | `string` | `"postgres"` | Node discovery method |
 | `heartbeat_interval_secs` | `u64` | `5` | Heartbeat frequency |
 | `dead_threshold_secs` | `u64` | `15` | Time until node marked dead |
-| `seed_nodes` | `[string]` | `[]` | Static node addresses |
-| `dns_name` | `string` | none | DNS name for discovery |
 
-## Discovery Methods
+## Discovery
 
-### PostgreSQL (Default)
-
-Nodes register in `forge_nodes` table. No additional infrastructure.
+Nodes register in the `forge_nodes` table. No additional infrastructure required.
 
 ```toml
 [cluster]
@@ -93,45 +88,6 @@ discovery = "postgres"
 ```
 
 Every node queries the same database. They find each other automatically.
-
-### DNS
-
-Resolve node addresses from DNS A/AAAA records.
-
-```toml
-[cluster]
-discovery = "dns"
-dns_name = "forge.service.consul"
-```
-
-Works with Consul, AWS Cloud Map, or any DNS-based service discovery.
-
-### Kubernetes
-
-Uses Kubernetes API to discover pods in the same namespace.
-
-```toml
-[cluster]
-discovery = "kubernetes"
-```
-
-Reads the `KUBERNETES_SERVICE_HOST` environment variable. Requires appropriate RBAC permissions.
-
-### Static
-
-Hardcoded list of seed nodes.
-
-```toml
-[cluster]
-discovery = "static"
-seed_nodes = [
-    "node1.internal:8080",
-    "node2.internal:8080",
-    "node3.internal:8080"
-]
-```
-
-For fixed infrastructure where node addresses do not change.
 
 ## Leader Election
 
@@ -400,33 +356,15 @@ Jobs with `worker_capability = "gpu"` only run on GPU workers.
 
 New nodes handle traffic before old nodes finish draining. Zero downtime.
 
-## Observability
+## Health Check
 
-### Dashboard
-
-`/_dashboard` shows:
-- Active nodes with status, load, roles
-- Leader assignments
-- Dead nodes pending cleanup
-
-### Metrics
-
-```
-forge_cluster_nodes_total{status="active"} 5
-forge_cluster_nodes_total{status="dead"} 0
-forge_cluster_leader{role="scheduler",node_id="abc123"} 1
-forge_cluster_heartbeat_lag_seconds{node_id="abc123"} 0.2
-```
-
-### Health Check
-
-`/_health` returns 200 if node is active, 503 if draining or dead.
+`/health` returns 200 if node is active, 503 if draining or dead.
 
 ```bash
 # Kubernetes readiness probe
 readinessProbe:
   httpGet:
-    path: /_health
+    path: /health
     port: 8080
 ```
 

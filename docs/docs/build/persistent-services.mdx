@@ -185,7 +185,7 @@ pub async fn flaky_integration(ctx: &DaemonContext) -> Result<()> {
 }
 ```
 
-After 5 restarts, the daemon stops with status `failed`. Check the dashboard for the last error.
+After 5 restarts, the daemon stops with status `failed`. Check the `forge_daemons` table for the last error.
 
 ### Startup Delay
 

@@ -145,23 +145,6 @@ readinessProbe:
   periodSeconds: 5
 ```
 
-## Dashboard
-
-Forge includes a built-in dashboard at `/_dashboard` for monitoring jobs, workflows, crons, and cluster state.
-
-| Path | View |
-|------|------|
-| `/_dashboard` | Overview |
-| `/_dashboard/jobs` | Job queue, status, dead letter |
-| `/_dashboard/workflows` | Active and completed workflows |
-| `/_dashboard/crons` | Scheduled tasks, history |
-| `/_dashboard/cluster` | Node status, leader election |
-| `/_dashboard/metrics` | Request metrics, latency |
-| `/_dashboard/logs` | Structured logs |
-| `/_dashboard/traces` | Distributed traces |
-
-The dashboard API is available at `/_api/*` for custom integrations.
-
 ## Docker Deployment
 
 ```dockerfile
@@ -397,7 +380,6 @@ DELETE FROM forge_nodes WHERE id = $1
 This allows:
 - Other nodes to claim orphaned jobs immediately
 - Load balancers to stop routing (if using database-based service discovery)
-- Accurate cluster state in dashboard
 
 ### Write-Ahead Logging
 
@@ -423,5 +405,4 @@ Additional variables can be accessed in handlers via `ctx.env("VAR_NAME")`.
 - [ ] Health checks configured in orchestrator
 - [ ] `terminationGracePeriodSeconds` exceeds drain timeout
 - [ ] Log aggregation configured (`RUST_LOG=info`)
-- [ ] Monitoring for `/_api/metrics` endpoints
 - [ ] Backup strategy for PostgreSQL
