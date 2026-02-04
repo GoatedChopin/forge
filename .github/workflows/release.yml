@@ -204,7 +204,7 @@ jobs:
 
   bump-versions:
     name: Bump Versions
-    needs: [parse-changelog, validate, integration-test]
+    needs: [parse-changelog, validate]
     runs-on: ubuntu-latest
     outputs:
       commit_sha: ${{ steps.commit.outputs.sha }}
