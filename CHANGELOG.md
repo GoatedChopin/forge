@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-02-04
+
+### Added
+
+- Webhook support with signatures and macro generation
+- Daemon support for long-running background processes
+- Job cancellation with save/saved API and TTL cleanup
+- Circuit Breaker pattern for HTTP client
+- Multipart file uploads with unified duration parsing
+- Read replica routing
+- Upload type handling in TypeScript code generation
+- Mutation transaction wrapping with outbox pattern
+- Playwright e2e tests for project templates
+- Full-stack todo example application
+
+### Changed
+
+- API routes now use consistent `/_api` prefix
+
+### Removed
+
+- Observability system and dashboard
+
 ## [0.0.7] - 2026-01-30
 
 ### Added
@@ -141,7 +164,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust 2024 edition unsafe block compatibility
 - Release workflow cargo-edit installation
 
-[unreleased]: https://github.com/isala404/forge/compare/v0.0.7...HEAD
+[unreleased]: https://github.com/isala404/forge/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/isala404/forge/compare/v0.0.7...v0.1.0
 [0.0.7]: https://github.com/isala404/forge/compare/v0.0.6...v0.0.7
 [0.0.6]: https://github.com/isala404/forge/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/isala404/forge/compare/v0.0.4...v0.0.5
