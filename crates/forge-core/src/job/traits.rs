@@ -265,10 +265,7 @@ mod tests {
             Ok(JobStatus::CancelRequested)
         );
         assert_eq!(JobStatus::Cancelled.as_str(), "cancelled");
-        assert_eq!(
-            "cancelled".parse::<JobStatus>(),
-            Ok(JobStatus::Cancelled)
-        );
+        assert_eq!("cancelled".parse::<JobStatus>(), Ok(JobStatus::Cancelled));
     }
 
     #[test]

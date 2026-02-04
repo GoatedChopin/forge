@@ -4,9 +4,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use forge_core::CircuitBreakerClient;
 use forge_core::Result;
 use forge_core::daemon::{DaemonContext, DaemonStatus};
-use forge_core::CircuitBreakerClient;
 use futures_util::FutureExt;
 use sqlx::PgPool;
 use tokio::sync::{broadcast, watch};

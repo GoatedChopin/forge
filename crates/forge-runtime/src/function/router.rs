@@ -105,8 +105,7 @@ impl FunctionRouter {
                         }
 
                         // Execute and cache result (use read replica for queries)
-                        let ctx =
-                            QueryContext::new(self.db.read_pool().clone(), auth, request);
+                        let ctx = QueryContext::new(self.db.read_pool().clone(), auth, request);
                         let result = handler(&ctx, args.clone()).await?;
 
                         self.query_cache.set(
@@ -119,8 +118,7 @@ impl FunctionRouter {
                         Ok(RouteResult::Query(result))
                     } else {
                         // Use read replica for queries
-                        let ctx =
-                            QueryContext::new(self.db.read_pool().clone(), auth, request);
+                        let ctx = QueryContext::new(self.db.read_pool().clone(), auth, request);
                         let result = handler(&ctx, args).await?;
                         Ok(RouteResult::Query(result))
                     }

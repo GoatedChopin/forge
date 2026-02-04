@@ -31,6 +31,10 @@ pub use function::{
     JobInfoLookup, MutationContext, OutboxBuffer, PendingJob, PendingWorkflow, QueryContext,
     RequestMetadata, WorkflowDispatch,
 };
+pub use http::{
+    CircuitBreakerClient, CircuitBreakerConfig, CircuitBreakerError, CircuitBreakerOpen,
+    CircuitState, CircuitStatus,
+};
 pub use job::{ForgeJob, JobContext, JobInfo, JobPriority, JobStatus, RetryConfig};
 pub use rate_limit::{RateLimitConfig, RateLimitHeaders, RateLimitKey, RateLimitResult};
 pub use realtime::{
@@ -47,8 +51,4 @@ pub use webhook::{
 pub use workflow::{
     ForgeWorkflow, ParallelBuilder, ParallelResults, SuspendReason, WorkflowContext, WorkflowEvent,
     WorkflowEventSender, WorkflowInfo, WorkflowStatus,
-};
-pub use http::{
-    CircuitBreakerClient, CircuitBreakerConfig, CircuitBreakerError, CircuitBreakerOpen,
-    CircuitState, CircuitStatus,
 };

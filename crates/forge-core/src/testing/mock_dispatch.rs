@@ -185,7 +185,6 @@ impl MockJobDispatch {
             job.cancel_reason = reason;
         }
     }
-
 }
 
 impl Default for MockJobDispatch {
@@ -203,9 +202,7 @@ impl crate::function::JobDispatch for MockJobDispatch {
         &self,
         job_type: &str,
         args: serde_json::Value,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<Uuid>> + Send + '_>,
-    > {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Uuid>> + Send + '_>> {
         let job_type = job_type.to_string();
         Box::pin(async move { self.dispatch(&job_type, args).await })
     }

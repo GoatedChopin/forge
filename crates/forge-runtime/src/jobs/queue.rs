@@ -363,7 +363,6 @@ impl JobQueue {
         Ok(())
     }
 
-
     /// Update heartbeat for a running job.
     pub async fn heartbeat(&self, job_id: Uuid) -> Result<(), sqlx::Error> {
         sqlx::query(

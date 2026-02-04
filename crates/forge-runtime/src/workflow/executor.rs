@@ -8,9 +8,9 @@ use uuid::Uuid;
 
 use super::registry::WorkflowRegistry;
 use super::state::{WorkflowRecord, WorkflowStepRecord};
+use forge_core::CircuitBreakerClient;
 use forge_core::function::WorkflowDispatch;
 use forge_core::workflow::{CompensationHandler, StepStatus, WorkflowContext, WorkflowStatus};
-use forge_core::CircuitBreakerClient;
 
 /// Workflow execution result.
 #[derive(Debug)]

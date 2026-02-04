@@ -21,10 +21,10 @@ use axum::http::Request;
 use axum::response::Response;
 use tokio::sync::broadcast;
 
+use forge_core::CircuitBreakerClient;
 use forge_core::cluster::{LeaderRole, NodeId, NodeInfo, NodeRole, NodeStatus};
 use forge_core::config::{ForgeConfig, NodeRole as ConfigNodeRole};
 use forge_core::error::{ForgeError, Result};
-use forge_core::CircuitBreakerClient;
 use forge_runtime::migrations::{Migration, MigrationRunner, load_migrations_from_dir};
 
 use forge_runtime::cluster::{

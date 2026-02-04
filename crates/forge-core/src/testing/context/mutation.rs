@@ -145,7 +145,10 @@ impl TestMutationContext {
             workflows.iter().any(|w| w.workflow_name == workflow_name),
             "Expected workflow '{}' to be buffered, but it was not. Buffered workflows: {:?}",
             workflow_name,
-            workflows.iter().map(|w| &w.workflow_name).collect::<Vec<_>>()
+            workflows
+                .iter()
+                .map(|w| &w.workflow_name)
+                .collect::<Vec<_>>()
         );
     }
 }

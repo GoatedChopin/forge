@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use forge_core::job::{JobContext, ProgressUpdate};
 use forge_core::CircuitBreakerClient;
+use forge_core::job::{JobContext, ProgressUpdate};
 use tokio::time::timeout;
 
 use super::queue::{JobQueue, JobRecord};
@@ -136,10 +136,8 @@ impl JobExecutor {
                         false
                     }
                 };
-                if matches!(e, forge_core::ForgeError::JobCancelled(_)) || cancel_requested
-                {
-                    let reason =
-                        Self::cancellation_reason(job, "Job cancellation requested");
+                if matches!(e, forge_core::ForgeError::JobCancelled(_)) || cancel_requested {
+                    let reason = Self::cancellation_reason(job, "Job cancellation requested");
                     if let Err(e) = self.queue.cancel(job.id, Some(&reason), ttl).await {
                         tracing::error!("Failed to mark job {} as cancelled: {}", job.id, e);
                     }

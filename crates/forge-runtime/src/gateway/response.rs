@@ -149,9 +149,7 @@ impl From<forge_core::error::ForgeError> for RpcError {
                 Self::new("INVALID_ARGUMENT", msg)
             }
             forge_core::error::ForgeError::Timeout(msg) => Self::new("TIMEOUT", msg),
-            forge_core::error::ForgeError::JobCancelled(msg) => {
-                Self::new("JOB_CANCELLED", msg)
-            }
+            forge_core::error::ForgeError::JobCancelled(msg) => Self::new("JOB_CANCELLED", msg),
             forge_core::error::ForgeError::Database(msg) => {
                 Self::internal(format!("Database error: {}", msg))
             }

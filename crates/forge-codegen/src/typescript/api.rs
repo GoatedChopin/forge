@@ -55,10 +55,7 @@ impl ApiGenerator {
             let ts_name = to_camel_case(&func.name);
 
             // Check if any argument contains an Upload type
-            let has_upload = func
-                .args
-                .iter()
-                .any(|arg| contains_upload(&arg.rust_type));
+            let has_upload = func.args.iter().any(|arg| contains_upload(&arg.rust_type));
 
             match func.kind {
                 FunctionKind::Query => {
@@ -490,8 +487,7 @@ mod tests {
         let registry = SchemaRegistry::new();
 
         // Mutation with Upload arg should use callWithFiles
-        let mut func =
-            FunctionDef::mutation("upload_avatar", RustType::Custom("User".to_string()));
+        let mut func = FunctionDef::mutation("upload_avatar", RustType::Custom("User".to_string()));
         func.args.push(FunctionArg::new("user_id", RustType::Uuid));
         func.args.push(FunctionArg::new("file", RustType::Upload));
         registry.register_function(func);
@@ -512,7 +508,9 @@ mod tests {
     #[test]
     fn test_contains_upload() {
         assert!(contains_upload(&RustType::Upload));
-        assert!(contains_upload(&RustType::Option(Box::new(RustType::Upload))));
+        assert!(contains_upload(&RustType::Option(Box::new(
+            RustType::Upload
+        ))));
         assert!(contains_upload(&RustType::Vec(Box::new(RustType::Upload))));
         assert!(contains_upload(&RustType::Custom("Upload".to_string())));
         assert!(!contains_upload(&RustType::String));

@@ -379,7 +379,9 @@ mod tests {
             reqwest::Client::new(),
         );
 
-        ctx.save("charge_id", serde_json::json!("ch_123")).await.unwrap();
+        ctx.save("charge_id", serde_json::json!("ch_123"))
+            .await
+            .unwrap();
         ctx.save("amount", serde_json::json!(100)).await.unwrap();
 
         let saved = ctx.saved().await;

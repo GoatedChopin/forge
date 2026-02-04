@@ -38,8 +38,11 @@ pub type BoxedJobHandler = Arc<
 >;
 
 pub type BoxedJobCompensation = Arc<
-    dyn for<'a> Fn(&'a JobContext, Value, &'a str)
-            -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>
+    dyn for<'a> Fn(
+            &'a JobContext,
+            Value,
+            &'a str,
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>
         + Send
         + Sync,
 >;

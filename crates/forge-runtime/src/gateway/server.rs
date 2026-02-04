@@ -12,7 +12,6 @@ use forge_core::cluster::NodeId;
 use forge_core::function::{JobDispatch, WorkflowDispatch};
 
 use super::auth::{AuthConfig, AuthMiddleware, auth_middleware};
-use crate::db::Database;
 use super::multipart::rpc_multipart_handler;
 use super::rpc::{RpcHandler, rpc_function_handler, rpc_handler};
 use super::sse::{
@@ -20,6 +19,7 @@ use super::sse::{
     sse_unsubscribe_handler, sse_workflow_subscribe_handler,
 };
 use super::tracing::TracingState;
+use crate::db::Database;
 use crate::function::FunctionRegistry;
 use crate::realtime::{Reactor, ReactorConfig};
 
