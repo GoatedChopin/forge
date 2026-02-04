@@ -248,10 +248,6 @@ impl MockHttp {
         self.mocks.write().unwrap().clear();
     }
 
-    // =========================================================================
-    // VERIFICATION METHODS
-    // =========================================================================
-
     /// Assert that a URL pattern was called.
     pub fn assert_called(&self, pattern: &str) {
         let requests = self.requests_blocking();

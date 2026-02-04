@@ -570,10 +570,6 @@ impl WorkflowContext {
         self.compensation_handlers.read().unwrap().clone()
     }
 
-    // =========================================================================
-    // DURABLE WORKFLOW API
-    // =========================================================================
-
     /// Sleep for a duration.
     ///
     /// This suspends the workflow and persists the wake time to the database.
@@ -766,10 +762,6 @@ impl WorkflowContext {
         Err(ForgeError::WorkflowSuspended)
     }
 
-    // =========================================================================
-    // PARALLEL EXECUTION API
-    // =========================================================================
-
     /// Create a parallel builder for executing steps concurrently.
     ///
     /// # Example
@@ -788,10 +780,6 @@ impl WorkflowContext {
     pub fn parallel(&self) -> ParallelBuilder<'_> {
         ParallelBuilder::new(self)
     }
-
-    // =========================================================================
-    // FLUENT STEP API
-    // =========================================================================
 
     /// Create a step runner for executing a workflow step.
     ///

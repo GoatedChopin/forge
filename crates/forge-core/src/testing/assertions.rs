@@ -174,10 +174,6 @@ macro_rules! assert_http_not_called {
     };
 }
 
-// =========================================================================
-// HELPER FUNCTIONS
-// =========================================================================
-
 /// Check if an error message contains a substring.
 pub fn error_contains(error: &ForgeError, substring: &str) -> bool {
     error.to_string().contains(substring)
