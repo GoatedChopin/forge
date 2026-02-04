@@ -409,6 +409,7 @@ impl MutationContext {
     }
 
     /// Returns handles to transaction and outbox for the caller to commit/flush.
+    #[allow(clippy::type_complexity)]
     pub fn with_transaction(
         db_pool: sqlx::PgPool,
         tx: Transaction<'static, Postgres>,
