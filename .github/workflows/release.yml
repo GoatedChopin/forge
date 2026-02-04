@@ -159,6 +159,13 @@ jobs:
           ./target/release/forge new /tmp/forge-integration-test --demo
           ls -la /tmp/forge-integration-test
 
+      - name: Patch to use local workspace
+        run: |
+          cd /tmp/forge-integration-test
+          # Replace crates.io dependency with path to workspace
+          sed -i 's|forge = { version = "[^"]*" }|forge = { path = "${{ github.workspace }}/crates/forge" }|' Cargo.toml
+          cat Cargo.toml
+
       - name: Install Playwright
         working-directory: /tmp/forge-integration-test/frontend
         run: |
@@ -204,7 +211,7 @@ jobs:
 
   bump-versions:
     name: Bump Versions
-    needs: [parse-changelog, validate]
+    needs: [parse-changelog, validate, integration-test]
     runs-on: ubuntu-latest
     outputs:
       commit_sha: ${{ steps.commit.outputs.sha }}
