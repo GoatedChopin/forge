@@ -13,6 +13,8 @@ pub struct JobRecord {
     pub input: serde_json::Value,
     /// Job output as JSON (if completed).
     pub output: Option<serde_json::Value>,
+    /// Persisted context data.
+    pub job_context: serde_json::Value,
     /// Current status.
     pub status: JobStatus,
     /// Priority level.
@@ -43,6 +45,12 @@ pub struct JobRecord {
     pub failed_at: Option<DateTime<Utc>>,
     /// Last heartbeat time.
     pub last_heartbeat: Option<DateTime<Utc>>,
+    /// Cancellation requested at.
+    pub cancel_requested_at: Option<DateTime<Utc>>,
+    /// Cancellation completed at.
+    pub cancelled_at: Option<DateTime<Utc>>,
+    /// Cancellation reason.
+    pub cancel_reason: Option<String>,
 }
 
 impl JobRecord {
@@ -58,6 +66,7 @@ impl JobRecord {
             job_type: job_type.into(),
             input,
             output: None,
+            job_context: serde_json::json!({}),
             status: JobStatus::Pending,
             priority: priority.as_i32(),
             attempts: 0,
@@ -73,6 +82,9 @@ impl JobRecord {
             completed_at: None,
             failed_at: None,
             last_heartbeat: None,
+            cancel_requested_at: None,
+            cancelled_at: None,
+            cancel_reason: None,
         }
     }
 
@@ -115,7 +127,7 @@ impl JobQueue {
                 r#"
                 SELECT id FROM forge_jobs
                 WHERE idempotency_key = $1
-                  AND status NOT IN ('completed', 'failed', 'dead_letter')
+                  AND status NOT IN ('completed', 'failed', 'dead_letter', 'cancelled')
                 "#,
             )
             .bind(key)
@@ -130,16 +142,17 @@ impl JobQueue {
         sqlx::query(
             r#"
             INSERT INTO forge_jobs (
-                id, job_type, input, status, priority, attempts, max_attempts,
+                id, job_type, input, job_context, status, priority, attempts, max_attempts,
                 worker_capability, idempotency_key, scheduled_at, created_at
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
             )
             "#,
         )
         .bind(job.id)
         .bind(&job.job_type)
         .bind(&job.input)
+        .bind(&job.job_context)
         .bind(job.status.as_str())
         .bind(job.priority)
         .bind(job.attempts)
@@ -181,10 +194,11 @@ impl JobQueue {
                 attempts = attempts + 1
             WHERE id IN (SELECT id FROM claimable)
             RETURNING
-                id, job_type, input, output, status, priority,
+                id, job_type, input, output, job_context, status, priority,
                 attempts, max_attempts, last_error, worker_capability,
                 worker_id, idempotency_key, scheduled_at, created_at,
-                claimed_at, started_at, completed_at, failed_at, last_heartbeat
+                claimed_at, started_at, completed_at, failed_at, last_heartbeat,
+                cancel_requested_at, cancelled_at, cancel_reason
             "#,
         )
         .bind(worker_id)
@@ -202,6 +216,7 @@ impl JobQueue {
                     job_type: row.get("job_type"),
                     input: row.get("input"),
                     output: row.get("output"),
+                    job_context: row.get("job_context"),
                     status: row.get::<String, _>("status").parse().unwrap(),
                     priority: row.get("priority"),
                     attempts: row.get("attempts"),
@@ -217,6 +232,9 @@ impl JobQueue {
                     completed_at: row.get("completed_at"),
                     failed_at: row.get("failed_at"),
                     last_heartbeat: row.get("last_heartbeat"),
+                    cancel_requested_at: row.get("cancel_requested_at"),
+                    cancelled_at: row.get("cancelled_at"),
+                    cancel_reason: row.get("cancel_reason"),
                 }
             })
             .collect();
@@ -226,38 +244,55 @@ impl JobQueue {
 
     /// Mark job as running.
     pub async fn start(&self, job_id: Uuid) -> Result<(), sqlx::Error> {
-        sqlx::query(
+        let result = sqlx::query(
             r#"
             UPDATE forge_jobs
             SET status = 'running', started_at = NOW()
             WHERE id = $1
+              AND status NOT IN ('cancel_requested', 'cancelled')
             "#,
         )
         .bind(job_id)
         .execute(&self.pool)
         .await?;
 
+        if result.rows_affected() == 0 {
+            return Err(sqlx::Error::RowNotFound);
+        }
+
         Ok(())
     }
 
     /// Mark job as completed.
+    ///
+    /// If `ttl` is provided, sets `expires_at` for automatic cleanup.
     pub async fn complete(
         &self,
         job_id: Uuid,
         output: serde_json::Value,
+        ttl: Option<std::time::Duration>,
     ) -> Result<(), sqlx::Error> {
+        let expires_at = ttl.map(|d| {
+            chrono::Utc::now() + chrono::Duration::from_std(d).unwrap_or(chrono::Duration::days(7))
+        });
+
         sqlx::query(
             r#"
             UPDATE forge_jobs
             SET
                 status = 'completed',
                 output = $2,
-                completed_at = NOW()
+                completed_at = NOW(),
+                cancel_requested_at = NULL,
+                cancelled_at = NULL,
+                cancel_reason = NULL,
+                expires_at = $3
             WHERE id = $1
             "#,
         )
         .bind(job_id)
         .bind(output)
+        .bind(expires_at)
         .execute(&self.pool)
         .await?;
 
@@ -265,11 +300,14 @@ impl JobQueue {
     }
 
     /// Mark job as failed, schedule retry or move to dead letter.
+    ///
+    /// If `ttl` is provided and job moves to dead_letter, sets `expires_at` for automatic cleanup.
     pub async fn fail(
         &self,
         job_id: Uuid,
         error: &str,
         retry_delay: Option<chrono::Duration>,
+        ttl: Option<std::time::Duration>,
     ) -> Result<(), sqlx::Error> {
         if let Some(delay) = retry_delay {
             // Schedule retry
@@ -282,7 +320,10 @@ impl JobQueue {
                     claimed_at = NULL,
                     started_at = NULL,
                     last_error = $2,
-                    scheduled_at = NOW() + $3
+                    scheduled_at = NOW() + $3,
+                    cancel_requested_at = NULL,
+                    cancelled_at = NULL,
+                    cancel_reason = NULL
                 WHERE id = $1
                 "#,
             )
@@ -293,24 +334,35 @@ impl JobQueue {
             .await?;
         } else {
             // Move to dead letter
+            let expires_at = ttl.map(|d| {
+                chrono::Utc::now()
+                    + chrono::Duration::from_std(d).unwrap_or(chrono::Duration::days(7))
+            });
+
             sqlx::query(
                 r#"
                 UPDATE forge_jobs
                 SET
                     status = 'dead_letter',
                     last_error = $2,
-                    failed_at = NOW()
+                    failed_at = NOW(),
+                    cancel_requested_at = NULL,
+                    cancelled_at = NULL,
+                    cancel_reason = NULL,
+                    expires_at = $3
                 WHERE id = $1
                 "#,
             )
             .bind(job_id)
             .bind(error)
+            .bind(expires_at)
             .execute(&self.pool)
             .await?;
         }
 
         Ok(())
     }
+
 
     /// Update heartbeat for a running job.
     pub async fn heartbeat(&self, job_id: Uuid) -> Result<(), sqlx::Error> {
@@ -351,6 +403,132 @@ impl JobQueue {
         Ok(())
     }
 
+    /// Replace persisted job context.
+    pub async fn set_context(
+        &self,
+        job_id: Uuid,
+        context: serde_json::Value,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            UPDATE forge_jobs
+            SET job_context = $2
+            WHERE id = $1
+            "#,
+        )
+        .bind(job_id)
+        .bind(context)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Request cancellation for a job.
+    pub async fn request_cancel(
+        &self,
+        job_id: Uuid,
+        reason: Option<&str>,
+    ) -> Result<bool, sqlx::Error> {
+        let row: Option<(String,)> = sqlx::query_as(
+            r#"
+            SELECT status
+            FROM forge_jobs
+            WHERE id = $1
+            "#,
+        )
+        .bind(job_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let status = match row {
+            Some((status,)) => status,
+            None => return Ok(false),
+        };
+
+        let terminal_statuses = [
+            JobStatus::Completed.as_str(),
+            JobStatus::Failed.as_str(),
+            JobStatus::DeadLetter.as_str(),
+            JobStatus::Cancelled.as_str(),
+        ];
+
+        if status == JobStatus::Running.as_str() {
+            let updated = sqlx::query(
+                r#"
+                UPDATE forge_jobs
+                SET
+                    status = 'cancel_requested',
+                    cancel_requested_at = NOW(),
+                    cancel_reason = COALESCE($2, cancel_reason)
+                WHERE id = $1
+                  AND status = 'running'
+                "#,
+            )
+            .bind(job_id)
+            .bind(reason)
+            .execute(&self.pool)
+            .await?;
+
+            return Ok(updated.rows_affected() > 0);
+        }
+
+        if terminal_statuses.contains(&status.as_str()) {
+            return Ok(false);
+        }
+
+        let updated = sqlx::query(
+            r#"
+            UPDATE forge_jobs
+            SET
+                status = 'cancelled',
+                cancelled_at = NOW(),
+                cancel_reason = COALESCE($2, cancel_reason)
+            WHERE id = $1
+              AND status NOT IN ('completed', 'failed', 'dead_letter', 'cancelled')
+            "#,
+        )
+        .bind(job_id)
+        .bind(reason)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(updated.rows_affected() > 0)
+    }
+
+    /// Mark job as cancelled.
+    ///
+    /// If `ttl` is provided, sets `expires_at` for automatic cleanup.
+    pub async fn cancel(
+        &self,
+        job_id: Uuid,
+        reason: Option<&str>,
+        ttl: Option<std::time::Duration>,
+    ) -> Result<(), sqlx::Error> {
+        let expires_at = ttl.map(|d| {
+            chrono::Utc::now() + chrono::Duration::from_std(d).unwrap_or(chrono::Duration::days(7))
+        });
+
+        sqlx::query(
+            r#"
+            UPDATE forge_jobs
+            SET
+                status = 'cancelled',
+                cancelled_at = NOW(),
+                cancel_reason = COALESCE($2, cancel_reason),
+                expires_at = $3
+            WHERE id = $1
+            "#,
+        )
+        .bind(job_id)
+        .bind(reason)
+        .bind(expires_at)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
     /// Release stale jobs back to pending.
     pub async fn release_stale(
         &self,
@@ -374,6 +552,25 @@ impl JobQueue {
         Ok(result.rows_affected())
     }
 
+    /// Delete expired job records.
+    ///
+    /// Only deletes terminal jobs (completed, cancelled, failed, dead_letter)
+    /// that have passed their TTL.
+    pub async fn cleanup_expired(&self) -> Result<u64, sqlx::Error> {
+        let result = sqlx::query(
+            r#"
+            DELETE FROM forge_jobs
+            WHERE expires_at IS NOT NULL
+              AND expires_at < NOW()
+              AND status IN ('completed', 'cancelled', 'failed', 'dead_letter')
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected())
+    }
+
     /// Get queue statistics.
     pub async fn stats(&self) -> Result<QueueStats, sqlx::Error> {
         let row = sqlx::query(
@@ -383,6 +580,7 @@ impl JobQueue {
                 COUNT(*) FILTER (WHERE status = 'claimed') as claimed,
                 COUNT(*) FILTER (WHERE status = 'running') as running,
                 COUNT(*) FILTER (WHERE status = 'completed') as completed,
+                COUNT(*) FILTER (WHERE status = 'cancelled') as cancelled,
                 COUNT(*) FILTER (WHERE status = 'failed') as failed,
                 COUNT(*) FILTER (WHERE status = 'dead_letter') as dead_letter
             FROM forge_jobs
@@ -397,6 +595,7 @@ impl JobQueue {
             claimed: row.get::<i64, _>("claimed") as u64,
             running: row.get::<i64, _>("running") as u64,
             completed: row.get::<i64, _>("completed") as u64,
+            cancelled: row.get::<i64, _>("cancelled") as u64,
             failed: row.get::<i64, _>("failed") as u64,
             dead_letter: row.get::<i64, _>("dead_letter") as u64,
         })
@@ -410,6 +609,7 @@ pub struct QueueStats {
     pub claimed: u64,
     pub running: u64,
     pub completed: u64,
+    pub cancelled: u64,
     pub failed: u64,
     pub dead_letter: u64,
 }

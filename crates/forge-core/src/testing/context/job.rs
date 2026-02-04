@@ -1,6 +1,7 @@
 //! Test context for job functions.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
 use sqlx::PgPool;
@@ -24,7 +25,7 @@ pub struct TestProgressUpdate {
 /// Test context for job functions.
 ///
 /// Provides an isolated testing environment for jobs with progress tracking,
-/// retry simulation, and HTTP mocking.
+/// retry simulation, cancellation testing, and HTTP mocking.
 ///
 /// # Example
 ///
@@ -38,6 +39,10 @@ pub struct TestProgressUpdate {
 ///
 /// // Verify progress was recorded
 /// assert_eq!(ctx.progress_updates().len(), 1);
+///
+/// // Test cancellation
+/// ctx.request_cancellation();
+/// assert!(ctx.is_cancel_requested().unwrap());
 /// ```
 pub struct TestJobContext {
     /// Job ID.
@@ -58,6 +63,10 @@ pub struct TestJobContext {
     progress_updates: Arc<RwLock<Vec<TestProgressUpdate>>>,
     /// Mock environment provider.
     env_provider: Arc<MockEnvProvider>,
+    /// Persisted saved data (in-memory).
+    saved_data: Arc<RwLock<serde_json::Value>>,
+    /// Whether cancellation has been requested.
+    cancel_requested: Arc<AtomicBool>,
 }
 
 impl TestJobContext {
@@ -91,6 +100,31 @@ impl TestJobContext {
         self.progress_updates.read().unwrap().clone()
     }
 
+    /// Get all saved job data.
+    pub fn saved(&self) -> serde_json::Value {
+        self.saved_data.read().unwrap().clone()
+    }
+
+    /// Replace all saved job data.
+    pub fn set_saved(&self, data: serde_json::Value) -> Result<()> {
+        let mut guard = self.saved_data.write().unwrap();
+        *guard = data;
+        Ok(())
+    }
+
+    /// Save a key-value pair to job data.
+    pub fn save(&self, key: &str, value: serde_json::Value) -> Result<()> {
+        let mut guard = self.saved_data.write().unwrap();
+        if let Some(map) = guard.as_object_mut() {
+            map.insert(key.to_string(), value);
+        } else {
+            let mut map = serde_json::Map::new();
+            map.insert(key.to_string(), value);
+            *guard = serde_json::Value::Object(map);
+        }
+        Ok(())
+    }
+
     /// Check if this is a retry attempt.
     pub fn is_retry(&self) -> bool {
         self.attempt > 1
@@ -104,6 +138,32 @@ impl TestJobContext {
     /// Simulate heartbeat (no-op in tests, but records the intent).
     pub async fn heartbeat(&self) -> Result<()> {
         Ok(())
+    }
+
+    /// Check if cancellation has been requested.
+    pub fn is_cancel_requested(&self) -> Result<bool> {
+        Ok(self.cancel_requested.load(Ordering::SeqCst))
+    }
+
+    /// Return an error if cancellation has been requested.
+    ///
+    /// Use this in job handlers to check for cancellation and exit early.
+    pub fn check_cancelled(&self) -> Result<()> {
+        if self.cancel_requested.load(Ordering::SeqCst) {
+            Err(crate::ForgeError::JobCancelled(
+                "Job cancellation requested".to_string(),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Request cancellation (for testing cancellation flows).
+    ///
+    /// After calling this, `is_cancel_requested()` returns `true` and
+    /// `check_cancelled()` returns an error.
+    pub fn request_cancellation(&self) {
+        self.cancel_requested.store(true, Ordering::SeqCst);
     }
 
     /// Get the mock env provider for verification.
@@ -130,6 +190,7 @@ pub struct TestJobContextBuilder {
     pool: Option<PgPool>,
     http: MockHttp,
     env_vars: HashMap<String, String>,
+    cancel_requested: bool,
 }
 
 impl TestJobContextBuilder {
@@ -146,6 +207,7 @@ impl TestJobContextBuilder {
             pool: None,
             http: MockHttp::new(),
             env_vars: HashMap::new(),
+            cancel_requested: false,
         }
     }
 
@@ -226,6 +288,14 @@ impl TestJobContextBuilder {
         self
     }
 
+    /// Start with cancellation already requested.
+    ///
+    /// Use this to test how jobs handle cancellation from the start.
+    pub fn with_cancellation_requested(mut self) -> Self {
+        self.cancel_requested = true;
+        self
+    }
+
     /// Build the test context.
     pub fn build(self) -> TestJobContext {
         TestJobContext {
@@ -238,6 +308,8 @@ impl TestJobContextBuilder {
             http: Arc::new(self.http),
             progress_updates: Arc::new(RwLock::new(Vec::new())),
             env_provider: Arc::new(MockEnvProvider::with_vars(self.env_vars)),
+            saved_data: Arc::new(RwLock::new(crate::job::empty_saved_data())),
+            cancel_requested: Arc::new(AtomicBool::new(self.cancel_requested)),
         }
     }
 }
@@ -287,5 +359,44 @@ mod tests {
         assert_eq!(updates.len(), 3);
         assert_eq!(updates[0].percent, 25);
         assert_eq!(updates[2].percent, 100);
+    }
+
+    #[test]
+    fn test_save_and_saved() {
+        let ctx = TestJobContext::builder("test").build();
+        ctx.save("charge_id", serde_json::json!("ch_123")).unwrap();
+        ctx.save("amount", serde_json::json!(100)).unwrap();
+
+        let saved = ctx.saved();
+        assert_eq!(saved["charge_id"], "ch_123");
+        assert_eq!(saved["amount"], 100);
+    }
+
+    #[test]
+    fn test_cancellation_not_requested() {
+        let ctx = TestJobContext::builder("test").build();
+
+        assert!(!ctx.is_cancel_requested().unwrap());
+        assert!(ctx.check_cancelled().is_ok());
+    }
+
+    #[test]
+    fn test_cancellation_requested_at_build() {
+        let ctx = TestJobContext::builder("test")
+            .with_cancellation_requested()
+            .build();
+
+        assert!(ctx.is_cancel_requested().unwrap());
+        assert!(ctx.check_cancelled().is_err());
+    }
+
+    #[test]
+    fn test_request_cancellation_mid_test() {
+        let ctx = TestJobContext::builder("test").build();
+
+        assert!(!ctx.is_cancel_requested().unwrap());
+        ctx.request_cancellation();
+        assert!(ctx.is_cancel_requested().unwrap());
+        assert!(ctx.check_cancelled().is_err());
     }
 }

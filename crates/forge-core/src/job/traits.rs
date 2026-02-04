@@ -24,6 +24,15 @@ pub trait ForgeJob: Send + Sync + 'static {
         ctx: &JobContext,
         args: Self::Args,
     ) -> Pin<Box<dyn Future<Output = Result<Self::Output>> + Send + '_>>;
+
+    /// Compensate a cancelled job.
+    fn compensate<'a>(
+        _ctx: &'a JobContext,
+        _args: Self::Args,
+        _reason: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 /// Job metadata.
@@ -47,6 +56,9 @@ pub struct JobInfo {
     pub is_public: bool,
     /// Required role for authorization (implies auth required).
     pub required_role: Option<&'static str>,
+    /// Time-to-live after completion. Job records are cleaned up after this duration.
+    /// None means records are kept indefinitely.
+    pub ttl: Option<Duration>,
 }
 
 impl Default for JobInfo {
@@ -61,6 +73,7 @@ impl Default for JobInfo {
             idempotency_key: None,
             is_public: false,
             required_role: None,
+            ttl: None,
         }
     }
 }
@@ -126,6 +139,10 @@ pub enum JobStatus {
     Failed,
     /// Moved to dead letter queue.
     DeadLetter,
+    /// Cancellation requested for a running job.
+    CancelRequested,
+    /// Job cancelled.
+    Cancelled,
 }
 
 impl JobStatus {
@@ -139,6 +156,8 @@ impl JobStatus {
             Self::Retry => "retry",
             Self::Failed => "failed",
             Self::DeadLetter => "dead_letter",
+            Self::CancelRequested => "cancel_requested",
+            Self::Cancelled => "cancelled",
         }
     }
 }
@@ -155,6 +174,8 @@ impl FromStr for JobStatus {
             "retry" => Self::Retry,
             "failed" => Self::Failed,
             "dead_letter" => Self::DeadLetter,
+            "cancel_requested" => Self::CancelRequested,
+            "cancelled" => Self::Cancelled,
             _ => Self::Pending,
         })
     }
@@ -237,6 +258,16 @@ mod tests {
         assert_eq!(
             "dead_letter".parse::<JobStatus>(),
             Ok(JobStatus::DeadLetter)
+        );
+        assert_eq!(JobStatus::CancelRequested.as_str(), "cancel_requested");
+        assert_eq!(
+            "cancel_requested".parse::<JobStatus>(),
+            Ok(JobStatus::CancelRequested)
+        );
+        assert_eq!(JobStatus::Cancelled.as_str(), "cancelled");
+        assert_eq!(
+            "cancelled".parse::<JobStatus>(),
+            Ok(JobStatus::Cancelled)
         );
     }
 

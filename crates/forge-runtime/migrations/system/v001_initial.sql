@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS forge_jobs (
     job_type VARCHAR(255) NOT NULL,
     input JSONB NOT NULL DEFAULT '{}',
     output JSONB,
+    job_context JSONB NOT NULL DEFAULT '{}',
     status VARCHAR(32) NOT NULL DEFAULT 'pending',
     priority INTEGER NOT NULL DEFAULT 50,
     attempts INTEGER NOT NULL DEFAULT 0,
@@ -47,7 +48,11 @@ CREATE TABLE IF NOT EXISTS forge_jobs (
     started_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ,
     failed_at TIMESTAMPTZ,
-    last_heartbeat TIMESTAMPTZ
+    cancel_requested_at TIMESTAMPTZ,
+    cancelled_at TIMESTAMPTZ,
+    cancel_reason TEXT,
+    last_heartbeat TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_forge_jobs_status_scheduled
@@ -57,6 +62,10 @@ CREATE INDEX IF NOT EXISTS idx_forge_jobs_status_scheduled
 CREATE INDEX IF NOT EXISTS idx_forge_jobs_idempotency
     ON forge_jobs(idempotency_key)
     WHERE idempotency_key IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_forge_jobs_expires
+    ON forge_jobs(expires_at)
+    WHERE expires_at IS NOT NULL;
 
 -- Cron: Execution history
 CREATE TABLE IF NOT EXISTS forge_cron_runs (
@@ -319,6 +328,22 @@ DECLARE
     deleted_count INTEGER;
 BEGIN
     DELETE FROM forge_webhook_events WHERE expires_at < NOW();
+    GET DIAGNOSTICS deleted_count = ROW_COUNT;
+    RETURN deleted_count;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Periodic cleanup function for expired job records
+-- Deletes completed/cancelled/failed jobs past their TTL
+-- This can be called from a cron job: SELECT forge_cleanup_expired_jobs();
+CREATE OR REPLACE FUNCTION forge_cleanup_expired_jobs() RETURNS INTEGER AS $$
+DECLARE
+    deleted_count INTEGER;
+BEGIN
+    DELETE FROM forge_jobs
+    WHERE expires_at IS NOT NULL
+      AND expires_at < NOW()
+      AND status IN ('completed', 'cancelled', 'failed', 'dead_letter');
     GET DIAGNOSTICS deleted_count = ROW_COUNT;
     RETURN deleted_count;
 END;

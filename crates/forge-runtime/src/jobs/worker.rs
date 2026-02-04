@@ -88,15 +88,28 @@ impl Worker {
         // Semaphore to limit concurrent jobs
         let semaphore = Arc::new(tokio::sync::Semaphore::new(self.config.max_concurrent));
 
-        // Spawn stale cleanup task
+        // Spawn stale and expired cleanup task
         let cleanup_queue = self.queue.clone();
         let cleanup_interval = self.config.stale_cleanup_interval;
         let stale_threshold = self.config.stale_threshold;
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(cleanup_interval).await;
+
+                // Release stale jobs back to pending
                 if let Err(e) = cleanup_queue.release_stale(stale_threshold).await {
                     tracing::error!("Failed to cleanup stale jobs: {}", e);
+                }
+
+                // Delete expired job records
+                match cleanup_queue.cleanup_expired().await {
+                    Ok(count) if count > 0 => {
+                        tracing::debug!("Cleaned up {} expired job records", count);
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to cleanup expired jobs: {}", e);
+                    }
+                    _ => {}
                 }
             }
         });
@@ -182,6 +195,14 @@ impl Worker {
                                         job_type = %job_type,
                                         will_retry = %retryable,
                                         "Job timed out"
+                                    );
+                                }
+                                super::executor::ExecutionResult::Cancelled { reason } => {
+                                    tracing::info!(
+                                        job_id = %job_id,
+                                        job_type = %job_type,
+                                        reason = %reason,
+                                        "Job cancelled"
                                     );
                                 }
                             }

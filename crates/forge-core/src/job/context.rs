@@ -5,6 +5,11 @@ use uuid::Uuid;
 use crate::env::{EnvAccess, EnvProvider, RealEnvProvider};
 use crate::function::AuthContext;
 
+/// Returns an empty JSON object for initializing job saved data.
+pub fn empty_saved_data() -> serde_json::Value {
+    serde_json::Value::Object(serde_json::Map::new())
+}
+
 /// Context available to job handlers.
 pub struct JobContext {
     /// Job ID.
@@ -17,6 +22,8 @@ pub struct JobContext {
     pub max_attempts: u32,
     /// Authentication context (for queries/mutations).
     pub auth: AuthContext,
+    /// Persisted job data (survives retries, accessible during compensation).
+    saved_data: Arc<tokio::sync::RwLock<serde_json::Value>>,
     /// Database pool.
     db_pool: sqlx::PgPool,
     /// HTTP client for external calls.
@@ -54,11 +61,18 @@ impl JobContext {
             attempt,
             max_attempts,
             auth: AuthContext::unauthenticated(),
+            saved_data: Arc::new(tokio::sync::RwLock::new(empty_saved_data())),
             db_pool,
             http_client,
             progress_tx: None,
             env_provider: Arc::new(RealEnvProvider::new()),
         }
+    }
+
+    /// Create a new job context with persisted saved data.
+    pub fn with_saved(mut self, data: serde_json::Value) -> Self {
+        self.saved_data = Arc::new(tokio::sync::RwLock::new(data));
+        self
     }
 
     /// Set authentication context.
@@ -103,6 +117,116 @@ impl JobContext {
         }
 
         Ok(())
+    }
+
+    /// Get all saved job data.
+    ///
+    /// Returns data that was saved during job execution via `save()`.
+    /// This data persists across retries and is accessible in compensation handlers.
+    pub async fn saved(&self) -> serde_json::Value {
+        self.saved_data.read().await.clone()
+    }
+
+    /// Replace all saved job data.
+    ///
+    /// Replaces the entire saved data object. For updating individual keys,
+    /// use `save()` instead.
+    pub async fn set_saved(&self, data: serde_json::Value) -> crate::Result<()> {
+        let mut guard = self.saved_data.write().await;
+        *guard = data;
+        let persisted = Self::clone_and_drop(guard);
+        if self.job_id.is_nil() {
+            return Ok(());
+        }
+        self.persist_saved_data(persisted).await
+    }
+
+    /// Save a key-value pair to persistent job data.
+    ///
+    /// Saved data persists across retries and is accessible in compensation handlers.
+    /// Use this to store information needed for rollback (e.g., transaction IDs,
+    /// resource handles, progress markers).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// ctx.save("charge_id", json!(charge.id)).await?;
+    /// ctx.save("refund_amount", json!(amount)).await?;
+    /// ```
+    pub async fn save(&self, key: &str, value: serde_json::Value) -> crate::Result<()> {
+        let mut guard = self.saved_data.write().await;
+        Self::apply_save(&mut guard, key, value);
+        let persisted = Self::clone_and_drop(guard);
+        if self.job_id.is_nil() {
+            return Ok(());
+        }
+        self.persist_saved_data(persisted).await
+    }
+
+    /// Check if cancellation has been requested for this job.
+    pub async fn is_cancel_requested(&self) -> crate::Result<bool> {
+        let row: Option<(String,)> = sqlx::query_as(
+            r#"
+            SELECT status
+            FROM forge_jobs
+            WHERE id = $1
+            "#,
+        )
+        .bind(self.job_id)
+        .fetch_optional(&self.db_pool)
+        .await
+        .map_err(|e| crate::ForgeError::Database(e.to_string()))?;
+
+        Ok(matches!(
+            row.as_ref().map(|(status,)| status.as_str()),
+            Some("cancel_requested") | Some("cancelled")
+        ))
+    }
+
+    /// Return an error if cancellation has been requested.
+    pub async fn check_cancelled(&self) -> crate::Result<()> {
+        if self.is_cancel_requested().await? {
+            Err(crate::ForgeError::JobCancelled(
+                "Job cancellation requested".to_string(),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn persist_saved_data(&self, data: serde_json::Value) -> crate::Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE forge_jobs
+            SET job_context = $2
+            WHERE id = $1
+            "#,
+        )
+        .bind(self.job_id)
+        .bind(data)
+        .execute(&self.db_pool)
+        .await
+        .map_err(|e| crate::ForgeError::Database(e.to_string()))?;
+
+        Ok(())
+    }
+
+    fn apply_save(data: &mut serde_json::Value, key: &str, value: serde_json::Value) {
+        if let Some(map) = data.as_object_mut() {
+            map.insert(key.to_string(), value);
+        } else {
+            let mut map = serde_json::Map::new();
+            map.insert(key.to_string(), value);
+            *data = serde_json::Value::Object(map);
+        }
+    }
+
+    fn clone_and_drop(
+        guard: tokio::sync::RwLockWriteGuard<'_, serde_json::Value>,
+    ) -> serde_json::Value {
+        let cloned = guard.clone();
+        drop(guard);
+        cloned
     }
 
     /// Send heartbeat to keep job alive (async).
@@ -216,5 +340,50 @@ mod tests {
 
         assert_eq!(update.percentage, 50);
         assert_eq!(update.message, "Halfway there");
+    }
+
+    #[tokio::test]
+    async fn test_saved_data_in_memory() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect_lazy("postgres://localhost/nonexistent")
+            .expect("Failed to create mock pool");
+
+        let ctx = JobContext::new(
+            Uuid::nil(),
+            "test_job".to_string(),
+            1,
+            3,
+            pool,
+            reqwest::Client::new(),
+        )
+        .with_saved(serde_json::json!({"foo": "bar"}));
+
+        let saved = ctx.saved().await;
+        assert_eq!(saved["foo"], "bar");
+    }
+
+    #[tokio::test]
+    async fn test_save_key_value() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect_lazy("postgres://localhost/nonexistent")
+            .expect("Failed to create mock pool");
+
+        let ctx = JobContext::new(
+            Uuid::nil(),
+            "test_job".to_string(),
+            1,
+            3,
+            pool,
+            reqwest::Client::new(),
+        );
+
+        ctx.save("charge_id", serde_json::json!("ch_123")).await.unwrap();
+        ctx.save("amount", serde_json::json!(100)).await.unwrap();
+
+        let saved = ctx.saved().await;
+        assert_eq!(saved["charge_id"], "ch_123");
+        assert_eq!(saved["amount"], 100);
     }
 }

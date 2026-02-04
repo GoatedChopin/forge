@@ -95,6 +95,8 @@ Background tasks with retries and worker routing.
 | `worker_capability` | `"string"` | none | Required worker capability (e.g., `"gpu"`, `"media"`) |
 | `idempotent` | flag | `false` | Mark job as idempotent |
 | `idempotent(key = "...")` | config | none | Idempotent with custom key field |
+| `compensate` | `"handler"` | none | Cancellation compensation handler |
+| `ttl` | `"duration"` | none | Auto-cleanup after completion (e.g., `"7d"`) |
 
 ### Retry Configuration (Grouped)
 
@@ -122,13 +124,37 @@ Equivalent to specifying `max_attempts`, `backoff`, and `max_backoff` separately
     timeout = "30m",
     retry(max_attempts = 5, backoff = "exponential", max_backoff = "10m"),
     worker_capability = "gpu",
-    idempotent(key = "video_id")
+    idempotent(key = "video_id"),
+    compensate = "compensate_process_video",
+    ttl = "7d"
 )]
 pub async fn process_video(ctx: &JobContext, input: VideoInput) -> Result<VideoOutput> {
     ctx.progress(0, "Starting transcode")?;
-    // ...
+    ctx.check_cancelled().await?;
+
+    let temp_file = create_temp_file().await?;
+    ctx.save("temp_file", json!(temp_file.path())).await?;
+
+    // ... processing ...
+
     ctx.progress(100, "Complete")?;
     Ok(output)
+}
+
+pub async fn compensate_process_video(
+    ctx: &JobContext,
+    input: VideoInput,
+    reason: &str,
+) -> Result<()> {
+    // Original args available directly
+    tracing::warn!("Cleaning up video {} due to: {}", input.video_id, reason);
+
+    // Data generated during execution from saved()
+    let saved = ctx.saved().await;
+    if let Some(path) = saved.get("temp_file") {
+        delete_temp_file(path.as_str().unwrap()).await?;
+    }
+    Ok(())
 }
 ```
 

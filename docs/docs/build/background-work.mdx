@@ -45,6 +45,7 @@ Jobs that exceed `max_attempts` move to the dead letter queue for manual inspect
 | `idempotent(key = "field")` | config | none | Custom idempotency key |
 | `public` | flag | `false` | Allow unauthenticated dispatch |
 | `require_role("name")` | `string` | none | Require role to dispatch |
+| `ttl` | `"duration"` | none | Auto-cleanup after completion (e.g., `"7d"`) |
 
 ### Priority Levels
 
@@ -142,6 +143,44 @@ pub async fn export_data(ctx: &JobContext, args: ExportArgs) -> Result<ExportRes
 }
 ```
 
+### Cancellation & Compensation
+
+Jobs can be cancelled after dispatch. Use `ctx.check_cancelled()` to exit early and define
+a compensation handler for cleanup.
+
+```rust
+#[forge::job(compensate = "rollback_charge")]
+pub async fn charge_card(ctx: &JobContext, args: ChargeArgs) -> Result<Receipt> {
+    ctx.check_cancelled().await?;
+
+    let receipt = charge(&args).await?;
+
+    // Save data generated during execution for compensation
+    ctx.save("receipt_id", json!(receipt.id)).await?;
+
+    Ok(receipt)
+}
+
+pub async fn rollback_charge(
+    ctx: &JobContext,
+    args: ChargeArgs,
+    reason: &str,
+) -> Result<()> {
+    // Original args are available directly
+    tracing::info!("Rolling back charge {} due to: {}", args.charge_id, reason);
+
+    // Data generated during execution comes from saved()
+    let saved = ctx.saved().await;
+    if let Some(receipt_id) = saved.get("receipt_id") {
+        refund(receipt_id.as_str().unwrap()).await?;
+    }
+    Ok(())
+}
+```
+
+The compensation handler receives the original `args`. Use `save(key, value)` for data generated
+during execution that isn't in the original args (transaction IDs, receipts, temporary resources).
+
 ### Worker Routing
 
 Route jobs to workers with specific capabilities.
@@ -213,6 +252,11 @@ pub async fn send_notification(ctx: &JobContext, args: NotifyArgs) -> Result<()>
 | `ctx.http()` | `&Client` | HTTP client for external calls |
 | `ctx.progress(percent, msg)` | `Result<()>` | Report progress (0-100) |
 | `ctx.heartbeat()` | `Result<()>` | Send heartbeat to prevent stale reclaim |
+| `ctx.save(key, value)` | `Result<()>` | Save data for retries/compensation |
+| `ctx.saved()` | `Value` | Get all saved data |
+| `ctx.set_saved(data)` | `Result<()>` | Replace all saved data |
+| `ctx.is_cancel_requested()` | `Result<bool>` | Check if cancellation requested |
+| `ctx.check_cancelled()` | `Result<()>` | Return error if cancelled |
 | `ctx.is_retry()` | `bool` | Check if this is a retry attempt |
 | `ctx.is_last_attempt()` | `bool` | Check if this is the final attempt |
 | `ctx.env(key)` | `Option<String>` | Get environment variable |
@@ -301,7 +345,7 @@ Idempotent jobs check for existing records before insertion:
 ```sql
 SELECT id FROM forge_jobs
 WHERE idempotency_key = $1
-  AND status NOT IN ('completed', 'failed', 'dead_letter')
+  AND status NOT IN ('completed', 'failed', 'dead_letter', 'cancelled')
 ```
 
 If found, the existing job ID returns without creating a duplicate. The unique constraint `(job_type, idempotency_key)` prevents race conditions.
@@ -315,6 +359,21 @@ ORDER BY priority DESC, scheduled_at ASC
 ```
 
 Critical jobs (priority 100) execute before background jobs (priority 0). Within a priority level, older jobs run first. Priority inversion is prevented by always selecting highest priority available.
+
+### Job Record TTL
+
+Jobs with a `ttl` attribute have their records automatically cleaned up after completion:
+
+```rust
+#[forge::job(ttl = "7d")]  // Records deleted 7 days after completion
+pub async fn process_order(ctx: &JobContext, args: OrderArgs) -> Result<()> {
+    // ...
+}
+```
+
+When a job completes, fails, or is cancelled, `expires_at` is set to `completed_at + ttl`. A background task deletes expired records every 60 seconds.
+
+Jobs without `ttl` remain in the database indefinitely for auditing. Set `ttl` for high-volume jobs to prevent database bloat.
 
 ## Testing
 
@@ -351,6 +410,39 @@ fn test_last_attempt_fallback() {
 
     assert!(ctx.is_retry());
     assert!(ctx.is_last_attempt());
+}
+```
+
+### Cancellation Testing
+
+Test cancellation handling:
+
+```rust
+#[test]
+fn test_job_handles_cancellation() {
+    let ctx = TestJobContext::builder("process_payment")
+        .with_cancellation_requested()
+        .build();
+
+    assert!(ctx.is_cancel_requested().unwrap());
+    assert!(ctx.check_cancelled().is_err());
+}
+
+#[test]
+fn test_mid_execution_cancellation() {
+    let ctx = TestJobContext::builder("long_running_job").build();
+
+    // Simulate work that saves data
+    ctx.save("temp_file", json!("/tmp/upload.dat")).unwrap();
+
+    // Request cancellation mid-execution
+    ctx.request_cancellation();
+
+    // Job detects cancellation
+    assert!(ctx.check_cancelled().is_err());
+
+    // Saved data accessible for compensation
+    assert_eq!(ctx.saved()["temp_file"], "/tmp/upload.dat");
 }
 ```
 
