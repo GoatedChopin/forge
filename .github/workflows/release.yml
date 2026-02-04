@@ -146,6 +146,9 @@ jobs:
       - name: Build forge CLI
         run: cargo build --release
 
+      - name: Install cargo-watch
+        run: cargo install cargo-watch
+
       - name: Install bun
         uses: oven-sh/setup-bun@v2
         with:
