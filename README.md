@@ -173,7 +173,7 @@ No WebSocket code. No manual cache invalidation. Just reactive queries.
                      └─────────────┘
 ```
 
-One process. Multiple goroutines handle different concerns:
+One process. Multiple subsystems handle different concerns:
 
 - **Gateway**: HTTP/WebSocket server (built on [Axum](https://github.com/tokio-rs/axum))
 - **Workers**: Pull jobs from PostgreSQL using `SKIP LOCKED`
@@ -181,6 +181,16 @@ One process. Multiple goroutines handle different concerns:
 - **Dashboard**: Built-in UI for monitoring jobs, workflows, and metrics
 
 Scale horizontally by running multiple instances. They coordinate through PostgreSQL. No service mesh, no gossip protocol, no Redis cluster.
+
+### Crate Layout
+
+```
+forge              → Public API, Forge::builder(), prelude, CLI
+├── forge-runtime  → Gateway, function router, job worker, workflow executor, cron scheduler
+│   ├── forge-core → Types, traits, error types, contexts, schema definitions
+│   └── forge-macros → #[query], #[mutation], #[job], #[workflow], #[cron]
+└── forge-codegen  → TypeScript/Svelte client generator
+```
 
 ---
 

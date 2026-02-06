@@ -1,6 +1,6 @@
 # Configuration
 
-Control database connections, authentication, workers, clustering, and node roles from a single file.
+Configure database connections, authentication, workers, clustering, and node roles in `forge.toml`.
 
 ## The Code
 
@@ -9,6 +9,7 @@ Control database connections, authentication, workers, clustering, and node role
 name = "my-app"
 
 [database]
+mode = "remote"
 url = "${DATABASE_URL}"
 pool_size = 50
 replica_urls = ["${DATABASE_REPLICA_URL}"]
@@ -26,7 +27,7 @@ jwks_url = "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@syste
 jwt_issuer = "https://securetoken.google.com/my-project"
 
 [node]
-roles = ["Gateway", "Worker", "Scheduler"]
+roles = ["gateway", "worker", "scheduler"]
 worker_capabilities = ["general", "media"]
 ```
 
@@ -47,16 +48,28 @@ Environment variables use `${VAR_NAME}` syntax (uppercase letters, numbers, unde
 
 ### [database]
 
+The database section uses a `mode` field to select between remote and embedded PostgreSQL:
+
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `url` | string | - | PostgreSQL connection URL |
-| `embedded` | bool | `false` | Use embedded PostgreSQL |
-| `data_dir` | string | `.forge/postgres` | Data directory for embedded mode |
+| `mode` | `"remote"` or `"embedded"` | - | Database mode (required) |
+| `url` | string | - | PostgreSQL connection URL (remote mode) |
+| `data_dir` | string | `.forge/postgres` | Data directory (embedded mode) |
 | `pool_size` | u32 | `50` | Connection pool size |
 | `pool_timeout_secs` | u64 | `30` | Pool checkout timeout |
 | `statement_timeout_secs` | u64 | `30` | Query timeout |
 | `replica_urls` | string[] | `[]` | Read replica URLs |
 | `read_from_replica` | bool | `false` | Route reads to replicas |
+
+#### Remote PostgreSQL
+
+Connect to an external PostgreSQL instance:
+
+```toml
+[database]
+mode = "remote"
+url = "${DATABASE_URL}"
+```
 
 #### Embedded PostgreSQL
 
@@ -64,16 +77,17 @@ For development or small deployments, Forge bundles PostgreSQL:
 
 ```toml
 [database]
-embedded = true
+mode = "embedded"
 data_dir = ".forge/data"
 ```
 
-No Docker. No external database. Data persists in `data_dir`. Requires the `embedded-db` feature.
+Embedded mode runs PostgreSQL in-process and persists data in `data_dir`. It requires the `embedded-db` feature.
 
 #### Read Replicas
 
 ```toml
 [database]
+mode = "remote"
 url = "${DATABASE_URL}"
 replica_urls = [
     "${DATABASE_REPLICA_1}",
@@ -90,6 +104,7 @@ Separate connection pools prevent runaway workloads from starving others:
 
 ```toml
 [database]
+mode = "remote"
 url = "${DATABASE_URL}"
 pool_size = 50
 
@@ -106,7 +121,23 @@ statement_timeout_secs = 300
 size = 5
 timeout_secs = 120
 statement_timeout_secs = 600
+
+[database.pools.observability]
+size = 3
+timeout_secs = 5
+statement_timeout_secs = 10
 ```
+
+Available pool names and their purposes:
+
+| Pool | Purpose |
+|------|---------|
+| `default` | User requests (queries, mutations) |
+| `jobs` | Background job execution |
+| `analytics` | Long-running reports and aggregations |
+| `observability` | Health checks, metrics collection, internal monitoring |
+
+The observability pool is used for internal operations like health checks and metrics scraping. It should have low timeouts to fail fast and not block monitoring.
 
 A slow analytics query exhausting 5 connections cannot touch the 30 connections reserved for user requests. Each pool has independent size limits and statement timeouts.
 
@@ -118,6 +149,49 @@ A slow analytics query exhausting 5 connections cannot touch the 30 connections 
 | `grpc_port` | u16 | `9000` | Inter-node communication port |
 | `max_connections` | usize | `10000` | Maximum concurrent connections |
 | `request_timeout_secs` | u64 | `30` | Request timeout |
+
+### [function]
+
+Controls query and mutation execution limits.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `max_concurrent` | usize | `1000` | Maximum concurrent function executions |
+| `timeout_secs` | u64 | `30` | Function execution timeout |
+| `memory_limit` | usize | `536870912` | Memory limit per function (bytes, 512 MiB) |
+
+```toml
+[function]
+max_concurrent = 1000
+timeout_secs = 30
+memory_limit = 536870912  # 512 MiB
+```
+
+The memory limit is advisory. Functions exceeding this limit may be terminated. Set appropriately for your workload.
+
+### [security]
+
+Security settings for signing and encryption.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `secret_key` | string | - | Secret key for signing internal tokens |
+
+```toml
+[security]
+secret_key = "${FORGE_SECRET_KEY}"
+```
+
+The secret key is used for:
+- Signing internal session tokens
+- Encrypting sensitive job arguments
+- CSRF token generation
+
+Generate a secure key:
+
+```bash
+openssl rand -base64 32
+```
 
 ### [auth]
 
@@ -179,7 +253,7 @@ Workers maintain a semaphore sized to `max_concurrent_jobs`. They only poll when
 
 #### Discovery
 
-Nodes register in the `forge_nodes` database table. No external service required.
+Nodes register in the `forge_nodes` database table, so an external service is not required.
 
 ```toml
 [cluster]
@@ -197,30 +271,30 @@ discovery = "postgres"
 
 | Role | Responsibility |
 |------|----------------|
-| `Gateway` | HTTP/gRPC endpoints, WebSocket connections |
-| `Function` | Query and mutation execution |
-| `Worker` | Background job processing |
-| `Scheduler` | Cron scheduling, leader election |
+| `gateway` | HTTP/gRPC endpoints, WebSocket connections |
+| `function` | Query and mutation execution |
+| `worker` | Background job processing |
+| `scheduler` | Cron scheduling, leader election |
 
 Single-node deployment (default):
 
 ```toml
 [node]
-roles = ["Gateway", "Function", "Worker", "Scheduler"]
+roles = ["gateway", "function", "worker", "scheduler"]
 ```
 
 API-only node:
 
 ```toml
 [node]
-roles = ["Gateway", "Function"]
+roles = ["gateway", "function"]
 ```
 
 Worker-only node:
 
 ```toml
 [node]
-roles = ["Worker"]
+roles = ["worker"]
 worker_capabilities = ["gpu", "ml"]
 ```
 
@@ -228,7 +302,7 @@ Scheduler node (singleton per cluster):
 
 ```toml
 [node]
-roles = ["Scheduler"]
+roles = ["scheduler"]
 ```
 
 Multiple nodes can run Scheduler. Advisory locks ensure only one is active. Others wait as standbys.
@@ -251,6 +325,29 @@ worker_capabilities = ["general", "media"]
 
 Jobs requiring `worker_capability = "gpu"` only run on workers with that capability. Jobs without a capability requirement run on any worker.
 
+### [observability]
+
+OTLP-based telemetry for traces, metrics, and logs. Disabled by default.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | bool | `false` | Enable OTLP telemetry export |
+| `otlp_endpoint` | string | `"http://localhost:4317"` | OTLP collector endpoint (gRPC) |
+| `service_name` | string | project name | Service name in telemetry data |
+| `enable_traces` | bool | `true` | Export distributed traces |
+| `enable_metrics` | bool | `true` | Export metrics |
+| `enable_logs` | bool | `true` | Export logs via OTLP |
+| `sampling_ratio` | f64 | `1.0` | Trace sampling ratio (0.0 to 1.0) |
+
+```toml
+[observability]
+enabled = true
+otlp_endpoint = "http://localhost:4317"
+sampling_ratio = 0.5
+```
+
+Requires an OTLP-compatible collector (Jaeger, Grafana Alloy, OpenTelemetry Collector, etc).
+
 ## Patterns
 
 ### Development
@@ -260,7 +357,7 @@ Jobs requiring `worker_capability = "gpu"` only run on workers with that capabil
 name = "my-app"
 
 [database]
-embedded = true
+mode = "embedded"
 
 [gateway]
 port = 3000
@@ -273,6 +370,7 @@ port = 3000
 name = "my-app"
 
 [database]
+mode = "remote"
 url = "${DATABASE_URL}"
 pool_size = 100
 
@@ -295,6 +393,7 @@ API nodes:
 
 ```toml
 [database]
+mode = "remote"
 url = "${DATABASE_URL}"
 replica_urls = ["${DATABASE_REPLICA_URL}"]
 read_from_replica = true
@@ -303,7 +402,7 @@ read_from_replica = true
 size = 40
 
 [node]
-roles = ["Gateway", "Function"]
+roles = ["gateway", "function"]
 
 [cluster]
 discovery = "postgres"
@@ -313,6 +412,7 @@ Worker nodes:
 
 ```toml
 [database]
+mode = "remote"
 url = "${DATABASE_URL}"
 
 [database.pools.jobs]
@@ -320,7 +420,7 @@ size = 30
 statement_timeout_secs = 600
 
 [node]
-roles = ["Worker"]
+roles = ["worker"]
 worker_capabilities = ["general"]
 
 [worker]
@@ -336,7 +436,7 @@ GPU processing node:
 
 ```toml
 [node]
-roles = ["Worker"]
+roles = ["worker"]
 worker_capabilities = ["gpu"]
 
 [worker]
@@ -393,7 +493,7 @@ Nodes discover each other through PostgreSQL:
 SELECT * FROM forge_nodes WHERE last_heartbeat > NOW() - INTERVAL '15s'
 ```
 
-Nodes insert their address on startup, update on heartbeat, and get cleaned up when dead_threshold passes. No additional infrastructure required.
+Nodes insert their address on startup, update on heartbeat, and get cleaned up when dead_threshold passes. Additional infrastructure is not required.
 
 ### Node Role Enforcement
 

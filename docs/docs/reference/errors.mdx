@@ -28,6 +28,7 @@ Err(ForgeError::NotFound("User not found".to_string()))
 | `Config(String)` | 500 | `INTERNAL_ERROR` | Configuration error |
 | `Function(String)` | 500 | `INTERNAL_ERROR` | Function execution failed |
 | `Job(String)` | 500 | `INTERNAL_ERROR` | Job execution failed |
+| `JobCancelled(String)` | 500 | `JOB_CANCELLED` | Job was explicitly cancelled |
 | `Cluster(String)` | 500 | `INTERNAL_ERROR` | Cluster communication failed |
 | `Serialization(String)` | 500 | `INTERNAL_ERROR` | Serialization failed |
 | `Deserialization(String)` | 500 | `INTERNAL_ERROR` | Deserialization failed |
@@ -359,3 +360,137 @@ ERROR forge::function: Function error
 ```
 
 Client errors (4xx) log at WARN level. Server errors (5xx) log at ERROR level.
+
+## Troubleshooting
+
+### Common Issues
+
+#### "Database error: pool timed out"
+
+**Cause:** All database connections are in use and checkout timed out.
+
+**Solutions:**
+1. Increase `pool_size` in forge.toml
+2. Check for long-running queries holding connections
+3. Use separate pools for different workloads (bulkhead pattern)
+
+```toml
+[database.pools.default]
+size = 30
+
+[database.pools.analytics]
+size = 10
+statement_timeout_secs = 600
+```
+
+#### "Unauthorized: Token expired"
+
+**Cause:** JWT token has passed its expiration time.
+
+**Solutions:**
+1. Refresh the token before expiration
+2. Increase token expiry in auth configuration
+3. Implement token refresh on 401 response
+
+```typescript
+onAuthError: (error) => {
+  if (error.code === 'UNAUTHORIZED') {
+    refreshToken().then(retry);
+  }
+}
+```
+
+#### "Rate limit exceeded: retry after 30s"
+
+**Cause:** Too many requests from this user/IP in the configured window.
+
+**Solutions:**
+1. Implement client-side rate limiting
+2. Use exponential backoff on retry
+3. Adjust rate limit configuration if too restrictive
+
+```typescript
+if (error.code === 'RATE_LIMITED') {
+  await sleep(error.details.retry_after * 1000);
+  return retry();
+}
+```
+
+#### "Timeout: Query exceeded 30s"
+
+**Cause:** Query took longer than configured timeout.
+
+**Solutions:**
+1. Add appropriate indexes to the database
+2. Optimize the query (check EXPLAIN ANALYZE)
+3. Increase statement_timeout for specific pools
+4. Consider pagination for large result sets
+
+#### "Job error: max attempts exceeded"
+
+**Cause:** Job failed all retry attempts.
+
+**Solutions:**
+1. Check job logs for the actual failure reason
+2. Investigate the failed job's arguments
+3. Fix the underlying issue and re-enqueue
+4. Increase max_attempts if failures are transient
+
+```sql
+-- Find failed jobs
+SELECT id, job_type, error, attempts
+FROM forge_jobs
+WHERE status = 'failed'
+ORDER BY created_at DESC
+LIMIT 10;
+```
+
+#### "Cluster error: Leader election failed"
+
+**Cause:** Unable to acquire advisory lock for leader role.
+
+**Solutions:**
+1. Check database connectivity
+2. Verify another node isn't holding the lock
+3. Check for zombie connections holding locks
+
+```sql
+-- View current advisory locks
+SELECT * FROM pg_locks WHERE locktype = 'advisory';
+
+-- Terminate stuck sessions if needed
+SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+WHERE state = 'idle' AND query_start < NOW() - INTERVAL '1 hour';
+```
+
+### Debugging Tips
+
+1. **Enable debug logging:**
+   ```bash
+   RUST_LOG=debug cargo run
+   ```
+
+2. **Trace a specific request:**
+   ```bash
+   RUST_LOG=forge=debug,tower_http=debug cargo run
+   ```
+
+3. **Check job queue status:**
+   ```sql
+   SELECT status, COUNT(*) FROM forge_jobs GROUP BY status;
+   ```
+
+4. **Monitor workflow runs:**
+   ```sql
+   SELECT workflow_name, status, error
+   FROM forge_workflow_runs
+   WHERE status IN ('failed', 'compensated')
+   ORDER BY started_at DESC;
+   ```
+
+5. **Verify node health:**
+   ```sql
+   SELECT hostname, status, last_heartbeat
+   FROM forge_nodes
+   ORDER BY last_heartbeat DESC;
+   ```
