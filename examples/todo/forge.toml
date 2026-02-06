@@ -6,10 +6,16 @@ name = "todo"
 # version = "0.1.0"
 
 [database]
+mode = "remote"
 url = "${DATABASE_URL}"
-# max_connections = 10
-# statement_timeout = "30s"
-# replica_url = "${DATABASE_REPLICA_URL}"  # Read replica for scaling reads
+# pool_size = 50
+# statement_timeout_secs = 30
+# replica_urls = ["${DATABASE_REPLICA_URL}"]  # Read replica for scaling reads
+# read_from_replica = false
+
+# --- Embedded mode (for development) ---
+# mode = "embedded"
+# data_dir = ".forge/postgres"
 
 [gateway]
 port = 8080
