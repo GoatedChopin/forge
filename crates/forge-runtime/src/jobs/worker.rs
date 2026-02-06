@@ -98,23 +98,23 @@ impl Worker {
 
                 // Release stale jobs back to pending
                 if let Err(e) = cleanup_queue.release_stale(stale_threshold).await {
-                    tracing::error!("Failed to cleanup stale jobs: {}", e);
+                    tracing::warn!(error = %e, "Failed to cleanup stale jobs");
                 }
 
                 // Delete expired job records
                 match cleanup_queue.cleanup_expired().await {
                     Ok(count) if count > 0 => {
-                        tracing::debug!("Cleaned up {} expired job records", count);
+                        tracing::debug!(count, "Cleaned up expired job records");
                     }
                     Err(e) => {
-                        tracing::error!("Failed to cleanup expired jobs: {}", e);
+                        tracing::warn!(error = %e, "Failed to cleanup expired jobs");
                     }
                     _ => {}
                 }
             }
         });
 
-        tracing::info!(
+        tracing::debug!(
             worker_id = %self.id,
             capabilities = ?self.config.capabilities,
             "Worker started"
@@ -123,7 +123,7 @@ impl Worker {
         loop {
             tokio::select! {
                 _ = shutdown_rx.recv() => {
-                    tracing::info!(worker_id = %self.id, "Worker shutting down");
+                    tracing::debug!(worker_id = %self.id, "Worker shutting down");
                     break;
                 }
                 _ = tokio::time::sleep(self.config.poll_interval) => {
@@ -143,7 +143,7 @@ impl Worker {
                     ).await {
                         Ok(jobs) => jobs,
                         Err(e) => {
-                            tracing::error!("Failed to claim jobs: {}", e);
+                            tracing::warn!(error = %e, "Failed to claim jobs");
                             continue;
                         }
                     };
@@ -156,54 +156,26 @@ impl Worker {
                         let job_type = job.job_type.clone();
 
                         tokio::spawn(async move {
-                            tracing::debug!(
-                                job_id = %job_id,
-                                job_type = %job_type,
-                                "Processing job"
-                            );
+                            tracing::trace!(job_id = %job_id, job_type = %job_type, "Processing job");
 
                             let result = executor.execute(&job).await;
 
                             match &result {
                                 super::executor::ExecutionResult::Completed { .. } => {
-                                    tracing::info!(
-                                        job_id = %job_id,
-                                        job_type = %job_type,
-                                        "Job completed"
-                                    );
+                                    tracing::debug!(job_id = %job_id, job_type = %job_type, "Job completed");
                                 }
                                 super::executor::ExecutionResult::Failed { error, retryable } => {
                                     if *retryable {
-                                        tracing::warn!(
-                                            job_id = %job_id,
-                                            job_type = %job_type,
-                                            error = %error,
-                                            "Job failed, will retry"
-                                        );
+                                        tracing::debug!(job_id = %job_id, error = %error, "Job failed, will retry");
                                     } else {
-                                        tracing::error!(
-                                            job_id = %job_id,
-                                            job_type = %job_type,
-                                            error = %error,
-                                            "Job failed permanently"
-                                        );
+                                        tracing::warn!(job_id = %job_id, job_type = %job_type, error = %error, "Job failed permanently");
                                     }
                                 }
                                 super::executor::ExecutionResult::TimedOut { retryable } => {
-                                    tracing::warn!(
-                                        job_id = %job_id,
-                                        job_type = %job_type,
-                                        will_retry = %retryable,
-                                        "Job timed out"
-                                    );
+                                    tracing::debug!(job_id = %job_id, will_retry = %retryable, "Job timed out");
                                 }
                                 super::executor::ExecutionResult::Cancelled { reason } => {
-                                    tracing::info!(
-                                        job_id = %job_id,
-                                        job_type = %job_type,
-                                        reason = %reason,
-                                        "Job cancelled"
-                                    );
+                                    tracing::debug!(job_id = %job_id, reason = %reason, "Job cancelled");
                                 }
                             }
 

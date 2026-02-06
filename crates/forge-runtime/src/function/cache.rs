@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -18,7 +18,7 @@ struct CacheKey {
 }
 
 struct CacheEntry {
-    value: Value,
+    value: Arc<Value>,
     expires_at: Instant,
     created_at: Instant,
 }
@@ -38,14 +38,14 @@ impl QueryCache {
     }
 
     /// Get a cached value if it exists and hasn't expired.
-    pub fn get(&self, function_name: &str, args: &Value) -> Option<Value> {
+    pub fn get(&self, function_name: &str, args: &Value) -> Option<Arc<Value>> {
         let key = self.make_key(function_name, args);
 
         let entries = self.entries.read().ok()?;
         let entry = entries.get(&key)?;
 
         if Instant::now() < entry.expires_at {
-            Some(entry.value.clone())
+            Some(Arc::clone(&entry.value))
         } else {
             None
         }
@@ -57,7 +57,7 @@ impl QueryCache {
         let now = Instant::now();
 
         let entry = CacheEntry {
-            value,
+            value: Arc::new(value),
             expires_at: now + ttl,
             created_at: now,
         };
@@ -197,7 +197,7 @@ mod tests {
         cache.set("get_user", &args, value.clone(), Duration::from_secs(60));
 
         let result = cache.get("get_user", &args);
-        assert_eq!(result, Some(value));
+        assert_eq!(result.as_deref(), Some(&value));
     }
 
     #[test]

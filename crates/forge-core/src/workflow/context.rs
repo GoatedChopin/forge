@@ -196,27 +196,22 @@ impl WorkflowContext {
         self
     }
 
-    /// Get the tenant ID.
     pub fn tenant_id(&self) -> Option<Uuid> {
         self.tenant_id
     }
 
-    /// Check if this is a resumed execution.
     pub fn is_resumed(&self) -> bool {
         self.is_resumed
     }
 
-    /// Get the deterministic workflow time.
     pub fn workflow_time(&self) -> DateTime<Utc> {
         self.workflow_time
     }
 
-    /// Get the database pool.
     pub fn db(&self) -> &sqlx::PgPool {
         &self.db_pool
     }
 
-    /// Get the HTTP client.
     pub fn http(&self) -> &reqwest::Client {
         &self.http_client
     }
@@ -235,21 +230,19 @@ impl WorkflowContext {
             .map(|(name, _)| name.clone())
             .collect();
 
-        *self.step_states.write().unwrap() = states;
-        *self.completed_steps.write().unwrap() = completed;
+        *self.step_states.write().expect("workflow lock poisoned") = states;
+        *self.completed_steps.write().expect("workflow lock poisoned") = completed;
         self
     }
 
-    /// Get step state by name.
     pub fn get_step_state(&self, name: &str) -> Option<StepState> {
-        self.step_states.read().unwrap().get(name).cloned()
+        self.step_states.read().expect("workflow lock poisoned").get(name).cloned()
     }
 
-    /// Check if a step is already completed.
     pub fn is_step_completed(&self, name: &str) -> bool {
         self.step_states
             .read()
-            .unwrap()
+            .expect("workflow lock poisoned")
             .get(name)
             .map(|s| s.status == StepStatus::Completed)
             .unwrap_or(false)
@@ -262,17 +255,16 @@ impl WorkflowContext {
     pub fn is_step_started(&self, name: &str) -> bool {
         self.step_states
             .read()
-            .unwrap()
+            .expect("workflow lock poisoned")
             .get(name)
             .map(|s| s.status != StepStatus::Pending)
             .unwrap_or(false)
     }
 
-    /// Get the result of a completed step.
     pub fn get_step_result<T: serde::de::DeserializeOwned>(&self, name: &str) -> Option<T> {
         self.step_states
             .read()
-            .unwrap()
+            .expect("workflow lock poisoned")
             .get(name)
             .and_then(|s| s.result.as_ref())
             .and_then(|v| serde_json::from_value(v.clone()).ok())
@@ -283,7 +275,7 @@ impl WorkflowContext {
     /// If the step is already running or beyond (completed/failed), this is a no-op.
     /// This prevents race conditions when resuming workflows.
     pub fn record_step_start(&self, name: &str) {
-        let mut states = self.step_states.write().unwrap();
+        let mut states = self.step_states.write().expect("workflow lock poisoned");
         let state = states
             .entry(name.to_string())
             .or_insert_with(|| StepState::new(name));
@@ -361,14 +353,14 @@ impl WorkflowContext {
         name: &str,
         result: serde_json::Value,
     ) -> Option<StepState> {
-        let mut states = self.step_states.write().unwrap();
+        let mut states = self.step_states.write().expect("workflow lock poisoned");
         if let Some(state) = states.get_mut(name) {
             state.complete(result.clone());
         }
         let state_clone = states.get(name).cloned();
         drop(states);
 
-        let mut completed = self.completed_steps.write().unwrap();
+        let mut completed = self.completed_steps.write().expect("workflow lock poisoned");
         if !completed.contains(&name.to_string()) {
             completed.push(name.to_string());
         }
@@ -414,7 +406,7 @@ impl WorkflowContext {
     /// Record step failure.
     pub fn record_step_failure(&self, name: &str, error: impl Into<String>) {
         let error_str = error.into();
-        let mut states = self.step_states.write().unwrap();
+        let mut states = self.step_states.write().expect("workflow lock poisoned");
         if let Some(state) = states.get_mut(name) {
             state.fail(error_str.clone());
         }
@@ -455,7 +447,7 @@ impl WorkflowContext {
 
     /// Record step compensation.
     pub fn record_step_compensated(&self, name: &str) {
-        let mut states = self.step_states.write().unwrap();
+        let mut states = self.step_states.write().expect("workflow lock poisoned");
         if let Some(state) = states.get_mut(name) {
             state.compensate();
         }
@@ -492,42 +484,37 @@ impl WorkflowContext {
         }
     }
 
-    /// Get completed steps in reverse order (for compensation).
     pub fn completed_steps_reversed(&self) -> Vec<String> {
-        let completed = self.completed_steps.read().unwrap();
+        let completed = self.completed_steps.read().expect("workflow lock poisoned");
         completed.iter().rev().cloned().collect()
     }
 
-    /// Get all step states.
     pub fn all_step_states(&self) -> HashMap<String, StepState> {
-        self.step_states.read().unwrap().clone()
+        self.step_states.read().expect("workflow lock poisoned").clone()
     }
 
-    /// Get elapsed time since workflow started.
     pub fn elapsed(&self) -> chrono::Duration {
         Utc::now() - self.started_at
     }
 
     /// Register a compensation handler for a step.
     pub fn register_compensation(&self, step_name: &str, handler: CompensationHandler) {
-        let mut handlers = self.compensation_handlers.write().unwrap();
+        let mut handlers = self.compensation_handlers.write().expect("workflow lock poisoned");
         handlers.insert(step_name.to_string(), handler);
     }
 
-    /// Get compensation handler for a step.
     pub fn get_compensation_handler(&self, step_name: &str) -> Option<CompensationHandler> {
         self.compensation_handlers
             .read()
-            .unwrap()
+            .expect("workflow lock poisoned")
             .get(step_name)
             .cloned()
     }
 
-    /// Check if a step has a compensation handler.
     pub fn has_compensation(&self, step_name: &str) -> bool {
         self.compensation_handlers
             .read()
-            .unwrap()
+            .expect("workflow lock poisoned")
             .contains_key(step_name)
     }
 
@@ -565,9 +552,8 @@ impl WorkflowContext {
         results
     }
 
-    /// Get compensation handlers (for cloning to executor).
     pub fn compensation_handlers(&self) -> HashMap<String, CompensationHandler> {
-        self.compensation_handlers.read().unwrap().clone()
+        self.compensation_handlers.read().expect("workflow lock poisoned").clone()
     }
 
     /// Sleep for a duration.

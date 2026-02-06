@@ -28,11 +28,27 @@ impl Default for LeaderConfig {
 }
 
 /// Leader election using PostgreSQL advisory locks.
+///
+/// Advisory locks provide a simple, reliable way to elect a leader without
+/// external coordination services. Key properties:
+///
+/// 1. **Mutual exclusion**: Only one session can hold a given lock ID at a time.
+/// 2. **Automatic release**: If the connection dies, PostgreSQL releases the lock.
+/// 3. **Non-blocking try**: `pg_try_advisory_lock` returns immediately with success/failure.
+///
+/// Each `LeaderRole` maps to a unique lock ID, allowing multiple independent
+/// leader elections (e.g., separate leaders for cron scheduler and workflow timers).
+///
+/// The `is_leader` flag uses `SeqCst` ordering because:
+/// - Multiple threads read this flag to decide whether to execute leader-only code
+/// - We need visibility guarantees across threads immediately after acquiring/releasing
+/// - The performance cost is negligible (leadership changes are rare)
 pub struct LeaderElection {
     pool: sqlx::PgPool,
     node_id: NodeId,
     role: LeaderRole,
     config: LeaderConfig,
+    /// Uses SeqCst for cross-thread visibility of leadership state changes.
     is_leader: Arc<AtomicBool>,
     shutdown_tx: watch::Sender<bool>,
     shutdown_rx: watch::Receiver<bool>,
@@ -107,7 +123,7 @@ impl LeaderElection {
             .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
 
             self.is_leader.store(true, Ordering::SeqCst);
-            tracing::info!("Became {} leader", self.role.as_str());
+            tracing::info!(role = self.role.as_str(), "Acquired leadership");
         }
 
         Ok(acquired)
@@ -166,7 +182,7 @@ impl LeaderElection {
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
 
         self.is_leader.store(false, Ordering::SeqCst);
-        tracing::info!("Released {} leadership", self.role.as_str());
+        tracing::info!(role = self.role.as_str(), "Released leadership");
 
         Ok(())
     }
@@ -227,7 +243,7 @@ impl LeaderElection {
                     if self.is_leader() {
                         // We're the leader, refresh lease
                         if let Err(e) = self.refresh_lease().await {
-                            tracing::warn!("Failed to refresh lease: {}", e);
+                            tracing::debug!(error = %e, "Failed to refresh lease");
                         }
                     } else {
                         // We're a standby, check if we should try to become leader
@@ -235,23 +251,23 @@ impl LeaderElection {
                             Ok(false) => {
                                 // No healthy leader, try to become one
                                 if let Err(e) = self.try_become_leader().await {
-                                    tracing::warn!("Failed to acquire leadership: {}", e);
+                                    tracing::debug!(error = %e, "Failed to acquire leadership");
                                 }
                             }
                             Ok(true) => {
                                 // Leader is healthy, stay as standby
                             }
                             Err(e) => {
-                                tracing::warn!("Failed to check leader health: {}", e);
+                                tracing::debug!(error = %e, "Failed to check leader health");
                             }
                         }
                     }
                 }
                 _ = shutdown_rx.changed() => {
                     if *shutdown_rx.borrow() {
-                        tracing::info!("Leader election shutting down");
+                        tracing::debug!("Leader election shutting down");
                         if let Err(e) = self.release_leadership().await {
-                            tracing::warn!("Failed to release leadership: {}", e);
+                            tracing::debug!(error = %e, "Failed to release leadership");
                         }
                         break;
                     }

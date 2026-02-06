@@ -30,7 +30,6 @@ impl NodeRole {
     }
 }
 
-/// Error for parsing NodeRole from string.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseNodeRoleError(pub String);
 
@@ -95,7 +94,6 @@ impl LeaderRole {
     }
 }
 
-/// Error for parsing LeaderRole from string.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseLeaderRoleError(pub String);
 

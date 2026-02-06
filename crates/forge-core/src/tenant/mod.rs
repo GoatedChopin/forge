@@ -27,15 +27,27 @@ impl TenantIsolationMode {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseTenantIsolationModeError(pub String);
+
+impl std::fmt::Display for ParseTenantIsolationModeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "invalid tenant isolation mode: '{}'", self.0)
+    }
+}
+
+impl std::error::Error for ParseTenantIsolationModeError {}
+
 impl FromStr for TenantIsolationMode {
-    type Err = std::convert::Infallible;
+    type Err = ParseTenantIsolationModeError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(match s {
-            "strict" => Self::Strict,
-            "read_shared" => Self::ReadShared,
-            _ => Self::None,
-        })
+        match s {
+            "none" => Ok(Self::None),
+            "strict" => Ok(Self::Strict),
+            "read_shared" => Ok(Self::ReadShared),
+            _ => Err(ParseTenantIsolationModeError(s.to_string())),
+        }
     }
 }
 
@@ -86,9 +98,11 @@ impl TenantContext {
         self.tenant_id.is_some() && self.isolation_mode != TenantIsolationMode::None
     }
 
-    /// Generate a SQL WHERE clause for tenant filtering.
-    pub fn sql_filter(&self, column: &str) -> Option<String> {
-        self.tenant_id.map(|id| format!("{} = '{}'", column, id))
+    /// Generate a SQL WHERE clause for tenant filtering with parameterized query.
+    /// Returns a tuple of (SQL clause, parameter value) for safe parameterized queries.
+    pub fn sql_filter(&self, column: &str, param_index: u32) -> Option<(String, Uuid)> {
+        self.tenant_id
+            .map(|id| (format!("{} = ${}", column, param_index), id))
     }
 }
 
@@ -132,9 +146,11 @@ mod tests {
     fn test_tenant_sql_filter() {
         let tenant_id = Uuid::new_v4();
         let ctx = TenantContext::strict(tenant_id);
-        let filter = ctx.sql_filter("tenant_id");
+        let filter = ctx.sql_filter("tenant_id", 1);
         assert!(filter.is_some());
-        assert!(filter.unwrap().contains(&tenant_id.to_string()));
+        let (clause, id) = filter.unwrap();
+        assert_eq!(clause, "tenant_id = $1");
+        assert_eq!(id, tenant_id);
     }
 
     #[test]

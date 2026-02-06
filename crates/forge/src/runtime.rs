@@ -162,14 +162,14 @@ impl Forge {
 
     /// Run the FORGE server.
     pub async fn run(mut self) -> Result<()> {
-        tracing::info!("FORGE runtime starting");
+        tracing::debug!("Connecting to database");
 
         // Connect to database
         let db = Database::from_config(&self.config.database).await?;
         let pool = db.primary().clone();
         self.db = Some(db);
 
-        tracing::info!("Connected to database");
+        tracing::debug!("Database connected");
 
         // Run migrations with mesh-safe locking
         // This acquires an advisory lock, so only one node runs migrations at a time
@@ -180,7 +180,7 @@ impl Forge {
         user_migrations.extend(self.extra_migrations.clone());
 
         runner.run(user_migrations).await?;
-        tracing::info!("Migrations completed");
+        tracing::debug!("Migrations applied");
 
         // Get local node info
         let hostname = hostname::get()
@@ -214,12 +214,12 @@ impl Forge {
 
         // Register node in cluster
         if let Err(e) = node_registry.register().await {
-            tracing::warn!("Failed to register node (tables may not exist): {}", e);
+            tracing::debug!("Failed to register node (tables may not exist): {}", e);
         }
 
         // Set node status to active
         if let Err(e) = node_registry.set_status(NodeStatus::Active).await {
-            tracing::warn!("Failed to set node status: {}", e);
+            tracing::debug!("Failed to set node status: {}", e);
         }
 
         // Create leader election for scheduler role
@@ -233,7 +233,7 @@ impl Forge {
 
             // Try to become leader
             if let Err(e) = election.try_become_leader().await {
-                tracing::warn!("Failed to acquire leadership: {}", e);
+                tracing::debug!("Failed to acquire leadership: {}", e);
             }
 
             Some(election)
@@ -297,7 +297,7 @@ impl Forge {
                 }
             }));
 
-            tracing::info!("Job worker started");
+            tracing::debug!("Job worker started");
         }
 
         // Start cron runner if scheduler role and is leader
@@ -324,7 +324,7 @@ impl Forge {
                 }
             }));
 
-            tracing::info!("Cron scheduler started");
+            tracing::debug!("Cron scheduler started");
         }
 
         // Start workflow scheduler if scheduler role
@@ -348,7 +348,7 @@ impl Forge {
                 scheduler.run(shutdown_token).await;
             }));
 
-            tracing::info!("Workflow scheduler started");
+            tracing::debug!("Workflow scheduler started");
         }
 
         // Start daemon runner if scheduler role (daemons run as singletons)
@@ -372,7 +372,7 @@ impl Forge {
                 }
             }));
 
-            tracing::info!("Daemon runner started");
+            tracing::debug!("Daemon runner started");
         }
 
         // Reactor handle for shutdown
@@ -412,7 +412,7 @@ impl Forge {
             if let Err(e) = reactor.start().await {
                 tracing::error!("Failed to start reactor: {}", e);
             } else {
-                tracing::info!("Reactor started for real-time updates");
+                tracing::debug!("Reactor started");
                 reactor_handle = Some(reactor);
             }
 
@@ -444,9 +444,9 @@ impl Forge {
 
                 router = router.nest("/_api/webhooks", webhook_router);
 
-                tracing::info!(
-                    "Webhook routes registered: {:?}",
-                    self.webhook_registry.paths().collect::<Vec<_>>()
+                tracing::debug!(
+                    webhooks = ?self.webhook_registry.paths().collect::<Vec<_>>(),
+                    "Webhook routes registered"
                 );
             }
 
@@ -454,13 +454,13 @@ impl Forge {
             if let Some(handler) = self.frontend_handler {
                 use axum::routing::get;
                 router = router.fallback(get(handler));
-                tracing::info!("Frontend handler enabled - serving embedded assets");
+                tracing::debug!("Frontend handler enabled");
             }
 
             let addr = gateway.addr();
 
             handles.push(tokio::spawn(async move {
-                tracing::info!("Gateway server listening on {}", addr);
+                tracing::debug!(addr = %addr, "Gateway server binding");
                 let listener = tokio::net::TcpListener::bind(addr)
                     .await
                     .expect("Failed to bind");
@@ -468,35 +468,35 @@ impl Forge {
                     tracing::error!("Gateway server error: {}", e);
                 }
             }));
-
-            tracing::info!("HTTP gateway started on port {}", self.config.gateway.port);
         }
 
-        tracing::info!("FORGE runtime started successfully");
-        tracing::info!("  Node ID: {}", node_id);
-        tracing::info!("  Roles: {:?}", roles);
+        tracing::info!(
+            node_id = %node_id,
+            roles = ?roles,
+            port = self.config.gateway.port,
+            "Forge started"
+        );
 
         // Wait for shutdown signal
         let mut shutdown_rx = self.shutdown_tx.subscribe();
 
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
-                tracing::info!("Received shutdown signal");
+                tracing::debug!("Received ctrl-c");
             }
             _ = shutdown_rx.recv() => {
-                tracing::info!("Received shutdown notification");
+                tracing::debug!("Received shutdown notification");
             }
         }
 
         // Graceful shutdown
-        tracing::info!("Starting graceful shutdown...");
+        tracing::debug!("Graceful shutdown starting");
 
         // Stop workflow scheduler
         workflow_shutdown_token.cancel();
-        tracing::info!("Workflow scheduler stopped");
 
         if let Err(e) = shutdown.shutdown().await {
-            tracing::warn!("Shutdown error: {}", e);
+            tracing::warn!(error = %e, "Shutdown error");
         }
 
         // Stop leader election
@@ -507,7 +507,6 @@ impl Forge {
         // Stop reactor before closing database
         if let Some(ref reactor) = reactor_handle {
             reactor.stop();
-            tracing::info!("Reactor stopped");
         }
 
         // Close database connections
@@ -515,7 +514,7 @@ impl Forge {
             db.close().await;
         }
 
-        tracing::info!("FORGE runtime stopped");
+        tracing::info!("Forge stopped");
         Ok(())
     }
 

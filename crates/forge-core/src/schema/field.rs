@@ -71,24 +71,6 @@ fn to_snake_case(s: &str) -> String {
     result
 }
 
-/// Convert a string to camelCase.
-#[allow(dead_code)]
-fn to_camel_case(s: &str) -> String {
-    let mut result = String::new();
-    let mut capitalize_next = false;
-    for c in s.chars() {
-        if c == '_' {
-            capitalize_next = true;
-        } else if capitalize_next {
-            result.push(c.to_uppercase().next().unwrap());
-            capitalize_next = false;
-        } else {
-            result.push(c);
-        }
-    }
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,11 +94,5 @@ mod tests {
         assert_eq!(to_snake_case("createdAt"), "created_at");
         assert_eq!(to_snake_case("userId"), "user_id");
         assert_eq!(to_snake_case("HTTPServer"), "h_t_t_p_server");
-    }
-
-    #[test]
-    fn test_to_camel_case() {
-        assert_eq!(to_camel_case("created_at"), "createdAt");
-        assert_eq!(to_camel_case("user_id"), "userId");
     }
 }

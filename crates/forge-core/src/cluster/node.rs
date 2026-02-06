@@ -69,17 +69,28 @@ impl NodeStatus {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseNodeStatusError(pub String);
+
+impl std::fmt::Display for ParseNodeStatusError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "invalid node status: '{}'", self.0)
+    }
+}
+
+impl std::error::Error for ParseNodeStatusError {}
+
 impl FromStr for NodeStatus {
-    type Err = std::convert::Infallible;
+    type Err = ParseNodeStatusError;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        Ok(match s {
-            "joining" => Self::Joining,
-            "active" => Self::Active,
-            "draining" => Self::Draining,
-            "dead" => Self::Dead,
-            _ => Self::Dead,
-        })
+        match s {
+            "joining" => Ok(Self::Joining),
+            "active" => Ok(Self::Active),
+            "draining" => Ok(Self::Draining),
+            "dead" => Ok(Self::Dead),
+            _ => Err(ParseNodeStatusError(s.to_string())),
+        }
     }
 }
 
@@ -181,6 +192,7 @@ mod tests {
     fn test_node_status_conversion() {
         assert_eq!("active".parse::<NodeStatus>(), Ok(NodeStatus::Active));
         assert_eq!("draining".parse::<NodeStatus>(), Ok(NodeStatus::Draining));
+        assert!("invalid".parse::<NodeStatus>().is_err());
         assert_eq!(NodeStatus::Active.as_str(), "active");
     }
 

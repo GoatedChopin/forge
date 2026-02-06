@@ -3,6 +3,8 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{FnArg, ItemFn, Pat, ReturnType, Type, parse_macro_input};
 
+use crate::utils::{parse_duration_secs, to_pascal_case};
+
 /// Expand the #[forge::mutation] attribute.
 ///
 /// This transforms an async function into a mutation handler that:
@@ -44,7 +46,6 @@ fn parse_mutation_attrs(attr: TokenStream) -> MutationAttrs {
         attrs.is_public = true;
     }
 
-    // Parse role requirement
     if let Some(role_start) = attr_str.find("require_role") {
         if let Some(paren_start) = attr_str[role_start..].find('(') {
             let remaining = &attr_str[role_start + paren_start + 1..];
@@ -55,7 +56,6 @@ fn parse_mutation_attrs(attr: TokenStream) -> MutationAttrs {
         }
     }
 
-    // Parse timeout
     if let Some(timeout_start) = attr_str.find("timeout") {
         if let Some(eq_pos) = attr_str[timeout_start..].find('=') {
             let remaining = &attr_str[timeout_start + eq_pos + 1..];
@@ -72,14 +72,12 @@ fn parse_mutation_attrs(attr: TokenStream) -> MutationAttrs {
         }
     }
 
-    // Parse rate_limit(requests = N, per = "Xm", key = "user")
     if let Some(rl_start) = attr_str.find("rate_limit") {
         if let Some(paren_start) = attr_str[rl_start..].find('(') {
             let remaining = &attr_str[rl_start + paren_start + 1..];
             if let Some(paren_end) = remaining.find(')') {
                 let rl_content = &remaining[..paren_end];
 
-                // Parse requests = N
                 if let Some(req_start) = rl_content.find("requests") {
                     if let Some(eq_pos) = rl_content[req_start..].find('=') {
                         let after_eq = &rl_content[req_start + eq_pos + 1..];
@@ -95,18 +93,16 @@ fn parse_mutation_attrs(attr: TokenStream) -> MutationAttrs {
                     }
                 }
 
-                // Parse per = "Xm" or per = "Xs"
                 if let Some(per_start) = rl_content.find("per") {
                     if let Some(quote_start) = rl_content[per_start..].find('"') {
                         let after_quote = &rl_content[per_start + quote_start + 1..];
                         if let Some(quote_end) = after_quote.find('"') {
                             let per_str = &after_quote[..quote_end];
-                            attrs.rate_limit_per_secs = parse_duration_to_secs(per_str);
+                            attrs.rate_limit_per_secs = parse_duration_secs(per_str);
                         }
                     }
                 }
 
-                // Parse key = "user" or key = "ip" etc
                 if let Some(key_start) = rl_content.find("key") {
                     if let Some(quote_start) = rl_content[key_start..].find('"') {
                         let after_quote = &rl_content[key_start + quote_start + 1..];
@@ -120,7 +116,6 @@ fn parse_mutation_attrs(attr: TokenStream) -> MutationAttrs {
         }
     }
 
-    // Parse log = "level" (trace, debug, info, warn, error, off)
     if let Some(log_start) = attr_str.find("log") {
         // Make sure it's not part of another word
         let before = if log_start > 0 {
@@ -142,25 +137,6 @@ fn parse_mutation_attrs(attr: TokenStream) -> MutationAttrs {
     attrs
 }
 
-fn parse_duration_to_secs(s: &str) -> Option<u64> {
-    let s = s.trim();
-    if s.is_empty() {
-        return None;
-    }
-    if let Some(num_str) = s.strip_suffix("ms") {
-        let num: u64 = num_str.parse().ok()?;
-        return Some(num / 1000);
-    }
-    let (num_str, unit) = s.split_at(s.len() - 1);
-    let num: u64 = num_str.parse().ok()?;
-    match unit {
-        "s" => Some(num),
-        "m" => Some(num * 60),
-        "h" => Some(num * 3600),
-        "d" => Some(num * 86400),
-        _ => None,
-    }
-}
 
 fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<TokenStream2> {
     let fn_name = &input.sig.ident;
@@ -457,14 +433,3 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
     })
 }
 
-fn to_pascal_case(s: &str) -> String {
-    s.split('_')
-        .map(|part| {
-            let mut chars = part.chars();
-            match chars.next() {
-                None => String::new(),
-                Some(first) => first.to_uppercase().chain(chars).collect(),
-            }
-        })
-        .collect()
-}

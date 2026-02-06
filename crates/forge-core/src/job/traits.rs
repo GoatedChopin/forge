@@ -107,18 +107,29 @@ impl JobPriority {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseJobPriorityError(pub String);
+
+impl std::fmt::Display for ParseJobPriorityError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "invalid job priority: '{}'", self.0)
+    }
+}
+
+impl std::error::Error for ParseJobPriorityError {}
+
 impl FromStr for JobPriority {
-    type Err = std::convert::Infallible;
+    type Err = ParseJobPriorityError;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        Ok(match s.to_lowercase().as_str() {
-            "background" => Self::Background,
-            "low" => Self::Low,
-            "normal" => Self::Normal,
-            "high" => Self::High,
-            "critical" => Self::Critical,
-            _ => Self::Normal,
-        })
+        match s.to_lowercase().as_str() {
+            "background" => Ok(Self::Background),
+            "low" => Ok(Self::Low),
+            "normal" => Ok(Self::Normal),
+            "high" => Ok(Self::High),
+            "critical" => Ok(Self::Critical),
+            _ => Err(ParseJobPriorityError(s.to_string())),
+        }
     }
 }
 
@@ -162,22 +173,33 @@ impl JobStatus {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseJobStatusError(pub String);
+
+impl std::fmt::Display for ParseJobStatusError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "invalid job status: '{}'", self.0)
+    }
+}
+
+impl std::error::Error for ParseJobStatusError {}
+
 impl FromStr for JobStatus {
-    type Err = std::convert::Infallible;
+    type Err = ParseJobStatusError;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        Ok(match s {
-            "pending" => Self::Pending,
-            "claimed" => Self::Claimed,
-            "running" => Self::Running,
-            "completed" => Self::Completed,
-            "retry" => Self::Retry,
-            "failed" => Self::Failed,
-            "dead_letter" => Self::DeadLetter,
-            "cancel_requested" => Self::CancelRequested,
-            "cancelled" => Self::Cancelled,
-            _ => Self::Pending,
-        })
+        match s {
+            "pending" => Ok(Self::Pending),
+            "claimed" => Ok(Self::Claimed),
+            "running" => Ok(Self::Running),
+            "completed" => Ok(Self::Completed),
+            "retry" => Ok(Self::Retry),
+            "failed" => Ok(Self::Failed),
+            "dead_letter" => Ok(Self::DeadLetter),
+            "cancel_requested" => Ok(Self::CancelRequested),
+            "cancelled" => Ok(Self::Cancelled),
+            _ => Err(ParseJobStatusError(s.to_string())),
+        }
     }
 }
 

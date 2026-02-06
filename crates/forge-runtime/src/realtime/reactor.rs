@@ -163,7 +163,7 @@ impl Reactor {
         self.session_server
             .register_connection(session_id, sender)
             .await;
-        tracing::debug!(?session_id, "Session registered with reactor");
+        tracing::trace!(?session_id, "Session registered");
     }
 
     /// Remove a session and all its subscriptions.
@@ -196,7 +196,7 @@ impl Reactor {
             workflow_subs.retain(|_, v| !v.is_empty());
         }
 
-        tracing::debug!(?session_id, "Session removed from reactor");
+        tracing::trace!(?session_id, "Session removed");
     }
 
     /// Subscribe to a query.
@@ -225,12 +225,11 @@ impl Reactor {
 
         let result_hash = Self::compute_hash(&data);
 
-        let tables: Vec<_> = read_set.tables.iter().collect();
-        tracing::debug!(
+        tracing::trace!(
             ?subscription_id,
-            query_name = %query_name,
-            read_set_tables = ?tables,
-            "Updating subscription with read set"
+            query = %query_name,
+            tables = ?read_set.tables.iter().collect::<Vec<_>>(),
+            "Subscription read set"
         );
 
         self.subscription_manager
@@ -252,7 +251,7 @@ impl Reactor {
             .await
             .insert(subscription_id, active);
 
-        tracing::debug!(?subscription_id, "Subscription created");
+        tracing::trace!(?subscription_id, "Subscription created");
 
         Ok((subscription_id, data))
     }
@@ -269,7 +268,7 @@ impl Reactor {
             .write()
             .await
             .remove(&subscription_id);
-        tracing::debug!(?subscription_id, "Subscription removed");
+        tracing::trace!(?subscription_id, "Subscription removed");
     }
 
     /// Subscribe to job progress updates.
@@ -295,9 +294,8 @@ impl Reactor {
         let mut subs = self.job_subscriptions.write().await;
         subs.entry(job_id).or_default().push(subscription);
 
-        tracing::debug!(
+        tracing::trace!(
             ?subscription_id,
-            client_id = %client_sub_id,
             %job_id,
             "Job subscription created"
         );
@@ -318,7 +316,7 @@ impl Reactor {
         // Remove empty entries
         subs.retain(|_, v| !v.is_empty());
 
-        tracing::debug!(client_id = %client_sub_id, "Job subscription removed");
+        tracing::trace!(client_id = %client_sub_id, "Job subscription removed");
     }
 
     /// Subscribe to workflow progress updates.
@@ -344,9 +342,8 @@ impl Reactor {
         let mut subs = self.workflow_subscriptions.write().await;
         subs.entry(workflow_id).or_default().push(subscription);
 
-        tracing::debug!(
+        tracing::trace!(
             ?subscription_id,
-            client_id = %client_sub_id,
             %workflow_id,
             "Workflow subscription created"
         );
@@ -367,7 +364,7 @@ impl Reactor {
         // Remove empty entries
         subs.retain(|_, v| !v.is_empty());
 
-        tracing::debug!(client_id = %client_sub_id, "Workflow subscription removed");
+        tracing::trace!(client_id = %client_sub_id, "Workflow subscription removed");
     }
 
     /// Fetch current job data from database.
@@ -503,21 +500,16 @@ impl Reactor {
                     // Use naming convention as last resort
                     let table_name = Self::extract_table_name(query_name);
                     read_set.add_table(&table_name);
-                    tracing::debug!(
+                    tracing::trace!(
                         query = %query_name,
                         fallback_table = %table_name,
-                        "No compile-time table dependencies found, using naming convention fallback"
+                        "Using naming convention fallback for table dependency"
                     );
                 } else {
                     // Use compile-time extracted tables
                     for table in info.table_dependencies {
                         read_set.add_table(*table);
                     }
-                    tracing::debug!(
-                        query = %query_name,
-                        tables = ?info.table_dependencies,
-                        "Using compile-time table dependencies"
-                    );
                 }
 
                 Ok((data, read_set))
@@ -563,7 +555,7 @@ impl Reactor {
 
         // Main reactor loop
         tokio::spawn(async move {
-            tracing::info!("Reactor started, listening for changes");
+            tracing::debug!("Reactor listening for changes");
 
             let mut restart_count: u32 = 0;
             let (listener_error_tx, mut listener_error_rx) = mpsc::channel::<String>(1);
@@ -597,18 +589,17 @@ impl Reactor {
                                 tracing::warn!("Reactor lagged by {} messages", n);
                             }
                             Err(broadcast::error::RecvError::Closed) => {
-                                tracing::info!("Change channel closed");
+                                tracing::debug!("Change channel closed");
                                 break;
                             }
                         }
                     }
                     Some(error_msg) = listener_error_rx.recv() => {
-                        tracing::error!("Listener failed: {}", error_msg);
-
                         if restart_count >= max_restarts {
                             tracing::error!(
-                                "Listener failed {} times, giving up. Real-time updates disabled.",
-                                restart_count
+                                attempts = restart_count,
+                                last_error = %error_msg,
+                                "Change listener failed permanently, real-time updates disabled"
                             );
                             break;
                         }
@@ -616,8 +607,11 @@ impl Reactor {
                         restart_count += 1;
                         let delay = base_delay_ms * 2u64.saturating_pow(restart_count - 1);
                         tracing::warn!(
-                            "Restarting listener in {}ms (attempt {}/{})",
-                            delay, restart_count, max_restarts
+                            attempt = restart_count,
+                            max = max_restarts,
+                            delay_ms = delay,
+                            error = %error_msg,
+                            "Change listener restarting"
                         );
 
                         tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
@@ -636,7 +630,7 @@ impl Reactor {
                         }));
                     }
                     _ = shutdown_rx.recv() => {
-                        tracing::info!("Reactor shutting down");
+                        tracing::debug!("Reactor shutting down");
                         break;
                     }
                 }
@@ -662,7 +656,7 @@ impl Reactor {
         registry: &FunctionRegistry,
         db_pool: &sqlx::PgPool,
     ) {
-        tracing::debug!(table = %change.table, op = ?change.operation, row_id = ?change.row_id, "Processing change");
+        tracing::trace!(table = %change.table, op = ?change.operation, row_id = ?change.row_id, "Processing change");
 
         // Handle job/workflow table changes first
         match change.table.as_str() {
@@ -714,7 +708,7 @@ impl Reactor {
             return;
         }
 
-        tracing::debug!(count = invalidated.len(), "Invalidating subscriptions");
+        tracing::trace!(count = invalidated.len(), "Invalidating subscriptions");
 
         // Collect subscription info under read lock, then release before async operations
         let subs_to_process: Vec<_> = {
@@ -760,16 +754,16 @@ impl Reactor {
                         };
 
                         if let Err(e) = session_server.send_to_session(session_id, message).await {
-                            tracing::warn!(client_id = %client_sub_id, "Failed to send update: {}", e);
+                            tracing::debug!(client_id = %client_sub_id, error = %e, "Failed to send update");
                         } else {
-                            tracing::debug!(client_id = %client_sub_id, "Pushed update to client");
+                            tracing::trace!(client_id = %client_sub_id, "Pushed update to client");
                             // Track the hash update
                             updates.push((sub_id, new_hash));
                         }
                     }
                 }
                 Err(e) => {
-                    tracing::error!(client_id = %client_sub_id, "Failed to re-execute query: {}", e);
+                    tracing::warn!(client_id = %client_sub_id, error = %e, "Failed to re-execute query");
                 }
             }
         }
@@ -803,7 +797,7 @@ impl Reactor {
         let job_data = match Self::fetch_job_data_static(job_id, db_pool).await {
             Ok(data) => data,
             Err(e) => {
-                tracing::warn!(%job_id, "Failed to fetch job data: {}", e);
+                tracing::debug!(%job_id, error = %e, "Failed to fetch job data");
                 return;
             }
         };
@@ -819,19 +813,9 @@ impl Reactor {
                 .send_to_session(sub.session_id, message)
                 .await
             {
-                // Debug level because this commonly happens when session disconnects (page refresh)
-                tracing::debug!(
-                    %job_id,
-                    client_id = %sub.client_sub_id,
-                    "Failed to send job update (session likely disconnected): {}",
-                    e
-                );
+                tracing::trace!(%job_id, error = %e, "Failed to send job update");
             } else {
-                tracing::debug!(
-                    %job_id,
-                    client_id = %sub.client_sub_id,
-                    "Pushed job update to client"
-                );
+                tracing::trace!(%job_id, "Job update sent");
             }
         }
     }
@@ -854,7 +838,7 @@ impl Reactor {
         let workflow_data = match Self::fetch_workflow_data_static(workflow_id, db_pool).await {
             Ok(data) => data,
             Err(e) => {
-                tracing::warn!(%workflow_id, "Failed to fetch workflow data: {}", e);
+                tracing::debug!(%workflow_id, error = %e, "Failed to fetch workflow data");
                 return;
             }
         };
@@ -870,19 +854,9 @@ impl Reactor {
                 .send_to_session(sub.session_id, message)
                 .await
             {
-                // Debug level because this commonly happens when session disconnects (page refresh)
-                tracing::debug!(
-                    %workflow_id,
-                    client_id = %sub.client_sub_id,
-                    "Failed to send workflow update (session likely disconnected): {}",
-                    e
-                );
+                tracing::trace!(%workflow_id, error = %e, "Failed to send workflow update");
             } else {
-                tracing::debug!(
-                    %workflow_id,
-                    client_id = %sub.client_sub_id,
-                    "Pushed workflow update to client"
-                );
+                tracing::trace!(%workflow_id, "Workflow update sent");
             }
         }
     }
@@ -904,7 +878,7 @@ impl Reactor {
         {
             Ok(id) => id,
             Err(e) => {
-                tracing::warn!(%step_id, "Failed to look up workflow_run_id for step: {}", e);
+                tracing::debug!(%step_id, error = %e, "Failed to look up workflow for step");
                 return;
             }
         };
@@ -1051,20 +1025,15 @@ impl Reactor {
                     // Fallback for dynamic SQL
                     let table_name = Self::extract_table_name(query_name);
                     read_set.add_table(&table_name);
-                    tracing::debug!(
+                    tracing::trace!(
                         query = %query_name,
                         fallback_table = %table_name,
-                        "No compile-time table dependencies found (static), using naming convention fallback"
+                        "Using naming convention fallback for table dependency"
                     );
                 } else {
                     for table in info.table_dependencies {
                         read_set.add_table(*table);
                     }
-                    tracing::debug!(
-                        query = %query_name,
-                        tables = ?info.table_dependencies,
-                        "Using compile-time table dependencies (static)"
-                    );
                 }
 
                 Ok((data, read_set))

@@ -233,7 +233,7 @@ impl DevCommand {
                 "run --no-default-features",
             ])
             .env("DATABASE_URL", &database_url)
-            .env("RUST_LOG", "info,forge_runtime::function::executor=trace")
+            .env("RUST_LOG", "warn,forge=info")
             .env("HOST", "0.0.0.0")
             .env("PORT", "8080")
             .env("WEBHOOK_SECRET", "demo-secret")

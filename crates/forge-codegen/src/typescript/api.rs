@@ -1,4 +1,5 @@
 use forge_core::schema::{FunctionKind, RustType, SchemaRegistry};
+use forge_utils::{to_camel_case, to_pascal_case};
 
 use super::Error;
 
@@ -359,41 +360,6 @@ fn rust_type_to_ts_inner(rust_type: &RustType, is_return: bool) -> String {
     }
 }
 
-fn to_camel_case(s: &str) -> String {
-    let mut result = String::new();
-    let mut capitalize_next = false;
-
-    for c in s.chars() {
-        if c == '_' {
-            capitalize_next = true;
-        } else if capitalize_next {
-            result.push(c.to_uppercase().next().unwrap_or(c));
-            capitalize_next = false;
-        } else {
-            result.push(c);
-        }
-    }
-
-    result
-}
-
-fn to_pascal_case(s: &str) -> String {
-    let mut result = String::new();
-    let mut capitalize_next = true;
-
-    for c in s.chars() {
-        if c == '_' {
-            capitalize_next = true;
-        } else if capitalize_next {
-            result.push(c.to_uppercase().next().unwrap_or(c));
-            capitalize_next = false;
-        } else {
-            result.push(c);
-        }
-    }
-
-    result
-}
 
 #[cfg(test)]
 mod tests {

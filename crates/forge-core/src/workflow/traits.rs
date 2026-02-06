@@ -94,20 +94,31 @@ impl WorkflowStatus {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseWorkflowStatusError(pub String);
+
+impl std::fmt::Display for ParseWorkflowStatusError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "invalid workflow status: '{}'", self.0)
+    }
+}
+
+impl std::error::Error for ParseWorkflowStatusError {}
+
 impl FromStr for WorkflowStatus {
-    type Err = std::convert::Infallible;
+    type Err = ParseWorkflowStatusError;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        Ok(match s {
-            "created" => Self::Created,
-            "running" => Self::Running,
-            "waiting" => Self::Waiting,
-            "completed" => Self::Completed,
-            "compensating" => Self::Compensating,
-            "compensated" => Self::Compensated,
-            "failed" => Self::Failed,
-            _ => Self::Created,
-        })
+        match s {
+            "created" => Ok(Self::Created),
+            "running" => Ok(Self::Running),
+            "waiting" => Ok(Self::Waiting),
+            "completed" => Ok(Self::Completed),
+            "compensating" => Ok(Self::Compensating),
+            "compensated" => Ok(Self::Compensated),
+            "failed" => Ok(Self::Failed),
+            _ => Err(ParseWorkflowStatusError(s.to_string())),
+        }
     }
 }
 

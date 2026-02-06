@@ -6,6 +6,7 @@ members = [
     "crates/forge-macros",
     "crates/forge-runtime",
     "crates/forge-codegen",
+    "crates/forge-utils",
 ]
 
 [workspace.package]
@@ -26,6 +27,7 @@ forge-core = { path = "crates/forge-core" }
 forge-macros = { path = "crates/forge-macros" }
 forge-runtime = { path = "crates/forge-runtime" }
 forge-codegen = { path = "crates/forge-codegen" }
+forge-utils = { path = "crates/forge-utils" }
 
 # Async runtime
 tokio = { version = "1.48", features = ["full"] }
@@ -61,7 +63,14 @@ thiserror = "2.0"
 anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+tracing-opentelemetry = "0.28"
 sysinfo = "0.37"
+
+# OpenTelemetry
+opentelemetry = { version = "0.27", features = ["trace", "metrics", "logs"] }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio", "trace", "metrics", "logs"] }
+opentelemetry-otlp = { version = "0.27", features = ["tonic", "trace", "metrics", "logs"] }
+opentelemetry-semantic-conventions = "0.27"
 
 # Proc macros
 syn = { version = "2.0", features = ["full", "extra-traits", "visit"] }

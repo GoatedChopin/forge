@@ -8,6 +8,7 @@ pub mod function;
 pub mod gateway;
 pub mod jobs;
 pub mod migrations;
+pub mod observability;
 pub mod rate_limit;
 pub mod realtime;
 pub mod testing;
@@ -40,4 +41,7 @@ pub use webhook::{WebhookEntry, WebhookRegistry, WebhookState, webhook_handler};
 pub use workflow::{
     EventStore, WorkflowEntry, WorkflowExecutor, WorkflowRecord, WorkflowRegistry,
     WorkflowScheduler, WorkflowSchedulerConfig, WorkflowStepRecord,
+};
+pub use observability::{
+    TelemetryConfig, TelemetryError, init_telemetry, shutdown_telemetry,
 };

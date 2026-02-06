@@ -2,6 +2,8 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{ItemFn, parse_macro_input};
 
+use crate::utils::{parse_duration_tokens, to_pascal_case};
+
 #[derive(Debug, Default)]
 struct JobAttrs {
     name: Option<String>,
@@ -30,10 +32,8 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
         result.is_public = true;
     }
 
-    // Parse idempotent (check for bare flag or with key)
     if let Some(idem_start) = attr_str.find("idempotent") {
         result.idempotent = true;
-        // Check for idempotent(key = "...")
         if let Some(paren_start) = attr_str[idem_start..].find('(') {
             let remaining = &attr_str[idem_start + paren_start + 1..];
             if let Some(paren_end) = remaining.find(')') {
@@ -50,7 +50,6 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
         }
     }
 
-    // Parse require_role("admin")
     if let Some(role_start) = attr_str.find("require_role") {
         if let Some(paren_start) = attr_str[role_start..].find('(') {
             let remaining = &attr_str[role_start + paren_start + 1..];
@@ -61,7 +60,6 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
         }
     }
 
-    // Parse compensate = "handler_name"
     if let Some(comp_start) = attr_str.find("compensate") {
         if let Some(eq_pos) = attr_str[comp_start..].find('=') {
             let after_eq = &attr_str[comp_start + eq_pos + 1..];
@@ -74,7 +72,6 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
         }
     }
 
-    // Parse name = "custom_name"
     if let Some(name_start) = attr_str.find("name") {
         // Ensure it's not part of another word
         let before = if name_start > 0 {
@@ -95,7 +92,6 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
         }
     }
 
-    // Parse timeout = "30m"
     if let Some(timeout_start) = attr_str.find("timeout") {
         if let Some(eq_pos) = attr_str[timeout_start..].find('=') {
             let after_eq = &attr_str[timeout_start + eq_pos + 1..];
@@ -108,7 +104,6 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
         }
     }
 
-    // Parse priority = "high"
     if let Some(priority_start) = attr_str.find("priority") {
         if let Some(eq_pos) = attr_str[priority_start..].find('=') {
             let after_eq = &attr_str[priority_start + eq_pos + 1..];
@@ -133,7 +128,6 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
         }
     }
 
-    // Parse worker_capability = "media"
     if let Some(cap_start) = attr_str.find("worker_capability") {
         if let Some(eq_pos) = attr_str[cap_start..].find('=') {
             let after_eq = &attr_str[cap_start + eq_pos + 1..];
@@ -146,8 +140,6 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
         }
     }
 
-    // Parse max_attempts = 3 (can be inside retry() or standalone)
-    // First check for standalone max_attempts
     if let Some(ma_start) = attr_str.find("max_attempts") {
         if let Some(eq_pos) = attr_str[ma_start..].find('=') {
             let after_eq = &attr_str[ma_start + eq_pos + 1..];
@@ -163,7 +155,6 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
         }
     }
 
-    // Parse backoff = "exponential" (standalone)
     if let Some(backoff_start) = attr_str.find("backoff") {
         // Ensure it's not max_backoff
         let before = if backoff_start > 0 {
@@ -195,7 +186,6 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
         }
     }
 
-    // Parse max_backoff = "5m" (standalone)
     if let Some(mb_start) = attr_str.find("max_backoff") {
         if let Some(eq_pos) = attr_str[mb_start..].find('=') {
             let after_eq = &attr_str[mb_start + eq_pos + 1..];
@@ -208,14 +198,12 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
         }
     }
 
-    // Parse retry(max_attempts = 3, backoff = "exponential", max_backoff = "5m")
     if let Some(retry_start) = attr_str.find("retry") {
         if let Some(paren_start) = attr_str[retry_start..].find('(') {
             let remaining = &attr_str[retry_start + paren_start + 1..];
             if let Some(paren_end) = remaining.find(')') {
                 let content = &remaining[..paren_end];
 
-                // Parse max_attempts inside retry()
                 if let Some(ma_start) = content.find("max_attempts") {
                     if let Some(eq_pos) = content[ma_start..].find('=') {
                         let after_eq = &content[ma_start + eq_pos + 1..];
@@ -231,7 +219,6 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
                     }
                 }
 
-                // Parse backoff inside retry()
                 if let Some(backoff_start) = content.find("backoff") {
                     let before = if backoff_start > 0 {
                         content.chars().nth(backoff_start - 1)
@@ -259,7 +246,6 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
                     }
                 }
 
-                // Parse max_backoff inside retry()
                 if let Some(mb_start) = content.find("max_backoff") {
                     if let Some(quote_start) = content[mb_start..].find('"') {
                         let after_quote = &content[mb_start + quote_start + 1..];
@@ -272,7 +258,6 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
         }
     }
 
-    // Parse ttl = "7d"
     if let Some(ttl_start) = attr_str.find("ttl") {
         if let Some(eq_pos) = attr_str[ttl_start..].find('=') {
             let after_eq = &attr_str[ttl_start + eq_pos + 1..];
@@ -288,31 +273,6 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
     Ok(result)
 }
 
-fn parse_duration(s: &str) -> proc_macro2::TokenStream {
-    let s = s.trim();
-    if s.ends_with("ms") {
-        let n: u64 = s.trim_end_matches("ms").parse().unwrap_or(1000);
-        quote! { std::time::Duration::from_millis(#n) }
-    } else if s.ends_with('s') {
-        let n: u64 = s.trim_end_matches('s').parse().unwrap_or(30);
-        quote! { std::time::Duration::from_secs(#n) }
-    } else if s.ends_with('m') {
-        let n: u64 = s.trim_end_matches('m').parse().unwrap_or(5);
-        let secs = n * 60;
-        quote! { std::time::Duration::from_secs(#secs) }
-    } else if s.ends_with('h') {
-        let n: u64 = s.trim_end_matches('h').parse().unwrap_or(1);
-        let secs = n * 3600;
-        quote! { std::time::Duration::from_secs(#secs) }
-    } else if s.ends_with('d') {
-        let n: u64 = s.trim_end_matches('d').parse().unwrap_or(1);
-        let secs = n * 86400;
-        quote! { std::time::Duration::from_secs(#secs) }
-    } else {
-        let n: u64 = s.parse().unwrap_or(30);
-        quote! { std::time::Duration::from_secs(#n) }
-    }
-}
 
 pub fn job_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
@@ -371,7 +331,7 @@ pub fn job_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     let timeout = if let Some(ref t) = attrs.timeout {
-        parse_duration(t)
+        parse_duration_tokens(t, 3600)
     } else {
         quote! { std::time::Duration::from_secs(3600) }
     };
@@ -403,7 +363,7 @@ pub fn job_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     let max_backoff = if let Some(ref mb) = attrs.max_backoff {
-        parse_duration(mb)
+        parse_duration_tokens(mb, 300)
     } else {
         quote! { std::time::Duration::from_secs(300) }
     };
@@ -429,7 +389,7 @@ pub fn job_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     let ttl = if let Some(ref t) = attrs.ttl {
-        let duration = parse_duration(t);
+        let duration = parse_duration_tokens(t, 3600);
         quote! { Some(#duration) }
     } else {
         quote! { None }
@@ -495,17 +455,6 @@ pub fn job_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-fn to_pascal_case(s: &str) -> String {
-    s.split('_')
-        .map(|part| {
-            let mut chars = part.chars();
-            match chars.next() {
-                None => String::new(),
-                Some(first) => first.to_uppercase().chain(chars).collect(),
-            }
-        })
-        .collect()
-}
 
 #[cfg(test)]
 mod tests {
@@ -520,13 +469,13 @@ mod tests {
 
     #[test]
     fn test_parse_duration_seconds() {
-        let ts = parse_duration("30s");
+        let ts = parse_duration_tokens("30s", 30);
         assert!(!ts.is_empty());
     }
 
     #[test]
     fn test_parse_duration_minutes() {
-        let ts = parse_duration("5m");
+        let ts = parse_duration_tokens("5m", 300);
         assert!(!ts.is_empty());
     }
 

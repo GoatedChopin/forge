@@ -101,7 +101,7 @@ impl FunctionRouter {
                 FunctionEntry::Query { handler, info, .. } => {
                     if let Some(ttl) = info.cache_ttl {
                         if let Some(cached) = self.query_cache.get(function_name, &args) {
-                            return Ok(RouteResult::Query(cached));
+                            return Ok(RouteResult::Query(Value::clone(&cached)));
                         }
 
                         // Execute and cache result (use read replica for queries)
@@ -324,7 +324,7 @@ impl FunctionRouter {
         match handler(&ctx, args).await {
             Ok(value) => {
                 let buffer = {
-                    let guard = outbox.lock().unwrap();
+                    let guard = outbox.lock().expect("outbox mutex poisoned");
                     OutboxBuffer {
                         jobs: guard.jobs.clone(),
                         workflows: guard.workflows.clone(),

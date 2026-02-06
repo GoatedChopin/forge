@@ -9,6 +9,7 @@ use forge_core::schema::{
     EnumDef, EnumVariant, FieldDef, FunctionArg, FunctionDef, FunctionKind, RustType,
     SchemaRegistry, TableDef,
 };
+use forge_utils::to_snake_case;
 use quote::ToTokens;
 use syn::{Attribute, Expr, Fields, FnArg, Lit, Meta, Pat, ReturnType};
 use walkdir::WalkDir;
@@ -428,22 +429,6 @@ fn extract_name_value(s: &str) -> Option<String> {
         }
     }
     None
-}
-
-/// Convert a string to snake_case.
-fn to_snake_case(s: &str) -> String {
-    let mut result = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if c.is_uppercase() {
-            if i > 0 {
-                result.push('_');
-            }
-            result.push(c.to_lowercase().next().unwrap());
-        } else {
-            result.push(c);
-        }
-    }
-    result
 }
 
 /// Simple English pluralization.

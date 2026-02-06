@@ -80,7 +80,7 @@ impl ChangeListener {
             .await
             .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
 
-        tracing::info!("Listening for changes on channel: {}", self.config.channel);
+        tracing::debug!(channel = %self.config.channel, "Listening for changes");
 
         let mut shutdown_rx = self.shutdown_rx.clone();
 
@@ -89,15 +89,14 @@ impl ChangeListener {
                 notification = listener.recv() => {
                     match notification {
                         Ok(notification) => {
-                            tracing::debug!("Received notification: {}", notification.payload());
                             if let Some(change) = self.parse_notification(notification.payload()) {
-                                tracing::debug!(table = %change.table, op = ?change.operation, "Parsed change");
+                                tracing::trace!(table = %change.table, op = ?change.operation, "Change received");
                                 // Broadcast the change
                                 let _ = self.change_tx.send(change);
                             }
                         }
                         Err(e) => {
-                            tracing::warn!("Error receiving notification: {}", e);
+                            tracing::debug!(error = %e, "Error receiving notification");
                             // Try to reconnect
                             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                         }
@@ -105,7 +104,7 @@ impl ChangeListener {
                 }
                 _ = shutdown_rx.changed() => {
                     if *shutdown_rx.borrow() {
-                        tracing::info!("Change listener shutting down");
+                        tracing::debug!("Change listener shutting down");
                         break;
                     }
                 }
@@ -123,7 +122,7 @@ impl ChangeListener {
         let parts: Vec<&str> = payload.split(':').collect();
 
         if parts.len() < 2 {
-            tracing::warn!("Invalid change notification format: {}", payload);
+            tracing::trace!(payload, "Invalid change notification format");
             return None;
         }
 

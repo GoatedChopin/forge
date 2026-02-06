@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use tokio::sync::{Mutex, watch};
+use tracing::Span;
 use uuid::Uuid;
 
 use crate::env::{EnvAccess, EnvProvider, RealEnvProvider};
@@ -19,6 +20,8 @@ pub struct DaemonContext {
     shutdown_rx: Mutex<watch::Receiver<bool>>,
     /// Environment variable provider.
     env_provider: Arc<dyn EnvProvider>,
+    /// Parent span for trace propagation.
+    span: Span,
 }
 
 impl DaemonContext {
@@ -37,6 +40,7 @@ impl DaemonContext {
             http_client,
             shutdown_rx: Mutex::new(shutdown_rx),
             env_provider: Arc::new(RealEnvProvider::new()),
+            span: Span::current(),
         }
     }
 
@@ -46,12 +50,10 @@ impl DaemonContext {
         self
     }
 
-    /// Get database pool.
     pub fn db(&self) -> &sqlx::PgPool {
         &self.db_pool
     }
 
-    /// Get HTTP client.
     pub fn http(&self) -> &reqwest::Client {
         &self.http_client
     }
@@ -88,6 +90,8 @@ impl DaemonContext {
 
     /// Send heartbeat to indicate daemon is alive.
     pub async fn heartbeat(&self) -> crate::Result<()> {
+        tracing::trace!(daemon.name = %self.daemon_name, "Sending heartbeat");
+
         sqlx::query(
             r#"
             UPDATE forge_daemons
@@ -102,6 +106,20 @@ impl DaemonContext {
         .map_err(|e| crate::ForgeError::Database(e.to_string()))?;
 
         Ok(())
+    }
+
+    /// Get the trace ID for this daemon execution.
+    ///
+    /// Returns the instance_id as a correlation ID.
+    pub fn trace_id(&self) -> String {
+        self.instance_id.to_string()
+    }
+
+    /// Get the parent span for trace propagation.
+    ///
+    /// Use this to create child spans within daemon handlers.
+    pub fn span(&self) -> &Span {
+        &self.span
     }
 }
 

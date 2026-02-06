@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use forge_core::CircuitBreakerClient;
 use forge_core::Result;
@@ -10,7 +10,7 @@ use forge_core::daemon::{DaemonContext, DaemonStatus};
 use futures_util::FutureExt;
 use sqlx::PgPool;
 use tokio::sync::{broadcast, watch};
-use tracing::{error, info, warn};
+use tracing::{Instrument, Span, field};
 use uuid::Uuid;
 
 use super::registry::DaemonRegistry;
@@ -70,94 +70,116 @@ impl DaemonRunner {
 
     /// Run all registered daemons.
     pub async fn run(mut self) -> Result<()> {
-        if self.registry.is_empty() {
-            info!("No daemons registered, daemon runner idle");
-            // Wait for shutdown
-            let _ = self.shutdown_rx.recv().await;
-            return Ok(());
-        }
-
-        info!(
-            "Starting daemon runner with {} daemons",
-            self.registry.len()
+        let runner_span = tracing::info_span!(
+            "daemon.runner",
+            daemon.node_id = %self.node_id,
+            daemon.count = self.registry.len(),
+            daemon.uptime_ms = field::Empty,
         );
+        let start_time = Instant::now();
 
-        // Create individual shutdown channels for each daemon
-        let mut daemon_handles: HashMap<String, DaemonHandle> = HashMap::new();
-
-        // Start each daemon
-        for (name, entry) in self.registry.daemons() {
-            let info = &entry.info;
-
-            // Create shutdown channel for this daemon
-            let (shutdown_tx, shutdown_rx) = watch::channel(false);
-
-            let handle = DaemonHandle {
-                name: name.to_string(),
-                instance_id: Uuid::new_v4(),
-                shutdown_tx,
-                restarts: 0,
-                status: DaemonStatus::Pending,
-            };
-
-            // Record daemon in database
-            if let Err(e) = self.record_daemon_start(&handle).await {
-                error!(daemon = name, error = %e, "Failed to record daemon start");
+        async {
+            if self.registry.is_empty() {
+                tracing::debug!("No daemons registered, daemon runner idle");
+                // Wait for shutdown
+                let _ = self.shutdown_rx.recv().await;
+                Span::current().record("daemon.uptime_ms", start_time.elapsed().as_millis() as u64);
+                return Ok(());
             }
 
-            // Spawn daemon task
-            let daemon_entry = entry.clone();
-            let pool = self.pool.clone();
-            let http_client = self.http_client.clone();
-            let daemon_name = name.to_string();
-            let startup_delay = info.startup_delay;
-            let restart_on_panic = info.restart_on_panic;
-            let restart_delay = info.restart_delay;
-            let max_restarts = info.max_restarts;
-            let leader_elected = info.leader_elected;
-            let node_id = self.node_id;
+            tracing::info!(count = self.registry.len(), "Daemon runner starting");
 
-            tokio::spawn(async move {
-                run_daemon_loop(
-                    daemon_name,
-                    daemon_entry,
-                    pool,
-                    http_client,
-                    shutdown_rx,
-                    node_id,
-                    startup_delay,
-                    restart_on_panic,
-                    restart_delay,
-                    max_restarts,
-                    leader_elected,
-                )
-                .await
-            });
+            // Create individual shutdown channels for each daemon
+            let mut daemon_handles: HashMap<String, DaemonHandle> = HashMap::new();
 
-            daemon_handles.insert(name.to_string(), handle);
-        }
+            // Start each daemon
+            for (name, entry) in self.registry.daemons() {
+                let info = &entry.info;
 
-        // Wait for shutdown signal
-        let _ = self.shutdown_rx.recv().await;
-        info!("Daemon runner received shutdown signal");
+                // Create shutdown channel for this daemon
+                let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-        // Signal all daemons to stop
-        for (name, handle) in &daemon_handles {
-            info!(daemon = name, "Signaling daemon to stop");
-            let _ = handle.shutdown_tx.send(true);
-        }
+                let handle = DaemonHandle {
+                    name: name.to_string(),
+                    instance_id: Uuid::new_v4(),
+                    shutdown_tx,
+                    restarts: 0,
+                    status: DaemonStatus::Pending,
+                };
 
-        // Give daemons time to clean up
-        tokio::time::sleep(Duration::from_secs(2)).await;
+                // Record daemon in database
+                if let Err(e) = self.record_daemon_start(&handle).await {
+                    tracing::debug!(daemon = name, error = %e, "Failed to record daemon start");
+                }
 
-        // Update daemon status in database
-        for (name, handle) in &daemon_handles {
-            if let Err(e) = self.record_daemon_stop(handle).await {
-                warn!(daemon = name, error = %e, "Failed to record daemon stop");
+                tracing::info!(
+                    daemon.name = name,
+                    daemon.instance_id = %handle.instance_id,
+                    daemon.leader_elected = info.leader_elected,
+                    "Starting daemon"
+                );
+
+                // Spawn daemon task
+                let daemon_entry = entry.clone();
+                let pool = self.pool.clone();
+                let http_client = self.http_client.clone();
+                let daemon_name = name.to_string();
+                let startup_delay = info.startup_delay;
+                let restart_on_panic = info.restart_on_panic;
+                let restart_delay = info.restart_delay;
+                let max_restarts = info.max_restarts;
+                let leader_elected = info.leader_elected;
+                let node_id = self.node_id;
+
+                tokio::spawn(async move {
+                    run_daemon_loop(
+                        daemon_name,
+                        daemon_entry,
+                        pool,
+                        http_client,
+                        shutdown_rx,
+                        node_id,
+                        startup_delay,
+                        restart_on_panic,
+                        restart_delay,
+                        max_restarts,
+                        leader_elected,
+                    )
+                    .await
+                });
+
+                daemon_handles.insert(name.to_string(), handle);
             }
-        }
 
-        Ok(())
+            // Wait for shutdown signal
+            let _ = self.shutdown_rx.recv().await;
+            tracing::info!("Daemon runner received shutdown signal");
+
+            // Signal all daemons to stop
+            for (name, handle) in &daemon_handles {
+                tracing::info!(daemon.name = name, "Signaling daemon to stop");
+                let _ = handle.shutdown_tx.send(true);
+            }
+
+            // Give daemons time to clean up
+            tokio::time::sleep(Duration::from_secs(2)).await;
+
+            // Update daemon status in database
+            for (name, handle) in &daemon_handles {
+                if let Err(e) = self.record_daemon_stop(handle).await {
+                    tracing::debug!(daemon = name, error = %e, "Failed to record daemon stop");
+                }
+            }
+
+            Span::current().record("daemon.uptime_ms", start_time.elapsed().as_millis() as u64);
+            tracing::info!(
+                daemon.uptime_ms = start_time.elapsed().as_millis() as u64,
+                "Daemon runner stopped"
+            );
+            Ok(())
+        }
+        .instrument(runner_span)
+        .await
     }
 
     async fn record_daemon_start(&self, handle: &DaemonHandle) -> Result<()> {
@@ -227,160 +249,206 @@ async fn run_daemon_loop(
     max_restarts: Option<u32>,
     leader_elected: bool,
 ) {
-    let mut restarts = 0u32;
+    let daemon_span = tracing::info_span!(
+        "daemon.lifecycle",
+        daemon.name = %name,
+        daemon.node_id = %node_id,
+        daemon.leader_elected = leader_elected,
+        daemon.restart_count = field::Empty,
+        daemon.uptime_ms = field::Empty,
+        daemon.final_status = field::Empty,
+        otel.name = %format!("daemon {}", name),
+    );
+    let daemon_start = Instant::now();
 
-    // Apply startup delay
-    if !startup_delay.is_zero() {
-        info!(daemon = %name, delay = ?startup_delay, "Waiting startup delay");
-        tokio::select! {
-            _ = tokio::time::sleep(startup_delay) => {}
-            _ = shutdown_rx.changed() => {
-                info!(daemon = %name, "Shutdown during startup delay");
-                return;
+    async {
+        let mut restarts = 0u32;
+
+        // Apply startup delay
+        if !startup_delay.is_zero() {
+            tracing::debug!(delay_ms = startup_delay.as_millis() as u64, "Waiting startup delay");
+            tokio::select! {
+                _ = tokio::time::sleep(startup_delay) => {}
+                _ = shutdown_rx.changed() => {
+                    tracing::debug!("Shutdown during startup delay");
+                    Span::current().record("daemon.final_status", "shutdown_during_startup");
+                    return;
+                }
             }
         }
-    }
 
-    loop {
-        // Check shutdown before attempting to run
-        if *shutdown_rx.borrow() {
-            info!(daemon = %name, "Daemon shutting down");
-            break;
-        }
+        loop {
+            // Check shutdown before attempting to run
+            if *shutdown_rx.borrow() {
+                tracing::debug!("Daemon shutting down");
+                Span::current().record("daemon.final_status", "shutdown");
+                break;
+            }
 
-        // Try to acquire leadership if required
-        if leader_elected {
-            match try_acquire_leadership(&pool, &name, node_id).await {
-                Ok(true) => {
-                    info!(daemon = %name, "Acquired leadership");
+            // Try to acquire leadership if required
+            if leader_elected {
+                match try_acquire_leadership(&pool, &name, node_id).await {
+                    Ok(true) => {
+                        tracing::info!("Acquired leadership");
+                    }
+                    Ok(false) => {
+                        // Another node has leadership, wait and retry
+                        tracing::debug!("Waiting for leadership");
+                        tokio::select! {
+                            _ = tokio::time::sleep(Duration::from_secs(5)) => {}
+                            _ = shutdown_rx.changed() => {
+                                tracing::debug!("Shutdown while waiting for leadership");
+                                Span::current().record("daemon.final_status", "shutdown_waiting_leadership");
+                                return;
+                            }
+                        }
+                        continue;
+                    }
+                    Err(e) => {
+                        tracing::debug!(error = %e, "Failed to check leadership");
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
                 }
-                Ok(false) => {
-                    // Another node has leadership, wait and retry
-                    tokio::select! {
-                        _ = tokio::time::sleep(Duration::from_secs(5)) => {}
-                        _ = shutdown_rx.changed() => {
-                            info!(daemon = %name, "Shutdown while waiting for leadership");
-                            return;
+            }
+
+            // Update status to running
+            if let Err(e) = update_daemon_status(&pool, &name, DaemonStatus::Running).await {
+                tracing::debug!(error = %e, "Failed to update daemon status");
+            }
+
+            let instance_id = Uuid::new_v4();
+            let execution_start = Instant::now();
+
+            let exec_span = tracing::info_span!(
+                "daemon.execute",
+                daemon.instance_id = %instance_id,
+                daemon.execution_duration_ms = field::Empty,
+                daemon.status = field::Empty,
+            );
+
+            let result = async {
+                tracing::info!(instance_id = %instance_id, "Daemon instance starting");
+
+                // Create context with shutdown receiver
+                let (daemon_shutdown_tx, daemon_shutdown_rx) = watch::channel(false);
+
+                // Forward shutdown signal
+                let shutdown_rx_clone = shutdown_rx.clone();
+                let shutdown_tx_clone = daemon_shutdown_tx.clone();
+                tokio::spawn(async move {
+                    let mut rx = shutdown_rx_clone;
+                    while rx.changed().await.is_ok() {
+                        if *rx.borrow() {
+                            let _ = shutdown_tx_clone.send(true);
+                            break;
                         }
                     }
-                    continue;
+                });
+
+                let ctx = DaemonContext::new(
+                    name.clone(),
+                    instance_id,
+                    pool.clone(),
+                    http_client.inner().clone(),
+                    daemon_shutdown_rx,
+                );
+
+                // Run the daemon
+                let result = std::panic::AssertUnwindSafe((entry.handler)(&ctx))
+                    .catch_unwind()
+                    .await;
+
+                let exec_duration = execution_start.elapsed().as_millis() as u64;
+                Span::current().record("daemon.execution_duration_ms", exec_duration);
+
+                result
+            }
+            .instrument(exec_span)
+            .await;
+
+            match result {
+                Ok(Ok(())) => {
+                    tracing::info!("Daemon completed gracefully");
+                    Span::current().record("daemon.final_status", "completed");
+                    let _ = update_daemon_status(&pool, &name, DaemonStatus::Stopped).await;
+                    break;
                 }
-                Err(e) => {
-                    warn!(daemon = %name, error = %e, "Failed to check leadership");
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                    continue;
+                Ok(Err(e)) => {
+                    let recorded = record_daemon_error(&pool, &name, &e.to_string()).await.is_ok();
+                    tracing::error!(error = %e, recorded, "Daemon failed");
+                }
+                Err(_) => {
+                    let recorded = record_daemon_error(&pool, &name, "Daemon panicked").await.is_ok();
+                    tracing::error!(recorded, "Daemon panicked");
                 }
             }
-        }
 
-        // Update status to running
-        if let Err(e) = update_daemon_status(&pool, &name, DaemonStatus::Running).await {
-            warn!(daemon = %name, error = %e, "Failed to update status");
-        }
+            // Check shutdown again
+            if *shutdown_rx.borrow() {
+                tracing::debug!("Daemon shutting down after failure");
+                Span::current().record("daemon.final_status", "shutdown_after_failure");
+                break;
+            }
 
-        let instance_id = Uuid::new_v4();
-        info!(daemon = %name, instance = %instance_id, "Starting daemon");
+            // Check restart policy
+            if !restart_on_panic {
+                tracing::warn!("Restart disabled, daemon stopping");
+                Span::current().record("daemon.final_status", "failed_no_restart");
+                let _ = update_daemon_status(&pool, &name, DaemonStatus::Failed).await;
+                break;
+            }
 
-        // Create context with shutdown receiver
-        let (daemon_shutdown_tx, daemon_shutdown_rx) = watch::channel(false);
+            restarts += 1;
+            Span::current().record("daemon.restart_count", restarts);
 
-        // Forward shutdown signal
-        let shutdown_rx_clone = shutdown_rx.clone();
-        let shutdown_tx_clone = daemon_shutdown_tx.clone();
-        tokio::spawn(async move {
-            let mut rx = shutdown_rx_clone;
-            while rx.changed().await.is_ok() {
-                if *rx.borrow() {
-                    let _ = shutdown_tx_clone.send(true);
+            // Check max restarts
+            if let Some(max) = max_restarts {
+                if restarts >= max {
+                    tracing::error!(restarts, max, "Max restarts exceeded");
+                    Span::current().record("daemon.final_status", "max_restarts_exceeded");
+                    let _ = update_daemon_status(&pool, &name, DaemonStatus::Failed).await;
                     break;
                 }
             }
-        });
 
-        let ctx = DaemonContext::new(
-            name.clone(),
-            instance_id,
-            pool.clone(),
-            http_client.inner().clone(),
-            daemon_shutdown_rx,
+            // Update status to restarting
+            let _ = update_daemon_status(&pool, &name, DaemonStatus::Restarting).await;
+
+            tracing::warn!(
+                restarts,
+                restart_delay_ms = restart_delay.as_millis() as u64,
+                "Restarting daemon"
+            );
+
+            // Wait before restart
+            tokio::select! {
+                _ = tokio::time::sleep(restart_delay) => {}
+                _ = shutdown_rx.changed() => {
+                    tracing::debug!("Shutdown during restart delay");
+                    Span::current().record("daemon.final_status", "shutdown_during_restart");
+                    break;
+                }
+            }
+        }
+
+        let uptime = daemon_start.elapsed().as_millis() as u64;
+        Span::current().record("daemon.uptime_ms", uptime);
+        Span::current().record("daemon.restart_count", restarts);
+
+        // Release leadership if we held it
+        if leader_elected {
+            let _ = release_leadership(&pool, &name, node_id).await;
+        }
+
+        tracing::info!(
+            uptime_ms = uptime,
+            restart_count = restarts,
+            "Daemon lifecycle ended"
         );
-
-        // Run the daemon
-        let result = std::panic::AssertUnwindSafe((entry.handler)(&ctx))
-            .catch_unwind()
-            .await;
-
-        match result {
-            Ok(Ok(())) => {
-                info!(daemon = %name, "Daemon completed successfully");
-                if let Err(e) = update_daemon_status(&pool, &name, DaemonStatus::Stopped).await {
-                    warn!(daemon = %name, error = %e, "Failed to update status");
-                }
-                break;
-            }
-            Ok(Err(e)) => {
-                error!(daemon = %name, error = %e, "Daemon failed with error");
-                if let Err(e) = record_daemon_error(&pool, &name, &e.to_string()).await {
-                    warn!(daemon = %name, error = %e, "Failed to record error");
-                }
-            }
-            Err(_) => {
-                error!(daemon = %name, "Daemon panicked");
-                if let Err(e) = record_daemon_error(&pool, &name, "Daemon panicked").await {
-                    warn!(daemon = %name, error = %e, "Failed to record panic");
-                }
-            }
-        }
-
-        // Check shutdown again
-        if *shutdown_rx.borrow() {
-            info!(daemon = %name, "Daemon shutting down after failure");
-            break;
-        }
-
-        // Check restart policy
-        if !restart_on_panic {
-            warn!(daemon = %name, "Restart disabled, daemon stopping");
-            if let Err(e) = update_daemon_status(&pool, &name, DaemonStatus::Failed).await {
-                warn!(daemon = %name, error = %e, "Failed to update status");
-            }
-            break;
-        }
-
-        restarts += 1;
-
-        // Check max restarts
-        if let Some(max) = max_restarts {
-            if restarts >= max {
-                error!(daemon = %name, restarts = restarts, max = max, "Max restarts exceeded");
-                if let Err(e) = update_daemon_status(&pool, &name, DaemonStatus::Failed).await {
-                    warn!(daemon = %name, error = %e, "Failed to update status");
-                }
-                break;
-            }
-        }
-
-        // Update status to restarting
-        if let Err(e) = update_daemon_status(&pool, &name, DaemonStatus::Restarting).await {
-            warn!(daemon = %name, error = %e, "Failed to update status");
-        }
-
-        info!(daemon = %name, restarts = restarts, delay = ?restart_delay, "Restarting daemon");
-
-        // Wait before restart
-        tokio::select! {
-            _ = tokio::time::sleep(restart_delay) => {}
-            _ = shutdown_rx.changed() => {
-                info!(daemon = %name, "Shutdown during restart delay");
-                break;
-            }
-        }
     }
-
-    // Release leadership if we held it
-    if leader_elected {
-        let _ = release_leadership(&pool, &name, node_id).await;
-    }
+    .instrument(daemon_span)
+    .await
 }
 
 async fn try_acquire_leadership(pool: &PgPool, daemon_name: &str, node_id: Uuid) -> Result<bool> {

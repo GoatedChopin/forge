@@ -86,20 +86,20 @@ impl MockJobDispatch {
             cancel_reason: None,
         };
 
-        self.jobs.write().unwrap().push(job);
+        self.jobs.write().expect("jobs lock poisoned").push(job);
         Ok(id)
     }
 
     /// Get all dispatched jobs.
     pub fn dispatched_jobs(&self) -> Vec<DispatchedJob> {
-        self.jobs.read().unwrap().clone()
+        self.jobs.read().expect("jobs lock poisoned").clone()
     }
 
     /// Get jobs of a specific type.
     pub fn jobs_of_type(&self, job_type: &str) -> Vec<DispatchedJob> {
         self.jobs
             .read()
-            .unwrap()
+            .expect("jobs lock poisoned")
             .iter()
             .filter(|j| j.job_type == job_type)
             .cloned()
@@ -108,7 +108,7 @@ impl MockJobDispatch {
 
     /// Assert that a job type was dispatched.
     pub fn assert_dispatched(&self, job_type: &str) {
-        let jobs = self.jobs.read().unwrap();
+        let jobs = self.jobs.read().expect("jobs lock poisoned");
         let found = jobs.iter().any(|j| j.job_type == job_type);
         assert!(
             found,
@@ -123,7 +123,7 @@ impl MockJobDispatch {
     where
         F: Fn(&serde_json::Value) -> bool,
     {
-        let jobs = self.jobs.read().unwrap();
+        let jobs = self.jobs.read().expect("jobs lock poisoned");
         let found = jobs
             .iter()
             .any(|j| j.job_type == job_type && predicate(&j.args));
@@ -136,7 +136,7 @@ impl MockJobDispatch {
 
     /// Assert that a job type was not dispatched.
     pub fn assert_not_dispatched(&self, job_type: &str) {
-        let jobs = self.jobs.read().unwrap();
+        let jobs = self.jobs.read().expect("jobs lock poisoned");
         let found = jobs.iter().any(|j| j.job_type == job_type);
         assert!(
             !found,
@@ -147,7 +147,7 @@ impl MockJobDispatch {
 
     /// Assert that a specific number of jobs were dispatched.
     pub fn assert_dispatch_count(&self, job_type: &str, expected: usize) {
-        let jobs = self.jobs.read().unwrap();
+        let jobs = self.jobs.read().expect("jobs lock poisoned");
         let count = jobs.iter().filter(|j| j.job_type == job_type).count();
         assert_eq!(
             count, expected,
@@ -158,12 +158,12 @@ impl MockJobDispatch {
 
     /// Clear all recorded jobs.
     pub fn clear(&self) {
-        self.jobs.write().unwrap().clear();
+        self.jobs.write().expect("jobs lock poisoned").clear();
     }
 
     /// Mark a job as completed (for test simulation).
     pub fn complete_job(&self, job_id: Uuid) {
-        let mut jobs = self.jobs.write().unwrap();
+        let mut jobs = self.jobs.write().expect("jobs lock poisoned");
         if let Some(job) = jobs.iter_mut().find(|j| j.id == job_id) {
             job.status = JobStatus::Completed;
         }
@@ -171,7 +171,7 @@ impl MockJobDispatch {
 
     /// Mark a job as failed (for test simulation).
     pub fn fail_job(&self, job_id: Uuid) {
-        let mut jobs = self.jobs.write().unwrap();
+        let mut jobs = self.jobs.write().expect("jobs lock poisoned");
         if let Some(job) = jobs.iter_mut().find(|j| j.id == job_id) {
             job.status = JobStatus::Failed;
         }
@@ -179,7 +179,7 @@ impl MockJobDispatch {
 
     /// Mark a job as cancelled (for test simulation).
     pub fn cancel_job(&self, job_id: Uuid, reason: Option<String>) {
-        let mut jobs = self.jobs.write().unwrap();
+        let mut jobs = self.jobs.write().expect("jobs lock poisoned");
         if let Some(job) = jobs.iter_mut().find(|j| j.id == job_id) {
             job.status = JobStatus::Cancelled;
             job.cancel_reason = reason;
@@ -257,20 +257,20 @@ impl MockWorkflowDispatch {
             status: WorkflowStatus::Created,
         };
 
-        self.workflows.write().unwrap().push(workflow);
+        self.workflows.write().expect("workflows lock poisoned").push(workflow);
         Ok(run_id)
     }
 
     /// Get all started workflows.
     pub fn started_workflows(&self) -> Vec<StartedWorkflow> {
-        self.workflows.read().unwrap().clone()
+        self.workflows.read().expect("workflows lock poisoned").clone()
     }
 
     /// Get workflows of a specific name.
     pub fn workflows_named(&self, name: &str) -> Vec<StartedWorkflow> {
         self.workflows
             .read()
-            .unwrap()
+            .expect("workflows lock poisoned")
             .iter()
             .filter(|w| w.workflow_name == name)
             .cloned()
@@ -279,7 +279,7 @@ impl MockWorkflowDispatch {
 
     /// Assert that a workflow was started.
     pub fn assert_started(&self, workflow_name: &str) {
-        let workflows = self.workflows.read().unwrap();
+        let workflows = self.workflows.read().expect("workflows lock poisoned");
         let found = workflows.iter().any(|w| w.workflow_name == workflow_name);
         assert!(
             found,
@@ -297,7 +297,7 @@ impl MockWorkflowDispatch {
     where
         F: Fn(&serde_json::Value) -> bool,
     {
-        let workflows = self.workflows.read().unwrap();
+        let workflows = self.workflows.read().expect("workflows lock poisoned");
         let found = workflows
             .iter()
             .any(|w| w.workflow_name == workflow_name && predicate(&w.input));
@@ -310,7 +310,7 @@ impl MockWorkflowDispatch {
 
     /// Assert that a workflow was not started.
     pub fn assert_not_started(&self, workflow_name: &str) {
-        let workflows = self.workflows.read().unwrap();
+        let workflows = self.workflows.read().expect("workflows lock poisoned");
         let found = workflows.iter().any(|w| w.workflow_name == workflow_name);
         assert!(
             !found,
@@ -321,7 +321,7 @@ impl MockWorkflowDispatch {
 
     /// Assert that a specific number of workflows were started.
     pub fn assert_start_count(&self, workflow_name: &str, expected: usize) {
-        let workflows = self.workflows.read().unwrap();
+        let workflows = self.workflows.read().expect("workflows lock poisoned");
         let count = workflows
             .iter()
             .filter(|w| w.workflow_name == workflow_name)
@@ -335,12 +335,12 @@ impl MockWorkflowDispatch {
 
     /// Clear all recorded workflows.
     pub fn clear(&self) {
-        self.workflows.write().unwrap().clear();
+        self.workflows.write().expect("workflows lock poisoned").clear();
     }
 
     /// Mark a workflow as completed (for test simulation).
     pub fn complete_workflow(&self, run_id: Uuid) {
-        let mut workflows = self.workflows.write().unwrap();
+        let mut workflows = self.workflows.write().expect("workflows lock poisoned");
         if let Some(workflow) = workflows.iter_mut().find(|w| w.run_id == run_id) {
             workflow.status = WorkflowStatus::Completed;
         }
@@ -348,7 +348,7 @@ impl MockWorkflowDispatch {
 
     /// Mark a workflow as failed (for test simulation).
     pub fn fail_workflow(&self, run_id: Uuid) {
-        let mut workflows = self.workflows.write().unwrap();
+        let mut workflows = self.workflows.write().expect("workflows lock poisoned");
         if let Some(workflow) = workflows.iter_mut().find(|w| w.run_id == run_id) {
             workflow.status = WorkflowStatus::Failed;
         }

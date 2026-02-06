@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 forge-core = { version = "0.1.0", path = "../forge-core" }
+forge-utils = { workspace = true }
 
 serde = { workspace = true }
 serde_json = { workspace = true }

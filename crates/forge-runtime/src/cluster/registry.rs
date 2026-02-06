@@ -1,9 +1,11 @@
 use std::net::IpAddr;
 use std::time::Duration;
 
+use sqlx::Row;
 use uuid::Uuid;
 
 use forge_core::cluster::{NodeId, NodeInfo, NodeRole, NodeStatus};
+use forge_core::{ForgeError, Result};
 
 /// Node registry for cluster membership.
 pub struct NodeRegistry {
@@ -28,7 +30,7 @@ impl NodeRegistry {
     }
 
     /// Register the local node in the cluster.
-    pub async fn register(&self) -> forge_core::Result<()> {
+    pub async fn register(&self) -> Result<()> {
         let roles: Vec<&str> = self.local_node.roles.iter().map(|r| r.as_str()).collect();
 
         sqlx::query(
@@ -61,13 +63,13 @@ impl NodeRegistry {
         .bind(self.local_node.started_at)
         .execute(&self.pool)
         .await
-        .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+        .map_err(|e| ForgeError::Database(e.to_string()))?;
 
         Ok(())
     }
 
     /// Update node status.
-    pub async fn set_status(&self, status: NodeStatus) -> forge_core::Result<()> {
+    pub async fn set_status(&self, status: NodeStatus) -> Result<()> {
         sqlx::query(
             r#"
             UPDATE forge_nodes
@@ -79,13 +81,13 @@ impl NodeRegistry {
         .bind(status.as_str())
         .execute(&self.pool)
         .await
-        .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+        .map_err(|e| ForgeError::Database(e.to_string()))?;
 
         Ok(())
     }
 
     /// Deregister the local node from the cluster.
-    pub async fn deregister(&self) -> forge_core::Result<()> {
+    pub async fn deregister(&self) -> Result<()> {
         sqlx::query(
             r#"
             DELETE FROM forge_nodes WHERE id = $1
@@ -94,21 +96,18 @@ impl NodeRegistry {
         .bind(self.local_node.id.as_uuid())
         .execute(&self.pool)
         .await
-        .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+        .map_err(|e| ForgeError::Database(e.to_string()))?;
 
         Ok(())
     }
 
     /// Get all active nodes in the cluster.
-    pub async fn get_active_nodes(&self) -> forge_core::Result<Vec<NodeInfo>> {
+    pub async fn get_active_nodes(&self) -> Result<Vec<NodeInfo>> {
         self.get_nodes_by_status(NodeStatus::Active).await
     }
 
     /// Get nodes by status.
-    pub async fn get_nodes_by_status(
-        &self,
-        status: NodeStatus,
-    ) -> forge_core::Result<Vec<NodeInfo>> {
+    pub async fn get_nodes_by_status(&self, status: NodeStatus) -> Result<Vec<NodeInfo>> {
         let rows = sqlx::query(
             r#"
             SELECT id, hostname, ip_address, http_port, grpc_port,
@@ -123,43 +122,13 @@ impl NodeRegistry {
         .bind(status.as_str())
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+        .map_err(|e| ForgeError::Database(e.to_string()))?;
 
-        let mut nodes = Vec::new();
-        for row in rows {
-            use sqlx::Row;
-            let id: Uuid = row.get("id");
-            let ip_str: String = row.get("ip_address");
-            let ip_address: IpAddr = ip_str
-                .parse()
-                .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)));
-            let roles_str: Vec<String> = row.get("roles");
-            let roles: Vec<NodeRole> = roles_str.iter().filter_map(|s| s.parse().ok()).collect();
-
-            nodes.push(NodeInfo {
-                id: NodeId::from_uuid(id),
-                hostname: row.get("hostname"),
-                ip_address,
-                http_port: row.get::<i32, _>("http_port") as u16,
-                grpc_port: row.get::<i32, _>("grpc_port") as u16,
-                roles,
-                worker_capabilities: row.get("worker_capabilities"),
-                status: row.get::<String, _>("status").parse().unwrap(),
-                version: row.get("version"),
-                started_at: row.get("started_at"),
-                last_heartbeat: row.get("last_heartbeat"),
-                current_connections: row.get::<i32, _>("current_connections") as u32,
-                current_jobs: row.get::<i32, _>("current_jobs") as u32,
-                cpu_usage: row.get::<f32, _>("cpu_usage"),
-                memory_usage: row.get::<f32, _>("memory_usage"),
-            });
-        }
-
-        Ok(nodes)
+        rows.into_iter().map(|row| parse_node_row(&row)).collect()
     }
 
     /// Get a specific node by ID.
-    pub async fn get_node(&self, node_id: NodeId) -> forge_core::Result<Option<NodeInfo>> {
+    pub async fn get_node(&self, node_id: NodeId) -> Result<Option<NodeInfo>> {
         let row = sqlx::query(
             r#"
             SELECT id, hostname, ip_address, http_port, grpc_port,
@@ -173,44 +142,13 @@ impl NodeRegistry {
         .bind(node_id.as_uuid())
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+        .map_err(|e| ForgeError::Database(e.to_string()))?;
 
-        match row {
-            Some(row) => {
-                use sqlx::Row;
-                let id: Uuid = row.get("id");
-                let ip_str: String = row.get("ip_address");
-                let ip_address: IpAddr = ip_str
-                    .parse()
-                    .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)));
-                let roles_str: Vec<String> = row.get("roles");
-                let roles: Vec<NodeRole> =
-                    roles_str.iter().filter_map(|s| s.parse().ok()).collect();
-
-                Ok(Some(NodeInfo {
-                    id: NodeId::from_uuid(id),
-                    hostname: row.get("hostname"),
-                    ip_address,
-                    http_port: row.get::<i32, _>("http_port") as u16,
-                    grpc_port: row.get::<i32, _>("grpc_port") as u16,
-                    roles,
-                    worker_capabilities: row.get("worker_capabilities"),
-                    status: row.get::<String, _>("status").parse().unwrap(),
-                    version: row.get("version"),
-                    started_at: row.get("started_at"),
-                    last_heartbeat: row.get("last_heartbeat"),
-                    current_connections: row.get::<i32, _>("current_connections") as u32,
-                    current_jobs: row.get::<i32, _>("current_jobs") as u32,
-                    cpu_usage: row.get::<f32, _>("cpu_usage"),
-                    memory_usage: row.get::<f32, _>("memory_usage"),
-                }))
-            }
-            None => Ok(None),
-        }
+        row.map(|r| parse_node_row(&r)).transpose()
     }
 
     /// Count nodes by status.
-    pub async fn count_by_status(&self) -> forge_core::Result<NodeCounts> {
+    pub async fn count_by_status(&self) -> Result<NodeCounts> {
         let row = sqlx::query(
             r#"
             SELECT
@@ -224,9 +162,8 @@ impl NodeRegistry {
         )
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+        .map_err(|e| ForgeError::Database(e.to_string()))?;
 
-        use sqlx::Row;
         Ok(NodeCounts {
             active: row.get::<i64, _>("active") as usize,
             draining: row.get::<i64, _>("draining") as usize,
@@ -237,7 +174,7 @@ impl NodeRegistry {
     }
 
     /// Mark stale nodes as dead.
-    pub async fn mark_dead_nodes(&self, threshold: Duration) -> forge_core::Result<u64> {
+    pub async fn mark_dead_nodes(&self, threshold: Duration) -> Result<u64> {
         let threshold_secs = threshold.as_secs() as i64;
 
         let result = sqlx::query(
@@ -251,13 +188,13 @@ impl NodeRegistry {
         .bind(threshold_secs as f64)
         .execute(&self.pool)
         .await
-        .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+        .map_err(|e| ForgeError::Database(e.to_string()))?;
 
         Ok(result.rows_affected())
     }
 
     /// Clean up old dead nodes.
-    pub async fn cleanup_dead_nodes(&self, older_than: Duration) -> forge_core::Result<u64> {
+    pub async fn cleanup_dead_nodes(&self, older_than: Duration) -> Result<u64> {
         let threshold_secs = older_than.as_secs() as i64;
 
         let result = sqlx::query(
@@ -270,10 +207,51 @@ impl NodeRegistry {
         .bind(threshold_secs as f64)
         .execute(&self.pool)
         .await
-        .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+        .map_err(|e| ForgeError::Database(e.to_string()))?;
 
         Ok(result.rows_affected())
     }
+}
+
+fn parse_node_row(row: &sqlx::postgres::PgRow) -> Result<NodeInfo> {
+    let id: Uuid = row.get("id");
+
+    let ip_str: String = row.get("ip_address");
+    let ip_address: IpAddr = ip_str
+        .parse()
+        .map_err(|e| ForgeError::Validation(format!("invalid IP address '{}': {}", ip_str, e)))?;
+
+    let roles_str: Vec<String> = row.get("roles");
+    let roles: Vec<NodeRole> = roles_str
+        .iter()
+        .map(|s| {
+            s.parse()
+                .map_err(|e| ForgeError::Validation(format!("invalid role '{}': {}", s, e)))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let status_str: String = row.get("status");
+    let status: NodeStatus = status_str
+        .parse()
+        .map_err(|e| ForgeError::Validation(format!("invalid status '{}': {}", status_str, e)))?;
+
+    Ok(NodeInfo {
+        id: NodeId::from_uuid(id),
+        hostname: row.get("hostname"),
+        ip_address,
+        http_port: row.get::<i32, _>("http_port") as u16,
+        grpc_port: row.get::<i32, _>("grpc_port") as u16,
+        roles,
+        worker_capabilities: row.get("worker_capabilities"),
+        status,
+        version: row.get("version"),
+        started_at: row.get("started_at"),
+        last_heartbeat: row.get("last_heartbeat"),
+        current_connections: row.get::<i32, _>("current_connections") as u32,
+        current_jobs: row.get::<i32, _>("current_jobs") as u32,
+        cpu_usage: row.get::<f32, _>("cpu_usage"),
+        memory_usage: row.get::<f32, _>("memory_usage"),
+    })
 }
 
 /// Node count statistics.

@@ -62,7 +62,7 @@ impl WorkflowScheduler {
     pub async fn run(&self, shutdown: CancellationToken) {
         let mut interval = tokio::time::interval(self.config.poll_interval);
 
-        tracing::info!(
+        tracing::debug!(
             poll_interval = ?self.config.poll_interval,
             batch_size = self.config.batch_size,
             "Workflow scheduler started"
@@ -72,11 +72,11 @@ impl WorkflowScheduler {
             tokio::select! {
                 _ = interval.tick() => {
                     if let Err(e) = self.process_ready_workflows().await {
-                        tracing::error!(error = %e, "Failed to process ready workflows");
+                        tracing::warn!(error = %e, "Failed to process ready workflows");
                     }
                 }
                 _ = shutdown.cancelled() => {
-                    tracing::info!("Workflow scheduler shutting down");
+                    tracing::debug!("Workflow scheduler shutting down");
                     break;
                 }
             }
@@ -105,7 +105,7 @@ impl WorkflowScheduler {
 
         let count = workflows.len();
         if count > 0 {
-            tracing::debug!(count = count, "Processing ready workflows");
+            tracing::trace!(count, "Processing ready workflows");
         }
 
         for (workflow_id, waiting_for_event) in workflows {
@@ -172,26 +172,15 @@ impl WorkflowScheduler {
         .execute(&self.pool)
         .await
         {
-            tracing::error!(
-                workflow_run_id = %workflow_run_id,
-                error = %e,
-                "Failed to clear wake state"
-            );
+            tracing::warn!(workflow_run_id = %workflow_run_id, error = %e, "Failed to clear wake state");
             return;
         }
 
         // Resume execution - use resume_from_sleep so ctx.sleep() returns immediately
         if let Err(e) = self.executor.resume_from_sleep(workflow_run_id).await {
-            tracing::error!(
-                workflow_run_id = %workflow_run_id,
-                error = %e,
-                "Failed to resume workflow"
-            );
+            tracing::warn!(workflow_run_id = %workflow_run_id, error = %e, "Failed to resume workflow");
         } else {
-            tracing::info!(
-                workflow_run_id = %workflow_run_id,
-                "Resumed workflow after timer"
-            );
+            tracing::debug!(workflow_run_id = %workflow_run_id, "Workflow resumed after timer");
         }
     }
 
@@ -209,26 +198,15 @@ impl WorkflowScheduler {
         .execute(&self.pool)
         .await
         {
-            tracing::error!(
-                workflow_run_id = %workflow_run_id,
-                error = %e,
-                "Failed to clear waiting state"
-            );
+            tracing::warn!(workflow_run_id = %workflow_run_id, error = %e, "Failed to clear waiting state");
             return;
         }
 
         // Resume execution - the workflow will get a timeout error
         if let Err(e) = self.executor.resume(workflow_run_id).await {
-            tracing::error!(
-                workflow_run_id = %workflow_run_id,
-                error = %e,
-                "Failed to resume workflow after timeout"
-            );
+            tracing::warn!(workflow_run_id = %workflow_run_id, error = %e, "Failed to resume workflow after timeout");
         } else {
-            tracing::info!(
-                workflow_run_id = %workflow_run_id,
-                "Resumed workflow after event timeout"
-            );
+            tracing::debug!(workflow_run_id = %workflow_run_id, "Workflow resumed after event timeout");
         }
     }
 
@@ -246,26 +224,15 @@ impl WorkflowScheduler {
         .execute(&self.pool)
         .await
         {
-            tracing::error!(
-                workflow_run_id = %workflow_run_id,
-                error = %e,
-                "Failed to clear waiting state for event"
-            );
+            tracing::warn!(workflow_run_id = %workflow_run_id, error = %e, "Failed to clear waiting state for event");
             return;
         }
 
         // Resume execution
         if let Err(e) = self.executor.resume(workflow_run_id).await {
-            tracing::error!(
-                workflow_run_id = %workflow_run_id,
-                error = %e,
-                "Failed to resume workflow after event"
-            );
+            tracing::warn!(workflow_run_id = %workflow_run_id, error = %e, "Failed to resume workflow after event");
         } else {
-            tracing::info!(
-                workflow_run_id = %workflow_run_id,
-                "Resumed workflow after event received"
-            );
+            tracing::debug!(workflow_run_id = %workflow_run_id, "Workflow resumed after event");
         }
     }
 }

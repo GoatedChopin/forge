@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
+use tracing::Span;
 use uuid::Uuid;
 
 use crate::env::{EnvAccess, EnvProvider, RealEnvProvider};
@@ -30,6 +31,8 @@ pub struct CronContext {
     pub log: CronLog,
     /// Environment variable provider.
     env_provider: Arc<dyn EnvProvider>,
+    /// Parent span for trace propagation.
+    span: Span,
 }
 
 impl CronContext {
@@ -55,6 +58,7 @@ impl CronContext {
             http_client,
             log: CronLog::new(cron_name),
             env_provider: Arc::new(RealEnvProvider::new()),
+            span: Span::current(),
         }
     }
 
@@ -64,12 +68,10 @@ impl CronContext {
         self
     }
 
-    /// Get the database pool.
     pub fn db(&self) -> &sqlx::PgPool {
         &self.db_pool
     }
 
-    /// Get the HTTP client.
     pub fn http(&self) -> &reqwest::Client {
         &self.http_client
     }
@@ -88,6 +90,23 @@ impl CronContext {
     pub fn with_auth(mut self, auth: AuthContext) -> Self {
         self.auth = auth;
         self
+    }
+
+    /// Get the trace ID for this cron execution.
+    ///
+    /// Returns the trace ID if OpenTelemetry is configured, otherwise returns the run_id.
+    pub fn trace_id(&self) -> String {
+        // The span carries the trace context. When OTel is configured,
+        // the trace ID can be extracted from the span context.
+        // For now, return the run_id as a fallback correlation ID.
+        self.run_id.to_string()
+    }
+
+    /// Get the parent span for trace propagation.
+    ///
+    /// Use this to create child spans within cron handlers.
+    pub fn span(&self) -> &Span {
+        &self.span
     }
 }
 

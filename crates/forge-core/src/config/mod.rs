@@ -2,7 +2,7 @@ mod cluster;
 mod database;
 
 pub use cluster::ClusterConfig;
-pub use database::DatabaseConfig;
+pub use database::{DatabaseConfig, DatabaseSource};
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -46,6 +46,10 @@ pub struct ForgeConfig {
     /// Authentication configuration.
     #[serde(default)]
     pub auth: AuthConfig,
+
+    /// Observability configuration.
+    #[serde(default)]
+    pub observability: ObservabilityConfig,
 }
 
 impl ForgeConfig {
@@ -62,18 +66,25 @@ impl ForgeConfig {
         // Substitute environment variables
         let content = substitute_env_vars(content);
 
-        toml::from_str(&content)
-            .map_err(|e| ForgeError::Config(format!("Failed to parse config: {}", e)))
+        let config: Self = toml::from_str(&content)
+            .map_err(|e| ForgeError::Config(format!("Failed to parse config: {}", e)))?;
+
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Validate the configuration for invalid combinations.
+    pub fn validate(&self) -> Result<()> {
+        self.database.validate()?;
+        self.auth.validate()?;
+        Ok(())
     }
 
     /// Load configuration with defaults.
     pub fn default_with_database_url(url: &str) -> Self {
         Self {
             project: ProjectConfig::default(),
-            database: DatabaseConfig {
-                url: url.to_string(),
-                ..Default::default()
-            },
+            database: DatabaseConfig::remote(url),
             node: NodeConfig::default(),
             gateway: GatewayConfig::default(),
             function: FunctionConfig::default(),
@@ -81,6 +92,7 @@ impl ForgeConfig {
             cluster: ClusterConfig::default(),
             security: SecurityConfig::default(),
             auth: AuthConfig::default(),
+            observability: ObservabilityConfig::default(),
         }
     }
 }
@@ -360,20 +372,39 @@ impl Default for AuthConfig {
 }
 
 impl AuthConfig {
+    /// Check if auth is configured (any credential or claim validation is set).
+    fn is_configured(&self) -> bool {
+        self.jwt_secret.is_some()
+            || self.jwks_url.is_some()
+            || self.jwt_issuer.is_some()
+            || self.jwt_audience.is_some()
+    }
+
     /// Validate that the configuration is complete for the chosen algorithm.
+    /// Skips validation if no auth settings are configured (auth disabled).
     pub fn validate(&self) -> Result<()> {
+        if !self.is_configured() {
+            return Ok(());
+        }
+
         match self.jwt_algorithm {
             JwtAlgorithm::HS256 | JwtAlgorithm::HS384 | JwtAlgorithm::HS512 => {
                 if self.jwt_secret.is_none() {
                     return Err(ForgeError::Config(
-                        "jwt_secret is required for HMAC algorithms (HS256, HS384, HS512)".into(),
+                        "auth.jwt_secret is required for HMAC algorithms (HS256, HS384, HS512). \
+                         Set auth.jwt_secret to a secure random string, \
+                         or switch to RS256 and provide auth.jwks_url for external identity providers."
+                            .into(),
                     ));
                 }
             }
             JwtAlgorithm::RS256 | JwtAlgorithm::RS384 | JwtAlgorithm::RS512 => {
                 if self.jwks_url.is_none() {
                     return Err(ForgeError::Config(
-                        "jwks_url is required for RSA algorithms (RS256, RS384, RS512)".into(),
+                        "auth.jwks_url is required for RSA algorithms (RS256, RS384, RS512). \
+                         Set auth.jwks_url to your identity provider's JWKS endpoint, \
+                         or switch to HS256 and provide auth.jwt_secret for symmetric signing."
+                            .into(),
                     ));
                 }
             }
@@ -406,6 +437,63 @@ fn default_session_ttl() -> u64 {
     7 * 24 * 60 * 60 // 7 days
 }
 
+/// Observability configuration for OTLP telemetry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObservabilityConfig {
+    /// Enable observability (traces, metrics, logs).
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// OTLP endpoint for telemetry export.
+    #[serde(default = "default_otlp_endpoint")]
+    pub otlp_endpoint: String,
+
+    /// Service name for telemetry identification.
+    pub service_name: Option<String>,
+
+    /// Enable distributed tracing.
+    #[serde(default = "default_true")]
+    pub enable_traces: bool,
+
+    /// Enable metrics collection.
+    #[serde(default = "default_true")]
+    pub enable_metrics: bool,
+
+    /// Enable log export via OTLP.
+    #[serde(default = "default_true")]
+    pub enable_logs: bool,
+
+    /// Trace sampling ratio (0.0 to 1.0).
+    #[serde(default = "default_sampling_ratio")]
+    pub sampling_ratio: f64,
+}
+
+impl Default for ObservabilityConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            otlp_endpoint: default_otlp_endpoint(),
+            service_name: None,
+            enable_traces: true,
+            enable_metrics: true,
+            enable_logs: true,
+            sampling_ratio: default_sampling_ratio(),
+        }
+    }
+}
+
+fn default_otlp_endpoint() -> String {
+    "http://localhost:4317".to_string()
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_sampling_ratio() -> f64 {
+    1.0
+}
+
 /// Substitute environment variables in the format ${VAR_NAME}.
 fn substitute_env_vars(content: &str) -> String {
     let mut result = content.to_string();
@@ -436,11 +524,12 @@ mod tests {
     fn test_parse_minimal_config() {
         let toml = r#"
             [database]
+            mode = "remote"
             url = "postgres://localhost/myapp"
         "#;
 
         let config = ForgeConfig::parse_toml(toml).unwrap();
-        assert_eq!(config.database.url, "postgres://localhost/myapp");
+        assert_eq!(config.database.url(), Some("postgres://localhost/myapp"));
         assert_eq!(config.gateway.port, 8080);
     }
 
@@ -452,6 +541,7 @@ mod tests {
             version = "1.0.0"
 
             [database]
+            mode = "remote"
             url = "postgres://localhost/myapp"
             pool_size = 100
 
@@ -479,14 +569,102 @@ mod tests {
 
         let toml = r#"
             [database]
+            mode = "remote"
             url = "${TEST_DB_URL}"
         "#;
 
         let config = ForgeConfig::parse_toml(toml).unwrap();
-        assert_eq!(config.database.url, "postgres://test:test@localhost/test");
+        assert_eq!(
+            config.database.url(),
+            Some("postgres://test:test@localhost/test")
+        );
 
         unsafe {
             std::env::remove_var("TEST_DB_URL");
         }
+    }
+
+    #[test]
+    fn test_auth_validation_no_config() {
+        let auth = AuthConfig::default();
+        assert!(auth.validate().is_ok());
+    }
+
+    #[test]
+    fn test_auth_validation_hmac_with_secret() {
+        let auth = AuthConfig {
+            jwt_secret: Some("my-secret".into()),
+            jwt_algorithm: JwtAlgorithm::HS256,
+            ..Default::default()
+        };
+        assert!(auth.validate().is_ok());
+    }
+
+    #[test]
+    fn test_auth_validation_hmac_missing_secret() {
+        let auth = AuthConfig {
+            jwt_issuer: Some("my-issuer".into()),
+            jwt_algorithm: JwtAlgorithm::HS256,
+            ..Default::default()
+        };
+        let result = auth.validate();
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("jwt_secret is required"));
+    }
+
+    #[test]
+    fn test_auth_validation_rsa_with_jwks() {
+        let auth = AuthConfig {
+            jwks_url: Some("https://example.com/.well-known/jwks.json".into()),
+            jwt_algorithm: JwtAlgorithm::RS256,
+            ..Default::default()
+        };
+        assert!(auth.validate().is_ok());
+    }
+
+    #[test]
+    fn test_auth_validation_rsa_missing_jwks() {
+        let auth = AuthConfig {
+            jwt_issuer: Some("my-issuer".into()),
+            jwt_algorithm: JwtAlgorithm::RS256,
+            ..Default::default()
+        };
+        let result = auth.validate();
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("jwks_url is required"));
+    }
+
+    #[test]
+    fn test_forge_config_validation_fails_on_empty_url() {
+        let toml = r#"
+            [database]
+            mode = "remote"
+            url = ""
+        "#;
+
+        let result = ForgeConfig::parse_toml(toml);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("database.url is required"));
+    }
+
+    #[test]
+    fn test_forge_config_validation_fails_on_invalid_auth() {
+        let toml = r#"
+            [database]
+            mode = "remote"
+            url = "postgres://localhost/test"
+
+            [auth]
+            jwt_issuer = "my-issuer"
+            jwt_algorithm = "RS256"
+        "#;
+
+        let result = ForgeConfig::parse_toml(toml);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("jwks_url is required"));
     }
 }

@@ -29,7 +29,6 @@ impl TrackingMode {
     }
 }
 
-/// Error for parsing TrackingMode from string.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseTrackingModeError(pub String);
 
@@ -199,7 +198,6 @@ impl ChangeOperation {
     }
 }
 
-/// Error for parsing ChangeOperation from string.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseChangeOperationError(pub String);
 

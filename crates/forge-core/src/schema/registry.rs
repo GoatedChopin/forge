@@ -1,3 +1,16 @@
+//! Schema registration system.
+//!
+//! The [`SchemaRegistry`] collects all schema definitions at startup. Proc macros
+//! (`#[forge::model]`, `#[forge::query]`, etc.) register their definitions here.
+//!
+//! The registry uses `BTreeMap` for deterministic iteration order, which ensures
+//! consistent TypeScript generation and migration diffing across runs.
+//!
+//! # Thread Safety
+//!
+//! Registration happens during single-threaded startup. After startup, the registry
+//! is read-only. `RwLock` provides interior mutability for the registration phase.
+
 use std::collections::BTreeMap;
 use std::sync::RwLock;
 
@@ -30,63 +43,63 @@ impl SchemaRegistry {
 
     /// Register a table definition.
     pub fn register_table(&self, table: TableDef) {
-        let mut tables = self.tables.write().unwrap();
+        let mut tables = self.tables.write().expect("schema registry lock poisoned");
         tables.insert(table.name.clone(), table);
     }
 
     /// Register an enum definition.
     pub fn register_enum(&self, enum_def: EnumDef) {
-        let mut enums = self.enums.write().unwrap();
+        let mut enums = self.enums.write().expect("schema registry lock poisoned");
         enums.insert(enum_def.name.clone(), enum_def);
     }
 
     /// Register a function definition.
     pub fn register_function(&self, func: FunctionDef) {
-        let mut functions = self.functions.write().unwrap();
+        let mut functions = self.functions.write().expect("schema registry lock poisoned");
         functions.insert(func.name.clone(), func);
     }
 
     /// Get a table by name.
     pub fn get_table(&self, name: &str) -> Option<TableDef> {
-        let tables = self.tables.read().unwrap();
+        let tables = self.tables.read().expect("schema registry lock poisoned");
         tables.get(name).cloned()
     }
 
     /// Get an enum by name.
     pub fn get_enum(&self, name: &str) -> Option<EnumDef> {
-        let enums = self.enums.read().unwrap();
+        let enums = self.enums.read().expect("schema registry lock poisoned");
         enums.get(name).cloned()
     }
 
     /// Get a function by name.
     pub fn get_function(&self, name: &str) -> Option<FunctionDef> {
-        let functions = self.functions.read().unwrap();
+        let functions = self.functions.read().expect("schema registry lock poisoned");
         functions.get(name).cloned()
     }
 
     /// Get all registered tables.
     pub fn all_tables(&self) -> Vec<TableDef> {
-        let tables = self.tables.read().unwrap();
+        let tables = self.tables.read().expect("schema registry lock poisoned");
         tables.values().cloned().collect()
     }
 
     /// Get all registered enums.
     pub fn all_enums(&self) -> Vec<EnumDef> {
-        let enums = self.enums.read().unwrap();
+        let enums = self.enums.read().expect("schema registry lock poisoned");
         enums.values().cloned().collect()
     }
 
     /// Get all registered functions.
     pub fn all_functions(&self) -> Vec<FunctionDef> {
-        let functions = self.functions.read().unwrap();
+        let functions = self.functions.read().expect("schema registry lock poisoned");
         functions.values().cloned().collect()
     }
 
     /// Clear all registrations (useful for testing).
     pub fn clear(&self) {
-        self.tables.write().unwrap().clear();
-        self.enums.write().unwrap().clear();
-        self.functions.write().unwrap().clear();
+        self.tables.write().expect("schema registry lock poisoned").clear();
+        self.enums.write().expect("schema registry lock poisoned").clear();
+        self.functions.write().expect("schema registry lock poisoned").clear();
     }
 }
 
@@ -159,7 +172,7 @@ pub struct EnumVariant {
     /// Value in SQL (lowercase).
     pub sql_value: String,
 
-    /// Optional integer value.
+    /// Optional integer discriminant value.
     pub int_value: Option<i32>,
 
     /// Documentation comment.
@@ -192,18 +205,6 @@ fn to_snake_case(s: &str) -> String {
         }
     }
     result
-}
-
-/// Global schema registry instance.
-/// Models register themselves here when their constructors are called.
-#[allow(dead_code)]
-static GLOBAL_REGISTRY: std::sync::LazyLock<SchemaRegistry> =
-    std::sync::LazyLock::new(SchemaRegistry::new);
-
-/// Get the global schema registry.
-#[allow(dead_code)]
-pub fn global_registry() -> &'static SchemaRegistry {
-    &GLOBAL_REGISTRY
 }
 
 #[cfg(test)]

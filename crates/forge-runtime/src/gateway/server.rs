@@ -65,6 +65,7 @@ pub struct HealthResponse {
 pub struct ReadinessResponse {
     pub ready: bool,
     pub database: bool,
+    pub reactor: bool,
     pub version: String,
 }
 
@@ -72,6 +73,7 @@ pub struct ReadinessResponse {
 #[derive(Clone)]
 pub struct ReadinessState {
     db_pool: sqlx::PgPool,
+    reactor: Arc<Reactor>,
 }
 
 /// Gateway HTTP server.
@@ -162,9 +164,10 @@ impl GatewayServer {
             auth_middleware_state.clone(),
         ));
 
-        // Readiness state for DB health check
+        // Readiness state for DB + reactor health check
         let readiness_state = Arc::new(ReadinessState {
             db_pool: self.db.primary().clone(),
+            reactor: self.reactor.clone(),
         });
 
         // Build the main router with middleware
@@ -220,11 +223,11 @@ impl GatewayServer {
         let router = self.router();
 
         // Start the reactor for real-time updates
-        if let Err(e) = self.reactor.start().await {
-            tracing::error!("Failed to start reactor: {}", e);
-        } else {
-            tracing::info!("Reactor started for real-time updates");
-        }
+        self.reactor
+            .start()
+            .await
+            .map_err(|e| std::io::Error::other(format!("Failed to start reactor: {}", e)))?;
+        tracing::info!("Reactor started for real-time updates");
 
         tracing::info!("Gateway server listening on {}", addr);
 
@@ -251,7 +254,11 @@ async fn readiness_handler(
         .await
         .is_ok();
 
-    let ready = db_ok;
+    // Check reactor health (change listener must be running for real-time updates)
+    let reactor_stats = state.reactor.stats().await;
+    let reactor_ok = reactor_stats.listener_running;
+
+    let ready = db_ok && reactor_ok;
     let status_code = if ready {
         axum::http::StatusCode::OK
     } else {
@@ -263,6 +270,7 @@ async fn readiness_handler(
         Json(ReadinessResponse {
             ready,
             database: db_ok,
+            reactor: reactor_ok,
             version: env!("CARGO_PKG_VERSION").to_string(),
         }),
     )

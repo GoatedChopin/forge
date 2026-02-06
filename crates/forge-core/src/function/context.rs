@@ -1,3 +1,37 @@
+//! Execution contexts for queries and mutations.
+//!
+//! Every function receives a context providing access to:
+//!
+//! - Database connection (pool or transaction)
+//! - Authentication state (user ID, roles, claims)
+//! - Request metadata (request ID, trace ID, client IP)
+//! - Environment variables
+//! - Job/workflow dispatch (mutations only)
+//!
+//! # QueryContext vs MutationContext
+//!
+//! | Feature | QueryContext | MutationContext |
+//! |---------|--------------|-----------------|
+//! | Database | Pool (read-only) | Transaction or pool |
+//! | Dispatch jobs | No | Yes |
+//! | Start workflows | No | Yes |
+//! | HTTP client | No | Yes (circuit breaker) |
+//!
+//! # Transactional Mutations
+//!
+//! When `transactional = true` (default), mutations run in a transaction.
+//! Jobs and workflows dispatched during the mutation are buffered and only
+//! inserted after the transaction commits successfully.
+//!
+//! ```text
+//! BEGIN
+//!   ├── ctx.db().execute(...)
+//!   ├── ctx.dispatch_job("send_email", ...)  // buffered
+//!   └── return Ok(result)
+//! COMMIT
+//!   └── INSERT INTO forge_jobs (buffered jobs)
+//! ```
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -295,12 +329,10 @@ impl QueryContext {
         }
     }
 
-    /// Get a reference to the database pool.
     pub fn db(&self) -> &sqlx::PgPool {
         &self.db_pool
     }
 
-    /// Get the authenticated user ID or return an error.
     pub fn require_user_id(&self) -> crate::error::Result<Uuid> {
         self.auth.require_user_id()
     }

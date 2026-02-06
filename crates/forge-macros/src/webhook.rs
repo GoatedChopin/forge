@@ -2,6 +2,8 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{ItemFn, parse_macro_input};
 
+use crate::utils::{parse_duration_tokens, to_pascal_case};
+
 #[derive(Debug, Default)]
 struct WebhookAttrs {
     path: Option<String>,
@@ -16,7 +18,6 @@ fn parse_webhook_attrs(attr: TokenStream) -> syn::Result<WebhookAttrs> {
     let mut result = WebhookAttrs::default();
     let attr_str = attr.to_string();
 
-    // Parse path = "/webhooks/stripe"
     if let Some(path_start) = attr_str.find("path") {
         if let Some(eq_pos) = attr_str[path_start..].find('=') {
             let after_eq = &attr_str[path_start + eq_pos + 1..];
@@ -29,11 +30,9 @@ fn parse_webhook_attrs(attr: TokenStream) -> syn::Result<WebhookAttrs> {
         }
     }
 
-    // Parse signature = WebhookSignature::hmac_sha256("X-Header", "SECRET_ENV")
     if let Some(sig_start) = attr_str.find("signature") {
         let remaining = &attr_str[sig_start..];
 
-        // Detect algorithm
         if remaining.contains("hmac_sha256") {
             result.signature_algorithm = Some("HmacSha256".to_string());
         } else if remaining.contains("hmac_sha1") {
@@ -42,11 +41,9 @@ fn parse_webhook_attrs(attr: TokenStream) -> syn::Result<WebhookAttrs> {
             result.signature_algorithm = Some("HmacSha512".to_string());
         }
 
-        // Find the function call and extract arguments
         if let Some(paren_start) = remaining.find('(') {
             let inside_parens = &remaining[paren_start + 1..];
 
-            // Find matching closing paren
             let mut depth = 1;
             let mut end_pos = 0;
             for (i, c) in inside_parens.char_indices() {
@@ -65,15 +62,12 @@ fn parse_webhook_attrs(attr: TokenStream) -> syn::Result<WebhookAttrs> {
 
             let args_str = &inside_parens[..end_pos];
 
-            // Extract quoted strings (header and secret_env)
             let quotes: Vec<_> = args_str.match_indices('"').collect();
             if quotes.len() >= 4 {
-                // First pair: header
                 let header_start = quotes[0].0 + 1;
                 let header_end = quotes[1].0;
                 result.signature_header = Some(args_str[header_start..header_end].to_string());
 
-                // Second pair: secret_env
                 let secret_start = quotes[2].0 + 1;
                 let secret_end = quotes[3].0;
                 result.signature_secret_env = Some(args_str[secret_start..secret_end].to_string());
@@ -81,7 +75,6 @@ fn parse_webhook_attrs(attr: TokenStream) -> syn::Result<WebhookAttrs> {
         }
     }
 
-    // Parse idempotency = "header:X-Request-Id" or "body:$.id"
     if let Some(idem_start) = attr_str.find("idempotency") {
         if let Some(eq_pos) = attr_str[idem_start..].find('=') {
             let after_eq = &attr_str[idem_start + eq_pos + 1..];
@@ -94,7 +87,6 @@ fn parse_webhook_attrs(attr: TokenStream) -> syn::Result<WebhookAttrs> {
         }
     }
 
-    // Parse timeout = "30s"
     if let Some(timeout_start) = attr_str.find("timeout") {
         if let Some(eq_pos) = attr_str[timeout_start..].find('=') {
             let after_eq = &attr_str[timeout_start + eq_pos + 1..];
@@ -107,7 +99,6 @@ fn parse_webhook_attrs(attr: TokenStream) -> syn::Result<WebhookAttrs> {
         }
     }
 
-    // Validate required fields
     if result.path.is_none() {
         return Err(syn::Error::new(
             proc_macro2::Span::call_site(),
@@ -118,31 +109,6 @@ fn parse_webhook_attrs(attr: TokenStream) -> syn::Result<WebhookAttrs> {
     Ok(result)
 }
 
-fn parse_duration(s: &str) -> proc_macro2::TokenStream {
-    let s = s.trim();
-    if s.ends_with("ms") {
-        let n: u64 = s.trim_end_matches("ms").parse().unwrap_or(30000);
-        quote! { std::time::Duration::from_millis(#n) }
-    } else if s.ends_with('s') {
-        let n: u64 = s.trim_end_matches('s').parse().unwrap_or(30);
-        quote! { std::time::Duration::from_secs(#n) }
-    } else if s.ends_with('m') {
-        let n: u64 = s.trim_end_matches('m').parse().unwrap_or(1);
-        let secs = n * 60;
-        quote! { std::time::Duration::from_secs(#secs) }
-    } else if s.ends_with('h') {
-        let n: u64 = s.trim_end_matches('h').parse().unwrap_or(1);
-        let secs = n * 3600;
-        quote! { std::time::Duration::from_secs(#secs) }
-    } else if s.ends_with('d') {
-        let n: u64 = s.trim_end_matches('d').parse().unwrap_or(1);
-        let secs = n * 86400;
-        quote! { std::time::Duration::from_secs(#secs) }
-    } else {
-        let n: u64 = s.parse().unwrap_or(30);
-        quote! { std::time::Duration::from_secs(#n) }
-    }
-}
 
 pub fn webhook_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
@@ -161,12 +127,11 @@ pub fn webhook_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let path = attrs.path.unwrap_or_else(|| "/webhooks".to_string());
 
     let timeout = if let Some(ref t) = attrs.timeout {
-        parse_duration(t)
+        parse_duration_tokens(t, 30)
     } else {
         quote! { std::time::Duration::from_secs(30) }
     };
 
-    // Generate signature config
     let signature = if let (Some(alg), Some(header), Some(secret_env)) = (
         &attrs.signature_algorithm,
         &attrs.signature_header,
@@ -189,9 +154,7 @@ pub fn webhook_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote! { None }
     };
 
-    // Generate idempotency config
     let idempotency = if let Some(ref idem) = attrs.idempotency {
-        // Parse "header:X-Request-Id" or "body:$.id"
         if let Some((prefix, value)) = idem.split_once(':') {
             match prefix {
                 "header" => {
@@ -246,17 +209,6 @@ pub fn webhook_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-fn to_pascal_case(s: &str) -> String {
-    s.split('_')
-        .map(|part| {
-            let mut chars = part.chars();
-            match chars.next() {
-                None => String::new(),
-                Some(first) => first.to_uppercase().chain(chars).collect(),
-            }
-        })
-        .collect()
-}
 
 #[cfg(test)]
 mod tests {
@@ -271,13 +223,13 @@ mod tests {
 
     #[test]
     fn test_parse_duration_seconds() {
-        let ts = parse_duration("30s");
+        let ts = parse_duration_tokens("30s", 30);
         assert!(!ts.is_empty());
     }
 
     #[test]
     fn test_parse_duration_minutes() {
-        let ts = parse_duration("5m");
+        let ts = parse_duration_tokens("5m", 300);
         assert!(!ts.is_empty());
     }
 }

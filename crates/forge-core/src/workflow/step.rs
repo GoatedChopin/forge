@@ -45,20 +45,31 @@ impl StepStatus {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseStepStatusError(pub String);
+
+impl std::fmt::Display for ParseStepStatusError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "invalid step status: '{}'", self.0)
+    }
+}
+
+impl std::error::Error for ParseStepStatusError {}
+
 impl FromStr for StepStatus {
-    type Err = std::convert::Infallible;
+    type Err = ParseStepStatusError;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        Ok(match s {
-            "pending" => Self::Pending,
-            "running" => Self::Running,
-            "completed" => Self::Completed,
-            "failed" => Self::Failed,
-            "compensated" => Self::Compensated,
-            "skipped" => Self::Skipped,
-            "waiting" => Self::Waiting,
-            _ => Self::Pending,
-        })
+        match s {
+            "pending" => Ok(Self::Pending),
+            "running" => Ok(Self::Running),
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            "compensated" => Ok(Self::Compensated),
+            "skipped" => Ok(Self::Skipped),
+            "waiting" => Ok(Self::Waiting),
+            _ => Err(ParseStepStatusError(s.to_string())),
+        }
     }
 }
 

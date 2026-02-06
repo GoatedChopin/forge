@@ -76,11 +76,7 @@ impl JobExecutor {
                             )
                             .await
                         {
-                            tracing::warn!(
-                                job_id = %progress_job_id,
-                                "Failed to update job progress: {}",
-                                e
-                            );
+                            tracing::trace!(job_id = %progress_job_id, error = %e, "Failed to update job progress");
                         }
                     }
                     Err(std::sync::mpsc::TryRecvError::Empty) => {
@@ -117,7 +113,7 @@ impl JobExecutor {
             Ok(Ok(output)) => {
                 // Job completed successfully
                 if let Err(e) = self.queue.complete(job.id, output.clone(), ttl).await {
-                    tracing::error!("Failed to mark job {} as complete: {}", job.id, e);
+                    tracing::debug!(job_id = %job.id, error = %e, "Failed to mark job as complete");
                 }
                 ExecutionResult::Completed { output }
             }
@@ -128,24 +124,18 @@ impl JobExecutor {
                 let cancel_requested = match ctx.is_cancel_requested().await {
                     Ok(value) => value,
                     Err(err) => {
-                        tracing::warn!(
-                            job_id = %job.id,
-                            "Failed to check cancellation status: {}",
-                            err
-                        );
+                        tracing::trace!(job_id = %job.id, error = %err, "Failed to check cancellation status");
                         false
                     }
                 };
                 if matches!(e, forge_core::ForgeError::JobCancelled(_)) || cancel_requested {
                     let reason = Self::cancellation_reason(job, "Job cancellation requested");
-                    if let Err(e) = self.queue.cancel(job.id, Some(&reason), ttl).await {
-                        tracing::error!("Failed to mark job {} as cancelled: {}", job.id, e);
-                    }
+                    let _ = self.queue.cancel(job.id, Some(&reason), ttl).await;
                     if let Err(e) = self
                         .run_compensation(&entry, &ctx, &job.input, &reason)
                         .await
                     {
-                        tracing::error!("Compensation failed for job {}: {}", job.id, e);
+                        tracing::warn!(job_id = %job.id, error = %e, "Job compensation failed");
                     }
                     return ExecutionResult::Cancelled { reason };
                 }
@@ -161,9 +151,7 @@ impl JobExecutor {
                     chrono::Duration::from_std(d).unwrap_or(chrono::Duration::seconds(60))
                 });
 
-                if let Err(e) = self.queue.fail(job.id, &error_msg, chrono_delay, ttl).await {
-                    tracing::error!("Failed to mark job {} as failed: {}", job.id, e);
-                }
+                let _ = self.queue.fail(job.id, &error_msg, chrono_delay, ttl).await;
 
                 ExecutionResult::Failed {
                     error: error_msg,
@@ -181,9 +169,7 @@ impl JobExecutor {
                     None
                 };
 
-                if let Err(e) = self.queue.fail(job.id, &error_msg, retry_delay, ttl).await {
-                    tracing::error!("Failed to mark job {} as timed out: {}", job.id, e);
-                }
+                let _ = self.queue.fail(job.id, &error_msg, retry_delay, ttl).await;
 
                 ExecutionResult::TimedOut {
                     retryable: should_retry,

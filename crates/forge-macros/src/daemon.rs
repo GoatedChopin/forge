@@ -2,6 +2,8 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{ItemFn, parse_macro_input};
 
+use crate::utils::{parse_duration_tokens, to_pascal_case};
+
 #[derive(Debug, Default)]
 struct DaemonAttrs {
     leader_elected: Option<bool>,
@@ -15,7 +17,6 @@ fn parse_daemon_attrs(attr: TokenStream) -> DaemonAttrs {
     let mut result = DaemonAttrs::default();
     let attr_str = attr.to_string();
 
-    // Parse leader_elected = true/false
     if let Some(le_start) = attr_str.find("leader_elected") {
         if let Some(eq_pos) = attr_str[le_start..].find('=') {
             let after_eq = &attr_str[le_start + eq_pos + 1..];
@@ -24,7 +25,6 @@ fn parse_daemon_attrs(attr: TokenStream) -> DaemonAttrs {
         }
     }
 
-    // Parse restart_on_panic = true/false
     if let Some(rop_start) = attr_str.find("restart_on_panic") {
         if let Some(eq_pos) = attr_str[rop_start..].find('=') {
             let after_eq = &attr_str[rop_start + eq_pos + 1..];
@@ -33,7 +33,6 @@ fn parse_daemon_attrs(attr: TokenStream) -> DaemonAttrs {
         }
     }
 
-    // Parse restart_delay = "5s"
     if let Some(rd_start) = attr_str.find("restart_delay") {
         if let Some(eq_pos) = attr_str[rd_start..].find('=') {
             let after_eq = &attr_str[rd_start + eq_pos + 1..];
@@ -46,7 +45,6 @@ fn parse_daemon_attrs(attr: TokenStream) -> DaemonAttrs {
         }
     }
 
-    // Parse startup_delay = "10s"
     if let Some(sd_start) = attr_str.find("startup_delay") {
         if let Some(eq_pos) = attr_str[sd_start..].find('=') {
             let after_eq = &attr_str[sd_start + eq_pos + 1..];
@@ -59,7 +57,6 @@ fn parse_daemon_attrs(attr: TokenStream) -> DaemonAttrs {
         }
     }
 
-    // Parse max_restarts = 10
     if let Some(mr_start) = attr_str.find("max_restarts") {
         if let Some(eq_pos) = attr_str[mr_start..].find('=') {
             let after_eq = &attr_str[mr_start + eq_pos + 1..];
@@ -78,27 +75,6 @@ fn parse_daemon_attrs(attr: TokenStream) -> DaemonAttrs {
     result
 }
 
-fn parse_duration(s: &str) -> proc_macro2::TokenStream {
-    let s = s.trim();
-    if s.ends_with("ms") {
-        let n: u64 = s.trim_end_matches("ms").parse().unwrap_or(1000);
-        quote! { std::time::Duration::from_millis(#n) }
-    } else if s.ends_with('s') {
-        let n: u64 = s.trim_end_matches('s').parse().unwrap_or(5);
-        quote! { std::time::Duration::from_secs(#n) }
-    } else if s.ends_with('m') {
-        let n: u64 = s.trim_end_matches('m').parse().unwrap_or(5);
-        let secs = n * 60;
-        quote! { std::time::Duration::from_secs(#secs) }
-    } else if s.ends_with('h') {
-        let n: u64 = s.trim_end_matches('h').parse().unwrap_or(1);
-        let secs = n * 3600;
-        quote! { std::time::Duration::from_secs(#secs) }
-    } else {
-        let n: u64 = s.parse().unwrap_or(5);
-        quote! { std::time::Duration::from_secs(#n) }
-    }
-}
 
 pub fn daemon_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
@@ -115,13 +91,13 @@ pub fn daemon_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let restart_on_panic = attrs.restart_on_panic.unwrap_or(true);
 
     let restart_delay = if let Some(ref d) = attrs.restart_delay {
-        parse_duration(d)
+        parse_duration_tokens(d, 5)
     } else {
         quote! { std::time::Duration::from_secs(5) }
     };
 
     let startup_delay = if let Some(ref d) = attrs.startup_delay {
-        parse_duration(d)
+        parse_duration_tokens(d, 0)
     } else {
         quote! { std::time::Duration::from_secs(0) }
     };
@@ -161,17 +137,6 @@ pub fn daemon_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-fn to_pascal_case(s: &str) -> String {
-    s.split('_')
-        .map(|part| {
-            let mut chars = part.chars();
-            match chars.next() {
-                None => String::new(),
-                Some(first) => first.to_uppercase().chain(chars).collect(),
-            }
-        })
-        .collect()
-}
 
 #[cfg(test)]
 mod tests {
@@ -186,19 +151,19 @@ mod tests {
 
     #[test]
     fn test_parse_duration_seconds() {
-        let ts = parse_duration("5s");
+        let ts = parse_duration_tokens("5s", 5);
         assert!(!ts.is_empty());
     }
 
     #[test]
     fn test_parse_duration_minutes() {
-        let ts = parse_duration("10m");
+        let ts = parse_duration_tokens("10m", 600);
         assert!(!ts.is_empty());
     }
 
     #[test]
     fn test_parse_duration_milliseconds() {
-        let ts = parse_duration("500ms");
+        let ts = parse_duration_tokens("500ms", 500);
         assert!(!ts.is_empty());
     }
 }

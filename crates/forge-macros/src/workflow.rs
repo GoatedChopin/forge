@@ -3,6 +3,8 @@ use quote::{format_ident, quote};
 use syn::visit::Visit;
 use syn::{ExprAwait, ExprCall, ItemFn, Lit, parse_macro_input};
 
+use crate::utils::{parse_duration_tokens, to_pascal_case};
+
 /// Minimum sleep duration (in seconds) that triggers the tokio::sleep warning.
 /// Sleeps shorter than this are allowed since they're typically used for polling/retry loops.
 const TOKIO_SLEEP_THRESHOLD_SECS: u64 = 100;
@@ -73,7 +75,7 @@ impl TokioSleepDetector {
         }
 
         let is_tokio_sleep =
-            path_str.contains("tokio") && path_str.contains("sleep") || path_str == "sleep";
+            (path_str.contains("tokio") && path_str.contains("sleep")) || path_str == "sleep";
 
         if !is_tokio_sleep {
             return;
@@ -149,7 +151,6 @@ fn parse_workflow_attrs(attr: TokenStream) -> WorkflowAttrs {
     let mut result = WorkflowAttrs::default();
     let attr_str = attr.to_string();
 
-    // Parse version = N
     if let Some(version_start) = attr_str.find("version") {
         if let Some(eq_pos) = attr_str[version_start..].find('=') {
             let remaining = &attr_str[version_start + eq_pos + 1..];
@@ -165,7 +166,6 @@ fn parse_workflow_attrs(attr: TokenStream) -> WorkflowAttrs {
         }
     }
 
-    // Parse timeout = "Xh" or timeout = "Xm" etc
     if let Some(timeout_start) = attr_str.find("timeout") {
         if let Some(quote_start) = attr_str[timeout_start..].find('"') {
             let remaining = &attr_str[timeout_start + quote_start + 1..];
@@ -176,17 +176,14 @@ fn parse_workflow_attrs(attr: TokenStream) -> WorkflowAttrs {
         }
     }
 
-    // Parse deprecated flag
     if attr_str.contains("deprecated") {
         result.deprecated = true;
     }
 
-    // Parse public flag
     if attr_str.contains("public") {
         result.is_public = true;
     }
 
-    // Parse require_role("admin")
     if let Some(role_start) = attr_str.find("require_role") {
         if let Some(paren_start) = attr_str[role_start..].find('(') {
             let remaining = &attr_str[role_start + paren_start + 1..];
@@ -200,31 +197,6 @@ fn parse_workflow_attrs(attr: TokenStream) -> WorkflowAttrs {
     result
 }
 
-fn parse_duration(s: &str) -> proc_macro2::TokenStream {
-    let s = s.trim();
-    if s.ends_with("ms") {
-        let n: u64 = s.trim_end_matches("ms").parse().unwrap_or(1000);
-        quote! { std::time::Duration::from_millis(#n) }
-    } else if s.ends_with('s') {
-        let n: u64 = s.trim_end_matches('s').parse().unwrap_or(30);
-        quote! { std::time::Duration::from_secs(#n) }
-    } else if s.ends_with('m') {
-        let n: u64 = s.trim_end_matches('m').parse().unwrap_or(5);
-        let secs = n * 60;
-        quote! { std::time::Duration::from_secs(#secs) }
-    } else if s.ends_with('h') {
-        let n: u64 = s.trim_end_matches('h').parse().unwrap_or(1);
-        let secs = n * 3600;
-        quote! { std::time::Duration::from_secs(#secs) }
-    } else if s.ends_with('d') {
-        let n: u64 = s.trim_end_matches('d').parse().unwrap_or(1);
-        let secs = n * 86400;
-        quote! { std::time::Duration::from_secs(#secs) }
-    } else {
-        let n: u64 = s.parse().unwrap_or(86400);
-        quote! { std::time::Duration::from_secs(#n) }
-    }
-}
 
 pub fn workflow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
@@ -306,7 +278,7 @@ pub fn workflow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     let timeout = if let Some(ref t) = attrs.timeout {
-        parse_duration(t)
+        parse_duration_tokens(t, 86400)
     } else {
         quote! { std::time::Duration::from_secs(86400) } // 24 hours default
     };
@@ -344,17 +316,6 @@ pub fn workflow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-fn to_pascal_case(s: &str) -> String {
-    s.split('_')
-        .map(|part| {
-            let mut chars = part.chars();
-            match chars.next() {
-                None => String::new(),
-                Some(first) => first.to_uppercase().chain(chars).collect(),
-            }
-        })
-        .collect()
-}
 
 #[cfg(test)]
 mod tests {
@@ -369,13 +330,13 @@ mod tests {
 
     #[test]
     fn test_parse_duration_days() {
-        let ts = parse_duration("7d");
+        let ts = parse_duration_tokens("7d", 604800);
         assert!(!ts.is_empty());
     }
 
     #[test]
     fn test_parse_duration_hours() {
-        let ts = parse_duration("24h");
+        let ts = parse_duration_tokens("24h", 86400);
         assert!(!ts.is_empty());
     }
 }

@@ -1,9 +1,10 @@
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use tokio::sync::RwLock;
+use tracing::{Instrument, Span, field};
 use uuid::Uuid;
 
 use super::registry::CronRegistry;
@@ -35,17 +36,28 @@ impl CronStatus {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseCronStatusError(pub String);
+
+impl std::fmt::Display for ParseCronStatusError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "invalid cron status: '{}'", self.0)
+    }
+}
+
+impl std::error::Error for ParseCronStatusError {}
+
 impl FromStr for CronStatus {
-    type Err = std::convert::Infallible;
+    type Err = ParseCronStatusError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(match s {
-            "pending" => Self::Pending,
-            "running" => Self::Running,
-            "completed" => Self::Completed,
-            "failed" => Self::Failed,
-            _ => Self::Pending,
-        })
+        match s {
+            "pending" => Ok(Self::Pending),
+            "running" => Ok(Self::Running),
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            _ => Err(ParseCronStatusError(s.to_string())),
+        }
     }
 }
 
@@ -150,7 +162,7 @@ impl CronRunner {
             *running = true;
         }
 
-        tracing::info!("Cron runner starting");
+        tracing::debug!("Cron runner starting");
 
         loop {
             if !*self.is_running.read().await {
@@ -159,14 +171,14 @@ impl CronRunner {
 
             if self.config.is_leader {
                 if let Err(e) = self.tick().await {
-                    tracing::error!(error = %e, "Cron tick failed");
+                    tracing::warn!(error = %e, "Cron tick failed");
                 }
             }
 
             tokio::time::sleep(self.config.poll_interval).await;
         }
 
-        tracing::info!("Cron runner stopped");
+        tracing::debug!("Cron runner stopped");
         Ok(())
     }
 
@@ -178,62 +190,89 @@ impl CronRunner {
 
     /// Execute one tick of the scheduler.
     async fn tick(&self) -> forge_core::Result<()> {
-        let now = Utc::now();
-        // Look back 2x poll interval to catch any scheduled times we might have missed
-        let window_start = now
-            - chrono::Duration::from_std(self.config.poll_interval * 2)
-                .unwrap_or(chrono::Duration::seconds(2));
+        let tick_span = tracing::info_span!(
+            "cron.tick",
+            cron.tick_id = %Uuid::new_v4(),
+            cron.jobs_checked = field::Empty,
+            cron.jobs_executed = field::Empty,
+        );
 
-        let cron_list = self.registry.list();
+        async {
+            let now = Utc::now();
+            // Look back 2x poll interval to catch any scheduled times we might have missed
+            let window_start = now
+                - chrono::Duration::from_std(self.config.poll_interval * 2)
+                    .unwrap_or(chrono::Duration::seconds(2));
 
-        if cron_list.is_empty() {
-            tracing::trace!("Cron tick: no crons registered");
-        } else {
-            tracing::trace!(
-                cron_count = cron_list.len(),
-                "Cron tick checking {} registered crons",
-                cron_list.len()
-            );
-        }
+            let cron_list = self.registry.list();
+            let mut jobs_executed = 0u32;
 
-        for entry in cron_list {
-            let info = &entry.info;
+            Span::current().record("cron.jobs_checked", cron_list.len());
 
-            let scheduled_times = info
-                .schedule
-                .between_in_tz(window_start, now, info.timezone);
-            if !scheduled_times.is_empty() {
+            if cron_list.is_empty() {
+                tracing::trace!("Cron tick: no crons registered");
+            } else {
                 tracing::trace!(
-                    cron = info.name,
-                    schedule = info.schedule.expression(),
-                    scheduled_count = scheduled_times.len(),
-                    "Found scheduled cron runs"
+                    cron_count = cron_list.len(),
+                    "Cron tick checking {} registered crons",
+                    cron_list.len()
                 );
             }
 
-            for scheduled in scheduled_times {
-                // Try to claim this cron run (database ensures exactly-once execution)
-                if let Ok(claimed) = self.try_claim(info.name, scheduled, info.timezone).await {
-                    if claimed {
-                        // Execute the cron
-                        self.execute_cron(entry, scheduled, false).await;
+            for entry in cron_list {
+                let info = &entry.info;
+
+                let scheduled_times = info
+                    .schedule
+                    .between_in_tz(window_start, now, info.timezone);
+
+                // Record missed runs that we found
+                if scheduled_times.len() > 1 {
+                    tracing::info!(
+                        cron.name = info.name,
+                        cron.missed_count = scheduled_times.len() - 1,
+                        "Detected missed cron runs"
+                    );
+                    Span::current().record("cron.missed_runs", scheduled_times.len() - 1);
+                }
+
+                if !scheduled_times.is_empty() {
+                    tracing::trace!(
+                        cron = info.name,
+                        schedule = info.schedule.expression(),
+                        scheduled_count = scheduled_times.len(),
+                        "Found scheduled cron runs"
+                    );
+                }
+
+                for scheduled in scheduled_times {
+                    // Try to claim this cron run (database ensures exactly-once execution)
+                    if let Ok(claimed) = self.try_claim(info.name, scheduled, info.timezone).await {
+                        if claimed {
+                            // Execute the cron
+                            self.execute_cron(entry, scheduled, false).await;
+                            jobs_executed += 1;
+                        }
+                    }
+                }
+
+                // Handle catch-up if enabled
+                if info.catch_up {
+                    if let Err(e) = self.handle_catch_up(entry).await {
+                        tracing::warn!(
+                            cron = info.name,
+                            error = %e,
+                            "Failed to process catch-up runs"
+                        );
                     }
                 }
             }
 
-            // Handle catch-up if enabled
-            if info.catch_up {
-                if let Err(e) = self.handle_catch_up(entry).await {
-                    tracing::warn!(
-                        cron = info.name,
-                        error = %e,
-                        "Failed to process catch-up runs"
-                    );
-                }
-            }
+            Span::current().record("cron.jobs_executed", jobs_executed);
+            Ok(())
         }
-
-        Ok(())
+        .instrument(tick_span)
+        .await
     }
 
     /// Try to claim a cron run (returns true if claimed successfully).
@@ -271,53 +310,84 @@ impl CronRunner {
     ) {
         let info = &entry.info;
         let run_id = Uuid::new_v4();
+        let start_time = Instant::now();
 
-        tracing::debug!(
-            cron = info.name,
-            scheduled_time = %scheduled_time,
-            is_catch_up = is_catch_up,
-            "Executing cron"
+        let exec_span = tracing::info_span!(
+            "cron.execute",
+            cron.name = info.name,
+            cron.run_id = %run_id,
+            cron.schedule = info.schedule.expression(),
+            cron.timezone = info.timezone,
+            cron.scheduled_time = %scheduled_time,
+            cron.is_catch_up = is_catch_up,
+            cron.duration_ms = field::Empty,
+            cron.status = field::Empty,
+            otel.name = %format!("cron {}", info.name),
         );
 
-        let ctx = CronContext::new(
-            run_id,
-            info.name.to_string(),
-            scheduled_time,
-            info.timezone.to_string(),
-            is_catch_up,
-            self.pool.clone(),
-            self.http_client.inner().clone(),
-        );
+        async {
+            tracing::trace!("Executing cron");
 
-        // Execute with timeout
-        let handler = entry.handler.clone();
-        let result = tokio::time::timeout(info.timeout, handler(&ctx)).await;
-
-        match result {
-            Ok(Ok(())) => {
+            if is_catch_up {
                 tracing::info!(
-                    cron = info.name,
-                    scheduled_time = %scheduled_time,
-                    "Cron executed"
+                    cron.name = info.name,
+                    cron.scheduled_time = %scheduled_time,
+                    "Executing catch-up run"
                 );
-                self.mark_completed(info.name, scheduled_time).await;
             }
-            Ok(Err(e)) => {
-                tracing::error!(cron = info.name, error = %e, "Cron failed");
-                self.mark_failed(info.name, scheduled_time, &e.to_string())
-                    .await;
-            }
-            Err(_) => {
-                tracing::error!(cron = info.name, "Cron timed out");
-                self.mark_failed(info.name, scheduled_time, "Execution timed out")
-                    .await;
+
+            let ctx = CronContext::new(
+                run_id,
+                info.name.to_string(),
+                scheduled_time,
+                info.timezone.to_string(),
+                is_catch_up,
+                self.pool.clone(),
+                self.http_client.inner().clone(),
+            );
+
+            // Execute with timeout
+            let handler = entry.handler.clone();
+            let result = tokio::time::timeout(info.timeout, handler(&ctx)).await;
+
+            let duration_ms = start_time.elapsed().as_millis() as u64;
+            Span::current().record("cron.duration_ms", duration_ms);
+
+            match result {
+                Ok(Ok(())) => {
+                    Span::current().record("cron.status", "completed");
+                    tracing::debug!(cron.duration_ms = duration_ms, "Cron executed");
+                    self.mark_completed(info.name, scheduled_time).await;
+                }
+                Ok(Err(e)) => {
+                    Span::current().record("cron.status", "failed");
+                    tracing::warn!(
+                        cron.duration_ms = duration_ms,
+                        error = %e,
+                        "Cron failed"
+                    );
+                    self.mark_failed(info.name, scheduled_time, &e.to_string())
+                        .await;
+                }
+                Err(_) => {
+                    Span::current().record("cron.status", "timeout");
+                    tracing::warn!(
+                        cron.duration_ms = duration_ms,
+                        cron.timeout_ms = info.timeout.as_millis() as u64,
+                        "Cron timed out"
+                    );
+                    self.mark_failed(info.name, scheduled_time, "Execution timed out")
+                        .await;
+                }
             }
         }
+        .instrument(exec_span)
+        .await
     }
 
     /// Mark a cron run as completed.
     async fn mark_completed(&self, cron_name: &str, scheduled_time: DateTime<Utc>) {
-        let _ = sqlx::query(
+        if let Err(e) = sqlx::query(
             r#"
             UPDATE forge_cron_runs
             SET status = 'completed', completed_at = NOW()
@@ -327,12 +397,15 @@ impl CronRunner {
         .bind(cron_name)
         .bind(scheduled_time)
         .execute(&self.pool)
-        .await;
+        .await
+        {
+            tracing::error!(cron = cron_name, error = %e, "Failed to mark cron completed");
+        }
     }
 
     /// Mark a cron run as failed.
     async fn mark_failed(&self, cron_name: &str, scheduled_time: DateTime<Utc>, error: &str) {
-        let _ = sqlx::query(
+        if let Err(e) = sqlx::query(
             r#"
             UPDATE forge_cron_runs
             SET status = 'failed', completed_at = NOW(), error = $3
@@ -343,7 +416,10 @@ impl CronRunner {
         .bind(scheduled_time)
         .bind(error)
         .execute(&self.pool)
-        .await;
+        .await
+        {
+            tracing::error!(cron = cron_name, error = %e, "Failed to mark cron failed");
+        }
     }
 
     /// Handle catch-up for missed runs.
@@ -351,42 +427,67 @@ impl CronRunner {
         let info = &entry.info;
         let now = Utc::now();
 
-        // Find the last completed run
-        let last_run: Option<(DateTime<Utc>,)> = sqlx::query_as(
-            r#"
-            SELECT scheduled_time
-            FROM forge_cron_runs
-            WHERE cron_name = $1 AND status = 'completed'
-            ORDER BY scheduled_time DESC
-            LIMIT 1
-            "#,
-        )
-        .bind(info.name)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+        let catch_up_span = tracing::info_span!(
+            "cron.catch_up",
+            cron.name = info.name,
+            cron.missed_count = field::Empty,
+            cron.executed_count = field::Empty,
+        );
 
-        let start_time = last_run
-            .map(|(t,)| t)
-            .unwrap_or(now - chrono::Duration::days(1));
+        async {
+            // Find the last completed run
+            let last_run: Option<(DateTime<Utc>,)> = sqlx::query_as(
+                r#"
+                SELECT scheduled_time
+                FROM forge_cron_runs
+                WHERE cron_name = $1 AND status = 'completed'
+                ORDER BY scheduled_time DESC
+                LIMIT 1
+                "#,
+            )
+            .bind(info.name)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
 
-        // Get all scheduled times between last run and now
-        let missed_times = info.schedule.between_in_tz(start_time, now, info.timezone);
+            let start_time = last_run
+                .map(|(t,)| t)
+                .unwrap_or(now - chrono::Duration::days(1));
 
-        // Limit catch-up runs
-        let to_catch_up: Vec<_> = missed_times
-            .into_iter()
-            .take(info.catch_up_limit as usize)
-            .collect();
+            // Get all scheduled times between last run and now
+            let missed_times = info.schedule.between_in_tz(start_time, now, info.timezone);
 
-        for scheduled in to_catch_up {
-            // Try to claim and execute
-            if self.try_claim(info.name, scheduled, info.timezone).await? {
-                self.execute_cron(entry, scheduled, true).await;
+            // Limit catch-up runs
+            let to_catch_up: Vec<_> = missed_times
+                .into_iter()
+                .take(info.catch_up_limit as usize)
+                .collect();
+
+            Span::current().record("cron.missed_count", to_catch_up.len());
+
+            if !to_catch_up.is_empty() {
+                tracing::info!(
+                    cron.name = info.name,
+                    cron.catch_up_count = to_catch_up.len(),
+                    cron.catch_up_limit = info.catch_up_limit,
+                    "Processing catch-up runs"
+                );
             }
-        }
 
-        Ok(())
+            let mut executed_count = 0u32;
+            for scheduled in to_catch_up {
+                // Try to claim and execute
+                if self.try_claim(info.name, scheduled, info.timezone).await? {
+                    self.execute_cron(entry, scheduled, true).await;
+                    executed_count += 1;
+                }
+            }
+
+            Span::current().record("cron.executed_count", executed_count);
+            Ok(())
+        }
+        .instrument(catch_up_span)
+        .await
     }
 }
 
@@ -405,6 +506,7 @@ mod tests {
         assert_eq!("running".parse::<CronStatus>(), Ok(CronStatus::Running));
         assert_eq!("completed".parse::<CronStatus>(), Ok(CronStatus::Completed));
         assert_eq!("failed".parse::<CronStatus>(), Ok(CronStatus::Failed));
+        assert!("invalid".parse::<CronStatus>().is_err());
     }
 
     #[test]

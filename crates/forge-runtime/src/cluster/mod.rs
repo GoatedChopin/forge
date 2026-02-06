@@ -1,5 +1,6 @@
 mod heartbeat;
 mod leader;
+pub(crate) mod metrics;
 mod registry;
 mod shutdown;
 

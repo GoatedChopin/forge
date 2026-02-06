@@ -8,6 +8,7 @@ mod model;
 mod mutation;
 mod query;
 mod sql_extractor;
+pub(crate) mod utils;
 mod webhook;
 mod workflow;
 

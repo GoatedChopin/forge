@@ -190,29 +190,39 @@ impl CheckCommand {
 
         // Check [database] section
         if let Some(db) = config.get("database") {
-            if let Some(url) = db.get("url") {
-                if let Some(url_str) = url.as_str() {
-                    if url_str.starts_with("${") || url_str.starts_with("postgres://") {
-                        result.pass("[database] section configured");
+            let mode = db.get("mode").and_then(|v| v.as_str());
+            match mode {
+                Some("remote") => {
+                    if let Some(url) = db.get("url").and_then(|v| v.as_str()) {
+                        if url.starts_with("${") || url.starts_with("postgres://") {
+                            result.pass("[database] configured (remote)");
+                        } else {
+                            result.warn(
+                                "[database].url format looks incorrect",
+                                "Use postgres://user:pass@host:port/db or ${DATABASE_URL}",
+                            );
+                        }
                     } else {
                         result.warn(
-                            "[database].url format looks incorrect",
-                            "Use postgres://user:pass@host:port/db or ${DATABASE_URL}",
+                            "[database].url not set",
+                            "Add url = \"${DATABASE_URL}\" to [database]",
                         );
                     }
                 }
-            } else if db.get("embedded").and_then(|v| v.as_bool()) == Some(true) {
-                result.pass("[database] configured for embedded postgres");
-            } else {
-                result.warn(
-                    "[database].url not set",
-                    "Add url = \"${DATABASE_URL}\" or embedded = true to [database]",
-                );
+                Some("embedded") => {
+                    result.pass("[database] configured (embedded)");
+                }
+                _ => {
+                    result.warn(
+                        "[database].mode not set",
+                        "Add mode = \"remote\" with url, or mode = \"embedded\" to [database]",
+                    );
+                }
             }
         } else {
             result.fail(
                 "[database] section missing",
-                "Add [database] section with url to forge.toml",
+                "Add [database] section with mode to forge.toml",
             );
         }
 

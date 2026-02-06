@@ -10,15 +10,33 @@ use forge_core::realtime::{Change, SubscriptionId};
 use super::manager::SubscriptionManager;
 
 /// Configuration for the invalidation engine.
+///
+/// The invalidation engine uses a debounce algorithm to batch rapid changes
+/// into single re-executions. This prevents "thundering herd" scenarios where
+/// a batch insert of 1000 rows would trigger 1000 subscription refreshes.
+///
+/// The algorithm works as follows:
+/// 1. When a change arrives, record the subscription as pending
+/// 2. Wait for `debounce_ms` of silence (no new changes to that subscription)
+/// 3. If `max_debounce_ms` passes since the first change, flush anyway
+/// 4. If buffer exceeds `max_buffer_size`, flush immediately (memory protection)
+///
+/// This balances latency (users want updates fast) against efficiency (batching
+/// reduces database load). Default values target 50ms debounce with 200ms max
+/// wait, meaning updates arrive within 200ms worst-case.
 #[derive(Debug, Clone)]
 pub struct InvalidationConfig {
     /// Debounce window in milliseconds.
+    /// After a change, wait this long for more changes before invalidating.
     pub debounce_ms: u64,
     /// Maximum debounce wait in milliseconds.
+    /// Even if changes keep arriving, invalidate after this duration.
     pub max_debounce_ms: u64,
     /// Whether to coalesce changes by table.
+    /// When true, multiple changes to the same table become a single invalidation.
     pub coalesce_by_table: bool,
     /// Maximum changes to buffer before forcing flush.
+    /// Prevents unbounded memory growth during high-throughput periods.
     pub max_buffer_size: usize,
 }
 
@@ -203,61 +221,9 @@ pub struct InvalidationStats {
     pub pending_tables: usize,
 }
 
-/// Coalesces multiple changes for the same table.
-#[allow(dead_code)]
-pub struct ChangeCoalescer {
-    /// Changes grouped by table.
-    changes_by_table: HashMap<String, Vec<Change>>,
-}
-
-#[allow(dead_code)]
-impl ChangeCoalescer {
-    /// Create a new change coalescer.
-    pub fn new() -> Self {
-        Self {
-            changes_by_table: HashMap::new(),
-        }
-    }
-
-    /// Add a change.
-    pub fn add(&mut self, change: Change) {
-        self.changes_by_table
-            .entry(change.table.clone())
-            .or_default()
-            .push(change);
-    }
-
-    /// Get coalesced tables that had changes.
-    pub fn tables(&self) -> impl Iterator<Item = &str> {
-        self.changes_by_table.keys().map(|s| s.as_str())
-    }
-
-    /// Drain all changes.
-    pub fn drain(&mut self) -> HashMap<String, Vec<Change>> {
-        std::mem::take(&mut self.changes_by_table)
-    }
-
-    /// Check if empty.
-    pub fn is_empty(&self) -> bool {
-        self.changes_by_table.is_empty()
-    }
-
-    /// Count total changes.
-    pub fn len(&self) -> usize {
-        self.changes_by_table.values().map(|v| v.len()).sum()
-    }
-}
-
-impl Default for ChangeCoalescer {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use forge_core::realtime::ChangeOperation;
 
     #[test]
     fn test_invalidation_config_default() {
@@ -265,35 +231,6 @@ mod tests {
         assert_eq!(config.debounce_ms, 50);
         assert_eq!(config.max_debounce_ms, 200);
         assert!(config.coalesce_by_table);
-    }
-
-    #[test]
-    fn test_change_coalescer() {
-        let mut coalescer = ChangeCoalescer::new();
-        assert!(coalescer.is_empty());
-
-        coalescer.add(Change::new("projects".to_string(), ChangeOperation::Insert));
-        coalescer.add(Change::new("projects".to_string(), ChangeOperation::Update));
-        coalescer.add(Change::new("users".to_string(), ChangeOperation::Insert));
-
-        assert_eq!(coalescer.len(), 3);
-
-        let tables: Vec<&str> = coalescer.tables().collect();
-        assert!(tables.contains(&"projects"));
-        assert!(tables.contains(&"users"));
-    }
-
-    #[test]
-    fn test_change_coalescer_drain() {
-        let mut coalescer = ChangeCoalescer::new();
-        coalescer.add(Change::new("projects".to_string(), ChangeOperation::Insert));
-        coalescer.add(Change::new("users".to_string(), ChangeOperation::Delete));
-
-        let drained = coalescer.drain();
-        assert!(coalescer.is_empty());
-        assert_eq!(drained.len(), 2);
-        assert!(drained.contains_key("projects"));
-        assert!(drained.contains_key("users"));
     }
 
     #[tokio::test]

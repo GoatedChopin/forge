@@ -1,0 +1,12 @@
+[package]
+name = "forge-utils"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared utility functions for the Forge framework"
+
+[lints]
+workspace = true
+
+[dependencies]

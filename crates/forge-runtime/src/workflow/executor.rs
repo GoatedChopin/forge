@@ -315,6 +315,14 @@ impl WorkflowExecutor {
     }
 
     /// Cancel a workflow and run compensation.
+    ///
+    /// Compensation follows the saga pattern: steps are undone in reverse order
+    /// of their completion. This ensures that dependencies are respected. For
+    /// example, if step A created a resource that step B modified, we must
+    /// undo B's modification before deleting A's resource.
+    ///
+    /// Compensation handlers receive the original step result, allowing them
+    /// to know exactly what to undo (e.g., refund the specific payment ID).
     pub async fn cancel(&self, run_id: Uuid) -> forge_core::Result<()> {
         self.update_workflow_status(run_id, WorkflowStatus::Compensating)
             .await?;
@@ -326,7 +334,10 @@ impl WorkflowExecutor {
             // Get completed steps with results from database
             let steps = self.get_workflow_steps(run_id).await?;
 
-            // Run compensation in reverse order
+            // Run compensation in reverse order of completion.
+            // This is critical for maintaining consistency: if step B depends on
+            // step A's output, we must undo B before A. The completed_steps list
+            // preserves insertion order, so reversing gives us the correct undo order.
             for step_name in state.completed_steps.iter().rev() {
                 if let Some(handler) = state.handlers.get(step_name) {
                     // Find the step result
@@ -397,19 +408,24 @@ impl WorkflowExecutor {
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
 
         use sqlx::Row;
-        Ok(rows
-            .into_iter()
-            .map(|row| WorkflowStepRecord {
-                id: row.get("id"),
-                workflow_run_id: row.get("workflow_run_id"),
-                step_name: row.get("step_name"),
-                status: row.get::<String, _>("status").parse().unwrap(),
-                result: row.get("result"),
-                error: row.get("error"),
-                started_at: row.get("started_at"),
-                completed_at: row.get("completed_at"),
+        rows.into_iter()
+            .map(|row| {
+                let status_str = row.get::<String, _>("status");
+                let status = status_str.parse().map_err(|e| {
+                    forge_core::ForgeError::Database(format!("Invalid step status '{}': {}", status_str, e))
+                })?;
+                Ok(WorkflowStepRecord {
+                    id: row.get("id"),
+                    workflow_run_id: row.get("workflow_run_id"),
+                    step_name: row.get("step_name"),
+                    status,
+                    result: row.get("result"),
+                    error: row.get("error"),
+                    started_at: row.get("started_at"),
+                    completed_at: row.get("completed_at"),
+                })
             })
-            .collect())
+            .collect()
     }
 
     /// Update step status.
@@ -481,13 +497,17 @@ impl WorkflowExecutor {
         })?;
 
         use sqlx::Row;
+        let status_str = row.get::<String, _>("status");
+        let status = status_str.parse().map_err(|e| {
+            forge_core::ForgeError::Database(format!("Invalid workflow status '{}': {}", status_str, e))
+        })?;
         Ok(WorkflowRecord {
             id: row.get("id"),
             workflow_name: row.get("workflow_name"),
             version: 1, // TODO: Add version column
             input: row.get("input"),
             output: row.get("output"),
-            status: row.get::<String, _>("status").parse().unwrap(),
+            status,
             current_step: row.get("current_step"),
             step_results: row.get("step_results"),
             started_at: row.get("started_at"),

@@ -76,19 +76,19 @@ impl HeartbeatLoop {
                 _ = tokio::time::sleep(self.config.interval) => {
                     // Update our heartbeat
                     if let Err(e) = self.send_heartbeat().await {
-                        tracing::warn!("Failed to send heartbeat: {}", e);
+                        tracing::debug!(error = %e, "Failed to send heartbeat");
                     }
 
                     // Mark dead nodes if enabled
                     if self.config.mark_dead_nodes {
                         if let Err(e) = self.mark_dead_nodes().await {
-                            tracing::warn!("Failed to mark dead nodes: {}", e);
+                            tracing::debug!(error = %e, "Failed to mark dead nodes");
                         }
                     }
                 }
                 _ = shutdown_rx.changed() => {
                     if *shutdown_rx.borrow() {
-                        tracing::info!("Heartbeat loop shutting down");
+                        tracing::debug!("Heartbeat loop shutting down");
                         break;
                     }
                 }
@@ -134,7 +134,7 @@ impl HeartbeatLoop {
 
         let count = result.rows_affected();
         if count > 0 {
-            tracing::info!("Marked {} nodes as dead", count);
+            tracing::warn!(count, "Marked nodes as dead");
         }
 
         Ok(count)

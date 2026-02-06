@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use sqlx::postgres::{PgPool, PgPoolOptions};
 
-use forge_core::config::DatabaseConfig;
+use forge_core::config::{DatabaseConfig, DatabaseSource};
 use forge_core::error::{ForgeError, Result};
 
 #[cfg(feature = "embedded-db")]
@@ -38,27 +38,31 @@ pub struct Database {
 impl Database {
     /// Create a new database connection from configuration.
     pub async fn from_config(config: &DatabaseConfig) -> Result<Self> {
-        let (url, embedded) = if config.embedded {
-            #[cfg(feature = "embedded-db")]
-            {
-                let url = Self::start_embedded_postgres(config.data_dir.as_deref()).await?;
-                (url, true)
+        let (url, embedded) = match &config.source {
+            DatabaseSource::Remote { url } => {
+                if url.is_empty() {
+                    return Err(ForgeError::Database(
+                        "database.url cannot be empty. Provide a PostgreSQL connection URL.".into(),
+                    ));
+                }
+                (url.clone(), false)
             }
-            #[cfg(not(feature = "embedded-db"))]
-            {
-                return Err(ForgeError::Database(
-                    "Embedded PostgreSQL requires the 'embedded-db' feature. \
-                    Build with: cargo build --features embedded-db"
-                        .to_string(),
-                ));
+            DatabaseSource::Embedded { data_dir } => {
+                #[cfg(feature = "embedded-db")]
+                {
+                    let url = Self::start_embedded_postgres(data_dir.as_deref()).await?;
+                    (url, true)
+                }
+                #[cfg(not(feature = "embedded-db"))]
+                {
+                    let _ = data_dir;
+                    return Err(ForgeError::Database(
+                        "Embedded PostgreSQL requires the 'embedded-db' feature. \
+                        Build with: cargo build --features embedded-db"
+                            .to_string(),
+                    ));
+                }
             }
-        } else {
-            if config.url.is_empty() {
-                return Err(ForgeError::Database(
-                    "Database URL is required when embedded = false. Set database.url or database.embedded = true".to_string()
-                ));
-            }
-            (config.url.clone(), false)
         };
 
         let primary = Self::create_pool(&url, config.pool_size, config.pool_timeout_secs)
@@ -192,14 +196,10 @@ mod tests {
 
     #[test]
     fn test_database_config_clone() {
-        let config = DatabaseConfig {
-            url: "postgres://localhost/test".to_string(),
-            pool_size: 10,
-            ..Default::default()
-        };
+        let config = DatabaseConfig::remote("postgres://localhost/test");
 
         let cloned = config.clone();
-        assert_eq!(cloned.url, config.url);
+        assert_eq!(cloned.url(), config.url());
         assert_eq!(cloned.pool_size, config.pool_size);
     }
 }

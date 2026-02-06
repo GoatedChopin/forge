@@ -1,6 +1,26 @@
 use forge_core::schema::{FieldDef, TableDef};
 
 /// Represents the difference between two schemas.
+///
+/// The diff algorithm compares the Rust schema (source of truth) against the
+/// database schema (current state) to produce a set of changes. The comparison
+/// is done at two levels:
+///
+/// 1. **Table level**: Find tables that exist in Rust but not DB (CREATE),
+///    or exist in DB but not Rust (DROP, except forge_ internal tables).
+///
+/// 2. **Column level**: For tables in both, compare fields:
+///    - Field in Rust but not DB → ADD COLUMN
+///    - Field in DB but not Rust → DROP COLUMN
+///    - Field in both but different type → ALTER COLUMN TYPE
+///
+/// The algorithm is intentionally simple and doesn't handle:
+/// - Column renames (seen as DROP + ADD)
+/// - Index changes (handled separately)
+/// - Complex type migrations (require manual migration)
+///
+/// This is by design: automatic migrations are for development convenience.
+/// Production deployments should use explicit migration files.
 #[derive(Debug, Clone)]
 pub struct SchemaDiff {
     /// Changes to be applied.

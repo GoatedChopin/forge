@@ -5,6 +5,7 @@ use syn::visit::Visit;
 use syn::{FnArg, ItemFn, Pat, ReturnType, Type, parse_macro_input};
 
 use crate::sql_extractor::{SqlStringExtractor, extract_tables_from_sql};
+use crate::utils::{parse_duration_secs, to_pascal_case};
 
 /// Expand the #[forge::query] attribute.
 ///
@@ -38,14 +39,12 @@ struct QueryAttrs {
 fn parse_query_attrs(attr: TokenStream) -> QueryAttrs {
     let mut attrs = QueryAttrs::default();
 
-    // Parse attribute arguments like #[forge::query(cache = "5m", public)]
     let attr_str = attr.to_string();
 
     if attr_str.contains("public") {
         attrs.is_public = true;
     }
 
-    // Parse role requirement
     if let Some(role_start) = attr_str.find("require_role") {
         if let Some(paren_start) = attr_str[role_start..].find('(') {
             let remaining = &attr_str[role_start + paren_start + 1..];
@@ -56,18 +55,16 @@ fn parse_query_attrs(attr: TokenStream) -> QueryAttrs {
         }
     }
 
-    // Parse cache TTL (simple parsing)
     if let Some(cache_start) = attr_str.find("cache") {
         if let Some(quote_start) = attr_str[cache_start..].find('"') {
             let remaining = &attr_str[cache_start + quote_start + 1..];
             if let Some(quote_end) = remaining.find('"') {
                 let ttl_str = &remaining[..quote_end];
-                attrs.cache_ttl = parse_duration(ttl_str);
+                attrs.cache_ttl = parse_duration_secs(ttl_str);
             }
         }
     }
 
-    // Parse timeout
     if let Some(timeout_start) = attr_str.find("timeout") {
         if let Some(eq_pos) = attr_str[timeout_start..].find('=') {
             let remaining = &attr_str[timeout_start + eq_pos + 1..];
@@ -84,14 +81,12 @@ fn parse_query_attrs(attr: TokenStream) -> QueryAttrs {
         }
     }
 
-    // Parse rate_limit(requests = N, per = "Xm", key = "user")
     if let Some(rl_start) = attr_str.find("rate_limit") {
         if let Some(paren_start) = attr_str[rl_start..].find('(') {
             let remaining = &attr_str[rl_start + paren_start + 1..];
             if let Some(paren_end) = remaining.find(')') {
                 let rl_content = &remaining[..paren_end];
 
-                // Parse requests = N
                 if let Some(req_start) = rl_content.find("requests") {
                     if let Some(eq_pos) = rl_content[req_start..].find('=') {
                         let after_eq = &rl_content[req_start + eq_pos + 1..];
@@ -107,18 +102,16 @@ fn parse_query_attrs(attr: TokenStream) -> QueryAttrs {
                     }
                 }
 
-                // Parse per = "Xm" or per = "Xs"
                 if let Some(per_start) = rl_content.find("per") {
                     if let Some(quote_start) = rl_content[per_start..].find('"') {
                         let after_quote = &rl_content[per_start + quote_start + 1..];
                         if let Some(quote_end) = after_quote.find('"') {
                             let per_str = &after_quote[..quote_end];
-                            attrs.rate_limit_per_secs = parse_duration(per_str);
+                            attrs.rate_limit_per_secs = parse_duration_secs(per_str);
                         }
                     }
                 }
 
-                // Parse key = "user" or key = "ip" etc
                 if let Some(key_start) = rl_content.find("key") {
                     if let Some(quote_start) = rl_content[key_start..].find('"') {
                         let after_quote = &rl_content[key_start + quote_start + 1..];
@@ -132,7 +125,6 @@ fn parse_query_attrs(attr: TokenStream) -> QueryAttrs {
         }
     }
 
-    // Parse log = "level" (trace, debug, info, warn, error, off)
     if let Some(log_start) = attr_str.find("log") {
         // Make sure it's not part of another word
         let before = if log_start > 0 {
@@ -151,7 +143,6 @@ fn parse_query_attrs(attr: TokenStream) -> QueryAttrs {
         }
     }
 
-    // Parse tables = ["table1", "table2"] for explicit table dependencies
     if let Some(tables_start) = attr_str.find("tables") {
         if let Some(bracket_start) = attr_str[tables_start..].find('[') {
             let remaining = &attr_str[tables_start + bracket_start + 1..];
@@ -172,22 +163,6 @@ fn parse_query_attrs(attr: TokenStream) -> QueryAttrs {
     attrs
 }
 
-fn parse_duration(s: &str) -> Option<u64> {
-    let s = s.trim();
-    if let Some(num) = s.strip_suffix("ms") {
-        num.parse::<u64>().ok().map(|ms| ms / 1000)
-    } else if let Some(num) = s.strip_suffix('s') {
-        num.parse().ok()
-    } else if let Some(num) = s.strip_suffix('m') {
-        num.parse::<u64>().ok().map(|m| m * 60)
-    } else if let Some(num) = s.strip_suffix('h') {
-        num.parse::<u64>().ok().map(|h| h * 3600)
-    } else if let Some(num) = s.strip_suffix('d') {
-        num.parse::<u64>().ok().map(|d| d * 86400)
-    } else {
-        s.parse().ok()
-    }
-}
 
 fn expand_query_impl(input: ItemFn, attrs: QueryAttrs) -> syn::Result<TokenStream2> {
     let fn_name = &input.sig.ident;
@@ -501,17 +476,6 @@ fn expand_query_impl(input: ItemFn, attrs: QueryAttrs) -> syn::Result<TokenStrea
     })
 }
 
-fn to_pascal_case(s: &str) -> String {
-    s.split('_')
-        .map(|part| {
-            let mut chars = part.chars();
-            match chars.next() {
-                None => String::new(),
-                Some(first) => first.to_uppercase().chain(chars).collect(),
-            }
-        })
-        .collect()
-}
 
 #[cfg(test)]
 mod tests {
@@ -525,10 +489,10 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_duration() {
-        assert_eq!(parse_duration("30s"), Some(30));
-        assert_eq!(parse_duration("5m"), Some(300));
-        assert_eq!(parse_duration("1h"), Some(3600));
-        assert_eq!(parse_duration("60"), Some(60));
+    fn test_parse_duration_secs() {
+        assert_eq!(parse_duration_secs("30s"), Some(30));
+        assert_eq!(parse_duration_secs("5m"), Some(300));
+        assert_eq!(parse_duration_secs("1h"), Some(3600));
+        assert_eq!(parse_duration_secs("60"), Some(60));
     }
 }

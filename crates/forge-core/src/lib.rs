@@ -13,6 +13,7 @@ pub mod realtime;
 pub mod schema;
 pub mod tenant;
 pub mod types;
+pub mod util;
 pub mod webhook;
 pub mod workflow;
 
