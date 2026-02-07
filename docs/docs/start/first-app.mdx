@@ -18,10 +18,25 @@ cd my-app
 forge dev
 ```
 
+Useful options:
+
+```bash
+# Use external PostgreSQL from DATABASE_URL
+forge dev --no-pg
+
+# Kill process(es) occupying default ports and take over
+forge dev --takeover-ports
+
+# Pick explicit ports
+forge dev --backend-port 8081 --frontend-port 4173
+```
+
 Three services start:
 - Frontend: http://localhost:5173
 - Backend: http://localhost:8080
 - Embedded PostgreSQL: localhost:5432
+
+Backend restarts are scoped to backend files (`src/`, `migrations/`, `Cargo.toml`, `Cargo.lock`, `build.rs`, `.env`, `forge.toml`) so unrelated root files do not trigger random restarts. By default, if a requested port is busy, Forge shows the owning process and exits.
 
 ## Define the Model
 

@@ -23,6 +23,7 @@ interface SsePayload {
   code?: string;
   message?: string;
   session_id?: string;
+  session_secret?: string;
 }
 
 export class ForgeClientError extends Error {
@@ -47,6 +48,7 @@ export class ForgeClient {
   private eventSource: EventSource | null = null;
   private connectionState: ConnectionState = "disconnected";
   private sessionId: string | null = null;
+  private sessionSecret: string | null = null;
   private connectionListeners = new Set<(state: ConnectionState) => void>();
   private subscriptions = new Map<string, (data: unknown) => void>();
   private subscriptionMeta = new Map<string, SubscriptionMeta>();
@@ -136,6 +138,7 @@ export class ForgeClient {
         clearTimeout(timeoutId);
         const data = JSON.parse((e as MessageEvent).data) as SsePayload;
         this.sessionId = data.session_id ?? null;
+        this.sessionSecret = data.session_secret ?? null;
         this.connectedTokenHash = this.hashToken(token);
         this.setConnectionState("connected");
         this.reconnectAttempts = 0;
@@ -188,6 +191,7 @@ export class ForgeClient {
     this.eventSource?.close();
     this.eventSource = null;
     this.sessionId = null;
+    this.sessionSecret = null;
     this.setConnectionState("disconnected");
     this.subscriptions.clear();
     this.subscriptionMeta.clear();
@@ -203,6 +207,7 @@ export class ForgeClient {
     this.eventSource?.close();
     this.eventSource = null;
     this.sessionId = null;
+    this.sessionSecret = null;
     this.setConnectionState("disconnected");
     this.reconnectAttempts = 0;
 
@@ -317,6 +322,7 @@ export class ForgeClient {
       },
       body: JSON.stringify({
         session_id: this.sessionId,
+        session_secret: this.sessionSecret,
         id,
         function: functionName,
         args: args,
@@ -343,6 +349,7 @@ export class ForgeClient {
       },
       body: JSON.stringify({
         session_id: this.sessionId,
+        session_secret: this.sessionSecret,
         id,
       }),
     });
@@ -359,6 +366,7 @@ export class ForgeClient {
       },
       body: JSON.stringify({
         session_id: this.sessionId,
+        session_secret: this.sessionSecret,
         id: clientSubId,
         job_id: jobId,
       }),
@@ -376,6 +384,7 @@ export class ForgeClient {
       },
       body: JSON.stringify({
         session_id: this.sessionId,
+        session_secret: this.sessionSecret,
         id: clientSubId,
         workflow_id: workflowId,
       }),

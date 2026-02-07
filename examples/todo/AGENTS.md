@@ -382,8 +382,9 @@ Use `ctx.require_subject()?` for non-UUID providers (Firebase/Auth0/Clerk).
 
 ```bash
 forge new <name> [--demo|--minimal]
-forge dev [--docker]
-forge add query|mutation|job|cron|workflow <name>
+forge dev [--docker] [--no-pg] [--takeover-ports]
+forge dev --backend-port 8081 --frontend-port 4173
+forge add query|mutation|job|cron|workflow|daemon|webhook <name>
 forge generate          # TypeScript types
 forge migrate up|down|status
 forge check

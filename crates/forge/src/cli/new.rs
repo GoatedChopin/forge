@@ -6,6 +6,7 @@ use std::path::Path;
 use std::process::Command;
 
 use super::template::render;
+use super::ui;
 use crate::template_vars;
 
 // In debug builds, embed the path to the forge source directory
@@ -78,7 +79,7 @@ fn is_inside_git_repo(dir: &Path) -> bool {
 
 /// Run forge generate to create frontend types.
 fn run_forge_generate(dir: &Path) -> Result<()> {
-    println!("  {} Generating frontend types...", style("→").cyan());
+    println!("  {} Generating frontend types...", ui::step());
 
     // Get the current executable path to run forge generate
     let forge_exe = std::env::current_exe().unwrap_or_else(|_| "forge".into());
@@ -92,13 +93,13 @@ fn run_forge_generate(dir: &Path) -> Result<()> {
         let stderr = String::from_utf8_lossy(&output.stderr);
         eprintln!(
             "  {} Failed to generate types: {}",
-            style("⚠").yellow(),
+            ui::warn(),
             stderr.trim()
         );
         return Ok(());
     }
 
-    println!("  {} Frontend types generated", style("✓").green());
+    println!("  {} Frontend types generated", ui::ok());
     Ok(())
 }
 
@@ -107,7 +108,7 @@ fn run_formatters(dir: &Path) -> Result<()> {
     // Run bun format in frontend directory
     let frontend_dir = dir.join("frontend");
     if frontend_dir.exists() {
-        println!("  {} Formatting frontend...", style("→").cyan());
+        println!("  {} Formatting frontend...", ui::step());
         let output = Command::new("bun")
             .args(["run", "format"])
             .current_dir(&frontend_dir)
@@ -115,7 +116,7 @@ fn run_formatters(dir: &Path) -> Result<()> {
 
         match output {
             Ok(o) if o.status.success() => {
-                println!("  {} Frontend formatted", style("✓").green());
+                println!("  {} Frontend formatted", ui::ok());
             }
             _ => {
                 // Non-fatal: continue without formatting
@@ -126,7 +127,7 @@ fn run_formatters(dir: &Path) -> Result<()> {
     // Run cargo fmt if cargo is available
     let cargo_check = Command::new("cargo").arg("--version").output();
     if cargo_check.is_ok() && cargo_check.unwrap().status.success() {
-        println!("  {} Formatting backend...", style("→").cyan());
+        println!("  {} Formatting backend...", ui::step());
         let output = Command::new("cargo")
             .args(["fmt"])
             .current_dir(dir)
@@ -134,7 +135,7 @@ fn run_formatters(dir: &Path) -> Result<()> {
 
         match output {
             Ok(o) if o.status.success() => {
-                println!("  {} Backend formatted", style("✓").green());
+                println!("  {} Backend formatted", ui::ok());
             }
             _ => {
                 // Non-fatal: continue without formatting
@@ -145,12 +146,43 @@ fn run_formatters(dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Generate Cargo.lock before initial commit.
+fn generate_cargo_lockfile(dir: &Path) -> Result<()> {
+    println!("  {} Generating Cargo.lock...", ui::step());
+
+    if !matches!(Command::new("cargo").arg("--version").output(), Ok(o) if o.status.success()) {
+        eprintln!(
+            "  {} cargo not found, skipping lockfile generation",
+            ui::warn()
+        );
+        return Ok(());
+    }
+
+    let output = Command::new("cargo")
+        .args(["generate-lockfile"])
+        .current_dir(dir)
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!(
+            "  {} Failed to generate Cargo.lock: {}",
+            ui::warn(),
+            stderr.trim()
+        );
+        return Ok(());
+    }
+
+    println!("  {} Cargo.lock generated", ui::ok());
+    Ok(())
+}
+
 /// Generate bun.lock file using native bun.
 /// Runs `bun install --lockfile-only` in the frontend directory.
 fn generate_bun_lockfile(dir: &Path) -> Result<()> {
     let frontend_dir = dir.join("frontend");
 
-    println!("  {} Generating bun.lock...", style("→").cyan());
+    println!("  {} Generating bun.lock...", ui::step());
 
     // Check if bun is available
     let bun_check = Command::new("bun").arg("--version").output();
@@ -158,7 +190,7 @@ fn generate_bun_lockfile(dir: &Path) -> Result<()> {
     if bun_check.is_err() || !bun_check.unwrap().status.success() {
         eprintln!(
             "  {} bun not found, skipping lockfile generation",
-            style("⚠").yellow()
+            ui::warn()
         );
         eprintln!(
             "    Run {} in frontend/ after installing bun",
@@ -176,14 +208,14 @@ fn generate_bun_lockfile(dir: &Path) -> Result<()> {
         let stderr = String::from_utf8_lossy(&output.stderr);
         eprintln!(
             "  {} Failed to generate bun.lock: {}",
-            style("⚠").yellow(),
+            ui::warn(),
             stderr.trim()
         );
         // Non-fatal: continue without lockfile
         return Ok(());
     }
 
-    println!("  {} bun.lock generated", style("✓").green());
+    println!("  {} bun.lock generated", ui::ok());
 
     Ok(())
 }
@@ -386,29 +418,26 @@ EXAMPLES:
 impl NewCommand {
     /// Execute the new project command.
     pub async fn execute(self) -> Result<()> {
-        println!("{}", style("Creating project...").dim());
-        println!();
+        ui::section("Create FORGE Project");
+        println!("  {} Generating project files...", ui::tool());
 
         // Require either --demo or --minimal
         if !self.demo && !self.minimal {
-            eprintln!(
-                "{}",
-                style("Error: You must specify a template mode")
-                    .red()
-                    .bold()
-            );
+            eprintln!("{} You must specify a template mode", ui::error());
             eprintln!();
             eprintln!("Choose one of:");
             eprintln!();
             eprintln!(
-                "  {} {}",
+                "  {} {} {}",
+                ui::bullet(),
                 style("--demo").cyan().bold(),
                 style("Full demo project with working examples").dim()
             );
             eprintln!("          User CRUD, jobs, crons, workflows, actions, and demo UI");
             eprintln!();
             eprintln!(
-                "  {} {}",
+                "  {} {} {}",
+                ui::bullet(),
                 style("--minimal").cyan().bold(),
                 style("Clean slate with just the structure").dim()
             );
@@ -416,12 +445,14 @@ impl NewCommand {
             eprintln!();
             eprintln!("Examples:");
             eprintln!(
-                "  {} {}",
+                "  {} {} {}",
+                ui::bullet(),
                 style("forge new my-app --demo").green(),
                 style("# Learn FORGE with examples").dim()
             );
             eprintln!(
-                "  {} {}",
+                "  {} {} {}",
+                ui::bullet(),
                 style("forge new my-app --minimal").green(),
                 style("# Start fresh").dim()
             );
@@ -442,9 +473,10 @@ impl NewCommand {
         fs::create_dir_all(path)?;
         create_project(path, &project_name, self.demo)?;
 
-        // Generate bun.lock before git commit (unless --no-lock)
+        // Generate lockfiles before git commit (unless --no-lock)
         if !self.no_lock {
             generate_bun_lockfile(path)?;
+            generate_cargo_lockfile(path)?;
         }
 
         // Generate frontend types
@@ -461,42 +493,29 @@ impl NewCommand {
         println!();
         println!(
             "{} Created new FORGE project: {}",
-            style("✅").green(),
+            ui::ok(),
             style(&project_name).cyan()
         );
-        println!();
-        println!("{}", style("Next steps:").bold());
-        println!();
-        println!(
-            "  {} {}",
-            style("1.").dim(),
-            style(format!("cd {}", project_dir)).cyan()
-        );
-        println!();
-        println!("  {} {}", style("2.").dim(), style("forge dev").cyan());
+        ui::section("Next Steps");
+        println!("  1. {}", style(format!("cd {}", project_dir)).cyan());
+        println!("  2. {}", style("forge dev").cyan());
         println!("     Start backend + frontend + embedded PostgreSQL");
-        println!();
-        println!("{}", style("Useful commands:").bold());
-        println!(
-            "  {}         Stop the development environment",
-            style("forge dev down").dim()
+
+        ui::section("Useful Commands");
+        ui::command("forge dev down", "Stop the development environment");
+        ui::command(
+            "forge dev down --clear",
+            "Stop and remove target/ and pg_data/",
         );
-        println!(
-            "  {}  Stop and clean target/ and pg_data/",
-            style("forge dev down --clear").dim()
-        );
-        println!(
-            "  {}       Run with Docker Compose",
-            style("forge dev --docker").dim()
-        );
-        println!();
-        println!("{}", style("Services (when running):").bold());
-        println!("  Frontend:  http://localhost:5173");
-        println!("  Backend:   http://localhost:8080");
-        println!("  Dashboard: http://localhost:8080/_dashboard");
-        println!();
-        println!("{}", style("Documentation:").bold());
-        println!("  https://tryforge.dev/docs");
+        ui::command("forge dev --docker", "Run with Docker Compose");
+
+        ui::section("Default Service URLs");
+        ui::kv("Frontend", "http://localhost:5173");
+        ui::kv("Backend", "http://localhost:8080");
+        ui::kv("Dashboard", "http://localhost:8080/_dashboard");
+
+        ui::section("Docs");
+        println!("  {} https://tryforge.dev/docs", ui::info());
         println!();
 
         Ok(())
@@ -523,10 +542,7 @@ pub fn create_project(dir: &Path, name: &str, demo: bool) -> Result<()> {
         #[cfg(debug_assertions)]
         {
             append_cargo_patch(&dir.join("Cargo.toml"))?;
-            println!(
-                "  {} Added cargo patch for local development",
-                style("→").cyan()
-            );
+            println!("  {} Added cargo patch for local development", ui::step());
         }
 
         fs::write(dir.join("forge.toml"), render(FORGE_TOML, &vars))?;
@@ -564,10 +580,7 @@ pub fn create_project(dir: &Path, name: &str, demo: bool) -> Result<()> {
         #[cfg(debug_assertions)]
         {
             append_cargo_patch(&dir.join("Cargo.toml"))?;
-            println!(
-                "  {} Added cargo patch for local development",
-                style("→").cyan()
-            );
+            println!("  {} Added cargo patch for local development", ui::step());
         }
 
         fs::write(dir.join("forge.toml"), render(EMPTY_FORGE_TOML, &vars))?;

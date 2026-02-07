@@ -262,13 +262,11 @@ impl CronRunner {
 
                 for scheduled in scheduled_times {
                     // Try to claim this cron run; only claimed slots execute.
-                    if let Ok(claimed_run_id) =
+                    if let Ok(Some(run_id)) =
                         self.try_claim(info.name, scheduled, info.timezone).await
                     {
-                        if let Some(run_id) = claimed_run_id {
-                            self.execute_cron(entry, run_id, scheduled, false).await;
-                            jobs_executed += 1;
-                        }
+                        self.execute_cron(entry, run_id, scheduled, false).await;
+                        jobs_executed += 1;
                     }
                 }
 

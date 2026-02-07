@@ -4,6 +4,8 @@ use console::style;
 use std::fs;
 use std::path::Path;
 
+use super::ui;
+
 /// Add a new component.
 #[derive(Parser)]
 pub struct AddCommand {
@@ -101,10 +103,10 @@ pub struct {pascal_name} {{
 
     println!(
         "{} Created model: {}",
-        style("✅").green(),
+        ui::ok(),
         style(&file_path.display()).cyan()
     );
-    println!("   Don't forget to add your fields!");
+    println!("    {} Don't forget to add your fields.", ui::info());
 
     Ok(())
 }
@@ -196,7 +198,7 @@ pub async fn {snake_name}(ctx: &MutationContext) -> Result<()> {{
 
     println!(
         "{} Created {}: {}",
-        style("✅").green(),
+        ui::ok(),
         description,
         style(&file_path.display()).cyan()
     );
@@ -285,10 +287,13 @@ pub async fn {snake_name}(ctx: &JobContext, _input: {pascal_name}Input) -> Resul
 
     println!(
         "{} Created job: {}",
-        style("✅").green(),
+        ui::ok(),
         style(&file_path.display()).cyan()
     );
-    println!("   Job features: timeout, retry, progress tracking");
+    println!(
+        "    {} Job features: timeout, retry, progress tracking",
+        ui::info()
+    );
 
     Ok(())
 }
@@ -358,11 +363,14 @@ pub async fn {snake_name}(ctx: &CronContext) -> Result<()> {{
 
     println!(
         "{} Created cron: {}",
-        style("✅").green(),
+        ui::ok(),
         style(&file_path.display()).cyan()
     );
-    println!("   Schedule: 0 0 * * * (daily at midnight)");
-    println!("   Edit the schedule in the #[forge::cron] attribute");
+    println!("    {} Schedule: 0 0 * * * (daily at midnight)", ui::info());
+    println!(
+        "    {} Edit the schedule in the #[forge::cron] attribute",
+        ui::info()
+    );
 
     Ok(())
 }
@@ -466,10 +474,13 @@ pub async fn {snake_name}(ctx: &WorkflowContext, _input: {pascal_name}Input) -> 
 
     println!(
         "{} Created workflow: {}",
-        style("✅").green(),
+        ui::ok(),
         style(&file_path.display()).cyan()
     );
-    println!("   Features: durable steps, compensation, automatic retry");
+    println!(
+        "    {} Features: durable steps, compensation, automatic retry",
+        ui::info()
+    );
 
     Ok(())
 }
@@ -483,11 +494,7 @@ fn update_schema_mod(snake_name: &str, pascal_name: &str) -> Result<()> {
 
     // Check if already declared
     if content.contains(&mod_decl) {
-        println!(
-            "  {} {} already declared in mod.rs",
-            style("ℹ").blue(),
-            snake_name
-        );
+        println!("  {} {} already declared in mod.rs", ui::info(), snake_name);
         return Ok(());
     }
 
@@ -513,11 +520,7 @@ fn update_functions_mod(snake_name: &str) -> Result<()> {
 
     // Check if already declared
     if content.contains(&mod_decl) {
-        println!(
-            "  {} {} already declared in mod.rs",
-            style("ℹ").blue(),
-            snake_name
-        );
+        println!("  {} {} already declared in mod.rs", ui::info(), snake_name);
         return Ok(());
     }
 

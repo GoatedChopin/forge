@@ -386,13 +386,20 @@ impl Forge {
             http_client.clone(),
         ));
 
+        // PORT env var overrides config (used by --backend-port in forge dev)
+        let gateway_port = std::env::var("PORT")
+            .ok()
+            .and_then(|p| p.parse::<u16>().ok())
+            .unwrap_or(self.config.gateway.port);
+
         // Start HTTP gateway if gateway role
         if roles.contains(&NodeRole::Gateway) {
             let gateway_config = RuntimeGatewayConfig {
-                port: self.config.gateway.port,
+                port: gateway_port,
                 max_connections: self.config.gateway.max_connections,
                 request_timeout_secs: self.config.gateway.request_timeout_secs,
-                cors_enabled: self.config.gateway.cors_enabled,
+                cors_enabled: self.config.gateway.cors_enabled
+                    || !self.config.gateway.cors_origins.is_empty(),
                 cors_origins: self.config.gateway.cors_origins.clone(),
                 auth: AuthConfig::from_forge_config(&self.config.auth),
             };
@@ -433,7 +440,9 @@ impl Forge {
 
                 // Webhook routes need their own CORS layer since they're outside the API router.
                 // Reuse gateway CORS policy rather than forcing wildcard access.
-                let webhook_cors = if self.config.gateway.cors_enabled {
+                let webhook_cors = if self.config.gateway.cors_enabled
+                    || !self.config.gateway.cors_origins.is_empty()
+                {
                     if self.config.gateway.cors_origins.iter().any(|o| o == "*") {
                         CorsLayer::new()
                             .allow_origin(Any)
@@ -458,7 +467,7 @@ impl Forge {
 
                 let webhook_router = Router::new()
                     .route("/{*path}", post(webhook_handler).with_state(webhook_state))
-                    .layer(axum::extract::DefaultBodyLimit::max(1 * 1024 * 1024))
+                    .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024))
                     .layer(
                         tower::ServiceBuilder::new()
                             .layer(axum::error_handling::HandleErrorLayer::new(
@@ -515,7 +524,7 @@ impl Forge {
         tracing::info!(
             node_id = %node_id,
             roles = ?roles,
-            port = self.config.gateway.port,
+            port = gateway_port,
             "Forge started"
         );
 

@@ -32,6 +32,21 @@ This single command:
 
 Backend: `http://localhost:8080` | Frontend: `http://localhost:5173` | Dashboard: `http://localhost:8080/_dashboard`
 
+Useful options:
+
+```bash
+# Use external PostgreSQL from DATABASE_URL
+forge dev --no-pg
+
+# Kill process(es) occupying 8080/5173/5432 and take over
+forge dev --takeover-ports
+
+# Customize ports
+forge dev --backend-port 8081 --frontend-port 4173 --db-port 5433
+```
+
+Backend hot reload watches only backend-relevant files (`src/`, `migrations/`, `build.rs`, `Cargo.toml`, `Cargo.lock`, `.env`, `forge.toml`), so unrelated root files do not trigger restarts. By default, if a requested port is busy, Forge shows the owning process and exits.
+
 ## Using Docker Compose
 
 For containerized development:

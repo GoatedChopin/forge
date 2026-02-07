@@ -14,6 +14,8 @@ forge new my-app --demo && cd my-app
 forge dev
 ```
 
+Use `forge dev --no-pg` for an external `DATABASE_URL`. If ports are busy, Forge now fails fast and shows the occupying process; use `forge dev --takeover-ports` to kill and take over.
+
 [![Crates.io](https://img.shields.io/crates/v/forgex.svg)](https://crates.io/crates/forgex)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-tryforge.dev-blue)](https://tryforge.dev/docs)

@@ -42,6 +42,11 @@ forge dev [action] [options]
 |--------|-------------|
 | `--docker` | Run with Docker Compose instead of cargo/bun |
 | `--no-open` | Skip automatic browser open |
+| `--no-pg` | Use external `DATABASE_URL` instead of embedded PostgreSQL |
+| `--backend-port <port>` | Backend HTTP port (default: `8080`) |
+| `--frontend-port <port>` | Frontend Vite port (default: `5173`) |
+| `--db-port <port>` | Embedded PostgreSQL port (default: `5432`) |
+| `--takeover-ports` | Kill process(es) using requested ports and take over |
 
 ### Actions
 
@@ -61,6 +66,15 @@ forge dev --no-open
 # Run with Docker Compose
 forge dev --docker
 
+# Use external PostgreSQL
+forge dev --no-pg
+
+# Kill process(es) occupying 8080/5173/5432 and take over
+forge dev --takeover-ports
+
+# Custom backend/frontend ports
+forge dev --backend-port 8081 --frontend-port 4173
+
 # Stop environment
 forge dev down
 
@@ -77,6 +91,8 @@ When running, the following services are available:
 | Frontend | http://localhost:5173 |
 | Backend | http://localhost:8080 |
 
+By default, `forge dev` fails fast when requested ports are occupied and prints the process using each blocked port.
+
 ### Requirements (bare metal)
 
 | Tool | Minimum Version |
@@ -84,6 +100,20 @@ When running, the following services are available:
 | cargo | 1.92+ |
 | cargo-watch | any |
 | bun | 1.3+ |
+
+### Watch Scope (bare metal)
+
+`forge dev` only watches backend-relevant files for restarts:
+
+- `src/`
+- `migrations/`
+- `build.rs`
+- `Cargo.toml`
+- `Cargo.lock`
+- `.env`
+- `forge.toml`
+
+`frontend/*` and unrelated root files (for example `*.json`) no longer trigger backend restarts.
 
 ---
 

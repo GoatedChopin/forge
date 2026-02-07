@@ -6,6 +6,7 @@ mod migrate;
 mod new;
 mod runtime_generator;
 mod template;
+mod ui;
 
 pub use add::AddCommand;
 pub use check::CheckCommand;
@@ -33,6 +34,8 @@ const AFTER_HELP: &str = r#"Examples:
   forge new my-app --minimal     Clean slate with just the structure
   forge dev                      Start development (embedded postgres, hot reload)
   forge dev --no-pg              Use external DATABASE_URL instead
+  forge dev --takeover-ports     Kill owners and take over busy ports
+  forge dev --frontend-port 4173 Use custom frontend port
   forge check                    Validate project configuration
   forge add query get_users      Add a new query function
   forge generate                 Regenerate TypeScript types

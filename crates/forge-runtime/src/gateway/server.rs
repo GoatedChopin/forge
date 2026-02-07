@@ -7,6 +7,7 @@ use axum::{
     extract::DefaultBodyLimit,
     http::StatusCode,
     middleware,
+    response::IntoResponse,
     routing::{get, post},
 };
 use serde::Serialize;
@@ -21,6 +22,7 @@ use forge_core::function::{JobDispatch, WorkflowDispatch};
 
 use super::auth::{AuthConfig, AuthMiddleware, auth_middleware};
 use super::multipart::rpc_multipart_handler;
+use super::response::{RpcError, RpcResponse};
 use super::rpc::{RpcHandler, rpc_function_handler, rpc_handler};
 use super::sse::{
     SseState, sse_handler, sse_job_subscribe_handler, sse_subscribe_handler,
@@ -31,7 +33,7 @@ use crate::db::Database;
 use crate::function::FunctionRegistry;
 use crate::realtime::{Reactor, ReactorConfig};
 
-const MAX_JSON_BODY_SIZE: usize = 1 * 1024 * 1024;
+const MAX_JSON_BODY_SIZE: usize = 1024 * 1024;
 const MAX_MULTIPART_BODY_SIZE: usize = 20 * 1024 * 1024;
 const MAX_MULTIPART_CONCURRENCY: usize = 32;
 
@@ -298,11 +300,21 @@ async fn readiness_handler(
     )
 }
 
-async fn handle_middleware_error(err: BoxError) -> (StatusCode, &'static str) {
-    if err.is::<tower::timeout::error::Elapsed>() {
-        return (StatusCode::REQUEST_TIMEOUT, "Request timed out");
-    }
-    (StatusCode::SERVICE_UNAVAILABLE, "Server overloaded")
+async fn handle_middleware_error(err: BoxError) -> axum::response::Response {
+    let (status, code, message) = if err.is::<tower::timeout::error::Elapsed>() {
+        (StatusCode::REQUEST_TIMEOUT, "TIMEOUT", "Request timed out")
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "SERVICE_UNAVAILABLE",
+            "Server overloaded",
+        )
+    };
+    (
+        status,
+        Json(RpcResponse::error(RpcError::new(code, message))),
+    )
+        .into_response()
 }
 
 /// Simple tracing middleware that adds TracingState to extensions.

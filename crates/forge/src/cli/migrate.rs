@@ -7,6 +7,8 @@ use forge_core::config::ForgeConfig;
 use forge_runtime::Database;
 use forge_runtime::migrations::{MigrationRunner, load_migrations_from_dir};
 
+use super::ui;
+
 /// Manage database migrations.
 #[derive(Parser)]
 pub struct MigrateCommand {
@@ -65,61 +67,45 @@ impl MigrateCommand {
 
         match self.action {
             MigrateAction::Up => {
-                println!();
-                println!(
-                    "  {}  {} Migrations",
-                    style("⚒️").bold(),
-                    style("FORGE").bold().cyan()
-                );
-                println!();
+                ui::section("FORGE Migrations");
 
                 if available.is_empty() {
                     println!(
                         "  {} No migrations found in {}",
-                        style("ℹ").blue(),
+                        ui::info(),
                         self.migrations_dir
                     );
                     return Ok(());
                 }
 
-                println!("  {} Running pending migrations...", style("→").dim());
+                println!("  {} Running pending migrations...", ui::step());
                 runner.run(available).await?;
-                println!("  {} Migrations complete", style("✓").green());
+                println!("  {} Migrations complete", ui::ok());
                 println!();
             }
 
             MigrateAction::Down { count } => {
-                println!();
-                println!(
-                    "  {}  {} Migrations",
-                    style("⚒️").bold(),
-                    style("FORGE").bold().cyan()
-                );
-                println!();
+                ui::section("FORGE Migrations");
 
                 if count == 0 {
-                    println!("  {} Nothing to rollback (count=0)", style("ℹ").blue());
+                    println!("  {} Nothing to rollback (count=0)", ui::info());
                     return Ok(());
                 }
 
-                println!(
-                    "  {} Rolling back {} migration(s)...",
-                    style("→").dim(),
-                    count
-                );
+                println!("  {} Rolling back {} migration(s)...", ui::step(), count);
 
                 let rolled_back = runner.rollback(count).await?;
 
                 if rolled_back.is_empty() {
-                    println!("  {} No migrations to rollback", style("ℹ").blue());
+                    println!("  {} No migrations to rollback", ui::info());
                 } else {
                     for name in &rolled_back {
-                        println!("  {} Rolled back: {}", style("✓").green(), name);
+                        println!("  {} Rolled back: {}", ui::ok(), name);
                     }
                     println!();
                     println!(
                         "  {} Rolled back {} migration(s)",
-                        style("✓").green(),
+                        ui::ok(),
                         rolled_back.len()
                     );
                 }
@@ -127,24 +113,18 @@ impl MigrateCommand {
             }
 
             MigrateAction::Status => {
-                println!();
-                println!(
-                    "  {}  {} Migration Status",
-                    style("⚒️").bold(),
-                    style("FORGE").bold().cyan()
-                );
-                println!();
+                ui::section("FORGE Migration Status");
 
                 let status = runner.status(&available).await?;
 
                 if status.applied.is_empty() && status.pending.is_empty() {
-                    println!("  {} No migrations found", style("ℹ").blue());
+                    println!("  {} No migrations found", ui::info());
                     return Ok(());
                 }
 
                 // Show applied migrations
                 if !status.applied.is_empty() {
-                    println!("  {} Applied:", style("✓").green());
+                    println!("  {} Applied:", ui::ok());
                     for m in &status.applied {
                         let down_marker = if m.has_down {
                             style("↓").green().to_string()
@@ -166,16 +146,16 @@ impl MigrateCommand {
                     if !status.applied.is_empty() {
                         println!();
                     }
-                    println!("  {} Pending:", style("○").yellow());
+                    println!("  {} Pending:", ui::warn());
                     for name in &status.pending {
-                        println!("    {} {}", style("→").dim(), style(name).yellow());
+                        println!("    {} {}", ui::step(), style(name).yellow());
                     }
                 }
 
                 println!();
                 println!(
                     "  {} {} applied, {} pending",
-                    style("ℹ").blue(),
+                    ui::info(),
                     status.applied.len(),
                     status.pending.len()
                 );

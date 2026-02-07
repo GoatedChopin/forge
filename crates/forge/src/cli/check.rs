@@ -7,6 +7,8 @@ use std::path::Path;
 use std::process::Stdio;
 use tokio::process::Command;
 
+use super::ui;
+
 /// Validate project configuration and dependencies.
 ///
 /// Checks that the project is correctly configured and all required
@@ -38,105 +40,104 @@ impl CheckResult {
     }
 
     fn pass(&mut self, msg: &str) {
-        println!("  {} {}", style("✓").green(), msg);
+        println!("  {} {}", ui::ok(), msg);
     }
 
     fn warn(&mut self, msg: &str, fix: &str) {
-        println!("  {} {}", style("⚠").yellow(), msg);
+        println!("  {} {}", ui::warn(), msg);
         self.warnings.push(fix.to_string());
     }
 
     fn fail(&mut self, msg: &str, fix: &str) {
-        println!("  {} {}", style("✗").red(), msg);
+        println!("  {} {}", ui::error(), msg);
         self.errors.push(fix.to_string());
         self.passed = false;
     }
 
     fn info(&mut self, msg: &str) {
-        println!("    {} {}", style("→").dim(), msg);
+        println!("    {} {}", ui::info(), msg);
+    }
+
+    fn section(&mut self, title: &str) {
+        println!();
+        println!("  {} {}", ui::step(), style(title).bold());
     }
 }
 
 impl CheckCommand {
     /// Execute the check command.
     pub async fn execute(self) -> Result<()> {
-        println!();
+        ui::section("FORGE Project Check");
         println!(
-            "{} Checking FORGE project configuration...",
-            style("🔍").cyan()
+            "  {} Scanning project configuration and dependencies",
+            ui::tool()
         );
-        println!();
 
         let mut result = CheckResult::new();
 
-        // Check 1: forge.toml
+        result.section("Configuration");
         self.check_forge_toml(&mut result)?;
-
-        // Check 2: Cargo.toml
         self.check_cargo_toml(&mut result)?;
 
-        // Check 3: Directory structure
+        result.section("Project Structure");
         self.check_directory_structure(&mut result);
 
-        // Check 4: Migration files
+        result.section("Migrations");
         self.check_migrations(&mut result)?;
 
-        // Check 5: Functions
+        result.section("Functions");
         self.check_functions(&mut result)?;
 
-        // Check 6: Schema
+        result.section("Schema");
         self.check_schema(&mut result)?;
 
-        // Check 7: Code quality (cargo fmt, clippy)
+        result.section("Rust Tooling");
         self.check_rust_linting(&mut result).await;
 
-        // Check 8: Environment
+        result.section("Environment");
         let database_url = self.check_environment(&mut result);
 
-        // Check 9: Database connectivity
         if !self.no_db {
             if let Some(url) = database_url {
+                result.section("Database Connectivity");
                 self.check_database(&mut result, &url).await;
             }
         }
 
-        // Check 10: Frontend (if exists)
+        result.section("Frontend");
         self.check_frontend(&mut result)?;
 
-        // Check 11: Frontend linting (if frontend exists)
+        result.section("Frontend Tooling");
         self.check_frontend_linting(&mut result).await;
 
         // Summary
         println!();
         if result.passed && result.warnings.is_empty() {
-            println!(
-                "{} All checks passed! Ready for development.",
-                style("✅").green()
-            );
+            println!("{} All checks passed! Ready for development.", ui::ok());
             println!();
             println!("Next steps:");
             println!("  {} Start development", style("forge dev").cyan());
         } else if result.passed {
             println!(
                 "{} Checks passed with {} warning(s)",
-                style("⚠").yellow(),
+                ui::warn(),
                 result.warnings.len()
             );
             println!();
             println!("Suggestions:");
             for warning in &result.warnings {
-                println!("  {} {}", style("→").dim(), warning);
+                println!("  {} {}", ui::step(), warning);
             }
         } else {
             println!(
                 "{} {} error(s) found. Fix the issues and run 'forge check' again.",
-                style("❌").red(),
+                ui::error(),
                 result.errors.len()
             );
             println!();
             println!("To fix:");
             for error in &result.errors {
-                println!("  {} {}", style("→").dim(), error);
+                println!("  {} {}", ui::step(), error);
             }
             return Err(anyhow::anyhow!("Project check failed"));
         }
@@ -545,7 +546,7 @@ impl CheckCommand {
 
     async fn check_database(&self, result: &mut CheckResult, url: &str) {
         println!();
-        println!("  {} Checking database connection...", style("⋯").cyan());
+        println!("  {} Checking database connection...", ui::step());
 
         match check_database_connection(url).await {
             Ok(version) => {

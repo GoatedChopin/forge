@@ -582,12 +582,10 @@ pub async fn sse_subscribe_handler(
     let sessions = state.sessions.read().await;
     let session_data = match sessions.get(&session_id) {
         Some(data) => {
-            let session_auth =
-                match authorize_session_access(data, &request.session_secret, &request_auth) {
-                    Ok(auth) => auth,
-                    Err(resp) => return resp,
-                };
-            session_auth
+            match authorize_session_access(data, &request.session_secret, &request_auth) {
+                Ok(auth) => auth,
+                Err(resp) => return resp,
+            }
         }
         None => {
             return subscribe_error(

@@ -11,6 +11,7 @@ use super::runtime_generator::{
     FORGE_VERSION, generate_runtime, get_installed_version, has_legacy_runtime, needs_update,
     remove_legacy_runtime, update_frontend_package_json,
 };
+use super::ui;
 
 /// Generate TypeScript client code.
 #[derive(Parser)]
@@ -68,8 +69,8 @@ impl GenerateCommand {
         if has_legacy_runtime(frontend_dir) {
             pb.finish_and_clear();
 
-            println!();
-            println!("{} Legacy project structure detected.", style("⚠").yellow());
+            ui::section("Runtime Migration");
+            println!("{} Legacy project structure detected.", ui::warn());
             println!();
             println!("  This project uses the old embedded runtime structure.");
             println!("  Migration to the new .forge/ package structure is recommended.");
@@ -87,37 +88,37 @@ impl GenerateCommand {
                     println!();
                     println!(
                         "{} Migration declined. Use --skip-runtime to only regenerate types.",
-                        style("ℹ").blue()
+                        ui::info()
                     );
                     return Ok(());
                 }
             }
 
             println!();
-            println!("  Migrating...");
+            println!("  {} Migrating...", ui::step());
 
             // Remove legacy runtime
             remove_legacy_runtime(frontend_dir)?;
             println!(
                 "  {} Removed old src/lib/forge/runtime/ directory",
-                style("✓").green()
+                ui::ok()
             );
 
             // Generate new runtime
             generate_runtime(frontend_dir)?;
-            println!("  {} Created .forge/svelte/ package", style("✓").green());
+            println!("  {} Created .forge/svelte/ package", ui::ok());
 
             // Update package.json
             update_frontend_package_json(frontend_dir)?;
             println!(
                 "  {} Updated package.json with @forge/svelte dependency",
-                style("✓").green()
+                ui::ok()
             );
 
             println!();
             println!(
                 "  {} Migration complete! Please run: {}",
-                style("✓").green(),
+                ui::ok(),
                 style("bun install").cyan()
             );
             println!();
@@ -140,7 +141,7 @@ impl GenerateCommand {
                 pb.finish_and_clear();
 
                 println!();
-                println!("{} Version mismatch detected:", style("⚠").yellow());
+                println!("{} Version mismatch detected:", ui::warn());
                 println!("    - Project runtime: v{}", style(&installed).cyan());
                 println!("    - Forge CLI: v{}", style(FORGE_VERSION).cyan());
                 println!();
@@ -160,7 +161,7 @@ impl GenerateCommand {
                         println!();
                         println!(
                             "{} Update declined. Use --skip-runtime to only regenerate types.",
-                            style("ℹ").blue()
+                            ui::info()
                         );
                         return Ok(());
                     }
@@ -174,7 +175,7 @@ impl GenerateCommand {
                 println!();
                 println!(
                     "  {} Updated @forge/svelte runtime (v{} → v{})",
-                    style("✓").green(),
+                    ui::ok(),
                     installed,
                     FORGE_VERSION
                 );
@@ -256,7 +257,7 @@ impl GenerateCommand {
         if !self.skip_runtime {
             println!(
                 "  {} Generated @forge/svelte runtime (v{})",
-                style("✓").green(),
+                ui::ok(),
                 FORGE_VERSION
             );
         }
@@ -266,17 +267,13 @@ impl GenerateCommand {
             let function_count = registry.all_functions().len();
             println!(
                 "  {} Generated TypeScript from {} models, {} enums, {} functions",
-                style("✓").green(),
+                ui::ok(),
                 style(table_count).cyan(),
                 style(enum_count).cyan(),
                 style(function_count).cyan()
             );
         }
-        println!(
-            "  {} Output: {}",
-            style("📁").dim(),
-            style(&output_dir).cyan()
-        );
+        println!("  {} Output: {}", ui::info(), style(&output_dir).cyan());
         println!();
 
         Ok(())
