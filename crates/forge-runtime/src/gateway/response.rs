@@ -150,13 +150,29 @@ impl From<forge_core::error::ForgeError> for RpcError {
             }
             forge_core::error::ForgeError::Timeout(msg) => Self::new("TIMEOUT", msg),
             forge_core::error::ForgeError::JobCancelled(msg) => Self::new("JOB_CANCELLED", msg),
-            forge_core::error::ForgeError::Database(msg) => {
-                Self::internal(format!("Database error: {}", msg))
+            forge_core::error::ForgeError::Database(_)
+            | forge_core::error::ForgeError::Sql(_)
+            | forge_core::error::ForgeError::Internal(_)
+            | forge_core::error::ForgeError::Serialization(_)
+            | forge_core::error::ForgeError::Deserialization(_)
+            | forge_core::error::ForgeError::Function(_)
+            | forge_core::error::ForgeError::Config(_)
+            | forge_core::error::ForgeError::Io(_)
+            | forge_core::error::ForgeError::Cluster(_)
+            | forge_core::error::ForgeError::InvalidState(_)
+            | forge_core::error::ForgeError::WorkflowSuspended => {
+                Self::internal("Internal server error")
             }
-            forge_core::error::ForgeError::Function(msg) => {
-                Self::internal(format!("Function error: {}", msg))
+            forge_core::error::ForgeError::Job(msg) => Self::internal(msg),
+            forge_core::error::ForgeError::RateLimitExceeded { retry_after, .. } => {
+                Self::with_details(
+                    "RATE_LIMITED",
+                    "Rate limit exceeded",
+                    serde_json::json!({
+                        "retry_after_secs": retry_after.as_secs(),
+                    }),
+                )
             }
-            _ => Self::internal(err.to_string()),
         }
     }
 }

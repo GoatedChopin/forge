@@ -67,6 +67,32 @@ Duration formats: `30s`, `5m`, `1h`, `7d`, `30d`
 
 ## Patterns
 
+### Ownership Tracking
+
+Workflows automatically set `owner_subject` from `ctx.auth.principal_id()` at dispatch time.
+
+```rust
+#[forge::mutation(transactional)]
+pub async fn begin_onboarding(ctx: &MutationContext, user: NewUser) -> Result<Uuid> {
+    // owner_subject set automatically from the authenticated principal
+    ctx.start_workflow("onboard_user", user).await
+}
+
+// Query workflows belonging to the current user
+#[forge::query]
+pub async fn my_workflows(ctx: &QueryContext) -> Result<Vec<WorkflowSummary>> {
+    let subject = ctx.auth.require_subject()?;
+
+    sqlx::query_as("SELECT id, workflow_name, status FROM forge_workflow_runs WHERE owner_subject = $1 ORDER BY created_at DESC")
+        .bind(subject)
+        .fetch_all(ctx.db())
+        .await
+        .map_err(Into::into)
+}
+```
+
+Ownership persists across restarts and suspensions.
+
 ### Step with Timeout
 
 ```rust

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Json;
-use axum::extract::{Query, State};
+use axum::extract::{Extension, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -28,6 +28,38 @@ fn try_parse_session_id(session_id: &str) -> Option<SessionId> {
     uuid::Uuid::parse_str(session_id)
         .ok()
         .map(SessionId::from_uuid)
+}
+
+fn same_principal(a: &AuthContext, b: &AuthContext) -> bool {
+    match (a.is_authenticated(), b.is_authenticated()) {
+        (false, false) => true,
+        (true, true) => a.principal_id().is_some() && a.principal_id() == b.principal_id(),
+        _ => false,
+    }
+}
+
+fn authorize_session_access(
+    session: &SseSessionData,
+    session_secret: &str,
+    requester_auth: &AuthContext,
+) -> Result<AuthContext, (StatusCode, Json<SseSubscribeResponse>)> {
+    if session.session_secret != session_secret {
+        return Err(subscribe_error(
+            StatusCode::UNAUTHORIZED,
+            "INVALID_SESSION_SECRET",
+            "Session secret mismatch",
+        ));
+    }
+
+    if !same_principal(&session.auth_context, requester_auth) {
+        return Err(subscribe_error(
+            StatusCode::FORBIDDEN,
+            "SESSION_PRINCIPAL_MISMATCH",
+            "Request principal does not match session principal",
+        ));
+    }
+
+    Ok(session.auth_context.clone())
 }
 
 /// SSE configuration.
@@ -60,6 +92,7 @@ pub struct SseQuery {
 
 struct SseSessionData {
     auth_context: AuthContext,
+    session_secret: String,
     /// Maps client subscription ID -> internal SubscriptionId
     subscriptions: HashMap<String, SubscriptionId>,
 }
@@ -169,7 +202,10 @@ pub enum SsePayload {
         message: String,
     },
     /// Connection acknowledged.
-    Connected { session_id: String },
+    Connected {
+        session_id: String,
+        session_secret: String,
+    },
 }
 
 /// Internal message type for SSE stream.
@@ -190,6 +226,7 @@ pub enum SseMessage {
 #[derive(Debug, Deserialize)]
 pub struct SseSubscribeRequest {
     pub session_id: String,
+    pub session_secret: String,
     pub id: String,
     pub function: String,
     #[serde(default)]
@@ -200,6 +237,7 @@ pub struct SseSubscribeRequest {
 #[derive(Debug, Deserialize)]
 pub struct SseUnsubscribeRequest {
     pub session_id: String,
+    pub session_secret: String,
     pub id: String,
 }
 
@@ -207,6 +245,7 @@ pub struct SseUnsubscribeRequest {
 #[derive(Debug, Deserialize)]
 pub struct SseJobSubscribeRequest {
     pub session_id: String,
+    pub session_secret: String,
     pub id: String,
     pub job_id: String,
 }
@@ -215,6 +254,7 @@ pub struct SseJobSubscribeRequest {
 #[derive(Debug, Deserialize)]
 pub struct SseWorkflowSubscribeRequest {
     pub session_id: String,
+    pub session_secret: String,
     pub id: String,
     pub workflow_id: String,
 }
@@ -305,16 +345,18 @@ pub async fn sse_handler(
         match state.auth_middleware.validate_token_async(token).await {
             Ok(claims) => super::auth::build_auth_context_from_claims(claims),
             Err(e) => {
-                tracing::debug!(
-                    "SSE token validation failed, continuing unauthenticated: {}",
-                    e
-                );
-                forge_core::function::AuthContext::unauthenticated()
+                tracing::warn!("SSE token validation failed: {}", e);
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    "Invalid authentication token".to_string(),
+                )
+                    .into_response();
             }
         }
     } else {
         forge_core::function::AuthContext::unauthenticated()
     };
+    let session_secret = uuid::Uuid::new_v4().to_string();
 
     // Register session with reactor
     let reactor = state.reactor.clone();
@@ -331,6 +373,7 @@ pub async fn sse_handler(
             session_id,
             SseSessionData {
                 auth_context: auth_context.clone(),
+                session_secret: session_secret.clone(),
                 subscriptions: HashMap::new(),
             },
         );
@@ -372,6 +415,7 @@ pub async fn sse_handler(
         // Send connected event
         let connected = SsePayload::Connected {
             session_id: session_id.to_string(),
+            session_secret: session_secret.clone(),
         };
         match serde_json::to_string(&connected) {
             Ok(json) => {
@@ -511,6 +555,7 @@ fn convert_realtime_to_sse(msg: RealtimeMessage) -> Option<SseMessage> {
 /// SSE subscribe handler for POST /subscribe.
 pub async fn sse_subscribe_handler(
     State(state): State<Arc<SseState>>,
+    Extension(request_auth): Extension<AuthContext>,
     Json(request): Json<SseSubscribeRequest>,
 ) -> impl IntoResponse {
     // Validate subscription ID length to prevent memory bloat
@@ -536,7 +581,14 @@ pub async fn sse_subscribe_handler(
     // Get session data (auth context)
     let sessions = state.sessions.read().await;
     let session_data = match sessions.get(&session_id) {
-        Some(data) => data.auth_context.clone(),
+        Some(data) => {
+            let session_auth =
+                match authorize_session_access(data, &request.session_secret, &request_auth) {
+                    Ok(auth) => auth,
+                    Err(resp) => return resp,
+                };
+            session_auth
+        }
         None => {
             return subscribe_error(
                 StatusCode::NOT_FOUND,
@@ -594,11 +646,26 @@ pub async fn sse_subscribe_handler(
         }
         Err(e) => {
             tracing::warn!(%session_id, error = %e, "SSE subscription failed");
-            subscribe_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "SUBSCRIPTION_FAILED",
-                e.to_string(),
-            )
+            match e {
+                forge_core::ForgeError::Unauthorized(msg) => {
+                    subscribe_error(StatusCode::UNAUTHORIZED, "UNAUTHORIZED", msg)
+                }
+                forge_core::ForgeError::Forbidden(msg) => {
+                    subscribe_error(StatusCode::FORBIDDEN, "FORBIDDEN", msg)
+                }
+                forge_core::ForgeError::InvalidArgument(msg)
+                | forge_core::ForgeError::Validation(msg) => {
+                    subscribe_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", msg)
+                }
+                forge_core::ForgeError::NotFound(msg) => {
+                    subscribe_error(StatusCode::NOT_FOUND, "NOT_FOUND", msg)
+                }
+                _ => subscribe_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "SUBSCRIPTION_FAILED",
+                    "Subscription failed",
+                ),
+            }
         }
     }
 }
@@ -606,6 +673,7 @@ pub async fn sse_subscribe_handler(
 /// SSE unsubscribe handler for POST /unsubscribe.
 pub async fn sse_unsubscribe_handler(
     State(state): State<Arc<SseState>>,
+    Extension(request_auth): Extension<AuthContext>,
     Json(request): Json<SseUnsubscribeRequest>,
 ) -> impl IntoResponse {
     let Some(session_id) = try_parse_session_id(&request.session_id) else {
@@ -616,12 +684,24 @@ pub async fn sse_unsubscribe_handler(
         );
     };
 
-    // Look up internal subscription ID
+    // Look up internal subscription ID and validate session ownership
     let subscription_id = {
         let sessions = state.sessions.read().await;
-        sessions
-            .get(&session_id)
-            .and_then(|s| s.subscriptions.get(&request.id).copied())
+        match sessions.get(&session_id) {
+            Some(session) => {
+                if session.session_secret != request.session_secret
+                    || !same_principal(&session.auth_context, &request_auth)
+                {
+                    return unsubscribe_error(
+                        StatusCode::FORBIDDEN,
+                        "SESSION_PRINCIPAL_MISMATCH",
+                        "Request principal does not match session principal",
+                    );
+                }
+                session.subscriptions.get(&request.id).copied()
+            }
+            None => None,
+        }
     };
 
     let Some(subscription_id) = subscription_id else {
@@ -661,6 +741,7 @@ pub async fn sse_unsubscribe_handler(
 /// SSE job subscribe handler for POST /subscribe-job.
 pub async fn sse_job_subscribe_handler(
     State(state): State<Arc<SseState>>,
+    Extension(request_auth): Extension<AuthContext>,
     Json(request): Json<SseJobSubscribeRequest>,
 ) -> impl IntoResponse {
     if request.id.len() > MAX_CLIENT_SUB_ID_LEN {
@@ -682,17 +763,25 @@ pub async fn sse_job_subscribe_handler(
         );
     };
 
-    // Validate session exists
-    {
+    // Validate session exists + principal binding
+    let session_auth = {
         let sessions = state.sessions.read().await;
-        if !sessions.contains_key(&session_id) {
-            return subscribe_error(
-                StatusCode::NOT_FOUND,
-                "SESSION_NOT_FOUND",
-                "Session not found or expired",
-            );
+        match sessions.get(&session_id) {
+            Some(session) => {
+                match authorize_session_access(session, &request.session_secret, &request_auth) {
+                    Ok(auth) => auth,
+                    Err(resp) => return resp,
+                }
+            }
+            None => {
+                return subscribe_error(
+                    StatusCode::NOT_FOUND,
+                    "SESSION_NOT_FOUND",
+                    "Session not found or expired",
+                );
+            }
         }
-    }
+    };
 
     // Parse job ID
     let job_uuid = match uuid::Uuid::parse_str(&request.job_id) {
@@ -709,7 +798,7 @@ pub async fn sse_job_subscribe_handler(
     // Subscribe to job updates via reactor
     match state
         .reactor
-        .subscribe_job(session_id, request.id.clone(), job_uuid)
+        .subscribe_job(session_id, request.id.clone(), job_uuid, &session_auth)
         .await
     {
         Ok(job_data) => {
@@ -739,13 +828,29 @@ pub async fn sse_job_subscribe_handler(
                 }),
             )
         }
-        Err(e) => subscribe_error(StatusCode::NOT_FOUND, "JOB_NOT_FOUND", e.to_string()),
+        Err(e) => match e {
+            forge_core::ForgeError::Unauthorized(msg) => {
+                subscribe_error(StatusCode::UNAUTHORIZED, "UNAUTHORIZED", msg)
+            }
+            forge_core::ForgeError::Forbidden(msg) => {
+                subscribe_error(StatusCode::FORBIDDEN, "FORBIDDEN", msg)
+            }
+            forge_core::ForgeError::NotFound(msg) => {
+                subscribe_error(StatusCode::NOT_FOUND, "JOB_NOT_FOUND", msg)
+            }
+            _ => subscribe_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "SUBSCRIPTION_FAILED",
+                "Subscription failed",
+            ),
+        },
     }
 }
 
 /// SSE workflow subscribe handler for POST /subscribe-workflow.
 pub async fn sse_workflow_subscribe_handler(
     State(state): State<Arc<SseState>>,
+    Extension(request_auth): Extension<AuthContext>,
     Json(request): Json<SseWorkflowSubscribeRequest>,
 ) -> impl IntoResponse {
     if request.id.len() > MAX_CLIENT_SUB_ID_LEN {
@@ -767,17 +872,25 @@ pub async fn sse_workflow_subscribe_handler(
         );
     };
 
-    // Validate session exists
-    {
+    // Validate session exists + principal binding
+    let session_auth = {
         let sessions = state.sessions.read().await;
-        if !sessions.contains_key(&session_id) {
-            return subscribe_error(
-                StatusCode::NOT_FOUND,
-                "SESSION_NOT_FOUND",
-                "Session not found or expired",
-            );
+        match sessions.get(&session_id) {
+            Some(session) => {
+                match authorize_session_access(session, &request.session_secret, &request_auth) {
+                    Ok(auth) => auth,
+                    Err(resp) => return resp,
+                }
+            }
+            None => {
+                return subscribe_error(
+                    StatusCode::NOT_FOUND,
+                    "SESSION_NOT_FOUND",
+                    "Session not found or expired",
+                );
+            }
         }
-    }
+    };
 
     // Parse workflow ID
     let workflow_uuid = match uuid::Uuid::parse_str(&request.workflow_id) {
@@ -794,7 +907,7 @@ pub async fn sse_workflow_subscribe_handler(
     // Subscribe to workflow updates via reactor
     match state
         .reactor
-        .subscribe_workflow(session_id, request.id.clone(), workflow_uuid)
+        .subscribe_workflow(session_id, request.id.clone(), workflow_uuid, &session_auth)
         .await
     {
         Ok(workflow_data) => {
@@ -824,7 +937,22 @@ pub async fn sse_workflow_subscribe_handler(
                 }),
             )
         }
-        Err(e) => subscribe_error(StatusCode::NOT_FOUND, "WORKFLOW_NOT_FOUND", e.to_string()),
+        Err(e) => match e {
+            forge_core::ForgeError::Unauthorized(msg) => {
+                subscribe_error(StatusCode::UNAUTHORIZED, "UNAUTHORIZED", msg)
+            }
+            forge_core::ForgeError::Forbidden(msg) => {
+                subscribe_error(StatusCode::FORBIDDEN, "FORBIDDEN", msg)
+            }
+            forge_core::ForgeError::NotFound(msg) => {
+                subscribe_error(StatusCode::NOT_FOUND, "WORKFLOW_NOT_FOUND", msg)
+            }
+            _ => subscribe_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "SUBSCRIPTION_FAILED",
+                "Subscription failed",
+            ),
+        },
     }
 }
 

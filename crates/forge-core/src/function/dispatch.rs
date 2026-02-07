@@ -27,6 +27,7 @@ pub trait JobDispatch: Send + Sync {
         &self,
         job_type: &str,
         args: serde_json::Value,
+        owner_subject: Option<String>,
     ) -> Pin<Box<dyn Future<Output = Result<Uuid>> + Send + '_>>;
 
     /// Request cancellation for a job.
@@ -57,5 +58,6 @@ pub trait WorkflowDispatch: Send + Sync {
         &self,
         workflow_name: &str,
         input: serde_json::Value,
+        owner_subject: Option<String>,
     ) -> Pin<Box<dyn Future<Output = Result<Uuid>> + Send + '_>>;
 }

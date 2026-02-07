@@ -3,8 +3,9 @@ use std::sync::Arc;
 use axum::{
     body::Body,
     extract::{Request, State},
+    http::StatusCode,
     middleware::Next,
-    response::Response,
+    response::{IntoResponse, Response},
 };
 use forge_core::auth::Claims;
 use forge_core::config::JwtAlgorithm as CoreJwtAlgorithm;
@@ -324,28 +325,37 @@ pub enum AuthError {
 }
 
 /// Extract token from request headers.
-pub fn extract_token(req: &Request<Body>) -> Option<String> {
-    req.headers()
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .filter(|header| header.starts_with("Bearer "))
-        .map(|header| header.trim_start_matches("Bearer ").trim().to_string())
+pub fn extract_token(req: &Request<Body>) -> Result<Option<String>, AuthError> {
+    let Some(header_value) = req.headers().get(axum::http::header::AUTHORIZATION) else {
+        return Ok(None);
+    };
+
+    let header = header_value
+        .to_str()
+        .map_err(|_| AuthError::InvalidHeader)?;
+    let token = header
+        .strip_prefix("Bearer ")
+        .ok_or(AuthError::InvalidHeader)?
+        .trim();
+
+    if token.is_empty() {
+        return Err(AuthError::InvalidHeader);
+    }
+
+    Ok(Some(token.to_string()))
 }
 
 /// Extract auth context from token (async, supports both HMAC and RSA/JWKS).
 pub async fn extract_auth_context_async(
     token: Option<String>,
     middleware: &AuthMiddleware,
-) -> AuthContext {
+) -> Result<AuthContext, AuthError> {
     match token {
-        Some(token) => match middleware.validate_token_async(&token).await {
-            Ok(claims) => build_auth_context_from_claims(claims),
-            Err(e) => {
-                tracing::warn!(error = %e, "Token validation failed");
-                AuthContext::unauthenticated()
-            }
-        },
-        None => AuthContext::unauthenticated(),
+        Some(token) => middleware
+            .validate_token_async(&token)
+            .await
+            .map(build_auth_context_from_claims),
+        None => Ok(AuthContext::unauthenticated()),
     }
 }
 
@@ -381,13 +391,25 @@ pub async fn auth_middleware(
     req: Request<Body>,
     next: Next,
 ) -> Response {
-    let token = extract_token(&req);
+    let token = match extract_token(&req) {
+        Ok(token) => token,
+        Err(e) => {
+            tracing::warn!(error = %e, "Invalid authorization header");
+            return (StatusCode::UNAUTHORIZED, "Invalid authorization header").into_response();
+        }
+    };
     tracing::trace!(
         token_present = token.is_some(),
         "Auth middleware processing request"
     );
 
-    let auth_context = extract_auth_context_async(token, &middleware).await;
+    let auth_context = match extract_auth_context_async(token, &middleware).await {
+        Ok(auth_context) => auth_context,
+        Err(e) => {
+            tracing::warn!(error = %e, "Token validation failed");
+            return (StatusCode::UNAUTHORIZED, "Invalid authentication token").into_response();
+        }
+    };
     tracing::trace!(
         authenticated = auth_context.is_authenticated(),
         "Auth context created"
@@ -580,5 +602,23 @@ mod tests {
         };
         assert!(!rsa_config.is_hmac());
         assert!(rsa_config.is_rsa());
+    }
+
+    #[test]
+    fn test_extract_token_rejects_non_bearer_header() {
+        let req = Request::builder()
+            .header(axum::http::header::AUTHORIZATION, "Basic abc")
+            .body(Body::empty())
+            .unwrap();
+
+        let result = extract_token(&req);
+        assert!(matches!(result, Err(AuthError::InvalidHeader)));
+    }
+
+    #[tokio::test]
+    async fn test_extract_auth_context_async_invalid_token_errors() {
+        let middleware = AuthMiddleware::new(AuthConfig::with_secret("secret"));
+        let result = extract_auth_context_async(Some("bad.token".to_string()), &middleware).await;
+        assert!(matches!(result, Err(AuthError::InvalidToken(_))));
     }
 }

@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS forge_jobs (
     worker_capability VARCHAR(255),
     worker_id UUID,
     idempotency_key VARCHAR(255),
+    owner_subject TEXT,
     scheduled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     claimed_at TIMESTAMPTZ,
@@ -62,6 +63,10 @@ CREATE INDEX IF NOT EXISTS idx_forge_jobs_status_scheduled
 CREATE INDEX IF NOT EXISTS idx_forge_jobs_idempotency
     ON forge_jobs(idempotency_key)
     WHERE idempotency_key IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_forge_jobs_owner_subject
+    ON forge_jobs(owner_subject)
+    WHERE owner_subject IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_forge_jobs_expires
     ON forge_jobs(expires_at)
@@ -88,6 +93,7 @@ CREATE TABLE IF NOT EXISTS forge_workflow_runs (
     id UUID PRIMARY KEY,
     workflow_name VARCHAR(255) NOT NULL,
     version INTEGER DEFAULT 1,
+    owner_subject TEXT,
     input JSONB NOT NULL DEFAULT '{}',
     output JSONB,
     status VARCHAR(32) NOT NULL DEFAULT 'created',
@@ -115,6 +121,10 @@ CREATE INDEX IF NOT EXISTS idx_forge_workflow_runs_wake
 CREATE INDEX IF NOT EXISTS idx_forge_workflow_runs_tenant
     ON forge_workflow_runs(tenant_id)
     WHERE tenant_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_forge_workflow_runs_owner_subject
+    ON forge_workflow_runs(owner_subject)
+    WHERE owner_subject IS NOT NULL;
 
 -- Workflows: Event storage for durable workflows
 CREATE TABLE IF NOT EXISTS forge_workflow_events (

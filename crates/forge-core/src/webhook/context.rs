@@ -109,7 +109,7 @@ impl WebhookContext {
             crate::error::ForgeError::Internal("Job dispatch not available".into())
         })?;
         let args_json = serde_json::to_value(args)?;
-        dispatcher.dispatch_by_name(job_type, args_json).await
+        dispatcher.dispatch_by_name(job_type, args_json, None).await
     }
 
     /// Request cancellation for a job.

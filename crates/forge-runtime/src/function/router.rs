@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -96,11 +97,16 @@ impl FunctionRouter {
             self.check_auth(entry.info(), &auth)?;
             self.check_rate_limit(entry.info(), function_name, &auth, &request)
                 .await?;
+            Self::check_identity_args(function_name, &args, &auth)?;
 
             return match entry {
                 FunctionEntry::Query { handler, info, .. } => {
+                    let auth_scope = Self::auth_cache_scope(&auth);
                     if let Some(ttl) = info.cache_ttl {
-                        if let Some(cached) = self.query_cache.get(function_name, &args) {
+                        if let Some(cached) =
+                            self.query_cache
+                                .get(function_name, &args, auth_scope.as_deref())
+                        {
                             return Ok(RouteResult::Query(Value::clone(&cached)));
                         }
 
@@ -111,6 +117,7 @@ impl FunctionRouter {
                         self.query_cache.set(
                             function_name,
                             &args,
+                            auth_scope.as_deref(),
                             result.clone(),
                             Duration::from_secs(ttl),
                         );
@@ -147,8 +154,9 @@ impl FunctionRouter {
         if let Some(ref job_dispatcher) = self.job_dispatcher {
             if let Some(job_info) = job_dispatcher.get_info(function_name) {
                 self.check_job_auth(&job_info, &auth)?;
+                Self::check_identity_args(function_name, &args, &auth)?;
                 match job_dispatcher
-                    .dispatch_by_name(function_name, args.clone())
+                    .dispatch_by_name(function_name, args.clone(), auth.principal_id())
                     .await
                 {
                     Ok(job_id) => {
@@ -163,8 +171,9 @@ impl FunctionRouter {
         if let Some(ref workflow_dispatcher) = self.workflow_dispatcher {
             if let Some(workflow_info) = workflow_dispatcher.get_info(function_name) {
                 self.check_workflow_auth(&workflow_info, &auth)?;
+                Self::check_identity_args(function_name, &args, &auth)?;
                 match workflow_dispatcher
-                    .start_by_name(function_name, args.clone())
+                    .start_by_name(function_name, args.clone(), auth.principal_id())
                     .await
                 {
                     Ok(workflow_id) => {
@@ -284,6 +293,130 @@ impl FunctionRouter {
         Ok(())
     }
 
+    fn auth_cache_scope(auth: &AuthContext) -> Option<String> {
+        if !auth.is_authenticated() {
+            return Some("anon".to_string());
+        }
+
+        // Include role + claims fingerprint to avoid cross-scope cache bleed.
+        let mut roles = auth.roles().to_vec();
+        roles.sort();
+        roles.dedup();
+
+        let mut claims = BTreeMap::new();
+        for (k, v) in auth.claims() {
+            claims.insert(k.clone(), v.clone());
+        }
+
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+        roles.hash(&mut hasher);
+        serde_json::to_string(&claims)
+            .unwrap_or_default()
+            .hash(&mut hasher);
+
+        let principal = auth
+            .principal_id()
+            .unwrap_or_else(|| "authenticated".to_string());
+
+        Some(format!(
+            "subject:{principal}:scope:{:016x}",
+            hasher.finish()
+        ))
+    }
+
+    fn check_identity_args(function_name: &str, args: &Value, auth: &AuthContext) -> Result<()> {
+        if auth.is_admin() {
+            return Ok(());
+        }
+
+        let Some(obj) = args.as_object() else {
+            return Ok(());
+        };
+
+        let mut principal_values: Vec<String> = Vec::new();
+        if let Some(user_id) = auth.user_id().map(|id| id.to_string()) {
+            principal_values.push(user_id);
+        }
+        if let Some(subject) = auth.principal_id() {
+            if !principal_values.iter().any(|v| v == &subject) {
+                principal_values.push(subject);
+            }
+        }
+
+        for key in [
+            "user_id",
+            "userId",
+            "owner_id",
+            "ownerId",
+            "owner_subject",
+            "ownerSubject",
+            "subject",
+            "sub",
+            "principal_id",
+            "principalId",
+        ] {
+            let Some(value) = obj.get(key) else {
+                continue;
+            };
+
+            if !auth.is_authenticated() {
+                return Err(ForgeError::Unauthorized(format!(
+                    "Function '{function_name}' requires authentication for identity-scoped argument '{key}'"
+                )));
+            }
+
+            let Value::String(actual) = value else {
+                return Err(ForgeError::InvalidArgument(format!(
+                    "Function '{function_name}' argument '{key}' must be a non-empty string"
+                )));
+            };
+
+            if actual.trim().is_empty() || !principal_values.iter().any(|v| v == actual) {
+                return Err(ForgeError::Forbidden(format!(
+                    "Function '{function_name}' argument '{key}' does not match authenticated principal"
+                )));
+            }
+        }
+
+        for key in ["tenant_id", "tenantId"] {
+            let Some(value) = obj.get(key) else {
+                continue;
+            };
+
+            if !auth.is_authenticated() {
+                return Err(ForgeError::Unauthorized(format!(
+                    "Function '{function_name}' requires authentication for tenant-scoped argument '{key}'"
+                )));
+            }
+
+            let expected = auth
+                .claim("tenant_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    ForgeError::Forbidden(format!(
+                        "Function '{function_name}' argument '{key}' is not allowed for this principal"
+                    ))
+                })?;
+
+            let Value::String(actual) = value else {
+                return Err(ForgeError::InvalidArgument(format!(
+                    "Function '{function_name}' argument '{key}' must be a non-empty string"
+                )));
+            };
+
+            if actual.trim().is_empty() || actual != expected {
+                return Err(ForgeError::Forbidden(format!(
+                    "Function '{function_name}' argument '{key}' does not match authenticated tenant"
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
     /// Get the function kind by name.
     pub fn get_function_kind(&self, function_name: &str) -> Option<FunctionKind> {
         self.registry.get(function_name).map(|e| e.kind())
@@ -362,8 +495,8 @@ impl FunctionRouter {
             r#"
             INSERT INTO forge_jobs (
                 id, job_type, input, job_context, status, priority, attempts, max_attempts,
-                worker_capability, scheduled_at, created_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                worker_capability, owner_subject, scheduled_at, created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             "#,
         )
         .bind(job.id)
@@ -375,6 +508,7 @@ impl FunctionRouter {
         .bind(0i32)
         .bind(job.max_attempts)
         .bind(&job.worker_capability)
+        .bind(&job.owner_subject)
         .bind(now)
         .bind(now)
         .execute(&mut **tx)
@@ -392,13 +526,15 @@ impl FunctionRouter {
         sqlx::query(
             r#"
             INSERT INTO forge_workflow_runs (
-                id, workflow_name, input, status, current_step,
+                id, workflow_name, version, owner_subject, input, status, current_step,
                 step_results, started_at, trace_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             "#,
         )
         .bind(workflow.id)
         .bind(&workflow.workflow_name)
+        .bind(1i32)
+        .bind(&workflow.owner_subject)
         .bind(&workflow.input)
         .bind(WorkflowStatus::Created.as_str())
         .bind(Option::<String>::None)
@@ -416,6 +552,7 @@ impl FunctionRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn test_check_auth_public() {
@@ -440,5 +577,90 @@ mod tests {
         // Can't test check_auth directly without a router instance,
         // but we can test the logic
         assert!(info.is_public);
+    }
+
+    #[test]
+    fn test_identity_args_reject_cross_user_value() {
+        let user_id = uuid::Uuid::new_v4();
+        let auth = AuthContext::authenticated(
+            user_id,
+            vec!["user".to_string()],
+            HashMap::from([(
+                "sub".to_string(),
+                serde_json::Value::String(user_id.to_string()),
+            )]),
+        );
+        let args = serde_json::json!({
+            "user_id": uuid::Uuid::new_v4().to_string()
+        });
+
+        let result = FunctionRouter::check_identity_args("list_orders", &args, &auth);
+        assert!(matches!(result, Err(ForgeError::Forbidden(_))));
+    }
+
+    #[test]
+    fn test_identity_args_allow_matching_subject() {
+        let sub = "user_123";
+        let auth = AuthContext::authenticated_without_uuid(
+            vec!["user".to_string()],
+            HashMap::from([(
+                "sub".to_string(),
+                serde_json::Value::String(sub.to_string()),
+            )]),
+        );
+        let args = serde_json::json!({
+            "subject": sub
+        });
+
+        let result = FunctionRouter::check_identity_args("list_orders", &args, &auth);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_identity_args_require_auth_for_identity_keys() {
+        let auth = AuthContext::unauthenticated();
+        let args = serde_json::json!({
+            "user_id": uuid::Uuid::new_v4().to_string()
+        });
+
+        let result = FunctionRouter::check_identity_args("list_orders", &args, &auth);
+        assert!(matches!(result, Err(ForgeError::Unauthorized(_))));
+    }
+
+    #[test]
+    fn test_auth_cache_scope_changes_with_claims() {
+        let user_id = uuid::Uuid::new_v4();
+        let auth_a = AuthContext::authenticated(
+            user_id,
+            vec!["user".to_string()],
+            HashMap::from([
+                (
+                    "sub".to_string(),
+                    serde_json::Value::String(user_id.to_string()),
+                ),
+                (
+                    "tenant_id".to_string(),
+                    serde_json::Value::String("tenant-a".to_string()),
+                ),
+            ]),
+        );
+        let auth_b = AuthContext::authenticated(
+            user_id,
+            vec!["user".to_string()],
+            HashMap::from([
+                (
+                    "sub".to_string(),
+                    serde_json::Value::String(user_id.to_string()),
+                ),
+                (
+                    "tenant_id".to_string(),
+                    serde_json::Value::String("tenant-b".to_string()),
+                ),
+            ]),
+        );
+
+        let scope_a = FunctionRouter::auth_cache_scope(&auth_a);
+        let scope_b = FunctionRouter::auth_cache_scope(&auth_b);
+        assert_ne!(scope_a, scope_b);
     }
 }

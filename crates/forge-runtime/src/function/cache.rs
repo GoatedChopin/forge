@@ -15,6 +15,7 @@ pub struct QueryCache {
 struct CacheKey {
     function_name: String,
     args_hash: u64,
+    auth_scope_hash: u64,
 }
 
 struct CacheEntry {
@@ -38,8 +39,13 @@ impl QueryCache {
     }
 
     /// Get a cached value if it exists and hasn't expired.
-    pub fn get(&self, function_name: &str, args: &Value) -> Option<Arc<Value>> {
-        let key = self.make_key(function_name, args);
+    pub fn get(
+        &self,
+        function_name: &str,
+        args: &Value,
+        auth_scope: Option<&str>,
+    ) -> Option<Arc<Value>> {
+        let key = self.make_key(function_name, args, auth_scope);
 
         let entries = self.entries.read().ok()?;
         let entry = entries.get(&key)?;
@@ -52,8 +58,15 @@ impl QueryCache {
     }
 
     /// Set a cached value with a TTL.
-    pub fn set(&self, function_name: &str, args: &Value, value: Value, ttl: Duration) {
-        let key = self.make_key(function_name, args);
+    pub fn set(
+        &self,
+        function_name: &str,
+        args: &Value,
+        auth_scope: Option<&str>,
+        value: Value,
+        ttl: Duration,
+    ) {
+        let key = self.make_key(function_name, args, auth_scope);
         let now = Instant::now();
 
         let entry = CacheEntry {
@@ -79,9 +92,11 @@ impl QueryCache {
 
     /// Invalidate a specific cache entry.
     pub fn invalidate(&self, function_name: &str, args: &Value) {
-        let key = self.make_key(function_name, args);
+        let key = self.make_key(function_name, args, None);
         if let Ok(mut entries) = self.entries.write() {
-            entries.remove(&key);
+            entries.retain(|k, _| {
+                !(k.function_name == key.function_name && k.args_hash == key.args_hash)
+            });
         }
     }
 
@@ -109,10 +124,11 @@ impl QueryCache {
         self.len() == 0
     }
 
-    fn make_key(&self, function_name: &str, args: &Value) -> CacheKey {
+    fn make_key(&self, function_name: &str, args: &Value, auth_scope: Option<&str>) -> CacheKey {
         CacheKey {
             function_name: function_name.to_string(),
             args_hash: hash_value(args),
+            auth_scope_hash: hash_str(auth_scope.unwrap_or("")),
         }
     }
 
@@ -144,6 +160,12 @@ impl Default for QueryCache {
 fn hash_value(value: &Value) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     hash_value_recursive(value, &mut hasher);
+    hasher.finish()
+}
+
+fn hash_str(value: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    value.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -194,9 +216,15 @@ mod tests {
         let args = json!({"id": 123});
         let value = json!({"name": "test"});
 
-        cache.set("get_user", &args, value.clone(), Duration::from_secs(60));
+        cache.set(
+            "get_user",
+            &args,
+            Some("user:1"),
+            value.clone(),
+            Duration::from_secs(60),
+        );
 
-        let result = cache.get("get_user", &args);
+        let result = cache.get("get_user", &args, Some("user:1"));
         assert_eq!(result.as_deref(), Some(&value));
     }
 
@@ -205,7 +233,7 @@ mod tests {
         let cache = QueryCache::new();
         let args = json!({"id": 123});
 
-        let result = cache.get("get_user", &args);
+        let result = cache.get("get_user", &args, Some("user:1"));
         assert_eq!(result, None);
     }
 
@@ -215,10 +243,16 @@ mod tests {
         let args = json!({"id": 123});
         let value = json!({"name": "test"});
 
-        cache.set("get_user", &args, value, Duration::from_secs(60));
+        cache.set(
+            "get_user",
+            &args,
+            Some("user:1"),
+            value,
+            Duration::from_secs(60),
+        );
         cache.invalidate("get_user", &args);
 
-        let result = cache.get("get_user", &args);
+        let result = cache.get("get_user", &args, Some("user:1"));
         assert_eq!(result, None);
     }
 
@@ -231,22 +265,34 @@ mod tests {
         cache.set(
             "get_user",
             &args1,
+            Some("user:1"),
             json!({"name": "a"}),
             Duration::from_secs(60),
         );
         cache.set(
             "get_user",
             &args2,
+            Some("user:1"),
             json!({"name": "b"}),
             Duration::from_secs(60),
         );
-        cache.set("list_users", &json!({}), json!([]), Duration::from_secs(60));
+        cache.set(
+            "list_users",
+            &json!({}),
+            Some("user:1"),
+            json!([]),
+            Duration::from_secs(60),
+        );
 
         cache.invalidate_function("get_user");
 
-        assert_eq!(cache.get("get_user", &args1), None);
-        assert_eq!(cache.get("get_user", &args2), None);
-        assert!(cache.get("list_users", &json!({})).is_some());
+        assert_eq!(cache.get("get_user", &args1, Some("user:1")), None);
+        assert_eq!(cache.get("get_user", &args2, Some("user:1")), None);
+        assert!(
+            cache
+                .get("list_users", &json!({}), Some("user:1"))
+                .is_some()
+        );
     }
 
     #[test]
@@ -256,5 +302,30 @@ mod tests {
 
         // Object keys should be sorted for consistent hashing
         assert_eq!(hash_value(&v1), hash_value(&v2));
+    }
+
+    #[test]
+    fn test_cache_isolation_by_auth_scope() {
+        let cache = QueryCache::new();
+        let args = json!({"id": 1});
+
+        cache.set(
+            "get_profile",
+            &args,
+            Some("subject:user-a"),
+            json!({"name": "Alice"}),
+            Duration::from_secs(60),
+        );
+
+        assert!(
+            cache
+                .get("get_profile", &args, Some("subject:user-b"))
+                .is_none()
+        );
+        assert!(
+            cache
+                .get("get_profile", &args, Some("subject:user-a"))
+                .is_some()
+        );
     }
 }

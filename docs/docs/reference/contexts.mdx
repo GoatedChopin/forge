@@ -24,7 +24,10 @@ Authentication state for the current request. Available on all contexts via the 
 | `has_role` | `fn has_role(&self, role: &str) -> bool` | Check if user has role |
 | `require_role` | `fn require_role(&self, role: &str) -> Result<()>` | Require role or return 403 error |
 | `claim` | `fn claim(&self, key: &str) -> Option<&Value>` | Get custom JWT claim |
+| `claims` | `fn claims(&self) -> &HashMap<String, Value>` | Get all custom JWT claims |
 | `roles` | `fn roles(&self) -> &[String]` | Get all user roles |
+| `principal_id` | `fn principal_id(&self) -> Option<String>` | Stable principal identifier for ownership tracking |
+| `is_admin` | `fn is_admin(&self) -> bool` | Check if principal has "admin" role |
 
 ### Constructors (Testing)
 

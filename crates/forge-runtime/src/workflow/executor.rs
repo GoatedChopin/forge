@@ -61,6 +61,7 @@ impl WorkflowExecutor {
         &self,
         workflow_name: &str,
         input: I,
+        owner_subject: Option<String>,
     ) -> forge_core::Result<Uuid> {
         let entry = self.registry.get(workflow_name).ok_or_else(|| {
             forge_core::ForgeError::NotFound(format!("Workflow '{}' not found", workflow_name))
@@ -68,7 +69,12 @@ impl WorkflowExecutor {
 
         let input_value = serde_json::to_value(input)?;
 
-        let record = WorkflowRecord::new(workflow_name, entry.info.version, input_value.clone());
+        let record = WorkflowRecord::new(
+            workflow_name,
+            entry.info.version,
+            input_value.clone(),
+            owner_subject,
+        );
         let run_id = record.id;
 
         // Clone entry data for background execution
@@ -412,7 +418,10 @@ impl WorkflowExecutor {
             .map(|row| {
                 let status_str = row.get::<String, _>("status");
                 let status = status_str.parse().map_err(|e| {
-                    forge_core::ForgeError::Database(format!("Invalid step status '{}': {}", status_str, e))
+                    forge_core::ForgeError::Database(format!(
+                        "Invalid step status '{}': {}",
+                        status_str, e
+                    ))
                 })?;
                 Ok(WorkflowStepRecord {
                     id: row.get("id"),
@@ -457,13 +466,15 @@ impl WorkflowExecutor {
         sqlx::query(
             r#"
             INSERT INTO forge_workflow_runs (
-                id, workflow_name, input, status, current_step,
+                id, workflow_name, version, owner_subject, input, status, current_step,
                 step_results, started_at, trace_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             "#,
         )
         .bind(record.id)
         .bind(&record.workflow_name)
+        .bind(record.version as i32)
+        .bind(&record.owner_subject)
         .bind(&record.input)
         .bind(record.status.as_str())
         .bind(&record.current_step)
@@ -481,7 +492,7 @@ impl WorkflowExecutor {
     async fn get_workflow(&self, run_id: Uuid) -> forge_core::Result<WorkflowRecord> {
         let row = sqlx::query(
             r#"
-            SELECT id, workflow_name, input, output, status, current_step,
+            SELECT id, workflow_name, version, owner_subject, input, output, status, current_step,
                    step_results, started_at, completed_at, error, trace_id
             FROM forge_workflow_runs
             WHERE id = $1
@@ -499,12 +510,16 @@ impl WorkflowExecutor {
         use sqlx::Row;
         let status_str = row.get::<String, _>("status");
         let status = status_str.parse().map_err(|e| {
-            forge_core::ForgeError::Database(format!("Invalid workflow status '{}': {}", status_str, e))
+            forge_core::ForgeError::Database(format!(
+                "Invalid workflow status '{}': {}",
+                status_str, e
+            ))
         })?;
         Ok(WorkflowRecord {
             id: row.get("id"),
             workflow_name: row.get("workflow_name"),
-            version: 1, // TODO: Add version column
+            version: row.get::<i32, _>("version") as u32,
+            owner_subject: row.get("owner_subject"),
             input: row.get("input"),
             output: row.get("output"),
             status,
@@ -614,8 +629,9 @@ impl WorkflowExecutor {
         &self,
         workflow_name: &str,
         input: serde_json::Value,
+        owner_subject: Option<String>,
     ) -> forge_core::Result<Uuid> {
-        self.start(workflow_name, input).await
+        self.start(workflow_name, input, owner_subject).await
     }
 }
 
@@ -628,9 +644,13 @@ impl WorkflowDispatch for WorkflowExecutor {
         &self,
         workflow_name: &str,
         input: serde_json::Value,
+        owner_subject: Option<String>,
     ) -> Pin<Box<dyn Future<Output = forge_core::Result<Uuid>> + Send + '_>> {
         let workflow_name = workflow_name.to_string();
-        Box::pin(async move { self.start_by_name(&workflow_name, input).await })
+        Box::pin(async move {
+            self.start_by_name(&workflow_name, input, owner_subject)
+                .await
+        })
     }
 }
 

@@ -108,6 +108,7 @@ pub struct PendingJob {
     pub job_type: String,
     pub args: serde_json::Value,
     pub context: serde_json::Value,
+    pub owner_subject: Option<String>,
     pub priority: i32,
     pub max_attempts: i32,
     pub worker_capability: Option<String>,
@@ -118,6 +119,7 @@ pub struct PendingWorkflow {
     pub id: Uuid,
     pub workflow_name: String,
     pub input: serde_json::Value,
+    pub owner_subject: Option<String>,
 }
 
 #[derive(Default)]
@@ -219,6 +221,11 @@ impl AuthContext {
         self.claims.get(key)
     }
 
+    /// Get all custom claims.
+    pub fn claims(&self) -> &HashMap<String, serde_json::Value> {
+        &self.claims
+    }
+
     /// Get all roles.
     pub fn roles(&self) -> &[String] {
         &self.roles
@@ -243,6 +250,20 @@ impl AuthContext {
         self.subject().ok_or_else(|| {
             crate::error::ForgeError::Unauthorized("No subject claim in token".to_string())
         })
+    }
+
+    /// Get a stable principal identifier for access control and cache scoping.
+    ///
+    /// Prefers the raw JWT `sub` claim and falls back to UUID user_id.
+    pub fn principal_id(&self) -> Option<String> {
+        self.subject()
+            .map(ToString::to_string)
+            .or_else(|| self.user_id.map(|id| id.to_string()))
+    }
+
+    /// Check whether this principal should be treated as privileged admin.
+    pub fn is_admin(&self) -> bool {
+        self.roles.iter().any(|r| r.eq_ignore_ascii_case("admin"))
     }
 }
 
@@ -530,6 +551,7 @@ impl MutationContext {
                 job_type: job_type.to_string(),
                 args: args_json,
                 context: serde_json::json!({}),
+                owner_subject: self.auth.principal_id(),
                 priority: job_info.priority.as_i32(),
                 max_attempts: job_info.retry.max_attempts as i32,
                 worker_capability: job_info.worker_capability.map(|s| s.to_string()),
@@ -544,7 +566,9 @@ impl MutationContext {
         let dispatcher = self.job_dispatch.as_ref().ok_or_else(|| {
             crate::error::ForgeError::Internal("Job dispatch not available".into())
         })?;
-        dispatcher.dispatch_by_name(job_type, args_json).await
+        dispatcher
+            .dispatch_by_name(job_type, args_json, self.auth.principal_id())
+            .await
     }
 
     /// Dispatch a job with initial context.
@@ -566,6 +590,7 @@ impl MutationContext {
                 job_type: job_type.to_string(),
                 args: args_json,
                 context,
+                owner_subject: self.auth.principal_id(),
                 priority: job_info.priority.as_i32(),
                 max_attempts: job_info.retry.max_attempts as i32,
                 worker_capability: job_info.worker_capability.map(|s| s.to_string()),
@@ -579,7 +604,9 @@ impl MutationContext {
         let dispatcher = self.job_dispatch.as_ref().ok_or_else(|| {
             crate::error::ForgeError::Internal("Job dispatch not available".into())
         })?;
-        dispatcher.dispatch_by_name(job_type, args_json).await
+        dispatcher
+            .dispatch_by_name(job_type, args_json, self.auth.principal_id())
+            .await
     }
 
     /// Request cancellation for a job.
@@ -608,6 +635,7 @@ impl MutationContext {
                 id: Uuid::new_v4(),
                 workflow_name: workflow_name.to_string(),
                 input: input_json,
+                owner_subject: self.auth.principal_id(),
             };
 
             let workflow_id = pending.id;
@@ -619,7 +647,9 @@ impl MutationContext {
         let dispatcher = self.workflow_dispatch.as_ref().ok_or_else(|| {
             crate::error::ForgeError::Internal("Workflow dispatch not available".into())
         })?;
-        dispatcher.start_by_name(workflow_name, input_json).await
+        dispatcher
+            .start_by_name(workflow_name, input_json, self.auth.principal_id())
+            .await
     }
 }
 

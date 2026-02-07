@@ -202,6 +202,7 @@ impl crate::function::JobDispatch for MockJobDispatch {
         &self,
         job_type: &str,
         args: serde_json::Value,
+        _owner_subject: Option<String>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Uuid>> + Send + '_>> {
         let job_type = job_type.to_string();
         Box::pin(async move { self.dispatch(&job_type, args).await })
@@ -257,13 +258,19 @@ impl MockWorkflowDispatch {
             status: WorkflowStatus::Created,
         };
 
-        self.workflows.write().expect("workflows lock poisoned").push(workflow);
+        self.workflows
+            .write()
+            .expect("workflows lock poisoned")
+            .push(workflow);
         Ok(run_id)
     }
 
     /// Get all started workflows.
     pub fn started_workflows(&self) -> Vec<StartedWorkflow> {
-        self.workflows.read().expect("workflows lock poisoned").clone()
+        self.workflows
+            .read()
+            .expect("workflows lock poisoned")
+            .clone()
     }
 
     /// Get workflows of a specific name.
@@ -335,7 +342,10 @@ impl MockWorkflowDispatch {
 
     /// Clear all recorded workflows.
     pub fn clear(&self) {
-        self.workflows.write().expect("workflows lock poisoned").clear();
+        self.workflows
+            .write()
+            .expect("workflows lock poisoned")
+            .clear();
     }
 
     /// Mark a workflow as completed (for test simulation).

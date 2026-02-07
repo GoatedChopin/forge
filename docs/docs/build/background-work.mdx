@@ -83,6 +83,36 @@ All strategies cap at `max_backoff` (default 5 minutes).
 
 ## Patterns
 
+### Ownership Tracking
+
+Jobs automatically set `owner_subject` from `ctx.auth.principal_id()` on dispatch.
+
+```rust
+#[forge::mutation(transactional)]
+pub async fn start_export(ctx: &MutationContext, input: ExportInput) -> Result<Uuid> {
+    // owner_subject is set automatically from the authenticated principal
+    let job_id = ctx.dispatch_job("export_data", json!({
+        "format": input.format,
+    })).await?;
+
+    Ok(job_id)
+}
+
+// Query a user's own jobs
+#[forge::query]
+pub async fn my_jobs(ctx: &QueryContext) -> Result<Vec<JobSummary>> {
+    let subject = ctx.auth.require_subject()?;
+
+    sqlx::query_as("SELECT id, job_type, status FROM forge_jobs WHERE owner_subject = $1 ORDER BY created_at DESC")
+        .bind(subject)
+        .fetch_all(ctx.db())
+        .await
+        .map_err(Into::into)
+}
+```
+
+The `owner_subject` column is indexed for efficient per-user queries.
+
 ### Dispatch from Mutation
 
 Jobs are dispatched within the mutation's transaction. If the mutation fails, the job is never enqueued.

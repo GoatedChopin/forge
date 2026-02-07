@@ -31,6 +31,8 @@ pub struct JobRecord {
     pub worker_id: Option<Uuid>,
     /// Idempotency key for deduplication.
     pub idempotency_key: Option<String>,
+    /// Principal that created the job (for access control).
+    pub owner_subject: Option<String>,
     /// When the job is scheduled to run.
     pub scheduled_at: DateTime<Utc>,
     /// When the job was created.
@@ -75,6 +77,7 @@ impl JobRecord {
             worker_capability: None,
             worker_id: None,
             idempotency_key: None,
+            owner_subject: None,
             scheduled_at: Utc::now(),
             created_at: Utc::now(),
             claimed_at: None,
@@ -103,6 +106,12 @@ impl JobRecord {
     /// Set idempotency key.
     pub fn with_idempotency_key(mut self, key: impl Into<String>) -> Self {
         self.idempotency_key = Some(key.into());
+        self
+    }
+
+    /// Set owner subject.
+    pub fn with_owner_subject(mut self, owner_subject: Option<String>) -> Self {
+        self.owner_subject = owner_subject;
         self
     }
 }
@@ -143,9 +152,9 @@ impl JobQueue {
             r#"
             INSERT INTO forge_jobs (
                 id, job_type, input, job_context, status, priority, attempts, max_attempts,
-                worker_capability, idempotency_key, scheduled_at, created_at
+                worker_capability, idempotency_key, owner_subject, scheduled_at, created_at
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
             )
             "#,
         )
@@ -159,6 +168,7 @@ impl JobQueue {
         .bind(job.max_attempts)
         .bind(&job.worker_capability)
         .bind(&job.idempotency_key)
+        .bind(&job.owner_subject)
         .bind(job.scheduled_at)
         .bind(job.created_at)
         .execute(&self.pool)
@@ -196,7 +206,7 @@ impl JobQueue {
             RETURNING
                 id, job_type, input, output, job_context, status, priority,
                 attempts, max_attempts, last_error, worker_capability,
-                worker_id, idempotency_key, scheduled_at, created_at,
+                worker_id, idempotency_key, owner_subject, scheduled_at, created_at,
                 claimed_at, started_at, completed_at, failed_at, last_heartbeat,
                 cancel_requested_at, cancelled_at, cancel_reason
             "#,
@@ -225,6 +235,7 @@ impl JobQueue {
                     worker_capability: row.get("worker_capability"),
                     worker_id: row.get("worker_id"),
                     idempotency_key: row.get("idempotency_key"),
+                    owner_subject: row.get("owner_subject"),
                     scheduled_at: row.get("scheduled_at"),
                     created_at: row.get("created_at"),
                     claimed_at: row.get("claimed_at"),

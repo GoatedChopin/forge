@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use tokio::sync::{RwLock, broadcast, mpsc};
@@ -63,6 +63,7 @@ pub struct JobSubscription {
     pub client_sub_id: String,
     #[allow(dead_code)]
     pub job_id: Uuid, // Validated UUID, not String
+    pub auth_context: forge_core::function::AuthContext,
 }
 
 /// Workflow subscription tracking.
@@ -74,6 +75,7 @@ pub struct WorkflowSubscription {
     pub client_sub_id: String,
     #[allow(dead_code)]
     pub workflow_id: Uuid, // Validated UUID, not String
+    pub auth_context: forge_core::function::AuthContext,
 }
 
 /// ChangeListener -> InvalidationEngine -> Query Re-execution -> SSE Push
@@ -208,6 +210,8 @@ impl Reactor {
         args: serde_json::Value,
         auth_context: forge_core::function::AuthContext,
     ) -> forge_core::Result<(SubscriptionId, serde_json::Value)> {
+        Self::check_identity_args(&query_name, &args, &auth_context)?;
+
         let sub_info = self
             .subscription_manager
             .create_subscription(session_id, &query_name, args.clone())
@@ -277,8 +281,11 @@ impl Reactor {
         session_id: SessionId,
         client_sub_id: String,
         job_id: Uuid, // Pre-validated UUID
+        auth_context: &forge_core::function::AuthContext,
     ) -> forge_core::Result<JobData> {
         let subscription_id = SubscriptionId::new();
+
+        Self::ensure_job_access(&self.db_pool, job_id, auth_context).await?;
 
         // Fetch current job state from database
         let job_data = self.fetch_job_data(job_id).await?;
@@ -289,6 +296,7 @@ impl Reactor {
             session_id,
             client_sub_id: client_sub_id.clone(),
             job_id,
+            auth_context: auth_context.clone(),
         };
 
         let mut subs = self.job_subscriptions.write().await;
@@ -325,8 +333,11 @@ impl Reactor {
         session_id: SessionId,
         client_sub_id: String,
         workflow_id: Uuid, // Pre-validated UUID
+        auth_context: &forge_core::function::AuthContext,
     ) -> forge_core::Result<WorkflowData> {
         let subscription_id = SubscriptionId::new();
+
+        Self::ensure_workflow_access(&self.db_pool, workflow_id, auth_context).await?;
 
         // Fetch current workflow + steps from database
         let workflow_data = self.fetch_workflow_data(workflow_id).await?;
@@ -337,6 +348,7 @@ impl Reactor {
             session_id,
             client_sub_id: client_sub_id.clone(),
             workflow_id,
+            auth_context: auth_context.clone(),
         };
 
         let mut subs = self.workflow_subscriptions.write().await;
@@ -476,6 +488,9 @@ impl Reactor {
     ) -> forge_core::Result<(serde_json::Value, ReadSet)> {
         match self.registry.get(query_name) {
             Some(FunctionEntry::Query { info, handler }) => {
+                Self::check_query_auth(info, auth_context)?;
+                Self::check_identity_args(query_name, args, auth_context)?;
+
                 let ctx = forge_core::function::QueryContext::new(
                     self.db_pool.clone(),
                     auth_context.clone(),
@@ -802,8 +817,23 @@ impl Reactor {
             }
         };
 
+        let owner_subject = match Self::fetch_job_owner_subject_static(job_id, db_pool).await {
+            Ok(owner) => owner,
+            Err(e) => {
+                tracing::debug!(%job_id, error = %e, "Failed to fetch job owner");
+                return;
+            }
+        };
+
+        let mut unauthorized_subscribers: HashSet<(SessionId, String)> = HashSet::new();
+
         // Push to all subscribers
         for sub in subscribers {
+            if Self::check_owner_access(owner_subject.clone(), &sub.auth_context).is_err() {
+                unauthorized_subscribers.insert((sub.session_id, sub.client_sub_id.clone()));
+                continue;
+            }
+
             let message = RealtimeMessage::JobUpdate {
                 client_sub_id: sub.client_sub_id.clone(),
                 job: job_data.clone(),
@@ -817,6 +847,17 @@ impl Reactor {
             } else {
                 tracing::trace!(%job_id, "Job update sent");
             }
+        }
+
+        if !unauthorized_subscribers.is_empty() {
+            let mut subs = job_subscriptions.write().await;
+            if let Some(entries) = subs.get_mut(&job_id) {
+                entries.retain(|entry| {
+                    !unauthorized_subscribers
+                        .contains(&(entry.session_id, entry.client_sub_id.clone()))
+                });
+            }
+            subs.retain(|_, v| !v.is_empty());
         }
     }
 
@@ -843,8 +884,24 @@ impl Reactor {
             }
         };
 
+        let owner_subject =
+            match Self::fetch_workflow_owner_subject_static(workflow_id, db_pool).await {
+                Ok(owner) => owner,
+                Err(e) => {
+                    tracing::debug!(%workflow_id, error = %e, "Failed to fetch workflow owner");
+                    return;
+                }
+            };
+
+        let mut unauthorized_subscribers: HashSet<(SessionId, String)> = HashSet::new();
+
         // Push to all subscribers
         for sub in subscribers {
+            if Self::check_owner_access(owner_subject.clone(), &sub.auth_context).is_err() {
+                unauthorized_subscribers.insert((sub.session_id, sub.client_sub_id.clone()));
+                continue;
+            }
+
             let message = RealtimeMessage::WorkflowUpdate {
                 client_sub_id: sub.client_sub_id.clone(),
                 workflow: workflow_data.clone(),
@@ -858,6 +915,17 @@ impl Reactor {
             } else {
                 tracing::trace!(%workflow_id, "Workflow update sent");
             }
+        }
+
+        if !unauthorized_subscribers.is_empty() {
+            let mut subs = workflow_subscriptions.write().await;
+            if let Some(entries) = subs.get_mut(&workflow_id) {
+                entries.retain(|entry| {
+                    !unauthorized_subscribers
+                        .contains(&(entry.session_id, entry.client_sub_id.clone()))
+                });
+            }
+            subs.retain(|_, v| !v.is_empty());
         }
     }
 
@@ -929,6 +997,21 @@ impl Reactor {
         }
     }
 
+    async fn fetch_job_owner_subject_static(
+        job_id: Uuid,
+        db_pool: &sqlx::PgPool,
+    ) -> forge_core::Result<Option<String>> {
+        let owner_subject: Option<Option<String>> =
+            sqlx::query_scalar("SELECT owner_subject FROM forge_jobs WHERE id = $1")
+                .bind(job_id)
+                .fetch_optional(db_pool)
+                .await
+                .map_err(forge_core::ForgeError::Sql)?;
+
+        owner_subject
+            .ok_or_else(|| forge_core::ForgeError::NotFound(format!("Job {} not found", job_id)))
+    }
+
     /// Static version of fetch_workflow_data for use in handle_change.
     #[allow(clippy::type_complexity)]
     async fn fetch_workflow_data_static(
@@ -993,6 +1076,22 @@ impl Reactor {
         })
     }
 
+    async fn fetch_workflow_owner_subject_static(
+        workflow_id: Uuid,
+        db_pool: &sqlx::PgPool,
+    ) -> forge_core::Result<Option<String>> {
+        let owner_subject: Option<Option<String>> =
+            sqlx::query_scalar("SELECT owner_subject FROM forge_workflow_runs WHERE id = $1")
+                .bind(workflow_id)
+                .fetch_optional(db_pool)
+                .await
+                .map_err(forge_core::ForgeError::Sql)?;
+
+        owner_subject.ok_or_else(|| {
+            forge_core::ForgeError::NotFound(format!("Workflow {} not found", workflow_id))
+        })
+    }
+
     /// Static version of execute_query for use in async context.
     async fn execute_query_static(
         registry: &FunctionRegistry,
@@ -1003,6 +1102,9 @@ impl Reactor {
     ) -> forge_core::Result<(serde_json::Value, ReadSet)> {
         match registry.get(query_name) {
             Some(FunctionEntry::Query { info, handler }) => {
+                Self::check_query_auth(info, auth_context)?;
+                Self::check_identity_args(query_name, args, auth_context)?;
+
                 let ctx = forge_core::function::QueryContext::new(
                     db_pool.clone(),
                     auth_context.clone(),
@@ -1060,6 +1162,199 @@ impl Reactor {
         }
     }
 
+    fn check_query_auth(
+        info: &forge_core::function::FunctionInfo,
+        auth: &forge_core::function::AuthContext,
+    ) -> forge_core::Result<()> {
+        if info.is_public {
+            return Ok(());
+        }
+
+        if !auth.is_authenticated() {
+            return Err(forge_core::ForgeError::Unauthorized(
+                "Authentication required".into(),
+            ));
+        }
+
+        if let Some(role) = info.required_role {
+            if !auth.has_role(role) {
+                return Err(forge_core::ForgeError::Forbidden(format!(
+                    "Role '{}' required",
+                    role
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn check_identity_args(
+        function_name: &str,
+        args: &serde_json::Value,
+        auth: &forge_core::function::AuthContext,
+    ) -> forge_core::Result<()> {
+        if auth.is_admin() {
+            return Ok(());
+        }
+
+        let Some(obj) = args.as_object() else {
+            return Ok(());
+        };
+
+        let mut principal_values: Vec<String> = Vec::new();
+        if let Some(user_id) = auth.user_id().map(|id| id.to_string()) {
+            principal_values.push(user_id);
+        }
+        if let Some(subject) = auth.principal_id() {
+            if !principal_values.iter().any(|v| v == &subject) {
+                principal_values.push(subject);
+            }
+        }
+
+        for key in [
+            "user_id",
+            "userId",
+            "owner_id",
+            "ownerId",
+            "owner_subject",
+            "ownerSubject",
+            "subject",
+            "sub",
+            "principal_id",
+            "principalId",
+        ] {
+            let Some(value) = obj.get(key) else {
+                continue;
+            };
+
+            if !auth.is_authenticated() {
+                return Err(forge_core::ForgeError::Unauthorized(format!(
+                    "Function '{function_name}' requires authentication for identity-scoped argument '{key}'"
+                )));
+            }
+
+            let serde_json::Value::String(actual) = value else {
+                return Err(forge_core::ForgeError::InvalidArgument(format!(
+                    "Function '{function_name}' argument '{key}' must be a non-empty string"
+                )));
+            };
+
+            if actual.trim().is_empty() || !principal_values.iter().any(|v| v == actual) {
+                return Err(forge_core::ForgeError::Forbidden(format!(
+                    "Function '{function_name}' argument '{key}' does not match authenticated principal"
+                )));
+            }
+        }
+
+        for key in ["tenant_id", "tenantId"] {
+            let Some(value) = obj.get(key) else {
+                continue;
+            };
+
+            if !auth.is_authenticated() {
+                return Err(forge_core::ForgeError::Unauthorized(format!(
+                    "Function '{function_name}' requires authentication for tenant-scoped argument '{key}'"
+                )));
+            }
+
+            let expected = auth
+                .claim("tenant_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    forge_core::ForgeError::Forbidden(format!(
+                        "Function '{function_name}' argument '{key}' is not allowed for this principal"
+                    ))
+                })?;
+
+            let serde_json::Value::String(actual) = value else {
+                return Err(forge_core::ForgeError::InvalidArgument(format!(
+                    "Function '{function_name}' argument '{key}' must be a non-empty string"
+                )));
+            };
+
+            if actual.trim().is_empty() || actual != expected {
+                return Err(forge_core::ForgeError::Forbidden(format!(
+                    "Function '{function_name}' argument '{key}' does not match authenticated tenant"
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn ensure_job_access(
+        db_pool: &sqlx::PgPool,
+        job_id: Uuid,
+        auth: &forge_core::function::AuthContext,
+    ) -> forge_core::Result<()> {
+        let owner_subject_row: Option<(Option<String>,)> = sqlx::query_as(
+            r#"
+            SELECT owner_subject
+            FROM forge_jobs
+            WHERE id = $1
+            "#,
+        )
+        .bind(job_id)
+        .fetch_optional(db_pool)
+        .await
+        .map_err(forge_core::ForgeError::Sql)?;
+
+        let owner_subject = owner_subject_row
+            .ok_or_else(|| forge_core::ForgeError::NotFound(format!("Job {} not found", job_id)))?
+            .0;
+
+        Self::check_owner_access(owner_subject, auth)
+    }
+
+    async fn ensure_workflow_access(
+        db_pool: &sqlx::PgPool,
+        workflow_id: Uuid,
+        auth: &forge_core::function::AuthContext,
+    ) -> forge_core::Result<()> {
+        let owner_subject_row: Option<(Option<String>,)> = sqlx::query_as(
+            r#"
+            SELECT owner_subject
+            FROM forge_workflow_runs
+            WHERE id = $1
+            "#,
+        )
+        .bind(workflow_id)
+        .fetch_optional(db_pool)
+        .await
+        .map_err(forge_core::ForgeError::Sql)?;
+
+        let owner_subject = owner_subject_row
+            .ok_or_else(|| {
+                forge_core::ForgeError::NotFound(format!("Workflow {} not found", workflow_id))
+            })?
+            .0;
+
+        Self::check_owner_access(owner_subject, auth)
+    }
+
+    fn check_owner_access(
+        owner_subject: Option<String>,
+        auth: &forge_core::function::AuthContext,
+    ) -> forge_core::Result<()> {
+        if auth.is_admin() {
+            return Ok(());
+        }
+
+        let principal = auth.principal_id().ok_or_else(|| {
+            forge_core::ForgeError::Unauthorized("Authentication required".to_string())
+        })?;
+
+        match owner_subject {
+            Some(owner) if owner == principal => Ok(()),
+            Some(_) => Err(forge_core::ForgeError::Forbidden(
+                "Not authorized to access this resource".to_string(),
+            )),
+            None => Err(forge_core::ForgeError::Forbidden(
+                "Resource has no owner; admin role required".to_string(),
+            )),
+        }
+    }
+
     /// Stop the reactor.
     pub fn stop(&self) {
         let _ = self.shutdown_tx.send(());
@@ -1092,6 +1387,7 @@ pub struct ReactorStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn test_reactor_config_default() {
@@ -1114,5 +1410,39 @@ mod tests {
 
         assert_eq!(hash1, hash2);
         assert_ne!(hash1, hash3);
+    }
+
+    #[test]
+    fn test_check_identity_args_rejects_cross_user() {
+        let user_id = uuid::Uuid::new_v4();
+        let auth = forge_core::function::AuthContext::authenticated(
+            user_id,
+            vec!["user".to_string()],
+            HashMap::from([(
+                "sub".to_string(),
+                serde_json::Value::String(user_id.to_string()),
+            )]),
+        );
+
+        let result = Reactor::check_identity_args(
+            "list_orders",
+            &serde_json::json!({"user_id": uuid::Uuid::new_v4().to_string()}),
+            &auth,
+        );
+        assert!(matches!(result, Err(forge_core::ForgeError::Forbidden(_))));
+    }
+
+    #[test]
+    fn test_check_owner_access_allows_admin() {
+        let auth = forge_core::function::AuthContext::authenticated_without_uuid(
+            vec!["admin".to_string()],
+            HashMap::from([(
+                "sub".to_string(),
+                serde_json::Value::String("admin-1".to_string()),
+            )]),
+        );
+
+        let result = Reactor::check_owner_access(Some("other-user".to_string()), &auth);
+        assert!(result.is_ok());
     }
 }

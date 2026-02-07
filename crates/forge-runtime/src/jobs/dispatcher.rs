@@ -29,7 +29,7 @@ impl JobDispatcher {
         J::Args: serde::Serialize,
     {
         let info = J::info();
-        self.dispatch_with_info(&info, serde_json::to_value(args)?)
+        self.dispatch_with_info(&info, serde_json::to_value(args)?, None)
             .await
     }
 
@@ -67,12 +67,14 @@ impl JobDispatcher {
         &self,
         job_type: &str,
         args: serde_json::Value,
+        owner_subject: Option<String>,
     ) -> Result<Uuid, forge_core::ForgeError> {
         let entry = self.registry.get(job_type).ok_or_else(|| {
             forge_core::ForgeError::NotFound(format!("Job type '{}' not found", job_type))
         })?;
 
-        self.dispatch_with_info(&entry.info, args).await
+        self.dispatch_with_info(&entry.info, args, owner_subject)
+            .await
     }
 
     /// Dispatch job with explicit info.
@@ -80,13 +82,15 @@ impl JobDispatcher {
         &self,
         info: &JobInfo,
         args: serde_json::Value,
+        owner_subject: Option<String>,
     ) -> Result<Uuid, forge_core::ForgeError> {
         let mut job = JobRecord::new(
             info.name,
             args,
             info.priority,
             info.retry.max_attempts as i32,
-        );
+        )
+        .with_owner_subject(owner_subject);
 
         if let Some(cap) = info.worker_capability {
             job = job.with_capability(cap);
@@ -200,9 +204,10 @@ impl JobDispatch for JobDispatcher {
         &self,
         job_type: &str,
         args: serde_json::Value,
+        owner_subject: Option<String>,
     ) -> Pin<Box<dyn Future<Output = forge_core::Result<Uuid>> + Send + '_>> {
         let job_type = job_type.to_string();
-        Box::pin(async move { self.dispatch_by_name(&job_type, args).await })
+        Box::pin(async move { self.dispatch_by_name(&job_type, args, owner_subject).await })
     }
 
     fn cancel(
