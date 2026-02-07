@@ -258,7 +258,7 @@ impl JobQueue {
         let result = sqlx::query(
             r#"
             UPDATE forge_jobs
-            SET status = 'running', started_at = NOW()
+            SET status = 'running', started_at = NOW(), last_heartbeat = NOW()
             WHERE id = $1
               AND status NOT IN ('cancel_requested', 'cancelled')
             "#,
@@ -550,9 +550,18 @@ impl JobQueue {
             SET
                 status = 'pending',
                 worker_id = NULL,
-                claimed_at = NULL
-            WHERE status IN ('claimed', 'running')
-              AND claimed_at < NOW() - $1
+                claimed_at = NULL,
+                started_at = NULL,
+                last_heartbeat = NULL
+            WHERE
+                (
+                    status = 'claimed'
+                    AND claimed_at < NOW() - $1
+                )
+                OR (
+                    status = 'running'
+                    AND COALESCE(last_heartbeat, started_at, claimed_at) < NOW() - $1
+                )
             "#,
         )
         .bind(stale_threshold)

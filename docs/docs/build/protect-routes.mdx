@@ -83,6 +83,35 @@ pub async fn get_orders(ctx: &QueryContext) -> Result<Vec<Order>> {
 }
 ```
 
+### Automatic Scope Enforcement
+
+Non-public functions require authenticated callers to include identity or tenant scope arguments (e.g., `user_id`, `tenant_id`, `org_id`). This prevents accidentally exposing unscoped queries that return all rows.
+
+```rust
+// This query requires user_id from authenticated callers
+#[forge::query]
+pub async fn list_orders(ctx: &QueryContext, user_id: Uuid) -> Result<Vec<Order>> {
+    let uid = ctx.auth.require_user_id()?;
+    sqlx::query_as("SELECT * FROM orders WHERE user_id = $1")
+        .bind(uid)
+        .fetch_all(ctx.db())
+        .await
+        .map_err(Into::into)
+}
+
+// Public queries skip scope enforcement
+#[forge::query(public)]
+pub async fn get_stats(ctx: &QueryContext) -> Result<Stats> {
+    // No scope arguments required
+    sqlx::query_as("SELECT count(*) as total FROM orders")
+        .fetch_one(ctx.db())
+        .await
+        .map_err(Into::into)
+}
+```
+
+Admins bypass scope enforcement. If an authenticated user calls a non-public function without any recognized scope key, the request returns 403 Forbidden.
+
 ### Accessing Custom Claims
 
 ```rust

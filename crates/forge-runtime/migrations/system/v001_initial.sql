@@ -319,10 +319,11 @@ CREATE INDEX IF NOT EXISTS idx_forge_daemons_node
 
 -- Webhooks: Idempotency tracking for webhook events
 CREATE TABLE IF NOT EXISTS forge_webhook_events (
-    idempotency_key VARCHAR(255) PRIMARY KEY,
     webhook_name VARCHAR(255) NOT NULL,
+    idempotency_key VARCHAR(255) NOT NULL,
     processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    expires_at TIMESTAMPTZ NOT NULL
+    expires_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (webhook_name, idempotency_key)
 );
 
 CREATE INDEX IF NOT EXISTS idx_forge_webhook_events_expires

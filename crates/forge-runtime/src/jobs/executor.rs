@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use forge_core::CircuitBreakerClient;
 use forge_core::job::{JobContext, ProgressUpdate};
@@ -16,6 +17,8 @@ pub struct JobExecutor {
 }
 
 impl JobExecutor {
+    const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
+
     /// Create a new job executor.
     pub fn new(queue: JobQueue, registry: JobRegistry, db_pool: sqlx::PgPool) -> Self {
         Self {
@@ -103,9 +106,33 @@ impl JobExecutor {
         .with_saved(job.job_context.clone())
         .with_progress(progress_tx);
 
+        // Keepalive heartbeat prevents stale cleanup from reclaiming healthy long jobs.
+        let heartbeat_queue = self.queue.clone();
+        let heartbeat_job_id = job.id;
+        let (heartbeat_stop_tx, mut heartbeat_stop_rx) = tokio::sync::watch::channel(false);
+        let heartbeat_task = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = tokio::time::sleep(Self::HEARTBEAT_INTERVAL) => {
+                        if let Err(e) = heartbeat_queue.heartbeat(heartbeat_job_id).await {
+                            tracing::trace!(job_id = %heartbeat_job_id, error = %e, "Failed to update job heartbeat");
+                        }
+                    }
+                    changed = heartbeat_stop_rx.changed() => {
+                        if changed.is_err() || *heartbeat_stop_rx.borrow() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+
         // Execute with timeout
         let job_timeout = entry.info.timeout;
         let result = timeout(job_timeout, self.run_handler(&entry, &ctx, &job.input)).await;
+
+        let _ = heartbeat_stop_tx.send(true);
+        let _ = heartbeat_task.await;
 
         let ttl = entry.info.ttl;
 

@@ -14,7 +14,7 @@
 //!    These are sorted alphabetically by name.
 
 use forge_core::error::{ForgeError, Result};
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres};
 use std::collections::HashSet;
 use std::path::Path;
 use tracing::{debug, info, warn};
@@ -127,13 +127,13 @@ impl MigrationRunner {
     /// This acquires an exclusive advisory lock before running migrations,
     /// ensuring only one node in the cluster runs migrations at a time.
     pub async fn run(&self, user_migrations: Vec<Migration>) -> Result<()> {
-        // Acquire exclusive lock (blocks until acquired)
-        self.acquire_lock().await?;
+        // Acquire exclusive lock (blocks until acquired) on a dedicated connection.
+        let mut lock_conn = self.acquire_lock_connection().await?;
 
         let result = self.run_migrations_inner(user_migrations).await;
 
         // Always release lock, even on error
-        if let Err(e) = self.release_lock().await {
+        if let Err(e) = self.release_lock_connection(&mut lock_conn).await {
             warn!("Failed to release migration lock: {}", e);
         }
 
@@ -193,23 +193,30 @@ impl MigrationRunner {
             .max()
     }
 
-    async fn acquire_lock(&self) -> Result<()> {
+    async fn acquire_lock_connection(&self) -> Result<sqlx::pool::PoolConnection<Postgres>> {
         debug!("Acquiring migration lock...");
+        let mut conn = self.pool.acquire().await.map_err(|e| {
+            ForgeError::Database(format!("Failed to acquire lock connection: {}", e))
+        })?;
+
         sqlx::query("SELECT pg_advisory_lock($1)")
             .bind(MIGRATION_LOCK_ID)
-            .execute(&self.pool)
+            .execute(&mut *conn)
             .await
             .map_err(|e| {
                 ForgeError::Database(format!("Failed to acquire migration lock: {}", e))
             })?;
         debug!("Migration lock acquired");
-        Ok(())
+        Ok(conn)
     }
 
-    async fn release_lock(&self) -> Result<()> {
+    async fn release_lock_connection(
+        &self,
+        conn: &mut sqlx::pool::PoolConnection<Postgres>,
+    ) -> Result<()> {
         sqlx::query("SELECT pg_advisory_unlock($1)")
             .bind(MIGRATION_LOCK_ID)
-            .execute(&self.pool)
+            .execute(&mut **conn)
             .await
             .map_err(|e| {
                 ForgeError::Database(format!("Failed to release migration lock: {}", e))
@@ -312,13 +319,13 @@ impl MigrationRunner {
             return Ok(Vec::new());
         }
 
-        // Acquire exclusive lock
-        self.acquire_lock().await?;
+        // Acquire exclusive lock on a dedicated connection.
+        let mut lock_conn = self.acquire_lock_connection().await?;
 
         let result = self.rollback_inner(count).await;
 
         // Always release lock
-        if let Err(e) = self.release_lock().await {
+        if let Err(e) = self.release_lock_connection(&mut lock_conn).await {
             warn!("Failed to release migration lock: {}", e);
         }
 

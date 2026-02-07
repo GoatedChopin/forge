@@ -179,6 +179,8 @@ pub async fn book_trip(ctx: &WorkflowContext, trip: TripRequest) -> Result<Booki
 
 If `book_car` fails, Forge runs compensation handlers in reverse order: first `cancel_hotel`, then `cancel_flight`. Each step's result is passed to its compensation handler.
 
+Compensation handlers live in memory. If the process restarts before compensation completes, the workflow is marked as failed rather than silently skipping handlers. This fail-closed behavior prevents silent data inconsistency.
+
 ### Wait for External Events
 
 ```rust
@@ -318,6 +320,8 @@ pub async fn user_signup(ctx: &WorkflowContext, user: User) -> Result<()> {
     Ok(())
 }
 ```
+
+The version is recorded when a workflow is started. On resume, the runtime loads the handler matching the recorded version, so in-flight workflows always run against the code they started with. Mark old versions `deprecated` to prevent new starts while existing runs finish.
 
 ## Context Methods
 

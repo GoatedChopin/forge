@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use forge_core::cluster::{LeaderInfo, LeaderRole, NodeId};
-use tokio::sync::watch;
+use tokio::sync::{Mutex, watch};
 
 /// Leader election configuration.
 #[derive(Debug, Clone)]
@@ -50,6 +50,7 @@ pub struct LeaderElection {
     config: LeaderConfig,
     /// Uses SeqCst for cross-thread visibility of leadership state changes.
     is_leader: Arc<AtomicBool>,
+    lock_connection: Arc<Mutex<Option<sqlx::pool::PoolConnection<sqlx::Postgres>>>>,
     shutdown_tx: watch::Sender<bool>,
     shutdown_rx: watch::Receiver<bool>,
 }
@@ -69,6 +70,7 @@ impl LeaderElection {
             role,
             config,
             is_leader: Arc::new(AtomicBool::new(false)),
+            lock_connection: Arc::new(Mutex::new(None)),
             shutdown_tx,
             shutdown_rx,
         }
@@ -91,10 +93,20 @@ impl LeaderElection {
 
     /// Try to acquire leadership.
     pub async fn try_become_leader(&self) -> forge_core::Result<bool> {
+        if self.is_leader() {
+            return Ok(true);
+        }
+
+        let mut conn = self
+            .pool
+            .acquire()
+            .await
+            .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+
         // Try to acquire advisory lock (non-blocking)
         let result: Option<(bool,)> = sqlx::query_as("SELECT pg_try_advisory_lock($1) as acquired")
             .bind(self.role.lock_id())
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *conn)
             .await
             .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
 
@@ -123,6 +135,7 @@ impl LeaderElection {
             .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
 
             self.is_leader.store(true, Ordering::SeqCst);
+            *self.lock_connection.lock().await = Some(conn);
             tracing::info!(role = self.role.as_str(), "Acquired leadership");
         }
 
@@ -161,12 +174,21 @@ impl LeaderElection {
             return Ok(());
         }
 
-        // Release the advisory lock
-        sqlx::query("SELECT pg_advisory_unlock($1)")
-            .bind(self.role.lock_id())
-            .execute(&self.pool)
-            .await
-            .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+        // Release the advisory lock on the same session that acquired it.
+        let mut lock_connection = self.lock_connection.lock().await;
+        if let Some(mut conn) = lock_connection.take() {
+            sqlx::query("SELECT pg_advisory_unlock($1)")
+                .bind(self.role.lock_id())
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+        } else {
+            tracing::warn!(
+                role = self.role.as_str(),
+                "Leader lock connection missing during release"
+            );
+        }
+        drop(lock_connection);
 
         // Clear leadership record
         sqlx::query(

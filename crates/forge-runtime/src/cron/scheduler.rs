@@ -8,6 +8,7 @@ use tracing::{Instrument, Span, field};
 use uuid::Uuid;
 
 use super::registry::CronRegistry;
+use crate::cluster::LeaderElection;
 use forge_core::CircuitBreakerClient;
 use forge_core::cron::CronContext;
 
@@ -106,14 +107,18 @@ impl CronRecord {
 }
 
 /// Configuration for the cron runner.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct CronRunnerConfig {
     /// How often to check for due crons.
     pub poll_interval: Duration,
     /// Node ID for this runner.
     pub node_id: Uuid,
-    /// Whether this node is the leader (only leaders run crons).
+    /// Static leadership fallback when no election handle is configured.
     pub is_leader: bool,
+    /// Dynamic leader election handle.
+    pub leader_election: Option<Arc<LeaderElection>>,
+    /// Threshold after which a running cron slot is considered stale.
+    pub run_stale_threshold: Duration,
 }
 
 impl Default for CronRunnerConfig {
@@ -122,6 +127,8 @@ impl Default for CronRunnerConfig {
             poll_interval: Duration::from_secs(1),
             node_id: Uuid::new_v4(),
             is_leader: true,
+            leader_election: None,
+            run_stale_threshold: Duration::from_secs(15 * 60),
         }
     }
 }
@@ -169,7 +176,7 @@ impl CronRunner {
                 break;
             }
 
-            if self.config.is_leader {
+            if self.is_leader() {
                 if let Err(e) = self.tick().await {
                     tracing::warn!(error = %e, "Cron tick failed");
                 }
@@ -186,6 +193,14 @@ impl CronRunner {
     pub async fn stop(&self) {
         let mut running = self.is_running.write().await;
         *running = false;
+    }
+
+    fn is_leader(&self) -> bool {
+        self.config
+            .leader_election
+            .as_ref()
+            .map(|e| e.is_leader())
+            .unwrap_or(self.config.is_leader)
     }
 
     /// Execute one tick of the scheduler.
@@ -246,11 +261,12 @@ impl CronRunner {
                 }
 
                 for scheduled in scheduled_times {
-                    // Try to claim this cron run (database ensures exactly-once execution)
-                    if let Ok(claimed) = self.try_claim(info.name, scheduled, info.timezone).await {
-                        if claimed {
-                            // Execute the cron
-                            self.execute_cron(entry, scheduled, false).await;
+                    // Try to claim this cron run; only claimed slots execute.
+                    if let Ok(claimed_run_id) =
+                        self.try_claim(info.name, scheduled, info.timezone).await
+                    {
+                        if let Some(run_id) = claimed_run_id {
+                            self.execute_cron(entry, run_id, scheduled, false).await;
                             jobs_executed += 1;
                         }
                     }
@@ -275,41 +291,61 @@ impl CronRunner {
         .await
     }
 
-    /// Try to claim a cron run (returns true if claimed successfully).
+    /// Try to claim a cron run.
+    ///
+    /// Returns the run ID if claimed (or stale-reclaimed), otherwise None.
     async fn try_claim(
         &self,
         cron_name: &str,
         scheduled_time: DateTime<Utc>,
         _timezone: &str,
-    ) -> forge_core::Result<bool> {
-        // Insert with ON CONFLICT DO NOTHING to ensure exactly-once execution
+    ) -> forge_core::Result<Option<Uuid>> {
+        let claim_id = Uuid::new_v4();
+        let stale_threshold = chrono::Duration::from_std(self.config.run_stale_threshold)
+            .unwrap_or(chrono::Duration::minutes(15));
+
+        // Insert new run, or reclaim stale running row if previous node crashed.
         let result = sqlx::query(
             r#"
             INSERT INTO forge_cron_runs (id, cron_name, scheduled_time, status, node_id, started_at)
             VALUES ($1, $2, $3, 'running', $4, NOW())
-            ON CONFLICT (cron_name, scheduled_time) DO NOTHING
+            ON CONFLICT (cron_name, scheduled_time) DO UPDATE
+            SET
+                id = EXCLUDED.id,
+                status = 'running',
+                node_id = EXCLUDED.node_id,
+                started_at = NOW(),
+                completed_at = NULL,
+                error = NULL
+            WHERE forge_cron_runs.status = 'running'
+              AND forge_cron_runs.started_at < NOW() - $5
             "#,
         )
-        .bind(Uuid::new_v4())
+        .bind(claim_id)
         .bind(cron_name)
         .bind(scheduled_time)
         .bind(self.config.node_id)
+        .bind(stale_threshold)
         .execute(&self.pool)
         .await
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
 
-        Ok(result.rows_affected() > 0)
+        if result.rows_affected() > 0 {
+            Ok(Some(claim_id))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Execute a cron job.
     async fn execute_cron(
         &self,
         entry: &super::registry::CronEntry,
+        run_id: Uuid,
         scheduled_time: DateTime<Utc>,
         is_catch_up: bool,
     ) {
         let info = &entry.info;
-        let run_id = Uuid::new_v4();
         let start_time = Instant::now();
 
         let exec_span = tracing::info_span!(
@@ -357,7 +393,7 @@ impl CronRunner {
                 Ok(Ok(())) => {
                     Span::current().record("cron.status", "completed");
                     tracing::debug!(cron.duration_ms = duration_ms, "Cron executed");
-                    self.mark_completed(info.name, scheduled_time).await;
+                    self.mark_completed(run_id, info.name).await;
                 }
                 Ok(Err(e)) => {
                     Span::current().record("cron.status", "failed");
@@ -366,7 +402,7 @@ impl CronRunner {
                         error = %e,
                         "Cron failed"
                     );
-                    self.mark_failed(info.name, scheduled_time, &e.to_string())
+                    self.mark_failed(run_id, info.name, &e.to_string())
                         .await;
                 }
                 Err(_) => {
@@ -376,7 +412,7 @@ impl CronRunner {
                         cron.timeout_ms = info.timeout.as_millis() as u64,
                         "Cron timed out"
                     );
-                    self.mark_failed(info.name, scheduled_time, "Execution timed out")
+                    self.mark_failed(run_id, info.name, "Execution timed out")
                         .await;
                 }
             }
@@ -386,16 +422,16 @@ impl CronRunner {
     }
 
     /// Mark a cron run as completed.
-    async fn mark_completed(&self, cron_name: &str, scheduled_time: DateTime<Utc>) {
+    async fn mark_completed(&self, run_id: Uuid, cron_name: &str) {
         if let Err(e) = sqlx::query(
             r#"
             UPDATE forge_cron_runs
             SET status = 'completed', completed_at = NOW()
-            WHERE cron_name = $1 AND scheduled_time = $2
+            WHERE id = $1 AND node_id = $2
             "#,
         )
-        .bind(cron_name)
-        .bind(scheduled_time)
+        .bind(run_id)
+        .bind(self.config.node_id)
         .execute(&self.pool)
         .await
         {
@@ -404,16 +440,16 @@ impl CronRunner {
     }
 
     /// Mark a cron run as failed.
-    async fn mark_failed(&self, cron_name: &str, scheduled_time: DateTime<Utc>, error: &str) {
+    async fn mark_failed(&self, run_id: Uuid, cron_name: &str, error: &str) {
         if let Err(e) = sqlx::query(
             r#"
             UPDATE forge_cron_runs
             SET status = 'failed', completed_at = NOW(), error = $3
-            WHERE cron_name = $1 AND scheduled_time = $2
+            WHERE id = $1 AND node_id = $2
             "#,
         )
-        .bind(cron_name)
-        .bind(scheduled_time)
+        .bind(run_id)
+        .bind(self.config.node_id)
         .bind(error)
         .execute(&self.pool)
         .await
@@ -477,8 +513,8 @@ impl CronRunner {
             let mut executed_count = 0u32;
             for scheduled in to_catch_up {
                 // Try to claim and execute
-                if self.try_claim(info.name, scheduled, info.timezone).await? {
-                    self.execute_cron(entry, scheduled, true).await;
+                if let Some(run_id) = self.try_claim(info.name, scheduled, info.timezone).await? {
+                    self.execute_cron(entry, run_id, scheduled, true).await;
                     executed_count += 1;
                 }
             }

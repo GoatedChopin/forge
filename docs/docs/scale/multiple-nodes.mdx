@@ -176,16 +176,20 @@ The 15-second threshold distinguishes slow nodes from crashed nodes. A node unde
 
 ## Stale Job Recovery
 
-Jobs claimed more than 5 minutes ago with no heartbeat are released:
+Claimed jobs that haven't started within 5 minutes and running jobs with no recent heartbeat are released:
 
 ```sql
 UPDATE forge_jobs
-SET status = 'pending', worker_id = NULL, claimed_at = NULL
-WHERE status IN ('claimed', 'running')
-  AND claimed_at < NOW() - INTERVAL '5 minutes'
+SET status = 'pending', worker_id = NULL, claimed_at = NULL,
+    started_at = NULL, last_heartbeat = NULL
+WHERE
+    (status = 'claimed' AND claimed_at < NOW() - INTERVAL '5 minutes')
+    OR
+    (status = 'running'
+     AND COALESCE(last_heartbeat, started_at, claimed_at) < NOW() - INTERVAL '5 minutes')
 ```
 
-This runs every 60 seconds. Long-running jobs should call `ctx.heartbeat()` to prevent false reclamation.
+This runs every 60 seconds. The runtime sends automatic heartbeats every 30 seconds for running jobs, so only genuinely stalled jobs get reclaimed.
 
 A worker crash at 0:00 means the job is reclaimed by 0:05 at worst. Another worker picks it up immediately.
 

@@ -290,12 +290,15 @@ impl WorkflowExecutor {
     ) -> forge_core::Result<WorkflowResult> {
         let record = self.get_workflow(run_id).await?;
 
-        let entry = self.registry.get(&record.workflow_name).ok_or_else(|| {
-            forge_core::ForgeError::NotFound(format!(
-                "Workflow '{}' not found",
-                record.workflow_name
-            ))
-        })?;
+        let entry = self
+            .registry
+            .get_version(&record.workflow_name, record.version)
+            .ok_or_else(|| {
+                forge_core::ForgeError::NotFound(format!(
+                    "Workflow '{}' version {} not found",
+                    record.workflow_name, record.version
+                ))
+            })?;
 
         // Check if workflow is resumable
         match record.status {
@@ -381,12 +384,12 @@ impl WorkflowExecutor {
                 }
             }
         } else {
-            // No in-memory state, try to compensate from DB state
-            // This handles the case where the server restarted
-            tracing::warn!(
-                workflow_run_id = %run_id,
-                "No compensation state found, marking as compensated without handlers"
-            );
+            // Fail closed: never report compensated when handlers are unavailable.
+            let msg =
+                "Compensation handlers unavailable (likely restart); refusing to mark compensated";
+            tracing::error!(workflow_run_id = %run_id, "{msg}");
+            self.fail_workflow(run_id, msg).await?;
+            return Err(forge_core::ForgeError::InvalidState(msg.to_string()));
         }
 
         self.update_workflow_status(run_id, WorkflowStatus::Compensated)

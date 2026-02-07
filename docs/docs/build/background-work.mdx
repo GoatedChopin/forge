@@ -367,16 +367,20 @@ Backpressure propagates naturally. Overloaded workers stop claiming. Jobs remain
 
 ### Stale Job Recovery
 
-A background task runs every 60 seconds. Jobs claimed more than 5 minutes ago (with no heartbeat) are released back to pending:
+A background task runs every 60 seconds. Claimed jobs that haven't started within 5 minutes and running jobs with no recent heartbeat are released back to pending:
 
 ```sql
 UPDATE forge_jobs
-SET status = 'pending', worker_id = NULL, claimed_at = NULL
-WHERE status IN ('claimed', 'running')
-  AND claimed_at < NOW() - INTERVAL '5 minutes'
+SET status = 'pending', worker_id = NULL, claimed_at = NULL,
+    started_at = NULL, last_heartbeat = NULL
+WHERE
+    (status = 'claimed' AND claimed_at < NOW() - INTERVAL '5 minutes')
+    OR
+    (status = 'running'
+     AND COALESCE(last_heartbeat, started_at, claimed_at) < NOW() - INTERVAL '5 minutes')
 ```
 
-Crashed workers' jobs are reclaimed automatically. Long-running jobs should call `ctx.heartbeat()` to prevent false reclamation.
+Crashed workers' jobs are reclaimed automatically. The runtime sends automatic heartbeats every 30 seconds for running jobs. Long-running jobs can also call `ctx.heartbeat()` explicitly to update the heartbeat timestamp.
 
 ### Dead Letter Queue
 

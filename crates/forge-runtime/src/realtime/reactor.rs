@@ -210,8 +210,6 @@ impl Reactor {
         args: serde_json::Value,
         auth_context: forge_core::function::AuthContext,
     ) -> forge_core::Result<(SubscriptionId, serde_json::Value)> {
-        Self::check_identity_args(&query_name, &args, &auth_context)?;
-
         let sub_info = self
             .subscription_manager
             .create_subscription(session_id, &query_name, args.clone())
@@ -219,13 +217,25 @@ impl Reactor {
 
         let subscription_id = sub_info.id;
 
-        self.session_server
+        if let Err(error) = self
+            .session_server
             .add_subscription(session_id, subscription_id)
-            .await?;
+            .await
+        {
+            self.subscription_manager
+                .remove_subscription(subscription_id)
+                .await;
+            return Err(error);
+        }
 
-        let (data, read_set) = self
-            .execute_query(&query_name, &args, &auth_context)
-            .await?;
+        let (data, read_set) = match self.execute_query(&query_name, &args, &auth_context).await {
+            Ok(result) => result,
+            Err(error) => {
+                // Roll back optimistic subscription registration on auth/query failures.
+                self.unsubscribe(subscription_id).await;
+                return Err(error);
+            }
+        };
 
         let result_hash = Self::compute_hash(&data);
 
@@ -489,7 +499,7 @@ impl Reactor {
         match self.registry.get(query_name) {
             Some(FunctionEntry::Query { info, handler }) => {
                 Self::check_query_auth(info, auth_context)?;
-                Self::check_identity_args(query_name, args, auth_context)?;
+                Self::check_identity_args(query_name, args, auth_context, !info.is_public)?;
 
                 let ctx = forge_core::function::QueryContext::new(
                     self.db_pool.clone(),
@@ -1103,7 +1113,7 @@ impl Reactor {
         match registry.get(query_name) {
             Some(FunctionEntry::Query { info, handler }) => {
                 Self::check_query_auth(info, auth_context)?;
-                Self::check_identity_args(query_name, args, auth_context)?;
+                Self::check_identity_args(query_name, args, auth_context, !info.is_public)?;
 
                 let ctx = forge_core::function::QueryContext::new(
                     db_pool.clone(),
@@ -1192,12 +1202,18 @@ impl Reactor {
         function_name: &str,
         args: &serde_json::Value,
         auth: &forge_core::function::AuthContext,
+        enforce_scope: bool,
     ) -> forge_core::Result<()> {
         if auth.is_admin() {
             return Ok(());
         }
 
         let Some(obj) = args.as_object() else {
+            if enforce_scope && auth.is_authenticated() {
+                return Err(forge_core::ForgeError::Forbidden(format!(
+                    "Function '{function_name}' must include identity or tenant scope arguments"
+                )));
+            }
             return Ok(());
         };
 
@@ -1210,6 +1226,8 @@ impl Reactor {
                 principal_values.push(subject);
             }
         }
+
+        let mut has_scope_key = false;
 
         for key in [
             "user_id",
@@ -1226,6 +1244,7 @@ impl Reactor {
             let Some(value) = obj.get(key) else {
                 continue;
             };
+            has_scope_key = true;
 
             if !auth.is_authenticated() {
                 return Err(forge_core::ForgeError::Unauthorized(format!(
@@ -1250,6 +1269,7 @@ impl Reactor {
             let Some(value) = obj.get(key) else {
                 continue;
             };
+            has_scope_key = true;
 
             if !auth.is_authenticated() {
                 return Err(forge_core::ForgeError::Unauthorized(format!(
@@ -1277,6 +1297,12 @@ impl Reactor {
                     "Function '{function_name}' argument '{key}' does not match authenticated tenant"
                 )));
             }
+        }
+
+        if enforce_scope && auth.is_authenticated() && !has_scope_key {
+            return Err(forge_core::ForgeError::Forbidden(format!(
+                "Function '{function_name}' must include identity or tenant scope arguments"
+            )));
         }
 
         Ok(())
@@ -1428,7 +1454,24 @@ mod tests {
             "list_orders",
             &serde_json::json!({"user_id": uuid::Uuid::new_v4().to_string()}),
             &auth,
+            true,
         );
+        assert!(matches!(result, Err(forge_core::ForgeError::Forbidden(_))));
+    }
+
+    #[test]
+    fn test_check_identity_args_requires_scope_for_non_public_queries() {
+        let user_id = uuid::Uuid::new_v4();
+        let auth = forge_core::function::AuthContext::authenticated(
+            user_id,
+            vec!["user".to_string()],
+            HashMap::from([(
+                "sub".to_string(),
+                serde_json::Value::String(user_id.to_string()),
+            )]),
+        );
+
+        let result = Reactor::check_identity_args("list_orders", &serde_json::json!({}), &auth, true);
         assert!(matches!(result, Err(forge_core::ForgeError::Forbidden(_))));
     }
 

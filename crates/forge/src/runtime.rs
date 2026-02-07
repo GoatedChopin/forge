@@ -305,15 +305,14 @@ impl Forge {
             let cron_registry = self.cron_registry.clone();
             let cron_pool = pool.clone();
             let cron_http = http_client.clone();
-            let is_leader = leader_election
-                .as_ref()
-                .map(|e| e.is_leader())
-                .unwrap_or(false);
+            let cron_leader_election = leader_election.clone();
 
             let cron_config = CronRunnerConfig {
                 poll_interval: Duration::from_secs(1),
                 node_id: node_id.as_uuid(),
-                is_leader,
+                is_leader: cron_leader_election.is_none(),
+                leader_election: cron_leader_election,
+                run_stale_threshold: Duration::from_secs(15 * 60),
             };
 
             let cron_runner = CronRunner::new(cron_registry, cron_pool, cron_http, cron_config);

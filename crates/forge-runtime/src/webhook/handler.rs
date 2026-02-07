@@ -336,7 +336,7 @@ async fn record_idempotency(
         r#"
         INSERT INTO forge_webhook_events (idempotency_key, webhook_name, processed_at, expires_at)
         VALUES ($1, $2, NOW(), $3)
-        ON CONFLICT (idempotency_key) DO NOTHING
+        ON CONFLICT (webhook_name, idempotency_key) DO NOTHING
         "#,
     )
     .bind(key)

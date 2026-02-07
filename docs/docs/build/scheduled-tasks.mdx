@@ -246,10 +246,14 @@ When the scheduler ticks:
 ```sql
 INSERT INTO forge_cron_runs (id, cron_name, scheduled_time, status, node_id, started_at)
 VALUES ($1, $2, $3, 'running', $4, NOW())
-ON CONFLICT (cron_name, scheduled_time) DO NOTHING
+ON CONFLICT (cron_name, scheduled_time) DO UPDATE
+SET id = EXCLUDED.id, status = 'running', node_id = EXCLUDED.node_id,
+    started_at = NOW(), completed_at = NULL, error = NULL
+WHERE forge_cron_runs.status = 'running'
+  AND forge_cron_runs.started_at < NOW() - $5
 ```
 
-Multiple nodes can attempt the same insert. PostgreSQL's unique constraint ensures exactly one succeeds. The node that wins (`rows_affected > 0`) executes the cron.
+Multiple nodes can attempt the same insert. PostgreSQL's unique constraint ensures exactly one succeeds. The node that wins (`rows_affected > 0`) executes the cron. If a previous run is stuck (status still `running` past the stale threshold, default 15 minutes), another node can reclaim it.
 
 ### Leader-Only Scheduling
 

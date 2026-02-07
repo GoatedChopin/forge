@@ -247,15 +247,15 @@ Forge stores idempotency keys before processing:
 ```sql
 INSERT INTO forge_webhook_events (idempotency_key, webhook_name, processed_at, expires_at)
 VALUES ($1, $2, NOW(), $3)
-ON CONFLICT (idempotency_key) DO NOTHING
+ON CONFLICT (webhook_name, idempotency_key) DO NOTHING
 ```
 
 When the same webhook arrives again:
-1. Check if idempotency key exists and is not expired
+1. Check if idempotency key exists for this webhook and is not expired
 2. If found, return cached response immediately
 3. If not found, process and record the key
 
-The unique constraint guarantees exactly-once processing without distributed locks or external coordination services.
+Idempotency keys are scoped per webhook. The same key can appear in different webhooks without conflict. The composite primary key `(webhook_name, idempotency_key)` guarantees exactly-once processing per webhook without distributed locks or external coordination services.
 
 ### TTL-Based Cleanup
 

@@ -97,7 +97,7 @@ impl FunctionRouter {
             self.check_auth(entry.info(), &auth)?;
             self.check_rate_limit(entry.info(), function_name, &auth, &request)
                 .await?;
-            Self::check_identity_args(function_name, &args, &auth)?;
+            Self::check_identity_args(function_name, &args, &auth, !entry.info().is_public)?;
 
             return match entry {
                 FunctionEntry::Query { handler, info, .. } => {
@@ -154,7 +154,7 @@ impl FunctionRouter {
         if let Some(ref job_dispatcher) = self.job_dispatcher {
             if let Some(job_info) = job_dispatcher.get_info(function_name) {
                 self.check_job_auth(&job_info, &auth)?;
-                Self::check_identity_args(function_name, &args, &auth)?;
+                Self::check_identity_args(function_name, &args, &auth, !job_info.is_public)?;
                 match job_dispatcher
                     .dispatch_by_name(function_name, args.clone(), auth.principal_id())
                     .await
@@ -171,7 +171,7 @@ impl FunctionRouter {
         if let Some(ref workflow_dispatcher) = self.workflow_dispatcher {
             if let Some(workflow_info) = workflow_dispatcher.get_info(function_name) {
                 self.check_workflow_auth(&workflow_info, &auth)?;
-                Self::check_identity_args(function_name, &args, &auth)?;
+                Self::check_identity_args(function_name, &args, &auth, !workflow_info.is_public)?;
                 match workflow_dispatcher
                     .start_by_name(function_name, args.clone(), auth.principal_id())
                     .await
@@ -327,12 +327,22 @@ impl FunctionRouter {
         ))
     }
 
-    fn check_identity_args(function_name: &str, args: &Value, auth: &AuthContext) -> Result<()> {
+    fn check_identity_args(
+        function_name: &str,
+        args: &Value,
+        auth: &AuthContext,
+        enforce_scope: bool,
+    ) -> Result<()> {
         if auth.is_admin() {
             return Ok(());
         }
 
         let Some(obj) = args.as_object() else {
+            if enforce_scope && auth.is_authenticated() {
+                return Err(ForgeError::Forbidden(format!(
+                    "Function '{function_name}' must include identity or tenant scope arguments"
+                )));
+            }
             return Ok(());
         };
 
@@ -345,6 +355,8 @@ impl FunctionRouter {
                 principal_values.push(subject);
             }
         }
+
+        let mut has_scope_key = false;
 
         for key in [
             "user_id",
@@ -361,6 +373,7 @@ impl FunctionRouter {
             let Some(value) = obj.get(key) else {
                 continue;
             };
+            has_scope_key = true;
 
             if !auth.is_authenticated() {
                 return Err(ForgeError::Unauthorized(format!(
@@ -385,6 +398,7 @@ impl FunctionRouter {
             let Some(value) = obj.get(key) else {
                 continue;
             };
+            has_scope_key = true;
 
             if !auth.is_authenticated() {
                 return Err(ForgeError::Unauthorized(format!(
@@ -412,6 +426,12 @@ impl FunctionRouter {
                     "Function '{function_name}' argument '{key}' does not match authenticated tenant"
                 )));
             }
+        }
+
+        if enforce_scope && auth.is_authenticated() && !has_scope_key {
+            return Err(ForgeError::Forbidden(format!(
+                "Function '{function_name}' must include identity or tenant scope arguments"
+            )));
         }
 
         Ok(())
@@ -473,7 +493,18 @@ impl FunctionRouter {
                 }
 
                 for workflow in &buffer.workflows {
-                    Self::insert_workflow(&mut tx, workflow).await?;
+                    let version = self
+                        .workflow_dispatcher
+                        .as_ref()
+                        .and_then(|d| d.get_info(&workflow.workflow_name))
+                        .map(|info| info.version)
+                        .ok_or_else(|| {
+                            ForgeError::NotFound(format!(
+                                "Workflow '{}' not found",
+                                workflow.workflow_name
+                            ))
+                        })?;
+                    Self::insert_workflow(&mut tx, workflow, version).await?;
                 }
 
                 tx.commit()
@@ -521,6 +552,7 @@ impl FunctionRouter {
     async fn insert_workflow(
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         workflow: &PendingWorkflow,
+        version: u32,
     ) -> Result<()> {
         let now = Utc::now();
         sqlx::query(
@@ -533,7 +565,7 @@ impl FunctionRouter {
         )
         .bind(workflow.id)
         .bind(&workflow.workflow_name)
-        .bind(1i32)
+        .bind(version as i32)
         .bind(&workflow.owner_subject)
         .bind(&workflow.input)
         .bind(WorkflowStatus::Created.as_str())
@@ -594,7 +626,7 @@ mod tests {
             "user_id": uuid::Uuid::new_v4().to_string()
         });
 
-        let result = FunctionRouter::check_identity_args("list_orders", &args, &auth);
+        let result = FunctionRouter::check_identity_args("list_orders", &args, &auth, true);
         assert!(matches!(result, Err(ForgeError::Forbidden(_))));
     }
 
@@ -612,7 +644,7 @@ mod tests {
             "subject": sub
         });
 
-        let result = FunctionRouter::check_identity_args("list_orders", &args, &auth);
+        let result = FunctionRouter::check_identity_args("list_orders", &args, &auth, true);
         assert!(result.is_ok());
     }
 
@@ -623,8 +655,29 @@ mod tests {
             "user_id": uuid::Uuid::new_v4().to_string()
         });
 
-        let result = FunctionRouter::check_identity_args("list_orders", &args, &auth);
+        let result = FunctionRouter::check_identity_args("list_orders", &args, &auth, true);
         assert!(matches!(result, Err(ForgeError::Unauthorized(_))));
+    }
+
+    #[test]
+    fn test_identity_args_require_scope_for_non_public_calls() {
+        let user_id = uuid::Uuid::new_v4();
+        let auth = AuthContext::authenticated(
+            user_id,
+            vec!["user".to_string()],
+            HashMap::from([(
+                "sub".to_string(),
+                serde_json::Value::String(user_id.to_string()),
+            )]),
+        );
+
+        let result = FunctionRouter::check_identity_args(
+            "list_orders",
+            &serde_json::json!({}),
+            &auth,
+            true,
+        );
+        assert!(matches!(result, Err(ForgeError::Forbidden(_))));
     }
 
     #[test]
