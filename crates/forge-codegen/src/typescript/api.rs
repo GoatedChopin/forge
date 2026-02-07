@@ -1,5 +1,5 @@
 use forge_core::schema::{FunctionKind, RustType, SchemaRegistry};
-use forge_utils::{to_camel_case, to_pascal_case};
+use forge_core::util::{to_camel_case, to_pascal_case};
 
 use super::Error;
 

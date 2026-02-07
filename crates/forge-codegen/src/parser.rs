@@ -9,7 +9,7 @@ use forge_core::schema::{
     EnumDef, EnumVariant, FieldDef, FunctionArg, FunctionDef, FunctionKind, RustType,
     SchemaRegistry, TableDef,
 };
-use forge_utils::to_snake_case;
+use forge_core::util::to_snake_case;
 use quote::ToTokens;
 use syn::{Attribute, Expr, Fields, FnArg, Lit, Meta, Pat, ReturnType};
 use walkdir::WalkDir;

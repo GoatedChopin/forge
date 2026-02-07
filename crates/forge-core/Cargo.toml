@@ -10,7 +10,6 @@ description = "Core types and traits for the Forge framework"
 workspace = true
 
 [dependencies]
-forge-utils = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }

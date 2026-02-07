@@ -1,17 +1,49 @@
 //! Shared utility functions for forge macros.
-//!
-//! Re-exports from forge-utils with proc-macro-specific helpers.
+
+use std::time::Duration;
 
 use proc_macro2::TokenStream;
 use quote::quote;
 
-#[allow(unused_imports)]
-pub use forge_utils::{to_camel_case, to_pascal_case, to_snake_case};
+/// Convert a snake_case string to PascalCase.
+pub fn to_pascal_case(s: &str) -> String {
+    s.split('_')
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(first) => first.to_uppercase().chain(chars).collect(),
+            }
+        })
+        .collect()
+}
 
-/// Parse a duration string (e.g., "30s", "5m", "1h") into seconds.
+/// Parse a duration string (e.g., "30s", "5m", "1h") into a `Duration`.
+fn parse_duration(s: &str) -> Option<Duration> {
+    let s = s.trim();
+    if let Some(num) = s.strip_suffix("ms") {
+        num.parse::<u64>().ok().map(Duration::from_millis)
+    } else if let Some(num) = s.strip_suffix('s') {
+        num.parse::<u64>().ok().map(Duration::from_secs)
+    } else if let Some(num) = s.strip_suffix('m') {
+        num.parse::<u64>().ok().map(|m| Duration::from_secs(m * 60))
+    } else if let Some(num) = s.strip_suffix('h') {
+        num.parse::<u64>()
+            .ok()
+            .map(|h| Duration::from_secs(h * 3600))
+    } else if let Some(num) = s.strip_suffix('d') {
+        num.parse::<u64>()
+            .ok()
+            .map(|d| Duration::from_secs(d * 86400))
+    } else {
+        s.parse::<u64>().ok().map(Duration::from_secs)
+    }
+}
+
+/// Parse a duration string into seconds.
 /// Returns None if the string cannot be parsed.
 pub fn parse_duration_secs(s: &str) -> Option<u64> {
-    forge_utils::parse_duration(s).map(|d| d.as_secs())
+    parse_duration(s).map(|d| d.as_secs())
 }
 
 /// Parse a duration string into a TokenStream representing std::time::Duration.
@@ -122,21 +154,6 @@ mod tests {
         assert_eq!(to_pascal_case("list_all_projects"), "ListAllProjects");
         assert_eq!(to_pascal_case("simple"), "Simple");
         assert_eq!(to_pascal_case("send_welcome_email"), "SendWelcomeEmail");
-    }
-
-    #[test]
-    fn test_to_snake_case() {
-        assert_eq!(to_snake_case("GetUser"), "get_user");
-        assert_eq!(to_snake_case("ListAllProjects"), "list_all_projects");
-        assert_eq!(to_snake_case("Simple"), "simple");
-        assert_eq!(to_snake_case("ProjectStatus"), "project_status");
-    }
-
-    #[test]
-    fn test_to_camel_case() {
-        assert_eq!(to_camel_case("get_user"), "getUser");
-        assert_eq!(to_camel_case("list_all_projects"), "listAllProjects");
-        assert_eq!(to_camel_case("simple"), "simple");
     }
 
     #[test]

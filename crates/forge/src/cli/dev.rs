@@ -206,7 +206,7 @@ impl DevCommand {
         }
         ui::kv(
             "Watch",
-            style("src/, migrations/, Cargo.toml, Cargo.lock, build.rs, .env, forge.toml").dim(),
+            style("src/, migrations/, Cargo.toml, build.rs, .env, forge.toml").dim(),
         );
         println!();
 
@@ -281,30 +281,28 @@ impl DevCommand {
                 ui::step()
             );
 
+            let mut watch_args = vec![
+                "watch",
+                "--watch", "src",
+                "--watch", "migrations",
+                "--watch", "build.rs",
+                "--watch", "Cargo.toml",
+                "--watch", ".env",
+                "--watch", "forge.toml",
+            ];
+
+            if std::path::Path::new("Cargo.lock").exists() {
+                watch_args.extend(["--watch", "Cargo.lock"]);
+            }
+
+            watch_args.extend([
+                "--ignore", "frontend/*",
+                "--ignore", "**/*.json",
+                "-x", "run --no-default-features",
+            ]);
+
             let mut backend_child = Command::new("cargo")
-                .args([
-                    "watch",
-                    "--watch",
-                    "src",
-                    "--watch",
-                    "migrations",
-                    "--watch",
-                    "build.rs",
-                    "--watch",
-                    "Cargo.toml",
-                    "--watch",
-                    "Cargo.lock",
-                    "--watch",
-                    ".env",
-                    "--watch",
-                    "forge.toml",
-                    "--ignore",
-                    "frontend/*",
-                    "--ignore",
-                    "**/*.json",
-                    "-x",
-                    "run --no-default-features",
-                ])
+                .args(&watch_args)
                 .env("DATABASE_URL", &database_url)
                 .env("RUST_LOG", "warn,forge=info")
                 .env("HOST", "0.0.0.0")

@@ -6,7 +6,6 @@ members = [
     "crates/forge-macros",
     "crates/forge-runtime",
     "crates/forge-codegen",
-    "crates/forge-utils",
 ]
 
 [workspace.package]
@@ -27,7 +26,6 @@ forge-core = { path = "crates/forge-core" }
 forge-macros = { path = "crates/forge-macros" }
 forge-runtime = { path = "crates/forge-runtime" }
 forge-codegen = { path = "crates/forge-codegen" }
-forge-utils = { path = "crates/forge-utils" }
 
 # Async runtime
 tokio = { version = "1.48", features = ["full"] }

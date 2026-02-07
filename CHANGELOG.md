@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-02-07
+
+### Added
+
+- OTLP-based observability with tracing, metrics, and database instrumentation
+- Principal ownership tracking for jobs and workflows
+- Job heartbeats for stale job detection
+- Configuration validation at parse time for database, cluster, and auth settings
+- Error reference page and contexts reference in documentation
+- Stricter clippy lints across all crates
+
+### Changed
+
+- `forge dev` revamped with strict-by-default ports, takeover mode, and scoped reloads
+- Gateway defaults hardened for production readiness
+- Logging levels reconfigured for cleaner defaults
+- Macro utilities extracted into shared `forge-macros/utils.rs`
+- Documentation rewritten for conciseness and consistent tone
+
+### Fixed
+
+- Webhook idempotency race condition in concurrent request handling
+- Advisory lock session pinning for leader election reliability
+- Integration tests using local workspace path instead of published crates
+- Bare `unwrap()` calls replaced with `expect()` for better panic diagnostics
+
 ## [0.1.0] - 2026-02-04
 
 ### Added
@@ -164,7 +190,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust 2024 edition unsafe block compatibility
 - Release workflow cargo-edit installation
 
-[unreleased]: https://github.com/isala404/forge/compare/v0.1.0...HEAD
+[unreleased]: https://github.com/isala404/forge/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/isala404/forge/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/isala404/forge/compare/v0.0.7...v0.1.0
 [0.0.7]: https://github.com/isala404/forge/compare/v0.0.6...v0.0.7
 [0.0.6]: https://github.com/isala404/forge/compare/v0.0.5...v0.0.6

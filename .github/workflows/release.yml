@@ -162,8 +162,17 @@ jobs:
       - name: Patch to use local workspace
         run: |
           cd /tmp/forge-integration-test
-          # Replace crates.io dependency with path to workspace
-          sed -i 's|forge = { version = "[^"]*" }|forge = { path = "${{ github.workspace }}/crates/forge" }|' Cargo.toml
+          # Add [patch.crates-io] section to use local forge crates
+          cat >> Cargo.toml << 'EOF'
+
+          # Local patches for integration testing
+          [patch.crates-io]
+          forgex = { path = "${{ github.workspace }}/crates/forge" }
+          forge-core = { path = "${{ github.workspace }}/crates/forge-core" }
+          forge-macros = { path = "${{ github.workspace }}/crates/forge-macros" }
+          forge-runtime = { path = "${{ github.workspace }}/crates/forge-runtime" }
+          forge-codegen = { path = "${{ github.workspace }}/crates/forge-codegen" }
+          EOF
           cat Cargo.toml
 
       - name: Install Playwright
@@ -236,7 +245,7 @@ jobs:
         run: |
           VERSION="${{ needs.parse-changelog.outputs.version }}"
 
-          for crate_dir in crates/forge crates/forge-runtime crates/forge-codegen; do
+          for crate_dir in crates/forge crates/forge-runtime crates/forge-codegen crates/forge-macros crates/forge-core; do
             if [ -f "$crate_dir/Cargo.toml" ]; then
               sed -i "s/forge-core = { version = \"[^\"]*\"/forge-core = { version = \"$VERSION\"/g" "$crate_dir/Cargo.toml"
               sed -i "s/forge-macros = { version = \"[^\"]*\"/forge-macros = { version = \"$VERSION\"/g" "$crate_dir/Cargo.toml"
@@ -419,29 +428,26 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Publish forge-macros
-        run: cargo publish -p forge-macros --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        continue-on-error: true
+        run: |
+          sleep 30
+          cargo publish -p forge-macros --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
       - name: Publish forge-core
         run: |
           sleep 30
           cargo publish -p forge-core --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        continue-on-error: true
 
       - name: Publish forge-runtime
         run: |
           sleep 30
           cargo publish -p forge-runtime --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        continue-on-error: true
 
       - name: Publish forge-codegen
         run: |
           sleep 30
           cargo publish -p forge-codegen --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        continue-on-error: true
 
       - name: Publish forgex
         run: |
           sleep 30
           cargo publish -p forgex --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        continue-on-error: true
