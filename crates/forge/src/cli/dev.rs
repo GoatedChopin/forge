@@ -347,22 +347,22 @@ impl DevCommand {
             for _ in 0..300 {
                 tokio::time::sleep(Duration::from_secs(1)).await;
 
-                if let Some(child) = backend.as_mut() {
-                    if let Some(status) = child.try_wait()? {
-                        anyhow::bail!("Backend exited early with status {}", status);
-                    }
+                if let Some(child) = backend.as_mut()
+                    && let Some(status) = child.try_wait()?
+                {
+                    anyhow::bail!("Backend exited early with status {}", status);
                 }
 
-                if let Ok(resp) = reqwest::get(&backend_ready_url).await {
-                    if resp.status().is_success() {
-                        println!(
-                            "    {} Backend running on http://localhost:{}",
-                            ui::ok(),
-                            backend_port
-                        );
-                        backend_ready = true;
-                        break;
-                    }
+                if let Ok(resp) = reqwest::get(&backend_ready_url).await
+                    && resp.status().is_success()
+                {
+                    println!(
+                        "    {} Backend running on http://localhost:{}",
+                        ui::ok(),
+                        backend_port
+                    );
+                    backend_ready = true;
+                    break;
                 }
             }
             if !backend_ready {
@@ -703,19 +703,17 @@ impl DevCommand {
         let pg_data_dir = Path::new("pg_data");
         if pg_data_dir.exists() {
             let postmaster_pid = pg_data_dir.join("data/postmaster.pid");
-            if postmaster_pid.exists() {
-                if let Ok(content) = std::fs::read_to_string(&postmaster_pid) {
-                    if let Some(pid_str) = content.lines().next() {
-                        if let Ok(pid) = pid_str.parse::<i32>() {
-                            println!("  {} Stopping PostgreSQL (PID {})...", ui::step(), pid);
-                            use nix::sys::signal::{Signal, kill};
-                            use nix::unistd::Pid;
-                            let _ = kill(Pid::from_raw(pid), Signal::SIGTERM);
-                            // Wait a moment for graceful shutdown
-                            tokio::time::sleep(Duration::from_secs(2)).await;
-                        }
-                    }
-                }
+            if postmaster_pid.exists()
+                && let Ok(content) = std::fs::read_to_string(&postmaster_pid)
+                && let Some(pid_str) = content.lines().next()
+                && let Ok(pid) = pid_str.parse::<i32>()
+            {
+                println!("  {} Stopping PostgreSQL (PID {})...", ui::step(), pid);
+                use nix::sys::signal::{Signal, kill};
+                use nix::unistd::Pid;
+                let _ = kill(Pid::from_raw(pid), Signal::SIGTERM);
+                // Wait a moment for graceful shutdown
+                tokio::time::sleep(Duration::from_secs(2)).await;
             }
         }
 
@@ -792,8 +790,10 @@ async fn get_tool_version(name: &str, args: &[&str]) -> Result<String> {
     let version = version_str
         .split_whitespace()
         .find(|s| {
-            let parts: Vec<&str> = s.split('.').collect();
-            parts.len() >= 2 && parts[0].parse::<u32>().is_ok() && parts[1].parse::<u32>().is_ok()
+            let mut parts = s.split('.');
+            let valid_major = parts.next().is_some_and(|p| p.parse::<u32>().is_ok());
+            let valid_minor = parts.next().is_some_and(|p| p.parse::<u32>().is_ok());
+            valid_major && valid_minor
         })
         .unwrap_or(&version_str)
         .to_string();
@@ -802,13 +802,13 @@ async fn get_tool_version(name: &str, args: &[&str]) -> Result<String> {
 }
 
 fn check_version(version: &str, min_major: u32, min_minor: u32) -> bool {
-    let parts: Vec<&str> = version.split('.').collect();
-    if parts.len() < 2 {
+    let mut parts = version.split('.');
+    let Some(major) = parts.next().and_then(|p| p.parse::<u32>().ok()) else {
         return false;
-    }
-
-    let major: u32 = parts[0].parse().unwrap_or(0);
-    let minor: u32 = parts[1].parse().unwrap_or(0);
+    };
+    let Some(minor) = parts.next().and_then(|p| p.parse::<u32>().ok()) else {
+        return false;
+    };
 
     major > min_major || (major == min_major && minor >= min_minor)
 }
@@ -1093,6 +1093,7 @@ async fn wait_for_child(child: &mut Child, duration: Duration) -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

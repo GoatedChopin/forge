@@ -23,14 +23,14 @@ fn parse_webhook_attrs(attr: TokenStream) -> syn::Result<WebhookAttrs> {
         result.allow_unsigned = true;
     }
 
-    if let Some(path_start) = attr_str.find("path") {
-        if let Some(eq_pos) = attr_str[path_start..].find('=') {
-            let after_eq = &attr_str[path_start + eq_pos + 1..];
-            if let Some(quote_start) = after_eq.find('"') {
-                let after_quote = &after_eq[quote_start + 1..];
-                if let Some(quote_end) = after_quote.find('"') {
-                    result.path = Some(after_quote[..quote_end].to_string());
-                }
+    if let Some(path_start) = attr_str.find("path")
+        && let Some(eq_pos) = attr_str[path_start..].find('=')
+    {
+        let after_eq = &attr_str[path_start + eq_pos + 1..];
+        if let Some(quote_start) = after_eq.find('"') {
+            let after_quote = &after_eq[quote_start + 1..];
+            if let Some(quote_end) = after_quote.find('"') {
+                result.path = Some(after_quote[..quote_end].to_string());
             }
         }
     }
@@ -80,26 +80,26 @@ fn parse_webhook_attrs(attr: TokenStream) -> syn::Result<WebhookAttrs> {
         }
     }
 
-    if let Some(idem_start) = attr_str.find("idempotency") {
-        if let Some(eq_pos) = attr_str[idem_start..].find('=') {
-            let after_eq = &attr_str[idem_start + eq_pos + 1..];
-            if let Some(quote_start) = after_eq.find('"') {
-                let after_quote = &after_eq[quote_start + 1..];
-                if let Some(quote_end) = after_quote.find('"') {
-                    result.idempotency = Some(after_quote[..quote_end].to_string());
-                }
+    if let Some(idem_start) = attr_str.find("idempotency")
+        && let Some(eq_pos) = attr_str[idem_start..].find('=')
+    {
+        let after_eq = &attr_str[idem_start + eq_pos + 1..];
+        if let Some(quote_start) = after_eq.find('"') {
+            let after_quote = &after_eq[quote_start + 1..];
+            if let Some(quote_end) = after_quote.find('"') {
+                result.idempotency = Some(after_quote[..quote_end].to_string());
             }
         }
     }
 
-    if let Some(timeout_start) = attr_str.find("timeout") {
-        if let Some(eq_pos) = attr_str[timeout_start..].find('=') {
-            let after_eq = &attr_str[timeout_start + eq_pos + 1..];
-            if let Some(quote_start) = after_eq.find('"') {
-                let after_quote = &after_eq[quote_start + 1..];
-                if let Some(quote_end) = after_quote.find('"') {
-                    result.timeout = Some(after_quote[..quote_end].to_string());
-                }
+    if let Some(timeout_start) = attr_str.find("timeout")
+        && let Some(eq_pos) = attr_str[timeout_start..].find('=')
+    {
+        let after_eq = &attr_str[timeout_start + eq_pos + 1..];
+        if let Some(quote_start) = after_eq.find('"') {
+            let after_quote = &after_eq[quote_start + 1..];
+            if let Some(quote_end) = after_quote.find('"') {
+                result.timeout = Some(after_quote[..quote_end].to_string());
             }
         }
     }

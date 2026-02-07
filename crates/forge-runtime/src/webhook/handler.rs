@@ -163,23 +163,23 @@ pub async fn webhook_handler(
 
     // Atomically claim idempotency key before execution.
     let mut idempotency_claimed = false;
-    if let Some(ref key) = idempotency_key {
-        if let Some(ref idem_config) = info.idempotency {
-            match claim_idempotency(&state.pool, info.name, key, idem_config.ttl).await {
-                Ok(true) => {
-                    idempotency_claimed = true;
-                }
-                Ok(false) => {
-                    info!(
-                        webhook = info.name,
-                        idempotency_key = %key,
-                        "Request already processed (idempotent)"
-                    );
-                    return (StatusCode::OK, Json(json!({"status": "already_processed"})));
-                }
-                Err(e) => {
-                    warn!(webhook = info.name, error = %e, "Failed to claim idempotency key");
-                }
+    if let Some(ref key) = idempotency_key
+        && let Some(ref idem_config) = info.idempotency
+    {
+        match claim_idempotency(&state.pool, info.name, key, idem_config.ttl).await {
+            Ok(true) => {
+                idempotency_claimed = true;
+            }
+            Ok(false) => {
+                info!(
+                    webhook = info.name,
+                    idempotency_key = %key,
+                    "Request already processed (idempotent)"
+                );
+                return (StatusCode::OK, Json(json!({"status": "already_processed"})));
+            }
+            Err(e) => {
+                warn!(webhook = info.name, error = %e, "Failed to claim idempotency key");
             }
         }
     }
@@ -188,17 +188,15 @@ pub async fn webhook_handler(
     let payload: Value = match serde_json::from_slice(&body) {
         Ok(v) => v,
         Err(e) => {
-            if idempotency_claimed {
-                if let Some(ref key) = idempotency_key {
-                    if let Err(release_err) = release_idempotency(&state.pool, info.name, key).await
-                    {
-                        warn!(
-                            webhook = info.name,
-                            error = %release_err,
-                            "Failed to release idempotency key after JSON parse failure"
-                        );
-                    }
-                }
+            if idempotency_claimed
+                && let Some(ref key) = idempotency_key
+                && let Err(release_err) = release_idempotency(&state.pool, info.name, key).await
+            {
+                warn!(
+                    webhook = info.name,
+                    error = %release_err,
+                    "Failed to release idempotency key after JSON parse failure"
+                );
             }
             warn!(webhook = info.name, error = %e, "Invalid JSON payload");
             return (
@@ -242,17 +240,15 @@ pub async fn webhook_handler(
             (status, Json(webhook_result.body()))
         }
         Ok(Err(e)) => {
-            if idempotency_claimed {
-                if let Some(ref key) = idempotency_key {
-                    if let Err(release_err) = release_idempotency(&state.pool, info.name, key).await
-                    {
-                        warn!(
-                            webhook = info.name,
-                            error = %release_err,
-                            "Failed to release idempotency key after handler error"
-                        );
-                    }
-                }
+            if idempotency_claimed
+                && let Some(ref key) = idempotency_key
+                && let Err(release_err) = release_idempotency(&state.pool, info.name, key).await
+            {
+                warn!(
+                    webhook = info.name,
+                    error = %release_err,
+                    "Failed to release idempotency key after handler error"
+                );
             }
             error!(webhook = info.name, error = %e, "Webhook handler error");
             (
@@ -261,17 +257,15 @@ pub async fn webhook_handler(
             )
         }
         Err(_) => {
-            if idempotency_claimed {
-                if let Some(ref key) = idempotency_key {
-                    if let Err(release_err) = release_idempotency(&state.pool, info.name, key).await
-                    {
-                        warn!(
-                            webhook = info.name,
-                            error = %release_err,
-                            "Failed to release idempotency key after timeout"
-                        );
-                    }
-                }
+            if idempotency_claimed
+                && let Some(ref key) = idempotency_key
+                && let Err(release_err) = release_idempotency(&state.pool, info.name, key).await
+            {
+                warn!(
+                    webhook = info.name,
+                    error = %release_err,
+                    "Failed to release idempotency key after timeout"
+                );
             }
             error!(
                 webhook = info.name,
@@ -397,6 +391,7 @@ async fn release_idempotency(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
 

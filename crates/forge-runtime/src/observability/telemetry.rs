@@ -278,22 +278,22 @@ pub fn init_telemetry(config: &TelemetryConfig) -> Result<(), TelemetryError> {
 pub fn shutdown_telemetry() {
     tracing::info!("shutting down telemetry");
 
-    if let Some(provider) = TRACER_PROVIDER.get() {
-        if let Err(e) = provider.shutdown() {
-            tracing::warn!(error = %e, "failed to shutdown tracer provider");
-        }
+    if let Some(provider) = TRACER_PROVIDER.get()
+        && let Err(e) = provider.shutdown()
+    {
+        tracing::warn!(error = %e, "failed to shutdown tracer provider");
     }
 
-    if let Some(provider) = METER_PROVIDER.get() {
-        if let Err(e) = provider.shutdown() {
-            tracing::warn!(error = %e, "failed to shutdown meter provider");
-        }
+    if let Some(provider) = METER_PROVIDER.get()
+        && let Err(e) = provider.shutdown()
+    {
+        tracing::warn!(error = %e, "failed to shutdown meter provider");
     }
 
-    if let Some(provider) = LOGGER_PROVIDER.get() {
-        if let Err(e) = provider.shutdown() {
-            tracing::warn!(error = %e, "failed to shutdown logger provider");
-        }
+    if let Some(provider) = LOGGER_PROVIDER.get()
+        && let Err(e) = provider.shutdown()
+    {
+        tracing::warn!(error = %e, "failed to shutdown logger provider");
     }
 }
 

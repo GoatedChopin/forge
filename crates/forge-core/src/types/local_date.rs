@@ -97,6 +97,7 @@ impl From<LocalDate> for NaiveDate {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use chrono::Datelike;

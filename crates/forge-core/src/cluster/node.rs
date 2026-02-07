@@ -177,6 +177,7 @@ impl NodeInfo {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use std::net::Ipv4Addr;

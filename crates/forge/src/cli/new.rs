@@ -126,7 +126,7 @@ fn run_formatters(dir: &Path) -> Result<()> {
 
     // Run cargo fmt if cargo is available
     let cargo_check = Command::new("cargo").arg("--version").output();
-    if cargo_check.is_ok() && cargo_check.unwrap().status.success() {
+    if matches!(cargo_check, Ok(ref o) if o.status.success()) {
         println!("  {} Formatting backend...", ui::step());
         let output = Command::new("cargo")
             .args(["fmt"])
@@ -187,7 +187,7 @@ fn generate_bun_lockfile(dir: &Path) -> Result<()> {
     // Check if bun is available
     let bun_check = Command::new("bun").arg("--version").output();
 
-    if bun_check.is_err() || !bun_check.unwrap().status.success() {
+    if !matches!(bun_check, Ok(ref o) if o.status.success()) {
         eprintln!(
             "  {} bun not found, skipping lockfile generation",
             ui::warn()
@@ -728,6 +728,7 @@ fn create_frontend(dir: &Path, name: &str, demo: bool) -> Result<()> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use tempfile::tempdir;

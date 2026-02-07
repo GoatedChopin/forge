@@ -17,58 +17,56 @@ fn parse_daemon_attrs(attr: TokenStream) -> DaemonAttrs {
     let mut result = DaemonAttrs::default();
     let attr_str = attr.to_string();
 
-    if let Some(le_start) = attr_str.find("leader_elected") {
-        if let Some(eq_pos) = attr_str[le_start..].find('=') {
-            let after_eq = &attr_str[le_start + eq_pos + 1..];
-            let value = after_eq.split(&[',', ')']).next().unwrap_or("").trim();
-            result.leader_elected = Some(value == "true");
+    if let Some(le_start) = attr_str.find("leader_elected")
+        && let Some(eq_pos) = attr_str[le_start..].find('=')
+    {
+        let after_eq = &attr_str[le_start + eq_pos + 1..];
+        let value = after_eq.split(&[',', ')']).next().unwrap_or("").trim();
+        result.leader_elected = Some(value == "true");
+    }
+
+    if let Some(rop_start) = attr_str.find("restart_on_panic")
+        && let Some(eq_pos) = attr_str[rop_start..].find('=')
+    {
+        let after_eq = &attr_str[rop_start + eq_pos + 1..];
+        let value = after_eq.split(&[',', ')']).next().unwrap_or("").trim();
+        result.restart_on_panic = Some(value == "true");
+    }
+
+    if let Some(rd_start) = attr_str.find("restart_delay")
+        && let Some(eq_pos) = attr_str[rd_start..].find('=')
+    {
+        let after_eq = &attr_str[rd_start + eq_pos + 1..];
+        if let Some(quote_start) = after_eq.find('"')
+            && let Some(quote_end) = after_eq[quote_start + 1..].find('"')
+        {
+            result.restart_delay = Some(after_eq[quote_start + 1..][..quote_end].to_string());
         }
     }
 
-    if let Some(rop_start) = attr_str.find("restart_on_panic") {
-        if let Some(eq_pos) = attr_str[rop_start..].find('=') {
-            let after_eq = &attr_str[rop_start + eq_pos + 1..];
-            let value = after_eq.split(&[',', ')']).next().unwrap_or("").trim();
-            result.restart_on_panic = Some(value == "true");
+    if let Some(sd_start) = attr_str.find("startup_delay")
+        && let Some(eq_pos) = attr_str[sd_start..].find('=')
+    {
+        let after_eq = &attr_str[sd_start + eq_pos + 1..];
+        if let Some(quote_start) = after_eq.find('"')
+            && let Some(quote_end) = after_eq[quote_start + 1..].find('"')
+        {
+            result.startup_delay = Some(after_eq[quote_start + 1..][..quote_end].to_string());
         }
     }
 
-    if let Some(rd_start) = attr_str.find("restart_delay") {
-        if let Some(eq_pos) = attr_str[rd_start..].find('=') {
-            let after_eq = &attr_str[rd_start + eq_pos + 1..];
-            if let Some(quote_start) = after_eq.find('"') {
-                let after_quote = &after_eq[quote_start + 1..];
-                if let Some(quote_end) = after_quote.find('"') {
-                    result.restart_delay = Some(after_quote[..quote_end].to_string());
-                }
-            }
-        }
-    }
-
-    if let Some(sd_start) = attr_str.find("startup_delay") {
-        if let Some(eq_pos) = attr_str[sd_start..].find('=') {
-            let after_eq = &attr_str[sd_start + eq_pos + 1..];
-            if let Some(quote_start) = after_eq.find('"') {
-                let after_quote = &after_eq[quote_start + 1..];
-                if let Some(quote_end) = after_quote.find('"') {
-                    result.startup_delay = Some(after_quote[..quote_end].to_string());
-                }
-            }
-        }
-    }
-
-    if let Some(mr_start) = attr_str.find("max_restarts") {
-        if let Some(eq_pos) = attr_str[mr_start..].find('=') {
-            let after_eq = &attr_str[mr_start + eq_pos + 1..];
-            if let Ok(n) = after_eq
-                .split(&[',', ')'])
-                .next()
-                .unwrap_or("")
-                .trim()
-                .parse::<u32>()
-            {
-                result.max_restarts = Some(n);
-            }
+    if let Some(mr_start) = attr_str.find("max_restarts")
+        && let Some(eq_pos) = attr_str[mr_start..].find('=')
+    {
+        let after_eq = &attr_str[mr_start + eq_pos + 1..];
+        if let Ok(n) = after_eq
+            .split(&[',', ')'])
+            .next()
+            .unwrap_or("")
+            .trim()
+            .parse::<u32>()
+        {
+            result.max_restarts = Some(n);
         }
     }
 

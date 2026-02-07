@@ -176,10 +176,10 @@ impl CronRunner {
                 break;
             }
 
-            if self.is_leader() {
-                if let Err(e) = self.tick().await {
-                    tracing::warn!(error = %e, "Cron tick failed");
-                }
+            if self.is_leader()
+                && let Err(e) = self.tick().await
+            {
+                tracing::warn!(error = %e, "Cron tick failed");
             }
 
             tokio::time::sleep(self.config.poll_interval).await;
@@ -271,14 +271,14 @@ impl CronRunner {
                 }
 
                 // Handle catch-up if enabled
-                if info.catch_up {
-                    if let Err(e) = self.handle_catch_up(entry).await {
-                        tracing::warn!(
-                            cron = info.name,
-                            error = %e,
-                            "Failed to process catch-up runs"
-                        );
-                    }
+                if info.catch_up
+                    && let Err(e) = self.handle_catch_up(entry).await
+                {
+                    tracing::warn!(
+                        cron = info.name,
+                        error = %e,
+                        "Failed to process catch-up runs"
+                    );
                 }
             }
 

@@ -97,11 +97,11 @@ impl CheckCommand {
         result.section("Environment");
         let database_url = self.check_environment(&mut result);
 
-        if !self.no_db {
-            if let Some(url) = database_url {
-                result.section("Database Connectivity");
-                self.check_database(&mut result, &url).await;
-            }
+        if !self.no_db
+            && let Some(url) = database_url
+        {
+            result.section("Database Connectivity");
+            self.check_database(&mut result, &url).await;
         }
 
         result.section("Frontend");
@@ -228,18 +228,17 @@ impl CheckCommand {
         }
 
         // Check [gateway] section
-        if let Some(gateway) = config.get("gateway") {
-            if let Some(port) = gateway.get("port") {
-                if let Some(p) = port.as_integer() {
-                    if (1..=65535).contains(&p) {
-                        result.pass(&format!("[gateway] configured (port {})", p));
-                    } else {
-                        result.fail(
-                            &format!("[gateway].port {} is out of range", p),
-                            "Use a port between 1 and 65535",
-                        );
-                    }
-                }
+        if let Some(gateway) = config.get("gateway")
+            && let Some(port) = gateway.get("port")
+            && let Some(p) = port.as_integer()
+        {
+            if (1..=65535).contains(&p) {
+                result.pass(&format!("[gateway] configured (port {})", p));
+            } else {
+                result.fail(
+                    &format!("[gateway].port {} is out of range", p),
+                    "Use a port between 1 and 65535",
+                );
             }
         }
 
@@ -323,7 +322,10 @@ impl CheckCommand {
 
             if path.extension().is_some_and(|ext| ext == "sql") {
                 migration_count += 1;
-                let filename = path.file_name().unwrap().to_string_lossy();
+                let Some(file_name) = path.file_name() else {
+                    continue;
+                };
+                let filename = file_name.to_string_lossy();
 
                 // Check naming convention: NNNN_name.sql
                 let name_valid = filename
@@ -398,8 +400,10 @@ impl CheckCommand {
             let path = entry.path();
 
             if path.extension().is_some_and(|ext| ext == "rs") {
-                let filename = path.file_name().unwrap().to_string_lossy();
-                if filename == "mod.rs" {
+                let Some(file_name) = path.file_name() else {
+                    continue;
+                };
+                if file_name == "mod.rs" {
                     continue;
                 }
 
@@ -463,8 +467,10 @@ impl CheckCommand {
             let path = entry.path();
 
             if path.extension().is_some_and(|ext| ext == "rs") {
-                let filename = path.file_name().unwrap().to_string_lossy();
-                if filename == "mod.rs" {
+                let Some(file_name) = path.file_name() else {
+                    continue;
+                };
+                if file_name == "mod.rs" {
                     continue;
                 }
 
@@ -510,17 +516,17 @@ impl CheckCommand {
         // Check DATABASE_URL
         let mut database_url = std::env::var("DATABASE_URL").ok();
 
-        if database_url.is_none() {
-            if let Ok(content) = std::fs::read_to_string(env_path) {
-                for line in content.lines() {
-                    let line = line.trim();
-                    if line.starts_with("DATABASE_URL=") {
-                        let url = line.trim_start_matches("DATABASE_URL=").trim();
-                        if !url.is_empty() {
-                            database_url = Some(url.to_string());
-                        }
-                        break;
+        if database_url.is_none()
+            && let Ok(content) = std::fs::read_to_string(env_path)
+        {
+            for line in content.lines() {
+                let line = line.trim();
+                if line.starts_with("DATABASE_URL=") {
+                    let url = line.trim_start_matches("DATABASE_URL=").trim();
+                    if !url.is_empty() {
+                        database_url = Some(url.to_string());
                     }
+                    break;
                 }
             }
         }
@@ -761,14 +767,14 @@ impl CheckCommand {
 }
 
 fn mask_database_url(url: &str) -> String {
-    if let Some(at_pos) = url.find('@') {
-        if let Some(colon_pos) = url[..at_pos].rfind(':') {
-            let protocol_end = url.find("://").map(|p| p + 3).unwrap_or(0);
-            if colon_pos > protocol_end {
-                let before_password = &url[..colon_pos + 1];
-                let after_password = &url[at_pos..];
-                return format!("{}****{}", before_password, after_password);
-            }
+    if let Some(at_pos) = url.find('@')
+        && let Some(colon_pos) = url[..at_pos].rfind(':')
+    {
+        let protocol_end = url.find("://").map(|p| p + 3).unwrap_or(0);
+        if colon_pos > protocol_end {
+            let before_password = &url[..colon_pos + 1];
+            let after_password = &url[at_pos..];
+            return format!("{}****{}", before_password, after_password);
         }
     }
     url.to_string()
@@ -795,6 +801,7 @@ async fn check_database_connection(url: &str) -> Result<String> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

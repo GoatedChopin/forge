@@ -515,7 +515,7 @@ fn default_sampling_ratio() -> f64 {
 /// Substitute environment variables in the format ${VAR_NAME}.
 fn substitute_env_vars(content: &str) -> String {
     let mut result = content.to_string();
-    let re = regex_lite::Regex::new(r"\$\{([A-Z_][A-Z0-9_]*)\}").unwrap();
+    let re = regex_lite::Regex::new(r"\$\{([A-Z_][A-Z0-9_]*)\}").expect("valid regex pattern");
 
     for cap in re.captures_iter(content) {
         let var_name = &cap[1];
@@ -528,6 +528,7 @@ fn substitute_env_vars(content: &str) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing, unsafe_code)]
 mod tests {
     use super::*;
 

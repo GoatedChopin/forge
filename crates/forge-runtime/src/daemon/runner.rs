@@ -403,13 +403,13 @@ async fn run_daemon_loop(
             Span::current().record("daemon.restart_count", restarts);
 
             // Check max restarts
-            if let Some(max) = max_restarts {
-                if restarts >= max {
-                    tracing::error!(restarts, max, "Max restarts exceeded");
-                    Span::current().record("daemon.final_status", "max_restarts_exceeded");
-                    let _ = update_daemon_status(&pool, &name, DaemonStatus::Failed).await;
-                    break;
-                }
+            if let Some(max) = max_restarts
+                && restarts >= max
+            {
+                tracing::error!(restarts, max, "Max restarts exceeded");
+                Span::current().record("daemon.final_status", "max_restarts_exceeded");
+                let _ = update_daemon_status(&pool, &name, DaemonStatus::Failed).await;
+                break;
             }
 
             // Update status to restarting

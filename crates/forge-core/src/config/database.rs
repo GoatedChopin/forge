@@ -126,16 +126,16 @@ impl DatabaseConfig {
 
     /// Validate the database configuration.
     pub fn validate(&self) -> Result<()> {
-        if let DatabaseSource::Remote { url } = &self.source {
-            if url.is_empty() {
-                return Err(ForgeError::Config(
-                    "database.url is required when mode = \"remote\". \
-                     Set database.url to a PostgreSQL connection string \
-                     (e.g., \"postgres://user:pass@localhost/mydb\"), \
-                     or use mode = \"embedded\" for zero-dependency development."
-                        .into(),
-                ));
-            }
+        if let DatabaseSource::Remote { url } = &self.source
+            && url.is_empty()
+        {
+            return Err(ForgeError::Config(
+                "database.url is required when mode = \"remote\". \
+                 Set database.url to a PostgreSQL connection string \
+                 (e.g., \"postgres://user:pass@localhost/mydb\"), \
+                 or use mode = \"embedded\" for zero-dependency development."
+                    .into(),
+            ));
         }
         Ok(())
     }
@@ -188,6 +188,7 @@ pub struct PoolConfig {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

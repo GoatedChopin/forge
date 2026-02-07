@@ -30,35 +30,34 @@ impl TokioSleepDetector {
             return None;
         }
 
-        if let syn::Expr::Call(call) = &args[0] {
-            if let syn::Expr::Path(path) = &*call.func {
-                let path_str: String = path
-                    .path
-                    .segments
-                    .iter()
-                    .map(|s| s.ident.to_string())
-                    .collect::<Vec<_>>()
-                    .join("::");
+        if let syn::Expr::Call(call) = &args[0]
+            && let syn::Expr::Path(path) = &*call.func
+        {
+            let path_str: String = path
+                .path
+                .segments
+                .iter()
+                .map(|s| s.ident.to_string())
+                .collect::<Vec<_>>()
+                .join("::");
 
-                if path_str.ends_with("from_secs") {
-                    if let Some(syn::Expr::Lit(lit)) = call.args.first() {
-                        if let Lit::Int(int_lit) = &lit.lit {
-                            return int_lit.base10_parse::<u64>().ok();
-                        }
-                    }
-                } else if path_str.ends_with("from_millis") {
-                    if let Some(syn::Expr::Lit(lit)) = call.args.first() {
-                        if let Lit::Int(int_lit) = &lit.lit {
-                            return int_lit.base10_parse::<u64>().ok().map(|ms| ms / 1000);
-                        }
-                    }
-                } else if path_str.ends_with("from_days") {
-                    if let Some(syn::Expr::Lit(lit)) = call.args.first() {
-                        if let Lit::Int(int_lit) = &lit.lit {
-                            return int_lit.base10_parse::<u64>().ok().map(|d| d * 86400);
-                        }
-                    }
+            if path_str.ends_with("from_secs") {
+                if let Some(syn::Expr::Lit(lit)) = call.args.first()
+                    && let Lit::Int(int_lit) = &lit.lit
+                {
+                    return int_lit.base10_parse::<u64>().ok();
                 }
+            } else if path_str.ends_with("from_millis") {
+                if let Some(syn::Expr::Lit(lit)) = call.args.first()
+                    && let Lit::Int(int_lit) = &lit.lit
+                {
+                    return int_lit.base10_parse::<u64>().ok().map(|ms| ms / 1000);
+                }
+            } else if path_str.ends_with("from_days")
+                && let Some(syn::Expr::Lit(lit)) = call.args.first()
+                && let Lit::Int(int_lit) = &lit.lit
+            {
+                return int_lit.base10_parse::<u64>().ok().map(|d| d * 86400);
             }
         }
         None
@@ -113,25 +112,25 @@ impl<'ast> Visit<'ast> for TokioSleepDetector {
 
     fn visit_expr_await(&mut self, node: &'ast ExprAwait) {
         // Check for tokio::time::sleep(...).await pattern
-        if let syn::Expr::Call(call) = &*node.base {
-            if let syn::Expr::Path(path) = &*call.func {
-                let path_str: String = path
-                    .path
-                    .segments
-                    .iter()
-                    .map(|s| s.ident.to_string())
-                    .collect::<Vec<_>>()
-                    .join("::");
+        if let syn::Expr::Call(call) = &*node.base
+            && let syn::Expr::Path(path) = &*call.func
+        {
+            let path_str: String = path
+                .path
+                .segments
+                .iter()
+                .map(|s| s.ident.to_string())
+                .collect::<Vec<_>>()
+                .join("::");
 
-                let span = path
-                    .path
-                    .segments
-                    .last()
-                    .map(|s| s.ident.span())
-                    .unwrap_or_else(proc_macro2::Span::call_site);
+            let span = path
+                .path
+                .segments
+                .last()
+                .map(|s| s.ident.span())
+                .unwrap_or_else(proc_macro2::Span::call_site);
 
-                self.check_sleep_call(&path_str, &call.args, span);
-            }
+            self.check_sleep_call(&path_str, &call.args, span);
         }
         syn::visit::visit_expr_await(self, node);
     }
@@ -151,28 +150,28 @@ fn parse_workflow_attrs(attr: TokenStream) -> WorkflowAttrs {
     let mut result = WorkflowAttrs::default();
     let attr_str = attr.to_string();
 
-    if let Some(version_start) = attr_str.find("version") {
-        if let Some(eq_pos) = attr_str[version_start..].find('=') {
-            let remaining = &attr_str[version_start + eq_pos + 1..];
-            if let Ok(v) = remaining
-                .split(&[',', ')'])
-                .next()
-                .unwrap_or("")
-                .trim()
-                .parse::<u32>()
-            {
-                result.version = Some(v);
-            }
+    if let Some(version_start) = attr_str.find("version")
+        && let Some(eq_pos) = attr_str[version_start..].find('=')
+    {
+        let remaining = &attr_str[version_start + eq_pos + 1..];
+        if let Ok(v) = remaining
+            .split(&[',', ')'])
+            .next()
+            .unwrap_or("")
+            .trim()
+            .parse::<u32>()
+        {
+            result.version = Some(v);
         }
     }
 
-    if let Some(timeout_start) = attr_str.find("timeout") {
-        if let Some(quote_start) = attr_str[timeout_start..].find('"') {
-            let remaining = &attr_str[timeout_start + quote_start + 1..];
-            if let Some(quote_end) = remaining.find('"') {
-                let timeout_str = &remaining[..quote_end];
-                result.timeout = Some(timeout_str.to_string());
-            }
+    if let Some(timeout_start) = attr_str.find("timeout")
+        && let Some(quote_start) = attr_str[timeout_start..].find('"')
+    {
+        let remaining = &attr_str[timeout_start + quote_start + 1..];
+        if let Some(quote_end) = remaining.find('"') {
+            let timeout_str = &remaining[..quote_end];
+            result.timeout = Some(timeout_str.to_string());
         }
     }
 
@@ -184,13 +183,13 @@ fn parse_workflow_attrs(attr: TokenStream) -> WorkflowAttrs {
         result.is_public = true;
     }
 
-    if let Some(role_start) = attr_str.find("require_role") {
-        if let Some(paren_start) = attr_str[role_start..].find('(') {
-            let remaining = &attr_str[role_start + paren_start + 1..];
-            if let Some(paren_end) = remaining.find(')') {
-                let role = remaining[..paren_end].trim().trim_matches('"');
-                result.required_role = Some(role.to_string());
-            }
+    if let Some(role_start) = attr_str.find("require_role")
+        && let Some(paren_start) = attr_str[role_start..].find('(')
+    {
+        let remaining = &attr_str[role_start + paren_start + 1..];
+        if let Some(paren_end) = remaining.find(')') {
+            let role = remaining[..paren_end].trim().trim_matches('"');
+            result.required_role = Some(role.to_string());
         }
     }
 

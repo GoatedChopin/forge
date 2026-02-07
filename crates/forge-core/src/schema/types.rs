@@ -153,10 +153,9 @@ impl RustType {
             RustType::DateTime | RustType::Instant => SqlType::Timestamptz,
             RustType::Date | RustType::LocalDate => SqlType::Date,
             RustType::LocalTime => SqlType::Time,
-            RustType::Upload => panic!(
-                "Upload type cannot be stored in database. \
-                Use Upload only in mutation arguments, then extract the bytes to store separately."
-            ),
+            // Upload is a runtime-only type for mutation arguments, not a storable column.
+            // Return Bytea as a fallback; callers should never define model fields as Upload.
+            RustType::Upload => SqlType::Bytea,
             RustType::Json => SqlType::Jsonb,
             RustType::Bytes => SqlType::Bytea,
             RustType::Option(inner) => inner.to_sql_type(),
@@ -227,6 +226,7 @@ impl RustType {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

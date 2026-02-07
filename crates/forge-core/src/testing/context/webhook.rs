@@ -1,5 +1,7 @@
 //! Test context for webhook functions.
 
+#![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+
 use std::collections::HashMap;
 use std::sync::Arc;
 

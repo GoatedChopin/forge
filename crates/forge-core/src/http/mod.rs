@@ -144,7 +144,7 @@ impl CircuitBreakerClient {
             return Ok(());
         }
 
-        let states = self.states.read().unwrap();
+        let states = self.states.read().expect("circuit breaker lock poisoned");
         let state = match states.get(host) {
             Some(s) => s,
             None => return Ok(()), // No state = first request, allow
@@ -176,7 +176,7 @@ impl CircuitBreakerClient {
             return;
         }
 
-        let mut states = self.states.write().unwrap();
+        let mut states = self.states.write().expect("circuit breaker lock poisoned");
         let state = states.entry(host.to_string()).or_default();
 
         match state.state {
@@ -211,7 +211,7 @@ impl CircuitBreakerClient {
             return;
         }
 
-        let mut states = self.states.write().unwrap();
+        let mut states = self.states.write().expect("circuit breaker lock poisoned");
         let state = states.entry(host.to_string()).or_default();
 
         match state.state {
@@ -261,17 +261,15 @@ impl CircuitBreakerClient {
 
         // If circuit is open but timeout expired, transition to half-open
         {
-            let mut states = self.states.write().unwrap();
-            if let Some(state) = states.get_mut(&host) {
-                if state.state == CircuitStatus::Open {
-                    if let Some(opened_at) = state.opened_at {
-                        if opened_at.elapsed() >= state.current_backoff {
-                            tracing::info!(host = %host, "Circuit breaker half-open, testing service");
-                            state.state = CircuitStatus::HalfOpen;
-                            state.success_count = 0;
-                        }
-                    }
-                }
+            let mut states = self.states.write().expect("circuit breaker lock poisoned");
+            if let Some(state) = states.get_mut(&host)
+                && state.state == CircuitStatus::Open
+                && let Some(opened_at) = state.opened_at
+                && opened_at.elapsed() >= state.current_backoff
+            {
+                tracing::info!(host = %host, "Circuit breaker half-open, testing service");
+                state.state = CircuitStatus::HalfOpen;
+                state.success_count = 0;
             }
         }
 
@@ -295,17 +293,27 @@ impl CircuitBreakerClient {
 
     /// Get the current state for a host.
     pub fn get_state(&self, host: &str) -> Option<CircuitState> {
-        self.states.read().unwrap().get(host).cloned()
+        self.states
+            .read()
+            .expect("circuit breaker lock poisoned")
+            .get(host)
+            .cloned()
     }
 
     /// Reset the circuit breaker state for a host.
     pub fn reset(&self, host: &str) {
-        self.states.write().unwrap().remove(host);
+        self.states
+            .write()
+            .expect("circuit breaker lock poisoned")
+            .remove(host);
     }
 
     /// Reset all circuit breaker states.
     pub fn reset_all(&self) {
-        self.states.write().unwrap().clear();
+        self.states
+            .write()
+            .expect("circuit breaker lock poisoned")
+            .clear();
     }
 }
 
@@ -343,6 +351,7 @@ impl From<reqwest::Error> for CircuitBreakerError {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

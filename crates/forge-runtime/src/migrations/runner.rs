@@ -156,14 +156,14 @@ impl MigrationRunner {
         let system_migrations = super::builtin::get_system_migrations();
         for sys_migration in system_migrations {
             // Skip if this version (or equivalent legacy) is already applied
-            if let Some(max_ver) = max_applied_version {
-                if sys_migration.version <= max_ver {
-                    debug!(
-                        "Skipping system migration v{} (already at v{})",
-                        sys_migration.version, max_ver
-                    );
-                    continue;
-                }
+            if let Some(max_ver) = max_applied_version
+                && sys_migration.version <= max_ver
+            {
+                debug!(
+                    "Skipping system migration v{} (already at v{})",
+                    sys_migration.version, max_ver
+                );
+                continue;
             }
 
             let migration = sys_migration.to_migration();
@@ -473,12 +473,14 @@ fn split_sql_statements(sql: &str) -> Vec<String> {
             // Collect characters until we hit another $ or non-identifier char
             while let Some(&next_c) = chars.peek() {
                 if next_c == '$' {
-                    potential_tag.push(chars.next().unwrap());
+                    // Safe: peek confirmed the char exists
+                    potential_tag.push(chars.next().expect("peeked char"));
                     current.push('$');
                     break;
                 } else if next_c.is_alphanumeric() || next_c == '_' {
-                    potential_tag.push(chars.next().unwrap());
-                    current.push(potential_tag.chars().last().unwrap());
+                    let c = chars.next().expect("peeked char");
+                    potential_tag.push(c);
+                    current.push(c);
                 } else {
                     break;
                 }
@@ -559,6 +561,7 @@ pub fn load_migrations_from_dir(dir: &Path) -> Result<Vec<Migration>> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
     use std::fs;

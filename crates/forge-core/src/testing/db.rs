@@ -9,6 +9,8 @@
 //! This design prevents accidental use of production databases. The .env file
 //! DATABASE_URL is NEVER automatically read.
 
+#![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+
 use sqlx::PgPool;
 use std::path::Path;
 use tracing::{debug, info};

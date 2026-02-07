@@ -121,26 +121,21 @@ impl ChangeListener {
         // Example: projects:INSERT:550e8400-e29b-41d4-a716-446655440000
         let parts: Vec<&str> = payload.split(':').collect();
 
-        if parts.len() < 2 {
-            tracing::trace!(payload, "Invalid change notification format");
-            return None;
-        }
+        let table = parts.first()?;
+        let operation = parts.get(1)?.parse().ok()?;
 
-        let table = parts[0].to_string();
-        let operation = parts[1].parse().ok()?;
-
-        let mut change = Change::new(table, operation);
+        let mut change = Change::new(table.to_string(), operation);
 
         // Parse row ID if present
-        if parts.len() >= 3 {
-            if let Ok(row_id) = uuid::Uuid::parse_str(parts[2]) {
-                change = change.with_row_id(row_id);
-            }
+        if let Some(&row_id_str) = parts.get(2)
+            && let Ok(row_id) = uuid::Uuid::parse_str(row_id_str)
+        {
+            change = change.with_row_id(row_id);
         }
 
         // Parse changed columns if present
-        if parts.len() >= 4 {
-            let columns: Vec<String> = parts[3].split(',').map(|s| s.to_string()).collect();
+        if let Some(&col_str) = parts.get(3) {
+            let columns: Vec<String> = col_str.split(',').map(|s| s.to_string()).collect();
             change = change.with_columns(columns);
         }
 
@@ -154,6 +149,7 @@ impl ChangeListener {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
     use forge_core::realtime::ChangeOperation;

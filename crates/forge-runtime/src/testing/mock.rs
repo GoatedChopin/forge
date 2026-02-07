@@ -121,7 +121,7 @@ impl MockHttp {
             .replace('*', ".*")
             .replace('?', ".");
 
-        let regex = Regex::new(&format!("^{}$", regex_pattern)).unwrap();
+        let regex = Regex::new(&format!("^{}$", regex_pattern)).expect("valid mock URL pattern");
 
         // We need to use blocking since RwLock::write is async
         let mocks = self.mocks.clone();
@@ -151,7 +151,7 @@ impl MockHttp {
             .replace('*', ".*")
             .replace('?', ".");
 
-        let _regex = Regex::new(&format!("^{}$", regex_pattern)).unwrap();
+        let _regex = Regex::new(&format!("^{}$", regex_pattern)).expect("valid mock URL pattern");
 
         // For testing, just create a new mock handler without async
         // This is a simplified version
@@ -193,7 +193,7 @@ impl MockHttp {
             .replace('.', "\\.")
             .replace('*', ".*")
             .replace('?', ".");
-        let regex = Regex::new(&format!("^{}$", regex_pattern)).unwrap();
+        let regex = Regex::new(&format!("^{}$", regex_pattern)).expect("valid mock URL pattern");
 
         self.requests
             .read()
@@ -258,6 +258,7 @@ impl Default for MockHttpBuilder {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
 

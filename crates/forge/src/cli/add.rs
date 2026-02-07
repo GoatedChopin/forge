@@ -546,7 +546,7 @@ fn to_pascal_case(s: &str) -> String {
         if c == '_' || c == '-' {
             capitalize_next = true;
         } else if capitalize_next {
-            result.push(c.to_uppercase().next().unwrap());
+            result.extend(c.to_uppercase());
             capitalize_next = false;
         } else {
             result.push(c);
@@ -565,7 +565,7 @@ fn to_snake_case(s: &str) -> String {
             if i > 0 {
                 result.push('_');
             }
-            result.push(c.to_lowercase().next().unwrap());
+            result.extend(c.to_lowercase());
         } else if c == '-' {
             result.push('_');
         } else {
@@ -577,6 +577,7 @@ fn to_snake_case(s: &str) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

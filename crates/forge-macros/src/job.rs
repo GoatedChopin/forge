@@ -38,36 +38,36 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
             let remaining = &attr_str[idem_start + paren_start + 1..];
             if let Some(paren_end) = remaining.find(')') {
                 let content = &remaining[..paren_end];
-                if let Some(key_start) = content.find("key") {
-                    if let Some(quote_start) = content[key_start..].find('"') {
-                        let after_quote = &content[key_start + quote_start + 1..];
-                        if let Some(quote_end) = after_quote.find('"') {
-                            result.idempotency_key = Some(after_quote[..quote_end].to_string());
-                        }
+                if let Some(key_start) = content.find("key")
+                    && let Some(quote_start) = content[key_start..].find('"')
+                {
+                    let after_quote = &content[key_start + quote_start + 1..];
+                    if let Some(quote_end) = after_quote.find('"') {
+                        result.idempotency_key = Some(after_quote[..quote_end].to_string());
                     }
                 }
             }
         }
     }
 
-    if let Some(role_start) = attr_str.find("require_role") {
-        if let Some(paren_start) = attr_str[role_start..].find('(') {
-            let remaining = &attr_str[role_start + paren_start + 1..];
-            if let Some(paren_end) = remaining.find(')') {
-                let role = remaining[..paren_end].trim().trim_matches('"');
-                result.required_role = Some(role.to_string());
-            }
+    if let Some(role_start) = attr_str.find("require_role")
+        && let Some(paren_start) = attr_str[role_start..].find('(')
+    {
+        let remaining = &attr_str[role_start + paren_start + 1..];
+        if let Some(paren_end) = remaining.find(')') {
+            let role = remaining[..paren_end].trim().trim_matches('"');
+            result.required_role = Some(role.to_string());
         }
     }
 
-    if let Some(comp_start) = attr_str.find("compensate") {
-        if let Some(eq_pos) = attr_str[comp_start..].find('=') {
-            let after_eq = &attr_str[comp_start + eq_pos + 1..];
-            if let Some(quote_start) = after_eq.find('"') {
-                let after_quote = &after_eq[quote_start + 1..];
-                if let Some(quote_end) = after_quote.find('"') {
-                    result.compensate = Some(after_quote[..quote_end].to_string());
-                }
+    if let Some(comp_start) = attr_str.find("compensate")
+        && let Some(eq_pos) = attr_str[comp_start..].find('=')
+    {
+        let after_eq = &attr_str[comp_start + eq_pos + 1..];
+        if let Some(quote_start) = after_eq.find('"') {
+            let after_quote = &after_eq[quote_start + 1..];
+            if let Some(quote_end) = after_quote.find('"') {
+                result.compensate = Some(after_quote[..quote_end].to_string());
             }
         }
     }
@@ -79,79 +79,79 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
         } else {
             None
         };
-        if before.is_none() || !before.unwrap().is_alphanumeric() {
-            if let Some(eq_pos) = attr_str[name_start..].find('=') {
-                let after_eq = &attr_str[name_start + eq_pos + 1..];
-                if let Some(quote_start) = after_eq.find('"') {
-                    let after_quote = &after_eq[quote_start + 1..];
-                    if let Some(quote_end) = after_quote.find('"') {
-                        result.name = Some(after_quote[..quote_end].to_string());
-                    }
-                }
-            }
-        }
-    }
-
-    if let Some(timeout_start) = attr_str.find("timeout") {
-        if let Some(eq_pos) = attr_str[timeout_start..].find('=') {
-            let after_eq = &attr_str[timeout_start + eq_pos + 1..];
+        if (before.is_none() || !before.unwrap().is_alphanumeric())
+            && let Some(eq_pos) = attr_str[name_start..].find('=')
+        {
+            let after_eq = &attr_str[name_start + eq_pos + 1..];
             if let Some(quote_start) = after_eq.find('"') {
                 let after_quote = &after_eq[quote_start + 1..];
                 if let Some(quote_end) = after_quote.find('"') {
-                    result.timeout = Some(after_quote[..quote_end].to_string());
+                    result.name = Some(after_quote[..quote_end].to_string());
                 }
             }
         }
     }
 
-    if let Some(priority_start) = attr_str.find("priority") {
-        if let Some(eq_pos) = attr_str[priority_start..].find('=') {
-            let after_eq = &attr_str[priority_start + eq_pos + 1..];
-            if let Some(quote_start) = after_eq.find('"') {
-                let after_quote = &after_eq[quote_start + 1..];
-                if let Some(quote_end) = after_quote.find('"') {
-                    let priority = after_quote[..quote_end].to_string();
-                    let priority_lower = priority.to_lowercase();
-                    if !VALID_PRIORITIES.contains(&priority_lower.as_str()) {
-                        return Err(syn::Error::new(
-                            proc_macro2::Span::call_site(),
-                            format!(
-                                "Invalid job priority '{}'. Valid values: {}",
-                                priority,
-                                VALID_PRIORITIES.join(", ")
-                            ),
-                        ));
-                    }
-                    result.priority = Some(priority);
-                }
+    if let Some(timeout_start) = attr_str.find("timeout")
+        && let Some(eq_pos) = attr_str[timeout_start..].find('=')
+    {
+        let after_eq = &attr_str[timeout_start + eq_pos + 1..];
+        if let Some(quote_start) = after_eq.find('"') {
+            let after_quote = &after_eq[quote_start + 1..];
+            if let Some(quote_end) = after_quote.find('"') {
+                result.timeout = Some(after_quote[..quote_end].to_string());
             }
         }
     }
 
-    if let Some(cap_start) = attr_str.find("worker_capability") {
-        if let Some(eq_pos) = attr_str[cap_start..].find('=') {
-            let after_eq = &attr_str[cap_start + eq_pos + 1..];
-            if let Some(quote_start) = after_eq.find('"') {
-                let after_quote = &after_eq[quote_start + 1..];
-                if let Some(quote_end) = after_quote.find('"') {
-                    result.worker_capability = Some(after_quote[..quote_end].to_string());
+    if let Some(priority_start) = attr_str.find("priority")
+        && let Some(eq_pos) = attr_str[priority_start..].find('=')
+    {
+        let after_eq = &attr_str[priority_start + eq_pos + 1..];
+        if let Some(quote_start) = after_eq.find('"') {
+            let after_quote = &after_eq[quote_start + 1..];
+            if let Some(quote_end) = after_quote.find('"') {
+                let priority = after_quote[..quote_end].to_string();
+                let priority_lower = priority.to_lowercase();
+                if !VALID_PRIORITIES.contains(&priority_lower.as_str()) {
+                    return Err(syn::Error::new(
+                        proc_macro2::Span::call_site(),
+                        format!(
+                            "Invalid job priority '{}'. Valid values: {}",
+                            priority,
+                            VALID_PRIORITIES.join(", ")
+                        ),
+                    ));
                 }
+                result.priority = Some(priority);
             }
         }
     }
 
-    if let Some(ma_start) = attr_str.find("max_attempts") {
-        if let Some(eq_pos) = attr_str[ma_start..].find('=') {
-            let after_eq = &attr_str[ma_start + eq_pos + 1..];
-            if let Ok(n) = after_eq
-                .split(&[',', ')'])
-                .next()
-                .unwrap_or("")
-                .trim()
-                .parse::<u32>()
-            {
-                result.max_attempts = Some(n);
+    if let Some(cap_start) = attr_str.find("worker_capability")
+        && let Some(eq_pos) = attr_str[cap_start..].find('=')
+    {
+        let after_eq = &attr_str[cap_start + eq_pos + 1..];
+        if let Some(quote_start) = after_eq.find('"') {
+            let after_quote = &after_eq[quote_start + 1..];
+            if let Some(quote_end) = after_quote.find('"') {
+                result.worker_capability = Some(after_quote[..quote_end].to_string());
             }
+        }
+    }
+
+    if let Some(ma_start) = attr_str.find("max_attempts")
+        && let Some(eq_pos) = attr_str[ma_start..].find('=')
+    {
+        let after_eq = &attr_str[ma_start + eq_pos + 1..];
+        if let Ok(n) = after_eq
+            .split(&[',', ')'])
+            .next()
+            .unwrap_or("")
+            .trim()
+            .parse::<u32>()
+        {
+            result.max_attempts = Some(n);
         }
     }
 
@@ -162,11 +162,74 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
         } else {
             None
         };
-        if before.is_none() || before.unwrap() != '_' {
-            if let Some(eq_pos) = attr_str[backoff_start..].find('=') {
-                let after_eq = &attr_str[backoff_start + eq_pos + 1..];
-                if let Some(quote_start) = after_eq.find('"') {
-                    let after_quote = &after_eq[quote_start + 1..];
+        if (before.is_none() || before.unwrap() != '_')
+            && let Some(eq_pos) = attr_str[backoff_start..].find('=')
+        {
+            let after_eq = &attr_str[backoff_start + eq_pos + 1..];
+            if let Some(quote_start) = after_eq.find('"') {
+                let after_quote = &after_eq[quote_start + 1..];
+                if let Some(quote_end) = after_quote.find('"') {
+                    let backoff = after_quote[..quote_end].to_string();
+                    if !VALID_BACKOFFS.contains(&backoff.as_str()) {
+                        return Err(syn::Error::new(
+                            proc_macro2::Span::call_site(),
+                            format!(
+                                "Invalid backoff strategy '{}'. Valid values: {}",
+                                backoff,
+                                VALID_BACKOFFS.join(", ")
+                            ),
+                        ));
+                    }
+                    result.backoff = Some(backoff);
+                }
+            }
+        }
+    }
+
+    if let Some(mb_start) = attr_str.find("max_backoff")
+        && let Some(eq_pos) = attr_str[mb_start..].find('=')
+    {
+        let after_eq = &attr_str[mb_start + eq_pos + 1..];
+        if let Some(quote_start) = after_eq.find('"') {
+            let after_quote = &after_eq[quote_start + 1..];
+            if let Some(quote_end) = after_quote.find('"') {
+                result.max_backoff = Some(after_quote[..quote_end].to_string());
+            }
+        }
+    }
+
+    if let Some(retry_start) = attr_str.find("retry")
+        && let Some(paren_start) = attr_str[retry_start..].find('(')
+    {
+        let remaining = &attr_str[retry_start + paren_start + 1..];
+        if let Some(paren_end) = remaining.find(')') {
+            let content = &remaining[..paren_end];
+
+            if let Some(ma_start) = content.find("max_attempts")
+                && let Some(eq_pos) = content[ma_start..].find('=')
+            {
+                let after_eq = &content[ma_start + eq_pos + 1..];
+                if let Ok(n) = after_eq
+                    .split(',')
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .parse::<u32>()
+                {
+                    result.max_attempts = Some(n);
+                }
+            }
+
+            if let Some(backoff_start) = content.find("backoff") {
+                let before = if backoff_start > 0 {
+                    content.chars().nth(backoff_start - 1)
+                } else {
+                    None
+                };
+                if (before.is_none() || before.unwrap() != '_')
+                    && let Some(quote_start) = content[backoff_start..].find('"')
+                {
+                    let after_quote = &content[backoff_start + quote_start + 1..];
                     if let Some(quote_end) = after_quote.find('"') {
                         let backoff = after_quote[..quote_end].to_string();
                         if !VALID_BACKOFFS.contains(&backoff.as_str()) {
@@ -183,14 +246,11 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
                     }
                 }
             }
-        }
-    }
 
-    if let Some(mb_start) = attr_str.find("max_backoff") {
-        if let Some(eq_pos) = attr_str[mb_start..].find('=') {
-            let after_eq = &attr_str[mb_start + eq_pos + 1..];
-            if let Some(quote_start) = after_eq.find('"') {
-                let after_quote = &after_eq[quote_start + 1..];
+            if let Some(mb_start) = content.find("max_backoff")
+                && let Some(quote_start) = content[mb_start..].find('"')
+            {
+                let after_quote = &content[mb_start + quote_start + 1..];
                 if let Some(quote_end) = after_quote.find('"') {
                     result.max_backoff = Some(after_quote[..quote_end].to_string());
                 }
@@ -198,74 +258,14 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
         }
     }
 
-    if let Some(retry_start) = attr_str.find("retry") {
-        if let Some(paren_start) = attr_str[retry_start..].find('(') {
-            let remaining = &attr_str[retry_start + paren_start + 1..];
-            if let Some(paren_end) = remaining.find(')') {
-                let content = &remaining[..paren_end];
-
-                if let Some(ma_start) = content.find("max_attempts") {
-                    if let Some(eq_pos) = content[ma_start..].find('=') {
-                        let after_eq = &content[ma_start + eq_pos + 1..];
-                        if let Ok(n) = after_eq
-                            .split(',')
-                            .next()
-                            .unwrap_or("")
-                            .trim()
-                            .parse::<u32>()
-                        {
-                            result.max_attempts = Some(n);
-                        }
-                    }
-                }
-
-                if let Some(backoff_start) = content.find("backoff") {
-                    let before = if backoff_start > 0 {
-                        content.chars().nth(backoff_start - 1)
-                    } else {
-                        None
-                    };
-                    if before.is_none() || before.unwrap() != '_' {
-                        if let Some(quote_start) = content[backoff_start..].find('"') {
-                            let after_quote = &content[backoff_start + quote_start + 1..];
-                            if let Some(quote_end) = after_quote.find('"') {
-                                let backoff = after_quote[..quote_end].to_string();
-                                if !VALID_BACKOFFS.contains(&backoff.as_str()) {
-                                    return Err(syn::Error::new(
-                                        proc_macro2::Span::call_site(),
-                                        format!(
-                                            "Invalid backoff strategy '{}'. Valid values: {}",
-                                            backoff,
-                                            VALID_BACKOFFS.join(", ")
-                                        ),
-                                    ));
-                                }
-                                result.backoff = Some(backoff);
-                            }
-                        }
-                    }
-                }
-
-                if let Some(mb_start) = content.find("max_backoff") {
-                    if let Some(quote_start) = content[mb_start..].find('"') {
-                        let after_quote = &content[mb_start + quote_start + 1..];
-                        if let Some(quote_end) = after_quote.find('"') {
-                            result.max_backoff = Some(after_quote[..quote_end].to_string());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if let Some(ttl_start) = attr_str.find("ttl") {
-        if let Some(eq_pos) = attr_str[ttl_start..].find('=') {
-            let after_eq = &attr_str[ttl_start + eq_pos + 1..];
-            if let Some(quote_start) = after_eq.find('"') {
-                let after_quote = &after_eq[quote_start + 1..];
-                if let Some(quote_end) = after_quote.find('"') {
-                    result.ttl = Some(after_quote[..quote_end].to_string());
-                }
+    if let Some(ttl_start) = attr_str.find("ttl")
+        && let Some(eq_pos) = attr_str[ttl_start..].find('=')
+    {
+        let after_eq = &attr_str[ttl_start + eq_pos + 1..];
+        if let Some(quote_start) = after_eq.find('"') {
+            let after_quote = &after_eq[quote_start + 1..];
+            if let Some(quote_end) = after_quote.find('"') {
+                result.ttl = Some(after_quote[..quote_end].to_string());
             }
         }
     }

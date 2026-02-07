@@ -110,6 +110,7 @@ pub fn validation_error_for_field(error: &ForgeError, field: &str) -> bool {
 }
 
 /// Assert helper for job status.
+#[allow(clippy::panic)]
 pub fn assert_job_status(actual: Option<JobStatus>, expected: JobStatus) {
     match actual {
         Some(status) => assert_eq!(
@@ -122,6 +123,7 @@ pub fn assert_job_status(actual: Option<JobStatus>, expected: JobStatus) {
 }
 
 /// Assert helper for workflow status.
+#[allow(clippy::panic)]
 pub fn assert_workflow_status(actual: Option<WorkflowStatus>, expected: WorkflowStatus) {
     match actual {
         Some(status) => assert_eq!(

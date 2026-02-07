@@ -181,11 +181,11 @@ where
             .expect("StepRunner::run called without step function");
 
         // Check if step already completed (for workflow resumption)
-        if self.ctx.is_step_completed(&self.name) {
-            if let Some(result) = self.ctx.get_step_result::<T>(&self.name) {
-                tracing::debug!(step = %self.name, "Step already completed, returning cached result");
-                return Ok(Some(result));
-            }
+        if self.ctx.is_step_completed(&self.name)
+            && let Some(result) = self.ctx.get_step_result::<T>(&self.name)
+        {
+            tracing::debug!(step = %self.name, "Step already completed, returning cached result");
+            return Ok(Some(result));
         }
 
         // Record step start
@@ -221,22 +221,24 @@ where
 
                     // Check if we should retry
                     if attempt < total_attempts {
-                        tracing::warn!(
-                            step = %self.name,
-                            attempt = attempt,
-                            max_attempts = total_attempts,
-                            delay_ms = self.retry_delay.as_millis() as u64,
-                            error = %last_error.as_ref().unwrap(),
-                            "Step failed, retrying"
-                        );
+                        if let Some(ref err) = last_error {
+                            tracing::warn!(
+                                step = %self.name,
+                                attempt = attempt,
+                                max_attempts = total_attempts,
+                                delay_ms = self.retry_delay.as_millis() as u64,
+                                error = %err,
+                                "Step failed, retrying"
+                            );
+                        }
                         tokio::time::sleep(self.retry_delay).await;
                     }
                 }
             }
         }
 
-        // All attempts failed
-        let error = last_error.unwrap();
+        // All attempts failed (last_error always Some after the loop runs at least once)
+        let error = last_error.expect("loop ran at least one attempt");
         let error_msg = error.to_string();
         self.ctx.record_step_failure(&self.name, &error_msg);
 
@@ -272,6 +274,7 @@ where
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     #[allow(unused_imports)]
     use super::*;

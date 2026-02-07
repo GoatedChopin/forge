@@ -187,7 +187,7 @@ impl Forge {
             .map(|h| h.to_string_lossy().to_string())
             .unwrap_or_else(|_| "unknown".to_string());
 
-        let ip_address: IpAddr = "127.0.0.1".parse().unwrap();
+        let ip_address: IpAddr = "127.0.0.1".parse().expect("valid IP literal");
         let roles: Vec<NodeRole> = self
             .config
             .node
@@ -712,6 +712,7 @@ fn config_role_to_node_role(role: &ConfigNodeRole) -> NodeRole {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

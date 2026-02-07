@@ -4,6 +4,8 @@
 //! predefined responses. Supports pattern matching and request recording
 //! for verification.
 
+#![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 

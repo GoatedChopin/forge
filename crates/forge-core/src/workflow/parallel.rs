@@ -176,7 +176,7 @@ impl<'a> ParallelBuilder<'a> {
                 self.ctx.register_compensation(&name, handler);
             }
             self.ctx.run_compensation().await;
-            return Err(first_error.unwrap());
+            return Err(first_error.expect("failed flag set implies at least one error"));
         }
 
         Ok(results)
@@ -234,6 +234,7 @@ impl ParallelResults {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

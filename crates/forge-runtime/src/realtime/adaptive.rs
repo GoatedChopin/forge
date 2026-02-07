@@ -99,10 +99,10 @@ impl AdaptiveTracker {
             if let Some(rows) = tracked.get_mut(table) {
                 let mut row_counts = self.row_subscription_counts.write().await;
                 for id in ids {
-                    if rows.remove(&id) {
-                        if let Some(count) = row_counts.get_mut(table) {
-                            *count = count.saturating_sub(1);
-                        }
+                    if rows.remove(&id)
+                        && let Some(count) = row_counts.get_mut(table)
+                    {
+                        *count = count.saturating_sub(1);
                     }
                 }
             }

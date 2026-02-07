@@ -148,7 +148,7 @@ impl Database {
                 .replica_counter
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
                 % self.replicas.len();
-            &self.replicas[idx]
+            self.replicas.get(idx).unwrap_or(&self.primary)
         } else {
             &self.primary
         }

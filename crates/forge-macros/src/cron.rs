@@ -24,43 +24,41 @@ fn parse_cron_attrs(attr: TokenStream) -> CronAttrs {
         }
     }
 
-    if let Some(tz_start) = attr_str.find("timezone") {
-        if let Some(eq_pos) = attr_str[tz_start..].find('=') {
-            let after_eq = &attr_str[tz_start + eq_pos + 1..];
-            if let Some(quote_start) = after_eq.find('"') {
-                let after_quote = &after_eq[quote_start + 1..];
-                if let Some(quote_end) = after_quote.find('"') {
-                    result.timezone = Some(after_quote[..quote_end].to_string());
-                }
-            }
+    if let Some(tz_start) = attr_str.find("timezone")
+        && let Some(eq_pos) = attr_str[tz_start..].find('=')
+    {
+        let after_eq = &attr_str[tz_start + eq_pos + 1..];
+        if let Some(quote_start) = after_eq.find('"')
+            && let Some(quote_end) = after_eq[quote_start + 1..].find('"')
+        {
+            result.timezone = Some(after_eq[quote_start + 1..][..quote_end].to_string());
         }
     }
 
-    if let Some(timeout_start) = attr_str.find("timeout") {
-        if let Some(eq_pos) = attr_str[timeout_start..].find('=') {
-            let after_eq = &attr_str[timeout_start + eq_pos + 1..];
-            if let Some(quote_start) = after_eq.find('"') {
-                let after_quote = &after_eq[quote_start + 1..];
-                if let Some(quote_end) = after_quote.find('"') {
-                    result.timeout = Some(after_quote[..quote_end].to_string());
-                }
-            }
+    if let Some(timeout_start) = attr_str.find("timeout")
+        && let Some(eq_pos) = attr_str[timeout_start..].find('=')
+    {
+        let after_eq = &attr_str[timeout_start + eq_pos + 1..];
+        if let Some(quote_start) = after_eq.find('"')
+            && let Some(quote_end) = after_eq[quote_start + 1..].find('"')
+        {
+            result.timeout = Some(after_eq[quote_start + 1..][..quote_end].to_string());
         }
     }
 
     // Parse catch_up_limit = 5 first (so catch_up doesn't match it)
-    if let Some(limit_start) = attr_str.find("catch_up_limit") {
-        if let Some(eq_pos) = attr_str[limit_start..].find('=') {
-            let after_eq = &attr_str[limit_start + eq_pos + 1..];
-            if let Ok(n) = after_eq
-                .split(&[',', ')'])
-                .next()
-                .unwrap_or("")
-                .trim()
-                .parse::<u32>()
-            {
-                result.catch_up_limit = Some(n);
-            }
+    if let Some(limit_start) = attr_str.find("catch_up_limit")
+        && let Some(eq_pos) = attr_str[limit_start..].find('=')
+    {
+        let after_eq = &attr_str[limit_start + eq_pos + 1..];
+        if let Ok(n) = after_eq
+            .split(&[',', ')'])
+            .next()
+            .unwrap_or("")
+            .trim()
+            .parse::<u32>()
+        {
+            result.catch_up_limit = Some(n);
         }
     }
 

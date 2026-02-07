@@ -39,6 +39,7 @@ pub fn serialize_payload<T: Serialize>(payload: &T) -> Result<serde_json::Value,
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

@@ -98,6 +98,7 @@ pub fn extract_version(name: &str) -> Option<u32> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
 

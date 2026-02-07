@@ -60,7 +60,7 @@ impl GenerateCommand {
         pb.set_style(
             ProgressStyle::default_bar()
                 .template("{spinner:.green} {msg}")
-                .unwrap(),
+                .expect("valid progress template"),
         );
         pb.enable_steady_tick(Duration::from_millis(100));
 
@@ -423,6 +423,7 @@ export { ForgeClient, ForgeClientError, createForgeClient, ForgeProvider } from 
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use tempfile::tempdir;

@@ -1,5 +1,7 @@
 //! Test context for job functions.
 
+#![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};

@@ -46,71 +46,71 @@ fn parse_mutation_attrs(attr: TokenStream) -> MutationAttrs {
         attrs.is_public = true;
     }
 
-    if let Some(role_start) = attr_str.find("require_role") {
-        if let Some(paren_start) = attr_str[role_start..].find('(') {
-            let remaining = &attr_str[role_start + paren_start + 1..];
-            if let Some(paren_end) = remaining.find(')') {
-                let role = remaining[..paren_end].trim().trim_matches('"');
-                attrs.required_role = Some(role.to_string());
-            }
+    if let Some(role_start) = attr_str.find("require_role")
+        && let Some(paren_start) = attr_str[role_start..].find('(')
+    {
+        let remaining = &attr_str[role_start + paren_start + 1..];
+        if let Some(paren_end) = remaining.find(')') {
+            let role = remaining[..paren_end].trim().trim_matches('"');
+            attrs.required_role = Some(role.to_string());
         }
     }
 
-    if let Some(timeout_start) = attr_str.find("timeout") {
-        if let Some(eq_pos) = attr_str[timeout_start..].find('=') {
-            let remaining = &attr_str[timeout_start + eq_pos + 1..];
-            let trimmed = remaining.trim();
-            if let Ok(secs) = trimmed
-                .split(&[',', ')'])
-                .next()
-                .unwrap_or("")
-                .trim()
-                .parse::<u64>()
+    if let Some(timeout_start) = attr_str.find("timeout")
+        && let Some(eq_pos) = attr_str[timeout_start..].find('=')
+    {
+        let remaining = &attr_str[timeout_start + eq_pos + 1..];
+        let trimmed = remaining.trim();
+        if let Ok(secs) = trimmed
+            .split(&[',', ')'])
+            .next()
+            .unwrap_or("")
+            .trim()
+            .parse::<u64>()
+        {
+            attrs.timeout = Some(secs);
+        }
+    }
+
+    if let Some(rl_start) = attr_str.find("rate_limit")
+        && let Some(paren_start) = attr_str[rl_start..].find('(')
+    {
+        let remaining = &attr_str[rl_start + paren_start + 1..];
+        if let Some(paren_end) = remaining.find(')') {
+            let rl_content = &remaining[..paren_end];
+
+            if let Some(req_start) = rl_content.find("requests")
+                && let Some(eq_pos) = rl_content[req_start..].find('=')
             {
-                attrs.timeout = Some(secs);
+                let after_eq = &rl_content[req_start + eq_pos + 1..];
+                if let Ok(n) = after_eq
+                    .split(',')
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .parse::<u32>()
+                {
+                    attrs.rate_limit_requests = Some(n);
+                }
             }
-        }
-    }
 
-    if let Some(rl_start) = attr_str.find("rate_limit") {
-        if let Some(paren_start) = attr_str[rl_start..].find('(') {
-            let remaining = &attr_str[rl_start + paren_start + 1..];
-            if let Some(paren_end) = remaining.find(')') {
-                let rl_content = &remaining[..paren_end];
-
-                if let Some(req_start) = rl_content.find("requests") {
-                    if let Some(eq_pos) = rl_content[req_start..].find('=') {
-                        let after_eq = &rl_content[req_start + eq_pos + 1..];
-                        if let Ok(n) = after_eq
-                            .split(',')
-                            .next()
-                            .unwrap_or("")
-                            .trim()
-                            .parse::<u32>()
-                        {
-                            attrs.rate_limit_requests = Some(n);
-                        }
-                    }
+            if let Some(per_start) = rl_content.find("per")
+                && let Some(quote_start) = rl_content[per_start..].find('"')
+            {
+                let after_quote = &rl_content[per_start + quote_start + 1..];
+                if let Some(quote_end) = after_quote.find('"') {
+                    let per_str = &after_quote[..quote_end];
+                    attrs.rate_limit_per_secs = parse_duration_secs(per_str);
                 }
+            }
 
-                if let Some(per_start) = rl_content.find("per") {
-                    if let Some(quote_start) = rl_content[per_start..].find('"') {
-                        let after_quote = &rl_content[per_start + quote_start + 1..];
-                        if let Some(quote_end) = after_quote.find('"') {
-                            let per_str = &after_quote[..quote_end];
-                            attrs.rate_limit_per_secs = parse_duration_secs(per_str);
-                        }
-                    }
-                }
-
-                if let Some(key_start) = rl_content.find("key") {
-                    if let Some(quote_start) = rl_content[key_start..].find('"') {
-                        let after_quote = &rl_content[key_start + quote_start + 1..];
-                        if let Some(quote_end) = after_quote.find('"') {
-                            let key = &after_quote[..quote_end];
-                            attrs.rate_limit_key = Some(key.to_string());
-                        }
-                    }
+            if let Some(key_start) = rl_content.find("key")
+                && let Some(quote_start) = rl_content[key_start..].find('"')
+            {
+                let after_quote = &rl_content[key_start + quote_start + 1..];
+                if let Some(quote_end) = after_quote.find('"') {
+                    let key = &after_quote[..quote_end];
+                    attrs.rate_limit_key = Some(key.to_string());
                 }
             }
         }
@@ -123,13 +123,13 @@ fn parse_mutation_attrs(attr: TokenStream) -> MutationAttrs {
         } else {
             None
         };
-        if before.is_none() || !before.unwrap().is_alphanumeric() {
-            if let Some(quote_start) = attr_str[log_start..].find('"') {
-                let after_quote = &attr_str[log_start + quote_start + 1..];
-                if let Some(quote_end) = after_quote.find('"') {
-                    let level = &after_quote[..quote_end];
-                    attrs.log_level = Some(level.to_string());
-                }
+        if (before.is_none() || !before.unwrap().is_alphanumeric())
+            && let Some(quote_start) = attr_str[log_start..].find('"')
+        {
+            let after_quote = &attr_str[log_start + quote_start + 1..];
+            if let Some(quote_end) = after_quote.find('"') {
+                let level = &after_quote[..quote_end];
+                attrs.log_level = Some(level.to_string());
             }
         }
     }
@@ -211,12 +211,12 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
     let args_fields: Vec<TokenStream2> = arg_params
         .iter()
         .filter_map(|p| {
-            if let FnArg::Typed(pat_type) = p {
-                if let Pat::Ident(pat_ident) = &*pat_type.pat {
-                    let name = &pat_ident.ident;
-                    let ty = &pat_type.ty;
-                    return Some(quote! { pub #name: #ty });
-                }
+            if let FnArg::Typed(pat_type) = p
+                && let Pat::Ident(pat_ident) = &*pat_type.pat
+            {
+                let name = &pat_ident.ident;
+                let ty = &pat_type.ty;
+                return Some(quote! { pub #name: #ty });
             }
             None
         })
@@ -226,11 +226,11 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
     let arg_names: Vec<TokenStream2> = arg_params
         .iter()
         .filter_map(|p| {
-            if let FnArg::Typed(pat_type) = p {
-                if let Pat::Ident(pat_ident) = &*pat_type.pat {
-                    let name = &pat_ident.ident;
-                    return Some(quote! { #name });
-                }
+            if let FnArg::Typed(pat_type) = p
+                && let Pat::Ident(pat_ident) = &*pat_type.pat
+            {
+                let name = &pat_ident.ident;
+                return Some(quote! { #name });
             }
             None
         })

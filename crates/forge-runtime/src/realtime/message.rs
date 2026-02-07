@@ -300,7 +300,8 @@ impl SessionServer {
 
     /// Cleanup stale connections.
     pub async fn cleanup_stale(&self, max_idle: Duration) {
-        let cutoff = chrono::Utc::now() - chrono::Duration::from_std(max_idle).unwrap();
+        let cutoff = chrono::Utc::now()
+            - chrono::Duration::from_std(max_idle).expect("duration within chrono range");
         let mut connections = self.connections.write().await;
         let mut sub_sessions = self.subscription_sessions.write().await;
 
@@ -329,6 +330,7 @@ pub struct SessionStats {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
 

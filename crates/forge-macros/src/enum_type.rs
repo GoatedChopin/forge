@@ -150,14 +150,12 @@ struct VariantInfo {
 
 fn get_int_value(attrs: &[Attribute]) -> Option<i32> {
     for attr in attrs {
-        if attr.path().is_ident("value") {
-            if let Meta::NameValue(nv) = &attr.meta {
-                if let Expr::Lit(lit) = &nv.value {
-                    if let Lit::Int(i) = &lit.lit {
-                        return i.base10_parse().ok();
-                    }
-                }
-            }
+        if attr.path().is_ident("value")
+            && let Meta::NameValue(nv) = &attr.meta
+            && let Expr::Lit(lit) = &nv.value
+            && let Lit::Int(i) = &lit.lit
+        {
+            return i.base10_parse().ok();
         }
     }
     None

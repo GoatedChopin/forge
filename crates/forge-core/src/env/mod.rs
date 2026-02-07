@@ -127,17 +127,26 @@ impl MockEnvProvider {
 
     /// Get list of accessed variable names.
     pub fn accessed_keys(&self) -> Vec<String> {
-        self.accessed.read().unwrap().clone()
+        self.accessed
+            .read()
+            .expect("env accessed lock poisoned")
+            .clone()
     }
 
     /// Check if a specific key was accessed.
     pub fn was_accessed(&self, key: &str) -> bool {
-        self.accessed.read().unwrap().contains(&key.to_string())
+        self.accessed
+            .read()
+            .expect("env accessed lock poisoned")
+            .contains(&key.to_string())
     }
 
     /// Clear the accessed keys list.
     pub fn clear_accessed(&self) {
-        self.accessed.write().unwrap().clear();
+        self.accessed
+            .write()
+            .expect("env accessed lock poisoned")
+            .clear();
     }
 
     /// Assert that a specific key was accessed.
@@ -163,7 +172,10 @@ impl MockEnvProvider {
 impl EnvProvider for MockEnvProvider {
     fn get(&self, key: &str) -> Option<String> {
         // Record access
-        self.accessed.write().unwrap().push(key.to_string());
+        self.accessed
+            .write()
+            .expect("env accessed lock poisoned")
+            .push(key.to_string());
         self.vars.get(key).cloned()
     }
 }
@@ -245,6 +257,7 @@ pub trait EnvAccess {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing, unsafe_code)]
 mod tests {
     use super::*;
 

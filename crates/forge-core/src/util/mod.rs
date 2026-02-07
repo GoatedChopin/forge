@@ -5,6 +5,7 @@
 pub use forge_utils::{parse_duration, to_camel_case, to_pascal_case, to_snake_case};
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

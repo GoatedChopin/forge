@@ -178,6 +178,7 @@ impl From<forge_core::error::ForgeError> for RpcError {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
 

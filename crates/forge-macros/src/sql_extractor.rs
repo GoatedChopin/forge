@@ -46,10 +46,10 @@ impl SqlStringExtractor {
                     let lit_str = lit.to_string();
                     // Raw string literals look like r#"..."# or r"..."
                     // Regular string literals look like "..."
-                    if let Some(sql) = Self::extract_string_content(&lit_str) {
-                        if Self::looks_like_sql(&sql) {
-                            self.sql_strings.push(sql);
-                        }
+                    if let Some(sql) = Self::extract_string_content(&lit_str)
+                        && Self::looks_like_sql(&sql)
+                    {
+                        self.sql_strings.push(sql);
                     }
                 }
                 proc_macro2::TokenTree::Group(group) => {
@@ -129,10 +129,10 @@ impl<'ast> Visit<'ast> for SqlStringExtractor {
                 .collect::<Vec<_>>()
                 .join("::");
 
-            if path_str.contains("query") || path_str.ends_with("query_as") {
-                if let Some(first_arg) = node.args.first() {
-                    self.visit_expr(first_arg);
-                }
+            if (path_str.contains("query") || path_str.ends_with("query_as"))
+                && let Some(first_arg) = node.args.first()
+            {
+                self.visit_expr(first_arg);
             }
         }
 

@@ -63,7 +63,10 @@ fn to_snake_case(s: &str) -> String {
             if i > 0 {
                 result.push('_');
             }
-            result.push(c.to_lowercase().next().unwrap());
+            // to_lowercase always yields at least one char for uppercase input
+            for lc in c.to_lowercase() {
+                result.push(lc);
+            }
         } else {
             result.push(c);
         }
@@ -72,6 +75,7 @@ fn to_snake_case(s: &str) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

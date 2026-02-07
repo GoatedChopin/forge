@@ -558,7 +558,11 @@ impl MutationContext {
             };
 
             let job_id = pending.id;
-            outbox.lock().unwrap().jobs.push(pending);
+            outbox
+                .lock()
+                .expect("outbox lock poisoned")
+                .jobs
+                .push(pending);
             return Ok(job_id);
         }
 
@@ -597,7 +601,11 @@ impl MutationContext {
             };
 
             let job_id = pending.id;
-            outbox.lock().unwrap().jobs.push(pending);
+            outbox
+                .lock()
+                .expect("outbox lock poisoned")
+                .jobs
+                .push(pending);
             return Ok(job_id);
         }
 
@@ -639,7 +647,11 @@ impl MutationContext {
             };
 
             let workflow_id = pending.id;
-            outbox.lock().unwrap().workflows.push(pending);
+            outbox
+                .lock()
+                .expect("outbox lock poisoned")
+                .workflows
+                .push(pending);
             return Ok(workflow_id);
         }
 
@@ -660,6 +672,7 @@ impl EnvAccess for MutationContext {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

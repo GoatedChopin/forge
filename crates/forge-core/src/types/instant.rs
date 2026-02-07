@@ -107,6 +107,7 @@ impl From<Instant> for DateTime<Utc> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use chrono::Timelike;

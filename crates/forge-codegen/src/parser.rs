@@ -186,12 +186,11 @@ fn parse_enum(item: &syn::ItemEnum) -> Option<EnumDef> {
         enum_variant.doc = get_doc_comment(&variant.attrs);
 
         // Check for explicit value
-        if let Some((_, Expr::Lit(lit))) = &variant.discriminant {
-            if let Lit::Int(int_lit) = &lit.lit {
-                if let Ok(value) = int_lit.base10_parse::<i32>() {
-                    enum_variant.int_value = Some(value);
-                }
-            }
+        if let Some((_, Expr::Lit(lit))) = &variant.discriminant
+            && let Lit::Int(int_lit) = &lit.lit
+            && let Ok(value) = int_lit.base10_parse::<i32>()
+        {
+            enum_variant.int_value = Some(value);
         }
 
         enum_def.variants.push(enum_variant);
@@ -370,12 +369,12 @@ fn type_to_rust_type(ty: &syn::Type) -> RustType {
 /// Get #[table(name = "...")] value from attributes.
 fn get_table_name_from_attrs(attrs: &[Attribute]) -> Option<String> {
     for attr in attrs {
-        if attr.path().is_ident("table") {
-            if let Meta::List(list) = &attr.meta {
-                let tokens = list.tokens.to_string();
-                if let Some(value) = extract_name_value(&tokens) {
-                    return Some(value);
-                }
+        if attr.path().is_ident("table")
+            && let Meta::List(list) = &attr.meta
+        {
+            let tokens = list.tokens.to_string();
+            if let Some(value) = extract_name_value(&tokens) {
+                return Some(value);
             }
         }
     }
@@ -384,12 +383,11 @@ fn get_table_name_from_attrs(attrs: &[Attribute]) -> Option<String> {
 
 /// Get string value from attribute like #[attr = "value"].
 fn get_attribute_string_value(attr: &Attribute) -> Option<String> {
-    if let Meta::NameValue(nv) = &attr.meta {
-        if let Expr::Lit(lit) = &nv.value {
-            if let Lit::Str(s) = &lit.lit {
-                return Some(s.value());
-            }
-        }
+    if let Meta::NameValue(nv) = &attr.meta
+        && let Expr::Lit(lit) = &nv.value
+        && let Lit::Str(s) = &lit.lit
+    {
+        return Some(s.value());
     }
     None
 }

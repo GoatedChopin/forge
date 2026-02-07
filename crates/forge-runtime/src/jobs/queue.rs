@@ -227,7 +227,10 @@ impl JobQueue {
                     input: row.get("input"),
                     output: row.get("output"),
                     job_context: row.get("job_context"),
-                    status: row.get::<String, _>("status").parse().unwrap(),
+                    status: row
+                        .get::<String, _>("status")
+                        .parse()
+                        .expect("valid job status from database"),
                     priority: row.get("priority"),
                     attempts: row.get("attempts"),
                     max_attempts: row.get("max_attempts"),

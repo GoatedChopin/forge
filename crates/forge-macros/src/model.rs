@@ -107,10 +107,10 @@ fn get_table_name(input: &DeriveInput) -> syn::Result<String> {
             if let Meta::List(list) = meta {
                 let tokens: TokenStream2 = list.tokens;
                 let tokens_str = tokens.to_string();
-                if tokens_str.starts_with("name") {
-                    if let Some(value) = extract_string_value(&tokens_str) {
-                        return Ok(value);
-                    }
+                if tokens_str.starts_with("name")
+                    && let Some(value) = extract_string_value(&tokens_str)
+                {
+                    return Ok(value);
                 }
             }
         }

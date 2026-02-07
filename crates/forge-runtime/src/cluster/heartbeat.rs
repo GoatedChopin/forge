@@ -80,10 +80,10 @@ impl HeartbeatLoop {
                     }
 
                     // Mark dead nodes if enabled
-                    if self.config.mark_dead_nodes {
-                        if let Err(e) = self.mark_dead_nodes().await {
-                            tracing::debug!(error = %e, "Failed to mark dead nodes");
-                        }
+                    if self.config.mark_dead_nodes
+                        && let Err(e) = self.mark_dead_nodes().await
+                    {
+                        tracing::debug!(error = %e, "Failed to mark dead nodes");
                     }
                 }
                 _ = shutdown_rx.changed() => {

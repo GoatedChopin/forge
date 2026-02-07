@@ -53,7 +53,9 @@ impl MigrationGenerator {
         }
 
         // Use first entry to generate name
-        let first = &diff.entries[0];
+        let Some(first) = diff.entries.first() else {
+            return "empty".to_string();
+        };
         match first.action {
             super::diff::DiffAction::CreateTable => {
                 format!("create_{}", first.table_name)
@@ -113,6 +115,7 @@ pub enum GeneratorError {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
     use forge_core::schema::RustType;

@@ -3,6 +3,8 @@
 //! Provides mock implementations that record dispatched jobs and workflows
 //! for verification in tests.
 
+#![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+
 use std::sync::RwLock;
 
 use chrono::{DateTime, Utc};

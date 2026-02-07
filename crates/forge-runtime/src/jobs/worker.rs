@@ -150,7 +150,7 @@ impl Worker {
 
                     // Process each job
                     for job in jobs {
-                        let permit = semaphore.clone().acquire_owned().await.unwrap();
+                        let permit = semaphore.clone().acquire_owned().await.expect("semaphore closed");
                         let executor = self.executor.clone();
                         let job_id = job.id;
                         let job_type = job.job_type.clone();

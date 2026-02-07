@@ -266,16 +266,16 @@ impl Change {
         }
 
         // For row-level tracking, check if the specific row was read
-        if read_set.mode == TrackingMode::Row {
-            if let Some(row_id) = self.row_id {
-                match self.operation {
-                    // Updates and deletes only invalidate if the specific row was read
-                    ChangeOperation::Update | ChangeOperation::Delete => {
-                        return read_set.includes_row(&self.table, row_id);
-                    }
-                    // Inserts always potentially invalidate (new row might match filter)
-                    ChangeOperation::Insert => {}
+        if read_set.mode == TrackingMode::Row
+            && let Some(row_id) = self.row_id
+        {
+            match self.operation {
+                // Updates and deletes only invalidate if the specific row was read
+                ChangeOperation::Update | ChangeOperation::Delete => {
+                    return read_set.includes_row(&self.table, row_id);
                 }
+                // Inserts always potentially invalidate (new row might match filter)
+                ChangeOperation::Insert => {}
             }
         }
 
@@ -285,6 +285,7 @@ impl Change {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

@@ -151,39 +151,39 @@ impl FunctionRouter {
             };
         }
 
-        if let Some(ref job_dispatcher) = self.job_dispatcher {
-            if let Some(job_info) = job_dispatcher.get_info(function_name) {
-                self.check_job_auth(&job_info, &auth)?;
-                Self::check_identity_args(function_name, &args, &auth, !job_info.is_public)?;
-                match job_dispatcher
-                    .dispatch_by_name(function_name, args.clone(), auth.principal_id())
-                    .await
-                {
-                    Ok(job_id) => {
-                        return Ok(RouteResult::Job(serde_json::json!({ "job_id": job_id })));
-                    }
-                    Err(ForgeError::NotFound(_)) => {}
-                    Err(e) => return Err(e),
+        if let Some(ref job_dispatcher) = self.job_dispatcher
+            && let Some(job_info) = job_dispatcher.get_info(function_name)
+        {
+            self.check_job_auth(&job_info, &auth)?;
+            Self::check_identity_args(function_name, &args, &auth, !job_info.is_public)?;
+            match job_dispatcher
+                .dispatch_by_name(function_name, args.clone(), auth.principal_id())
+                .await
+            {
+                Ok(job_id) => {
+                    return Ok(RouteResult::Job(serde_json::json!({ "job_id": job_id })));
                 }
+                Err(ForgeError::NotFound(_)) => {}
+                Err(e) => return Err(e),
             }
         }
 
-        if let Some(ref workflow_dispatcher) = self.workflow_dispatcher {
-            if let Some(workflow_info) = workflow_dispatcher.get_info(function_name) {
-                self.check_workflow_auth(&workflow_info, &auth)?;
-                Self::check_identity_args(function_name, &args, &auth, !workflow_info.is_public)?;
-                match workflow_dispatcher
-                    .start_by_name(function_name, args.clone(), auth.principal_id())
-                    .await
-                {
-                    Ok(workflow_id) => {
-                        return Ok(RouteResult::Workflow(
-                            serde_json::json!({ "workflow_id": workflow_id }),
-                        ));
-                    }
-                    Err(ForgeError::NotFound(_)) => {}
-                    Err(e) => return Err(e),
+        if let Some(ref workflow_dispatcher) = self.workflow_dispatcher
+            && let Some(workflow_info) = workflow_dispatcher.get_info(function_name)
+        {
+            self.check_workflow_auth(&workflow_info, &auth)?;
+            Self::check_identity_args(function_name, &args, &auth, !workflow_info.is_public)?;
+            match workflow_dispatcher
+                .start_by_name(function_name, args.clone(), auth.principal_id())
+                .await
+            {
+                Ok(workflow_id) => {
+                    return Ok(RouteResult::Workflow(
+                        serde_json::json!({ "workflow_id": workflow_id }),
+                    ));
                 }
+                Err(ForgeError::NotFound(_)) => {}
+                Err(e) => return Err(e),
             }
         }
 
@@ -202,10 +202,10 @@ impl FunctionRouter {
             return Err(ForgeError::Unauthorized("Authentication required".into()));
         }
 
-        if let Some(role) = info.required_role {
-            if !auth.has_role(role) {
-                return Err(ForgeError::Forbidden(format!("Role '{}' required", role)));
-            }
+        if let Some(role) = info.required_role
+            && !auth.has_role(role)
+        {
+            return Err(ForgeError::Forbidden(format!("Role '{}' required", role)));
         }
 
         Ok(())
@@ -220,10 +220,10 @@ impl FunctionRouter {
             return Err(ForgeError::Unauthorized("Authentication required".into()));
         }
 
-        if let Some(role) = info.required_role {
-            if !auth.has_role(role) {
-                return Err(ForgeError::Forbidden(format!("Role '{}' required", role)));
-            }
+        if let Some(role) = info.required_role
+            && !auth.has_role(role)
+        {
+            return Err(ForgeError::Forbidden(format!("Role '{}' required", role)));
         }
 
         Ok(())
@@ -242,10 +242,10 @@ impl FunctionRouter {
             return Err(ForgeError::Unauthorized("Authentication required".into()));
         }
 
-        if let Some(role) = info.required_role {
-            if !auth.has_role(role) {
-                return Err(ForgeError::Forbidden(format!("Role '{}' required", role)));
-            }
+        if let Some(role) = info.required_role
+            && !auth.has_role(role)
+        {
+            return Err(ForgeError::Forbidden(format!("Role '{}' required", role)));
         }
 
         Ok(())
@@ -350,10 +350,10 @@ impl FunctionRouter {
         if let Some(user_id) = auth.user_id().map(|id| id.to_string()) {
             principal_values.push(user_id);
         }
-        if let Some(subject) = auth.principal_id() {
-            if !principal_values.iter().any(|v| v == &subject) {
-                principal_values.push(subject);
-            }
+        if let Some(subject) = auth.principal_id()
+            && !principal_values.iter().any(|v| v == &subject)
+        {
+            principal_values.push(subject);
         }
 
         let mut has_scope_key = false;

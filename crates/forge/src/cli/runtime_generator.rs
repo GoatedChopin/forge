@@ -120,7 +120,9 @@ pub fn update_frontend_package_json(frontend_dir: &Path) -> Result<()> {
             "@forge/svelte".to_string(),
             serde_json::Value::String("file:./.forge/svelte".to_string()),
         );
-        json["dependencies"] = serde_json::Value::Object(deps);
+        if let Some(obj) = json.as_object_mut() {
+            obj.insert("dependencies".to_string(), serde_json::Value::Object(deps));
+        }
     }
 
     // Write back with pretty formatting
@@ -140,6 +142,7 @@ pub fn remove_legacy_runtime(frontend_dir: &Path) -> Result<()> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use tempfile::tempdir;

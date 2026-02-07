@@ -123,6 +123,7 @@ impl std::fmt::Display for CronParseError {
 impl std::error::Error for CronParseError {}
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

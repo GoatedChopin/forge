@@ -393,11 +393,10 @@ pub async fn sse_handler(
                 msg = rt_rx.recv() => {
                     match msg {
                         Some(rt_msg) => {
-                            if let Some(sse_msg) = convert_realtime_to_sse(rt_msg) {
-                                if tx.send(sse_msg).await.is_err() {
+                            if let Some(sse_msg) = convert_realtime_to_sse(rt_msg)
+                                && tx.send(sse_msg).await.is_err() {
                                     break;
                                 }
-                            }
                         }
                         None => break,
                     }
@@ -955,6 +954,7 @@ pub async fn sse_workflow_subscribe_handler(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
 

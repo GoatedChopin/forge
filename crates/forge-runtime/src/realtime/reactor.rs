@@ -509,9 +509,7 @@ impl Reactor {
 
                 // Normalize args
                 let normalized_args = match args {
-                    v if v.is_object() && v.as_object().unwrap().is_empty() => {
-                        serde_json::Value::Null
-                    }
+                    v if v.as_object().is_some_and(|o| o.is_empty()) => serde_json::Value::Null,
                     v => v.clone(),
                 };
 
@@ -1122,9 +1120,7 @@ impl Reactor {
                 );
 
                 let normalized_args = match args {
-                    v if v.is_object() && v.as_object().unwrap().is_empty() => {
-                        serde_json::Value::Null
-                    }
+                    v if v.as_object().is_some_and(|o| o.is_empty()) => serde_json::Value::Null,
                     v => v.clone(),
                 };
 
@@ -1186,13 +1182,13 @@ impl Reactor {
             ));
         }
 
-        if let Some(role) = info.required_role {
-            if !auth.has_role(role) {
-                return Err(forge_core::ForgeError::Forbidden(format!(
-                    "Role '{}' required",
-                    role
-                )));
-            }
+        if let Some(role) = info.required_role
+            && !auth.has_role(role)
+        {
+            return Err(forge_core::ForgeError::Forbidden(format!(
+                "Role '{}' required",
+                role
+            )));
         }
 
         Ok(())
@@ -1221,10 +1217,10 @@ impl Reactor {
         if let Some(user_id) = auth.user_id().map(|id| id.to_string()) {
             principal_values.push(user_id);
         }
-        if let Some(subject) = auth.principal_id() {
-            if !principal_values.iter().any(|v| v == &subject) {
-                principal_values.push(subject);
-            }
+        if let Some(subject) = auth.principal_id()
+            && !principal_values.iter().any(|v| v == &subject)
+        {
+            principal_values.push(subject);
         }
 
         let mut has_scope_key = false;

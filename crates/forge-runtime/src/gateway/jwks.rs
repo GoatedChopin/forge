@@ -116,13 +116,12 @@ impl JwksClient {
         // Try to get from cache first
         {
             let cache = self.cache.read().await;
-            if let Some(ref cached) = *cache {
-                if cached.fetched_at.elapsed() < self.cache_ttl {
-                    if let Some(key) = cached.keys.get(kid) {
-                        debug!(kid = %kid, "Using cached JWKS key");
-                        return Ok(key.clone());
-                    }
-                }
+            if let Some(ref cached) = *cache
+                && cached.fetched_at.elapsed() < self.cache_ttl
+                && let Some(key) = cached.keys.get(kid)
+            {
+                debug!(kid = %kid, "Using cached JWKS key");
+                return Ok(key.clone());
             }
         }
 
@@ -153,13 +152,12 @@ impl JwksClient {
         // Try to get from cache first
         {
             let cache = self.cache.read().await;
-            if let Some(ref cached) = *cache {
-                if cached.fetched_at.elapsed() < self.cache_ttl {
-                    if let Some(key) = cached.keys.values().next() {
-                        debug!("Using first cached JWKS key (no kid specified)");
-                        return Ok(key.clone());
-                    }
-                }
+            if let Some(ref cached) = *cache
+                && cached.fetched_at.elapsed() < self.cache_ttl
+                && let Some(key) = cached.keys.values().next()
+            {
+                debug!("Using first cached JWKS key (no kid specified)");
+                return Ok(key.clone());
             }
         }
 
@@ -209,10 +207,10 @@ impl JwksClient {
 
         for jwk in jwks.keys {
             // Skip non-signature keys
-            if let Some(ref key_use) = jwk.key_use {
-                if key_use != "sig" {
-                    continue;
-                }
+            if let Some(ref key_use) = jwk.key_use
+                && key_use != "sig"
+            {
+                continue;
             }
 
             let kid = jwk.kid.clone().unwrap_or_else(|| "default".to_string());
@@ -251,18 +249,16 @@ impl JwksClient {
         match jwk.kty.as_str() {
             "RSA" => {
                 // Try X.509 certificate chain first (used by Firebase)
-                if let Some(ref x5c) = jwk.x5c {
-                    if let Some(cert) = x5c.first() {
-                        let pem = format!(
-                            "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----",
-                            cert
-                        );
-                        return DecodingKey::from_rsa_pem(pem.as_bytes()).map(Some).map_err(
-                            |e: jsonwebtoken::errors::Error| {
-                                JwksError::KeyParseFailed(e.to_string())
-                            },
-                        );
-                    }
+                if let Some(ref x5c) = jwk.x5c
+                    && let Some(cert) = x5c.first()
+                {
+                    let pem = format!(
+                        "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----",
+                        cert
+                    );
+                    return DecodingKey::from_rsa_pem(pem.as_bytes()).map(Some).map_err(
+                        |e: jsonwebtoken::errors::Error| JwksError::KeyParseFailed(e.to_string()),
+                    );
                 }
 
                 // Fall back to n/e components (used by Clerk, Auth0, etc.)
@@ -313,6 +309,7 @@ pub enum JwksError {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
 

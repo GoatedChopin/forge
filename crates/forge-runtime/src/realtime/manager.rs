@@ -91,7 +91,8 @@ impl SessionManager {
     /// Clean up disconnected sessions older than the given duration.
     pub async fn cleanup_old_sessions(&self, max_age: std::time::Duration) {
         let mut sessions = self.sessions.write().await;
-        let cutoff = chrono::Utc::now() - chrono::Duration::from_std(max_age).unwrap();
+        let cutoff = chrono::Utc::now()
+            - chrono::Duration::from_std(max_age).expect("duration within chrono range");
 
         sessions.retain(|_, session| {
             session.status != SessionStatus::Disconnected || session.last_active_at > cutoff
@@ -146,13 +147,13 @@ impl SubscriptionManager {
     ) -> forge_core::Result<SubscriptionInfo> {
         // Check limit
         let by_session = self.by_session.read().await;
-        if let Some(subs) = by_session.get(&session_id) {
-            if subs.len() >= self.max_per_session {
-                return Err(forge_core::ForgeError::Validation(format!(
-                    "Maximum subscriptions per session ({}) exceeded",
-                    self.max_per_session
-                )));
-            }
+        if let Some(subs) = by_session.get(&session_id)
+            && subs.len() >= self.max_per_session
+        {
+            return Err(forge_core::ForgeError::Validation(format!(
+                "Maximum subscriptions per session ({}) exceeded",
+                self.max_per_session
+            )));
         }
         drop(by_session);
 
@@ -288,6 +289,7 @@ pub struct SubscriptionCounts {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
 
