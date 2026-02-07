@@ -31,6 +31,7 @@ pub use jobs::{
     JobDispatcher, JobExecutor, JobQueue, JobRecord, JobRegistry, Worker, WorkerConfig,
 };
 pub use migrations::{MigrationExecutor, MigrationGenerator, SchemaDiff};
+pub use observability::{TelemetryConfig, TelemetryError, init_telemetry, shutdown_telemetry};
 pub use rate_limit::RateLimiter;
 pub use realtime::{
     AdaptiveTracker, AdaptiveTrackingConfig, AdaptiveTrackingStats, ChangeListener,
@@ -41,7 +42,4 @@ pub use webhook::{WebhookEntry, WebhookRegistry, WebhookState, webhook_handler};
 pub use workflow::{
     EventStore, WorkflowEntry, WorkflowExecutor, WorkflowRecord, WorkflowRegistry,
     WorkflowScheduler, WorkflowSchedulerConfig, WorkflowStepRecord,
-};
-pub use observability::{
-    TelemetryConfig, TelemetryError, init_telemetry, shutdown_telemetry,
 };

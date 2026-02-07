@@ -38,6 +38,10 @@ pub struct WebhookInfo {
     pub path: &'static str,
     /// Signature validation configuration.
     pub signature: Option<SignatureConfig>,
+    /// Allow unsigned requests for this webhook.
+    ///
+    /// Defaults to `false` for security. Only enable for trusted internal callers.
+    pub allow_unsigned: bool,
     /// Idempotency configuration.
     pub idempotency: Option<IdempotencyConfig>,
     /// Request timeout.
@@ -50,6 +54,7 @@ impl Default for WebhookInfo {
             name: "",
             path: "",
             signature: None,
+            allow_unsigned: false,
             idempotency: None,
             timeout: Duration::from_secs(30),
         }
@@ -104,6 +109,7 @@ mod tests {
     fn test_default_webhook_info() {
         let info = WebhookInfo::default();
         assert!(info.signature.is_none());
+        assert!(!info.allow_unsigned);
         assert!(info.idempotency.is_none());
         assert_eq!(info.timeout, Duration::from_secs(30));
     }

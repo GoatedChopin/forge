@@ -12,6 +12,7 @@ use forge_core::types::Upload;
 use super::rpc::RpcHandler;
 
 const MAX_FILE_SIZE: usize = 10 * 1024 * 1024;
+const MAX_TOTAL_UPLOAD_SIZE: usize = 20 * 1024 * 1024;
 const MAX_UPLOAD_FIELDS: usize = 20;
 const MAX_FIELD_NAME_LENGTH: usize = 255;
 const MAX_JSON_FIELD_SIZE: usize = 1024 * 1024;
@@ -44,6 +45,7 @@ pub async fn rpc_multipart_handler(
 ) -> impl IntoResponse {
     let mut json_args: Option<serde_json::Value> = None;
     let mut uploads: HashMap<String, Upload> = HashMap::new();
+    let mut total_read: usize = 0;
 
     // Parse multipart fields
     loop {
@@ -99,6 +101,16 @@ pub async fn rpc_multipart_handler(
             loop {
                 match json_field.chunk().await {
                     Ok(Some(chunk)) => {
+                        if total_read + chunk.len() > MAX_TOTAL_UPLOAD_SIZE {
+                            return multipart_error(
+                                StatusCode::PAYLOAD_TOO_LARGE,
+                                "PAYLOAD_TOO_LARGE",
+                                format!(
+                                    "Multipart payload exceeds maximum size of {} bytes",
+                                    MAX_TOTAL_UPLOAD_SIZE
+                                ),
+                            );
+                        }
                         if buffer.len() + chunk.len() > MAX_JSON_FIELD_SIZE {
                             return multipart_error(
                                 StatusCode::PAYLOAD_TOO_LARGE,
@@ -109,6 +121,7 @@ pub async fn rpc_multipart_handler(
                                 ),
                             );
                         }
+                        total_read += chunk.len();
                         buffer.extend_from_slice(&chunk);
                     }
                     Ok(None) => break,
@@ -159,6 +172,16 @@ pub async fn rpc_multipart_handler(
             loop {
                 match field.chunk().await {
                     Ok(Some(chunk)) => {
+                        if total_read + chunk.len() > MAX_TOTAL_UPLOAD_SIZE {
+                            return multipart_error(
+                                StatusCode::PAYLOAD_TOO_LARGE,
+                                "PAYLOAD_TOO_LARGE",
+                                format!(
+                                    "Multipart payload exceeds maximum size of {} bytes",
+                                    MAX_TOTAL_UPLOAD_SIZE
+                                ),
+                            );
+                        }
                         if buffer.len() + chunk.len() > MAX_FILE_SIZE {
                             return multipart_error(
                                 StatusCode::PAYLOAD_TOO_LARGE,
@@ -169,6 +192,7 @@ pub async fn rpc_multipart_handler(
                                 ),
                             );
                         }
+                        total_read += chunk.len();
                         buffer.extend_from_slice(&chunk);
                     }
                     Ok(None) => break,

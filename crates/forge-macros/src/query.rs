@@ -5,7 +5,7 @@ use syn::visit::Visit;
 use syn::{FnArg, ItemFn, Pat, ReturnType, Type, parse_macro_input};
 
 use crate::sql_extractor::{SqlStringExtractor, extract_tables_from_sql};
-use crate::utils::{parse_duration_secs, to_pascal_case};
+use crate::utils::{has_attr_flag, parse_duration_secs, to_pascal_case};
 
 /// Expand the #[forge::query] attribute.
 ///
@@ -41,7 +41,7 @@ fn parse_query_attrs(attr: TokenStream) -> QueryAttrs {
 
     let attr_str = attr.to_string();
 
-    if attr_str.contains("public") {
+    if has_attr_flag(&attr_str, "public") {
         attrs.is_public = true;
     }
 
@@ -162,7 +162,6 @@ fn parse_query_attrs(attr: TokenStream) -> QueryAttrs {
 
     attrs
 }
-
 
 fn expand_query_impl(input: ItemFn, attrs: QueryAttrs) -> syn::Result<TokenStream2> {
     let fn_name = &input.sig.ident;
@@ -475,7 +474,6 @@ fn expand_query_impl(input: ItemFn, attrs: QueryAttrs) -> syn::Result<TokenStrea
         }
     })
 }
-
 
 #[cfg(test)]
 mod tests {

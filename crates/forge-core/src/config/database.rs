@@ -26,9 +26,7 @@ pub enum DatabaseSource {
 
 impl Default for DatabaseSource {
     fn default() -> Self {
-        Self::Remote {
-            url: String::new(),
-        }
+        Self::Remote { url: String::new() }
     }
 }
 

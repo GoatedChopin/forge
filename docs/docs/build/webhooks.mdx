@@ -40,6 +40,7 @@ Webhooks do not use JWT authentication; the signature serves as the authenticati
 |-----------|------|---------|-------------|
 | `path` | `"/path"` | required | URL path for the webhook endpoint |
 | `signature` | `WebhookSignature::*` | none | Signature verification configuration |
+| `allow_unsigned` | flag | `false` | Accept requests without signature verification |
 | `idempotency` | `"source:key"` | none | Idempotency key extraction |
 | `timeout` | `"duration"` | `"30s"` | Request timeout |
 
@@ -166,11 +167,12 @@ pub async fn custom_webhook(ctx: &WebhookContext, payload: Value) -> Result<Webh
 
 ### Webhook Without Signature Verification
 
-For development or trusted networks. Prefer signed webhooks in production.
+For development or trusted networks. Requires `allow_unsigned` to opt in. Prefer signed webhooks in production.
 
 ```rust
 #[forge::webhook(
     path = "/webhooks/internal",
+    allow_unsigned,
     idempotency = "body:$.request_id",
 )]
 pub async fn internal_webhook(ctx: &WebhookContext, payload: Value) -> Result<WebhookResult> {
@@ -242,18 +244,20 @@ Use `Accepted` when dispatching jobs for async processing. Use `Ok` when process
 
 ### Inbox Pattern for Exactly-Once Delivery
 
-Forge stores idempotency keys before processing:
+Forge atomically claims idempotency keys before processing:
 
 ```sql
 INSERT INTO forge_webhook_events (idempotency_key, webhook_name, processed_at, expires_at)
 VALUES ($1, $2, NOW(), $3)
-ON CONFLICT (webhook_name, idempotency_key) DO NOTHING
+ON CONFLICT (webhook_name, idempotency_key) DO UPDATE
+    SET processed_at = EXCLUDED.processed_at, expires_at = EXCLUDED.expires_at
+WHERE forge_webhook_events.expires_at < NOW()
 ```
 
 When the same webhook arrives again:
-1. Check if idempotency key exists for this webhook and is not expired
-2. If found, return cached response immediately
-3. If not found, process and record the key
+1. Attempt to claim the idempotency key atomically
+2. If already claimed and not expired, return immediately
+3. If the handler fails or times out, the key is released so retries can proceed
 
 Idempotency keys are scoped per webhook. The same key can appear in different webhooks without conflict. The composite primary key `(webhook_name, idempotency_key)` guarantees exactly-once processing per webhook without distributed locks or external coordination services.
 

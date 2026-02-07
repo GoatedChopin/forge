@@ -1471,7 +1471,8 @@ mod tests {
             )]),
         );
 
-        let result = Reactor::check_identity_args("list_orders", &serde_json::json!({}), &auth, true);
+        let result =
+            Reactor::check_identity_args("list_orders", &serde_json::json!({}), &auth, true);
         assert!(matches!(result, Err(forge_core::ForgeError::Forbidden(_))));
     }
 

@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{ItemFn, parse_macro_input};
 
-use crate::utils::{parse_duration_tokens, to_pascal_case};
+use crate::utils::{has_attr_flag, parse_duration_tokens, to_pascal_case};
 
 #[derive(Debug, Default)]
 struct JobAttrs {
@@ -28,7 +28,7 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
     let mut result = JobAttrs::default();
     let attr_str = attr.to_string();
 
-    if attr_str.contains("public") {
+    if has_attr_flag(&attr_str, "public") {
         result.is_public = true;
     }
 
@@ -273,7 +273,6 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
     Ok(result)
 }
 
-
 pub fn job_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
     let attrs = match parse_job_attrs(attr) {
@@ -454,7 +453,6 @@ pub fn job_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     TokenStream::from(expanded)
 }
-
 
 #[cfg(test)]
 mod tests {

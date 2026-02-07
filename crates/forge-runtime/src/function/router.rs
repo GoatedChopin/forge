@@ -671,12 +671,8 @@ mod tests {
             )]),
         );
 
-        let result = FunctionRouter::check_identity_args(
-            "list_orders",
-            &serde_json::json!({}),
-            &auth,
-            true,
-        );
+        let result =
+            FunctionRouter::check_identity_args("list_orders", &serde_json::json!({}), &auth, true);
         assert!(matches!(result, Err(ForgeError::Forbidden(_))));
     }
 

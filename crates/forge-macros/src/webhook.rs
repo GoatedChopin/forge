@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{ItemFn, parse_macro_input};
 
-use crate::utils::{parse_duration_tokens, to_pascal_case};
+use crate::utils::{has_attr_flag, parse_duration_tokens, to_pascal_case};
 
 #[derive(Debug, Default)]
 struct WebhookAttrs {
@@ -10,6 +10,7 @@ struct WebhookAttrs {
     signature_algorithm: Option<String>,
     signature_header: Option<String>,
     signature_secret_env: Option<String>,
+    allow_unsigned: bool,
     idempotency: Option<String>,
     timeout: Option<String>,
 }
@@ -17,6 +18,10 @@ struct WebhookAttrs {
 fn parse_webhook_attrs(attr: TokenStream) -> syn::Result<WebhookAttrs> {
     let mut result = WebhookAttrs::default();
     let attr_str = attr.to_string();
+
+    if has_attr_flag(&attr_str, "allow_unsigned") {
+        result.allow_unsigned = true;
+    }
 
     if let Some(path_start) = attr_str.find("path") {
         if let Some(eq_pos) = attr_str[path_start..].find('=') {
@@ -109,7 +114,6 @@ fn parse_webhook_attrs(attr: TokenStream) -> syn::Result<WebhookAttrs> {
     Ok(result)
 }
 
-
 pub fn webhook_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
     let attrs = match parse_webhook_attrs(attr) {
@@ -125,6 +129,7 @@ pub fn webhook_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let block = &input.block;
 
     let path = attrs.path.unwrap_or_else(|| "/webhooks".to_string());
+    let allow_unsigned = attrs.allow_unsigned;
 
     let timeout = if let Some(ref t) = attrs.timeout {
         parse_duration_tokens(t, 30)
@@ -192,6 +197,7 @@ pub fn webhook_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                     name: #fn_name_str,
                     path: #path,
                     signature: #signature,
+                    allow_unsigned: #allow_unsigned,
                     idempotency: #idempotency,
                     timeout: #timeout,
                 }
@@ -208,7 +214,6 @@ pub fn webhook_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     TokenStream::from(expanded)
 }
-
 
 #[cfg(test)]
 mod tests {

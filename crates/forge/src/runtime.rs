@@ -392,8 +392,8 @@ impl Forge {
                 port: self.config.gateway.port,
                 max_connections: self.config.gateway.max_connections,
                 request_timeout_secs: self.config.gateway.request_timeout_secs,
-                cors_enabled: true,
-                cors_origins: vec!["*".to_string()],
+                cors_enabled: self.config.gateway.cors_enabled,
+                cors_origins: self.config.gateway.cors_origins.clone(),
                 auth: AuthConfig::from_forge_config(&self.config.auth),
             };
 
@@ -431,14 +431,57 @@ impl Forge {
                         .with_job_dispatcher(job_dispatcher.clone()),
                 );
 
-                // Webhook routes need their own CORS layer since they're outside the API router
-                let webhook_cors = CorsLayer::new()
-                    .allow_origin(Any)
-                    .allow_methods(Any)
-                    .allow_headers(Any);
+                // Webhook routes need their own CORS layer since they're outside the API router.
+                // Reuse gateway CORS policy rather than forcing wildcard access.
+                let webhook_cors = if self.config.gateway.cors_enabled {
+                    if self.config.gateway.cors_origins.iter().any(|o| o == "*") {
+                        CorsLayer::new()
+                            .allow_origin(Any)
+                            .allow_methods(Any)
+                            .allow_headers(Any)
+                    } else {
+                        let origins: Vec<_> = self
+                            .config
+                            .gateway
+                            .cors_origins
+                            .iter()
+                            .filter_map(|o| o.parse().ok())
+                            .collect();
+                        CorsLayer::new()
+                            .allow_origin(origins)
+                            .allow_methods(Any)
+                            .allow_headers(Any)
+                    }
+                } else {
+                    CorsLayer::new()
+                };
 
                 let webhook_router = Router::new()
                     .route("/{*path}", post(webhook_handler).with_state(webhook_state))
+                    .layer(axum::extract::DefaultBodyLimit::max(1 * 1024 * 1024))
+                    .layer(
+                        tower::ServiceBuilder::new()
+                            .layer(axum::error_handling::HandleErrorLayer::new(
+                                |err: tower::BoxError| async move {
+                                    if err.is::<tower::timeout::error::Elapsed>() {
+                                        return (
+                                            axum::http::StatusCode::REQUEST_TIMEOUT,
+                                            "Request timed out",
+                                        );
+                                    }
+                                    (
+                                        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                                        "Server overloaded",
+                                    )
+                                },
+                            ))
+                            .layer(tower::limit::ConcurrencyLimitLayer::new(
+                                self.config.gateway.max_connections,
+                            ))
+                            .layer(tower::timeout::TimeoutLayer::new(Duration::from_secs(
+                                self.config.gateway.request_timeout_secs,
+                            ))),
+                    )
                     .layer(webhook_cors);
 
                 router = router.nest("/_api/webhooks", webhook_router);

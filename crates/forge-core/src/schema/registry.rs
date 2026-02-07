@@ -55,7 +55,10 @@ impl SchemaRegistry {
 
     /// Register a function definition.
     pub fn register_function(&self, func: FunctionDef) {
-        let mut functions = self.functions.write().expect("schema registry lock poisoned");
+        let mut functions = self
+            .functions
+            .write()
+            .expect("schema registry lock poisoned");
         functions.insert(func.name.clone(), func);
     }
 
@@ -73,7 +76,10 @@ impl SchemaRegistry {
 
     /// Get a function by name.
     pub fn get_function(&self, name: &str) -> Option<FunctionDef> {
-        let functions = self.functions.read().expect("schema registry lock poisoned");
+        let functions = self
+            .functions
+            .read()
+            .expect("schema registry lock poisoned");
         functions.get(name).cloned()
     }
 
@@ -91,15 +97,27 @@ impl SchemaRegistry {
 
     /// Get all registered functions.
     pub fn all_functions(&self) -> Vec<FunctionDef> {
-        let functions = self.functions.read().expect("schema registry lock poisoned");
+        let functions = self
+            .functions
+            .read()
+            .expect("schema registry lock poisoned");
         functions.values().cloned().collect()
     }
 
     /// Clear all registrations (useful for testing).
     pub fn clear(&self) {
-        self.tables.write().expect("schema registry lock poisoned").clear();
-        self.enums.write().expect("schema registry lock poisoned").clear();
-        self.functions.write().expect("schema registry lock poisoned").clear();
+        self.tables
+            .write()
+            .expect("schema registry lock poisoned")
+            .clear();
+        self.enums
+            .write()
+            .expect("schema registry lock poisoned")
+            .clear();
+        self.functions
+            .write()
+            .expect("schema registry lock poisoned")
+            .clear();
     }
 }
 

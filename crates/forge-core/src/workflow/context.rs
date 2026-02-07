@@ -231,12 +231,19 @@ impl WorkflowContext {
             .collect();
 
         *self.step_states.write().expect("workflow lock poisoned") = states;
-        *self.completed_steps.write().expect("workflow lock poisoned") = completed;
+        *self
+            .completed_steps
+            .write()
+            .expect("workflow lock poisoned") = completed;
         self
     }
 
     pub fn get_step_state(&self, name: &str) -> Option<StepState> {
-        self.step_states.read().expect("workflow lock poisoned").get(name).cloned()
+        self.step_states
+            .read()
+            .expect("workflow lock poisoned")
+            .get(name)
+            .cloned()
     }
 
     pub fn is_step_completed(&self, name: &str) -> bool {
@@ -360,7 +367,10 @@ impl WorkflowContext {
         let state_clone = states.get(name).cloned();
         drop(states);
 
-        let mut completed = self.completed_steps.write().expect("workflow lock poisoned");
+        let mut completed = self
+            .completed_steps
+            .write()
+            .expect("workflow lock poisoned");
         if !completed.contains(&name.to_string()) {
             completed.push(name.to_string());
         }
@@ -490,7 +500,10 @@ impl WorkflowContext {
     }
 
     pub fn all_step_states(&self) -> HashMap<String, StepState> {
-        self.step_states.read().expect("workflow lock poisoned").clone()
+        self.step_states
+            .read()
+            .expect("workflow lock poisoned")
+            .clone()
     }
 
     pub fn elapsed(&self) -> chrono::Duration {
@@ -499,7 +512,10 @@ impl WorkflowContext {
 
     /// Register a compensation handler for a step.
     pub fn register_compensation(&self, step_name: &str, handler: CompensationHandler) {
-        let mut handlers = self.compensation_handlers.write().expect("workflow lock poisoned");
+        let mut handlers = self
+            .compensation_handlers
+            .write()
+            .expect("workflow lock poisoned");
         handlers.insert(step_name.to_string(), handler);
     }
 
@@ -553,7 +569,10 @@ impl WorkflowContext {
     }
 
     pub fn compensation_handlers(&self) -> HashMap<String, CompensationHandler> {
-        self.compensation_handlers.read().expect("workflow lock poisoned").clone()
+        self.compensation_handlers
+            .read()
+            .expect("workflow lock poisoned")
+            .clone()
     }
 
     /// Sleep for a duration.

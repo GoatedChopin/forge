@@ -1,9 +1,8 @@
 #![allow(dead_code)]
 
 use opentelemetry::{
-    global,
+    KeyValue, global,
     metrics::{Counter, Gauge, Histogram},
-    KeyValue,
 };
 use std::sync::OnceLock;
 
@@ -103,9 +102,10 @@ pub fn record_leader_election_attempt(role: &str, acquired: bool) {
 }
 
 pub fn set_is_leader(role: &str, is_leader: bool) {
-    metrics()
-        .is_leader
-        .record(if is_leader { 1 } else { 0 }, &[KeyValue::new("role", role.to_string())]);
+    metrics().is_leader.record(
+        if is_leader { 1 } else { 0 },
+        &[KeyValue::new("role", role.to_string())],
+    );
 }
 
 pub fn record_notification_processed(table: &str) {

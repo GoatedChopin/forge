@@ -3,7 +3,7 @@ use quote::{format_ident, quote};
 use syn::visit::Visit;
 use syn::{ExprAwait, ExprCall, ItemFn, Lit, parse_macro_input};
 
-use crate::utils::{parse_duration_tokens, to_pascal_case};
+use crate::utils::{has_attr_flag, parse_duration_tokens, to_pascal_case};
 
 /// Minimum sleep duration (in seconds) that triggers the tokio::sleep warning.
 /// Sleeps shorter than this are allowed since they're typically used for polling/retry loops.
@@ -176,11 +176,11 @@ fn parse_workflow_attrs(attr: TokenStream) -> WorkflowAttrs {
         }
     }
 
-    if attr_str.contains("deprecated") {
+    if has_attr_flag(&attr_str, "deprecated") {
         result.deprecated = true;
     }
 
-    if attr_str.contains("public") {
+    if has_attr_flag(&attr_str, "public") {
         result.is_public = true;
     }
 
@@ -196,7 +196,6 @@ fn parse_workflow_attrs(attr: TokenStream) -> WorkflowAttrs {
 
     result
 }
-
 
 pub fn workflow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
@@ -315,7 +314,6 @@ pub fn workflow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     TokenStream::from(expanded)
 }
-
 
 #[cfg(test)]
 mod tests {

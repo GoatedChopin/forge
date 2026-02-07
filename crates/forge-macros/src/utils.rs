@@ -19,7 +19,10 @@ pub fn parse_duration_secs(s: &str) -> Option<u64> {
 pub fn parse_duration_tokens(s: &str, default_secs: u64) -> TokenStream {
     let s = s.trim();
     if s.ends_with("ms") {
-        let n: u64 = s.trim_end_matches("ms").parse().unwrap_or(default_secs * 1000);
+        let n: u64 = s
+            .trim_end_matches("ms")
+            .parse()
+            .unwrap_or(default_secs * 1000);
         quote! { std::time::Duration::from_millis(#n) }
     } else if s.ends_with('s') {
         let n: u64 = s.trim_end_matches('s').parse().unwrap_or(default_secs);
@@ -29,17 +32,84 @@ pub fn parse_duration_tokens(s: &str, default_secs: u64) -> TokenStream {
         let secs = n * 60;
         quote! { std::time::Duration::from_secs(#secs) }
     } else if s.ends_with('h') {
-        let n: u64 = s.trim_end_matches('h').parse().unwrap_or(default_secs / 3600);
+        let n: u64 = s
+            .trim_end_matches('h')
+            .parse()
+            .unwrap_or(default_secs / 3600);
         let secs = n * 3600;
         quote! { std::time::Duration::from_secs(#secs) }
     } else if s.ends_with('d') {
-        let n: u64 = s.trim_end_matches('d').parse().unwrap_or(default_secs / 86400);
+        let n: u64 = s
+            .trim_end_matches('d')
+            .parse()
+            .unwrap_or(default_secs / 86400);
         let secs = n * 86400;
         quote! { std::time::Duration::from_secs(#secs) }
     } else {
         let n: u64 = s.parse().unwrap_or(default_secs);
         quote! { std::time::Duration::from_secs(#n) }
     }
+}
+
+/// Check whether an attribute string contains a standalone flag identifier.
+///
+/// This avoids false positives from substring matching inside quoted values,
+/// e.g. `require_role("public_api")` should not match `public`.
+pub fn has_attr_flag(attr_str: &str, flag: &str) -> bool {
+    if flag.is_empty() {
+        return false;
+    }
+
+    let bytes = attr_str.as_bytes();
+    let flag_bytes = flag.as_bytes();
+    let mut i = 0usize;
+    let mut in_quote: Option<u8> = None;
+    let mut escaped = false;
+
+    while i < bytes.len() {
+        let b = bytes[i];
+
+        if let Some(q) = in_quote {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == q {
+                in_quote = None;
+            }
+            i += 1;
+            continue;
+        }
+
+        if b == b'"' || b == b'\'' {
+            in_quote = Some(b);
+            i += 1;
+            continue;
+        }
+
+        if i + flag_bytes.len() <= bytes.len() && &bytes[i..i + flag_bytes.len()] == flag_bytes {
+            let prev = if i == 0 { None } else { Some(bytes[i - 1]) };
+            let next = if i + flag_bytes.len() < bytes.len() {
+                Some(bytes[i + flag_bytes.len()])
+            } else {
+                None
+            };
+
+            let prev_is_ident = prev.is_some_and(is_ident_char);
+            let next_is_ident = next.is_some_and(is_ident_char);
+            if !prev_is_ident && !next_is_ident {
+                return true;
+            }
+        }
+
+        i += 1;
+    }
+
+    false
+}
+
+fn is_ident_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
 }
 
 #[cfg(test)]
@@ -90,5 +160,21 @@ mod tests {
 
         let ts = parse_duration_tokens("1h", 3600);
         assert!(!ts.is_empty());
+    }
+
+    #[test]
+    fn test_has_attr_flag_matches_standalone() {
+        assert!(has_attr_flag("public, timeout = 30", "public"));
+        assert!(has_attr_flag(
+            "transactional, require_role(\"admin\")",
+            "transactional"
+        ));
+    }
+
+    #[test]
+    fn test_has_attr_flag_ignores_substrings_and_quotes() {
+        assert!(!has_attr_flag("require_role(\"public_api\")", "public"));
+        assert!(!has_attr_flag("my_public_flag", "public"));
+        assert!(!has_attr_flag("public_api = true", "public"));
     }
 }

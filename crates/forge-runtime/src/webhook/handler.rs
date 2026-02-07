@@ -87,6 +87,17 @@ pub async fn webhook_handler(
         "Webhook request received"
     );
 
+    if info.signature.is_none() && !info.allow_unsigned {
+        warn!(
+            webhook = info.name,
+            "Unsigned webhook rejected (set allow_unsigned to opt in)"
+        );
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "Webhook signature is required"})),
+        );
+    }
+
     // Validate signature if configured
     if let Some(ref sig_config) = info.signature {
         // Get signature from header
@@ -150,20 +161,25 @@ pub async fn webhook_handler(
         None
     };
 
-    // Check idempotency
+    // Atomically claim idempotency key before execution.
+    let mut idempotency_claimed = false;
     if let Some(ref key) = idempotency_key {
-        match check_idempotency(&state.pool, info.name, key).await {
-            Ok(true) => {
-                info!(
-                    webhook = info.name,
-                    idempotency_key = %key,
-                    "Request already processed (idempotent)"
-                );
-                return (StatusCode::OK, Json(json!({"status": "already_processed"})));
-            }
-            Ok(false) => {}
-            Err(e) => {
-                warn!(webhook = info.name, error = %e, "Failed to check idempotency");
+        if let Some(ref idem_config) = info.idempotency {
+            match claim_idempotency(&state.pool, info.name, key, idem_config.ttl).await {
+                Ok(true) => {
+                    idempotency_claimed = true;
+                }
+                Ok(false) => {
+                    info!(
+                        webhook = info.name,
+                        idempotency_key = %key,
+                        "Request already processed (idempotent)"
+                    );
+                    return (StatusCode::OK, Json(json!({"status": "already_processed"})));
+                }
+                Err(e) => {
+                    warn!(webhook = info.name, error = %e, "Failed to claim idempotency key");
+                }
             }
         }
     }
@@ -172,6 +188,18 @@ pub async fn webhook_handler(
     let payload: Value = match serde_json::from_slice(&body) {
         Ok(v) => v,
         Err(e) => {
+            if idempotency_claimed {
+                if let Some(ref key) = idempotency_key {
+                    if let Err(release_err) = release_idempotency(&state.pool, info.name, key).await
+                    {
+                        warn!(
+                            webhook = info.name,
+                            error = %release_err,
+                            "Failed to release idempotency key after JSON parse failure"
+                        );
+                    }
+                }
+            }
             warn!(webhook = info.name, error = %e, "Invalid JSON payload");
             return (
                 StatusCode::BAD_REQUEST,
@@ -209,22 +237,23 @@ pub async fn webhook_handler(
 
     match result {
         Ok(Ok(webhook_result)) => {
-            // Record idempotency on success
-            if let Some(ref key) = idempotency_key {
-                if let Some(ref idem_config) = info.idempotency {
-                    if let Err(e) =
-                        record_idempotency(&state.pool, info.name, key, idem_config.ttl).await
-                    {
-                        warn!(webhook = info.name, error = %e, "Failed to record idempotency");
-                    }
-                }
-            }
-
             let status =
                 StatusCode::from_u16(webhook_result.status_code()).unwrap_or(StatusCode::OK);
             (status, Json(webhook_result.body()))
         }
         Ok(Err(e)) => {
+            if idempotency_claimed {
+                if let Some(ref key) = idempotency_key {
+                    if let Err(release_err) = release_idempotency(&state.pool, info.name, key).await
+                    {
+                        warn!(
+                            webhook = info.name,
+                            error = %release_err,
+                            "Failed to release idempotency key after handler error"
+                        );
+                    }
+                }
+            }
             error!(webhook = info.name, error = %e, "Webhook handler error");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -232,6 +261,18 @@ pub async fn webhook_handler(
             )
         }
         Err(_) => {
+            if idempotency_claimed {
+                if let Some(ref key) = idempotency_key {
+                    if let Err(release_err) = release_idempotency(&state.pool, info.name, key).await
+                    {
+                        warn!(
+                            webhook = info.name,
+                            error = %release_err,
+                            "Failed to release idempotency key after timeout"
+                        );
+                    }
+                }
+            }
             error!(
                 webhook = info.name,
                 timeout = ?info.timeout,
@@ -302,46 +343,53 @@ fn extract_json_path(value: &Value, path: &str) -> Option<String> {
     }
 }
 
-/// Check if idempotency key was already processed.
-async fn check_idempotency(
-    pool: &PgPool,
-    webhook_name: &str,
-    key: &str,
-) -> Result<bool, sqlx::Error> {
-    let result: Option<(i32,)> = sqlx::query_as(
-        r#"
-        SELECT 1 FROM forge_webhook_events
-        WHERE webhook_name = $1 AND idempotency_key = $2 AND expires_at > NOW()
-        "#,
-    )
-    .bind(webhook_name)
-    .bind(key)
-    .fetch_optional(pool)
-    .await?;
-
-    Ok(result.is_some())
-}
-
-/// Record idempotency key after successful processing.
-async fn record_idempotency(
+/// Atomically claim idempotency key before processing.
+///
+/// Returns:
+/// - `Ok(true)` if this request acquired the claim
+/// - `Ok(false)` if key is already active
+async fn claim_idempotency(
     pool: &PgPool,
     webhook_name: &str,
     key: &str,
     ttl: std::time::Duration,
-) -> Result<(), sqlx::Error> {
+) -> Result<bool, sqlx::Error> {
     let expires_at =
         chrono::Utc::now() + chrono::Duration::from_std(ttl).unwrap_or(chrono::Duration::hours(24));
 
-    sqlx::query(
+    let result = sqlx::query(
         r#"
         INSERT INTO forge_webhook_events (idempotency_key, webhook_name, processed_at, expires_at)
         VALUES ($1, $2, NOW(), $3)
-        ON CONFLICT (webhook_name, idempotency_key) DO NOTHING
+        ON CONFLICT (webhook_name, idempotency_key) DO UPDATE
+            SET processed_at = EXCLUDED.processed_at,
+                expires_at = EXCLUDED.expires_at
+        WHERE forge_webhook_events.expires_at < NOW()
         "#,
     )
     .bind(key)
     .bind(webhook_name)
     .bind(expires_at)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected() > 0)
+}
+
+/// Release idempotency key after failure so retries can proceed.
+async fn release_idempotency(
+    pool: &PgPool,
+    webhook_name: &str,
+    key: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        DELETE FROM forge_webhook_events
+        WHERE webhook_name = $1 AND idempotency_key = $2
+        "#,
+    )
+    .bind(webhook_name)
+    .bind(key)
     .execute(pool)
     .await?;
 

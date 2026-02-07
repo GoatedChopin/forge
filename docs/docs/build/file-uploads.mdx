@@ -200,10 +200,11 @@ function uploadWithProgress(
 
 **Streaming upload**: The gateway processes multipart data in chunks using `axum::extract::Multipart`. Each field is read incrementally, preventing memory exhaustion from large files.
 
-**Size limits**: The gateway enforces a 10MB default file size limit and 20 maximum upload fields. These prevent resource exhaustion attacks.
+**Size limits**: The gateway enforces a 10MB per-file limit, 20MB total payload limit, and 20 maximum upload fields. Multipart requests are also capped at 32 concurrent in-flight uploads to prevent memory exhaustion.
 
 ```rust
-const MAX_FILE_SIZE: usize = 10 * 1024 * 1024;  // 10MB
+const MAX_FILE_SIZE: usize = 10 * 1024 * 1024;       // 10MB per file
+const MAX_TOTAL_UPLOAD_SIZE: usize = 20 * 1024 * 1024; // 20MB total payload
 const MAX_UPLOAD_FIELDS: usize = 20;
 ```
 

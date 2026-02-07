@@ -32,5 +32,5 @@ mod roles;
 mod traits;
 
 pub use node::{NodeId, NodeInfo, NodeStatus, ParseNodeStatusError};
-pub use roles::{LeaderRole, NodeRole, ParseNodeRoleError, ParseLeaderRoleError};
+pub use roles::{LeaderRole, NodeRole, ParseLeaderRoleError, ParseNodeRoleError};
 pub use traits::{ClusterInfo, LeaderInfo};

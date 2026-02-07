@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{ItemFn, parse_macro_input};
 
-use crate::utils::{parse_duration_tokens, to_pascal_case};
+use crate::utils::{has_attr_flag, parse_duration_tokens, to_pascal_case};
 
 #[derive(Debug, Default)]
 struct CronAttrs {
@@ -64,22 +64,12 @@ fn parse_cron_attrs(attr: TokenStream) -> CronAttrs {
         }
     }
 
-    if attr_str.contains("catch_up") {
-        // Make sure it's not just catch_up_limit
-        let catch_up_positions: Vec<_> = attr_str.match_indices("catch_up").collect();
-        for (pos, _) in catch_up_positions {
-            let after = &attr_str[pos + 8..];
-            // If it's followed by '_limit', skip it
-            if !after.starts_with("_limit") {
-                result.catch_up = true;
-                break;
-            }
-        }
+    if has_attr_flag(&attr_str, "catch_up") {
+        result.catch_up = true;
     }
 
     result
 }
-
 
 pub fn cron_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
@@ -132,7 +122,6 @@ pub fn cron_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     TokenStream::from(expanded)
 }
-
 
 #[cfg(test)]
 mod tests {

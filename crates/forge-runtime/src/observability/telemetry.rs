@@ -1,12 +1,12 @@
-use opentelemetry::{global, trace::TracerProvider as _, KeyValue};
+use opentelemetry::{KeyValue, global, trace::TracerProvider as _};
 use opentelemetry_otlp::{LogExporter, MetricExporter, SpanExporter, WithExportConfig};
 use opentelemetry_sdk::{
+    Resource,
     logs::LoggerProvider,
     metrics::{MeterProviderBuilder, PeriodicReader, SdkMeterProvider},
     propagation::TraceContextPropagator,
     resource::{EnvResourceDetector, SdkProvidedResourceDetector},
     trace::{RandomIdGenerator, Sampler, TracerProvider},
-    Resource,
 };
 use opentelemetry_semantic_conventions::resource::{SERVICE_NAME, SERVICE_VERSION};
 
@@ -14,7 +14,7 @@ const DEPLOYMENT_ENVIRONMENT_NAME: &str = "deployment.environment.name";
 use std::sync::OnceLock;
 use thiserror::Error;
 use tracing_opentelemetry::OpenTelemetryLayer;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Registry};
+use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, util::SubscriberInitExt};
 
 static TRACER_PROVIDER: OnceLock<TracerProvider> = OnceLock::new();
 static METER_PROVIDER: OnceLock<SdkMeterProvider> = OnceLock::new();
@@ -77,7 +77,10 @@ impl TelemetryConfig {
     ) -> Self {
         Self {
             otlp_endpoint: obs.otlp_endpoint.clone(),
-            service_name: obs.service_name.clone().unwrap_or_else(|| project_name.to_string()),
+            service_name: obs
+                .service_name
+                .clone()
+                .unwrap_or_else(|| project_name.to_string()),
             service_version: project_version.to_string(),
             environment: "production".to_string(),
             enable_traces: obs.enable_traces,

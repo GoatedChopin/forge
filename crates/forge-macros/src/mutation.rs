@@ -3,7 +3,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{FnArg, ItemFn, Pat, ReturnType, Type, parse_macro_input};
 
-use crate::utils::{parse_duration_secs, to_pascal_case};
+use crate::utils::{has_attr_flag, parse_duration_secs, to_pascal_case};
 
 /// Expand the #[forge::mutation] attribute.
 ///
@@ -38,11 +38,11 @@ fn parse_mutation_attrs(attr: TokenStream) -> MutationAttrs {
 
     let attr_str = attr.to_string();
 
-    if attr_str.contains("transactional") {
+    if has_attr_flag(&attr_str, "transactional") {
         attrs.transactional = true;
     }
 
-    if attr_str.contains("public") {
+    if has_attr_flag(&attr_str, "public") {
         attrs.is_public = true;
     }
 
@@ -136,7 +136,6 @@ fn parse_mutation_attrs(attr: TokenStream) -> MutationAttrs {
 
     attrs
 }
-
 
 fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<TokenStream2> {
     let fn_name = &input.sig.ident;
@@ -432,4 +431,3 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
         }
     })
 }
-

@@ -360,7 +360,6 @@ fn rust_type_to_ts_inner(rust_type: &RustType, is_return: bool) -> String {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

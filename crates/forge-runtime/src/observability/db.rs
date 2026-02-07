@@ -3,7 +3,7 @@ use opentelemetry::metrics::{Gauge, Histogram};
 use sqlx::PgPool;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
-use tracing::{info_span, Instrument};
+use tracing::{Instrument, info_span};
 
 const DB_SYSTEM: &str = "db.system";
 const DB_OPERATION_NAME: &str = "db.operation.name";
@@ -53,15 +53,24 @@ pub fn record_pool_metrics(pool: &PgPool) {
 
     metrics.pool_connections_active.record(
         (pool_size - idle_count as u32) as u64,
-        &[opentelemetry::KeyValue::new(DB_SYSTEM, DB_SYSTEM_POSTGRESQL)],
+        &[opentelemetry::KeyValue::new(
+            DB_SYSTEM,
+            DB_SYSTEM_POSTGRESQL,
+        )],
     );
     metrics.pool_connections_idle.record(
         idle_count as u64,
-        &[opentelemetry::KeyValue::new(DB_SYSTEM, DB_SYSTEM_POSTGRESQL)],
+        &[opentelemetry::KeyValue::new(
+            DB_SYSTEM,
+            DB_SYSTEM_POSTGRESQL,
+        )],
     );
     metrics.pool_connections_max.record(
         max_connections as u64,
-        &[opentelemetry::KeyValue::new(DB_SYSTEM, DB_SYSTEM_POSTGRESQL)],
+        &[opentelemetry::KeyValue::new(
+            DB_SYSTEM,
+            DB_SYSTEM_POSTGRESQL,
+        )],
     );
 }
 
@@ -116,11 +125,7 @@ fn extract_first_identifier(s: &str) -> Option<&str> {
         .find(|c: char| c.is_whitespace() || c == '(' || c == ',' || c == ';')
         .unwrap_or(s.len());
 
-    if end > 0 {
-        Some(&s[..end])
-    } else {
-        None
-    }
+    if end > 0 { Some(&s[..end]) } else { None }
 }
 
 /// Execute a database operation with tracing instrumentation.

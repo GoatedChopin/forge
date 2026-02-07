@@ -147,8 +147,10 @@ A slow analytics query exhausting 5 connections cannot touch the 30 connections 
 |--------|------|---------|-------------|
 | `port` | u16 | `8080` | HTTP port |
 | `grpc_port` | u16 | `9000` | Inter-node communication port |
-| `max_connections` | usize | `10000` | Maximum concurrent connections |
+| `max_connections` | usize | `512` | Maximum concurrent connections |
 | `request_timeout_secs` | u64 | `30` | Request timeout |
+| `cors_enabled` | bool | `false` | Enable CORS handling |
+| `cors_origins` | string[] | `[]` | Allowed CORS origins (use `["*"]` for any) |
 
 ### [function]
 

@@ -188,6 +188,14 @@ pub struct GatewayConfig {
     /// Request timeout in seconds.
     #[serde(default = "default_request_timeout")]
     pub request_timeout_secs: u64,
+
+    /// Enable CORS handling.
+    #[serde(default = "default_cors_enabled")]
+    pub cors_enabled: bool,
+
+    /// Allowed CORS origins.
+    #[serde(default = "default_cors_origins")]
+    pub cors_origins: Vec<String>,
 }
 
 impl Default for GatewayConfig {
@@ -197,6 +205,8 @@ impl Default for GatewayConfig {
             grpc_port: default_grpc_port(),
             max_connections: default_max_connections(),
             request_timeout_secs: default_request_timeout(),
+            cors_enabled: default_cors_enabled(),
+            cors_origins: default_cors_origins(),
         }
     }
 }
@@ -210,11 +220,19 @@ fn default_grpc_port() -> u16 {
 }
 
 fn default_max_connections() -> usize {
-    10000
+    512
 }
 
 fn default_request_timeout() -> u64 {
     30
+}
+
+fn default_cors_enabled() -> bool {
+    false
+}
+
+fn default_cors_origins() -> Vec<String> {
+    Vec::new()
 }
 
 /// Function execution configuration.

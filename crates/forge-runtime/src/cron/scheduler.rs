@@ -402,8 +402,7 @@ impl CronRunner {
                         error = %e,
                         "Cron failed"
                     );
-                    self.mark_failed(run_id, info.name, &e.to_string())
-                        .await;
+                    self.mark_failed(run_id, info.name, &e.to_string()).await;
                 }
                 Err(_) => {
                     Span::current().record("cron.status", "timeout");

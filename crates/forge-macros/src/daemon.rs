@@ -75,7 +75,6 @@ fn parse_daemon_attrs(attr: TokenStream) -> DaemonAttrs {
     result
 }
 
-
 pub fn daemon_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
     let attrs = parse_daemon_attrs(attr);
@@ -136,7 +135,6 @@ pub fn daemon_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     TokenStream::from(expanded)
 }
-
 
 #[cfg(test)]
 mod tests {

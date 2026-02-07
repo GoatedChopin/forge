@@ -37,9 +37,13 @@ pub fn parse_duration(s: &str) -> Option<Duration> {
     } else if let Some(num) = s.strip_suffix('m') {
         num.parse::<u64>().ok().map(|m| Duration::from_secs(m * 60))
     } else if let Some(num) = s.strip_suffix('h') {
-        num.parse::<u64>().ok().map(|h| Duration::from_secs(h * 3600))
+        num.parse::<u64>()
+            .ok()
+            .map(|h| Duration::from_secs(h * 3600))
     } else if let Some(num) = s.strip_suffix('d') {
-        num.parse::<u64>().ok().map(|d| Duration::from_secs(d * 86400))
+        num.parse::<u64>()
+            .ok()
+            .map(|d| Duration::from_secs(d * 86400))
     } else {
         s.parse::<u64>().ok().map(Duration::from_secs)
     }

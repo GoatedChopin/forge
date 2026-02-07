@@ -1,11 +1,19 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::{
-    Json, Router, middleware,
+    Json, Router,
+    error_handling::HandleErrorLayer,
+    extract::DefaultBodyLimit,
+    http::StatusCode,
+    middleware,
     routing::{get, post},
 };
 use serde::Serialize;
+use tower::BoxError;
 use tower::ServiceBuilder;
+use tower::limit::ConcurrencyLimitLayer;
+use tower::timeout::TimeoutLayer;
 use tower_http::cors::{Any, CorsLayer};
 
 use forge_core::cluster::NodeId;
@@ -22,6 +30,10 @@ use super::tracing::TracingState;
 use crate::db::Database;
 use crate::function::FunctionRegistry;
 use crate::realtime::{Reactor, ReactorConfig};
+
+const MAX_JSON_BODY_SIZE: usize = 1 * 1024 * 1024;
+const MAX_MULTIPART_BODY_SIZE: usize = 20 * 1024 * 1024;
+const MAX_MULTIPART_CONCURRENCY: usize = 32;
 
 /// Gateway server configuration.
 #[derive(Debug, Clone)]
@@ -44,10 +56,10 @@ impl Default for GatewayConfig {
     fn default() -> Self {
         Self {
             port: 8080,
-            max_connections: 10000,
+            max_connections: 512,
             request_timeout_secs: 30,
-            cors_enabled: true,
-            cors_origins: vec!["*".to_string()],
+            cors_enabled: false,
+            cors_origins: Vec::new(),
             auth: AuthConfig::default(),
         }
     }
@@ -137,7 +149,7 @@ impl GatewayServer {
 
         // Build CORS layer
         let cors = if self.config.cors_enabled {
-            if self.config.cors_origins.contains(&"*".to_string()) {
+            if self.config.cors_origins.iter().any(|o| o == "*") {
                 CorsLayer::new()
                     .allow_origin(Any)
                     .allow_methods(Any)
@@ -180,12 +192,17 @@ impl GatewayServer {
             .route("/rpc", post(rpc_handler))
             // REST-style function endpoint (JSON)
             .route("/rpc/{function}", post(rpc_function_handler))
+            // Prevent oversized JSON payloads from exhausting memory.
+            .layer(DefaultBodyLimit::max(MAX_JSON_BODY_SIZE))
             // Add state
             .with_state(rpc_handler_state.clone());
 
         // Multipart RPC router (separate state needed for multipart)
         let multipart_router = Router::new()
             .route("/rpc/{function}/upload", post(rpc_multipart_handler))
+            .layer(DefaultBodyLimit::max(MAX_MULTIPART_BODY_SIZE))
+            // Cap upload fan-out; each request buffers data in memory.
+            .layer(ConcurrencyLimitLayer::new(MAX_MULTIPART_CONCURRENCY))
             .with_state(rpc_handler_state);
 
         // SSE router
@@ -201,6 +218,11 @@ impl GatewayServer {
 
         // Build middleware stack
         let service_builder = ServiceBuilder::new()
+            .layer(HandleErrorLayer::new(handle_middleware_error))
+            .layer(ConcurrencyLimitLayer::new(self.config.max_connections))
+            .layer(TimeoutLayer::new(Duration::from_secs(
+                self.config.request_timeout_secs,
+            )))
             .layer(cors.clone())
             .layer(middleware::from_fn_with_state(
                 auth_middleware_state,
@@ -276,6 +298,13 @@ async fn readiness_handler(
     )
 }
 
+async fn handle_middleware_error(err: BoxError) -> (StatusCode, &'static str) {
+    if err.is::<tower::timeout::error::Elapsed>() {
+        return (StatusCode::REQUEST_TIMEOUT, "Request timed out");
+    }
+    (StatusCode::SERVICE_UNAVAILABLE, "Server overloaded")
+}
+
 /// Simple tracing middleware that adds TracingState to extensions.
 async fn tracing_middleware(
     req: axum::extract::Request,
@@ -327,8 +356,8 @@ mod tests {
     fn test_gateway_config_default() {
         let config = GatewayConfig::default();
         assert_eq!(config.port, 8080);
-        assert_eq!(config.max_connections, 10000);
-        assert!(config.cors_enabled);
+        assert_eq!(config.max_connections, 512);
+        assert!(!config.cors_enabled);
     }
 
     #[test]
