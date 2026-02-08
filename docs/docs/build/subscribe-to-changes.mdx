@@ -192,7 +192,7 @@ Cache the initial load. Push updates when data changes.
 
 ```rust
 #[forge::query(cache = "30s")]
-pub async fn get_dashboard_stats(ctx: &QueryContext) -> Result<DashboardStats> {
+pub async fn get_order_stats(ctx: &QueryContext) -> Result<OrderStats> {
     sqlx::query_as(
         "SELECT count(*) as total, sum(amount) as revenue
          FROM orders WHERE created_at > now() - interval '24 hours'"

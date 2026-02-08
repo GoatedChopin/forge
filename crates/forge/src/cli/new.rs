@@ -512,7 +512,6 @@ impl NewCommand {
         ui::section("Default Service URLs");
         ui::kv("Frontend", "http://localhost:5173");
         ui::kv("Backend", "http://localhost:8080");
-        ui::kv("Dashboard", "http://localhost:8080/_dashboard");
 
         ui::section("Docs");
         println!("  {} https://tryforge.dev/docs", ui::info());

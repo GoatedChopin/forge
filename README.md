@@ -161,14 +161,14 @@ No WebSocket code. No manual cache invalidation. Just reactive queries.
 ## The Architecture
 
 ```
-┌────────────────────────────────────────────────────────────┐
-│                       forge run                            │
-├─────────────┬─────────────┬─────────────┬──────────────────┤
-│   Gateway   │   Workers   │  Scheduler  │    Dashboard     │
-│  (HTTP/WS)  │   (Jobs)    │   (Cron)    │   (Built-in)     │
-└──────┬──────┴──────┬──────┴──────┬──────┴────────┬─────────┘
-       │             │             │               │
-       └─────────────┴──────┬──────┴───────────────┘
+┌──────────────────────────────────────────────────┐
+│                    forge run                     │
+├─────────────┬─────────────┬─────────────┤
+│   Gateway   │   Workers   │  Scheduler  │
+│  (HTTP/WS)  │   (Jobs)    │   (Cron)    │
+└──────┬──────┴──────┬──────┴──────┬──────┘
+       │             │             │
+       └─────────────┴──────┬──────┘
                             │
                      ┌──────▼──────┐
                      │ PostgreSQL  │
@@ -180,7 +180,7 @@ One process. Multiple subsystems handle different concerns:
 - **Gateway**: HTTP/WebSocket server (built on [Axum](https://github.com/tokio-rs/axum))
 - **Workers**: Pull jobs from PostgreSQL using `SKIP LOCKED`
 - **Scheduler**: Leader-elected cron runner (advisory locks prevent duplicate runs)
-- **Dashboard**: Built-in UI for monitoring jobs, workflows, and metrics
+- **Observability**: Built-in metrics, logs, and traces
 
 Scale horizontally by running multiple instances. They coordinate through PostgreSQL. No service mesh, no gossip protocol, no Redis cluster.
 
@@ -276,7 +276,6 @@ docker run -rm -d --name forge-postgres -e POSTGRES_PASSWORD=forge -e POSTGRES_D
 cd my-app
 cargo run
 # → API at http://localhost:8080
-# → Dashboard at http://localhost:8080/_dashboard
 
 # Start frontend (in another terminal)
 cd my-app/frontend

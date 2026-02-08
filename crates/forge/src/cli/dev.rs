@@ -480,7 +480,6 @@ impl DevCommand {
             println!("  {} Development environment running:", ui::ok());
             ui::kv("Frontend", &frontend_url);
             ui::kv("Backend", format!("http://localhost:{}", backend_port));
-            ui::kv("Dashboard", format!("http://localhost:{}/_dashboard", backend_port));
             println!();
             println!("  Press {} to stop.", style("Ctrl+C").yellow());
             println!();

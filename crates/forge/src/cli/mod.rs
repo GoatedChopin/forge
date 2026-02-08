@@ -40,8 +40,7 @@ const AFTER_HELP: &str = r#"Examples:
   forge add query get_users      Add a new query function
   forge generate                 Regenerate TypeScript types
   forge migrate status           Check migration status
-
-Dashboard: http://localhost:8080/_dashboard (when running)"#;
+"#;
 
 /// FORGE - The Full-Stack Framework for the Impatient
 #[derive(Parser)]

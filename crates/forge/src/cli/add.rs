@@ -268,7 +268,7 @@ pub async fn {snake_name}(ctx: &JobContext, _input: {pascal_name}Input) -> Resul
     // Add your job logic here
     // Example: Process data, call external APIs, etc.
 
-    // Report progress (visible in dashboard)
+    // Report progress (visible in observability tools)
     let _ = ctx.progress(50, "Processing...");
 
     // Simulate work

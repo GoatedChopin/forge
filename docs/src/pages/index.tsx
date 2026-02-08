@@ -78,7 +78,7 @@ const FeatureList: FeatureItem[] = [
     title: 'Observable by Default',
     description: (
       <>
-        Built-in dashboard shows metrics, logs, traces, and alerts. See everything
+        Built-in observability tools show metrics, logs, traces, and alerts. See everything
         happening in your app without any extra configuration.
       </>
     ),
@@ -214,7 +214,7 @@ export default function Home(): JSX.Element {
   return (
     <Layout
       title={`${siteConfig.title} - Full-Stack Rust Framework`}
-      description="Build full-stack apps in hours, not weeks. Database, API, real-time updates, background jobs, and dashboard - all in one package.">
+      description="Build full-stack apps in hours, not weeks. Database, API, real-time updates, background jobs, and observability - all in one package.">
       <HomepageHeader />
       <main>
         <HomepageFeatures />

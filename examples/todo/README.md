@@ -14,7 +14,7 @@ FORGE handles the hard parts of full-stack engineering so you can focus on busin
 - **Cron Scheduling** - Timezone-aware, catch-up runs, leader-only execution
 - **Durable Workflows** - Multi-step processes that survive restarts
 - **Real-time Updates** - SSE subscriptions with automatic invalidation
-- **Observability** - Built-in metrics, logs, traces, and dashboard
+- **Observability** - Built-in metrics, logs, and traces
 
 No Redis. No Kafka. No message queues. Just PostgreSQL.
 
@@ -30,7 +30,7 @@ This single command:
 - Starts the frontend dev server
 - Opens your browser
 
-Backend: `http://localhost:8080` | Frontend: `http://localhost:5173` | Dashboard: `http://localhost:8080/_dashboard`
+Backend: `http://localhost:8080` | Frontend: `http://localhost:5173`
 
 Useful options:
 

@@ -89,7 +89,7 @@ Cache results for 5 minutes. Allow 100 requests per minute per user.
     cache = "5m",
     rate_limit(requests = 100, per = "1m", key = "user")
 )]
-pub async fn get_dashboard_stats(ctx: &QueryContext) -> Result<DashboardStats> {
+pub async fn get_order_stats(ctx: &QueryContext) -> Result<OrderStats> {
     sqlx::query_as(
         "SELECT count(*) as total, sum(amount) as revenue FROM orders WHERE created_at > now() - interval '30 days'"
     )
