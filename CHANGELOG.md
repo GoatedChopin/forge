@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-02-09
+
+### Added
+
+- Example project (todo) e2e testing in CI release pipeline
+- Playwright test suite for the todo example
+
+### Changed
+
+- Reactor invalidation uses periodic flush interval instead of inline check per change
+- Todo example updated to `ctx.db()` transaction-aware query API
+- Docker Compose template simplified: shorter cargo-watch command, PG 18 volume path fix
+
+### Fixed
+
+- `forge dev` crash when `.env` file doesn't exist (cargo-watch canonicalize error)
+- `forge dev` now copies `frontend/.env.example` to `frontend/.env` when missing (fixes fresh clones)
+
+### Removed
+
+- Stale dashboard references from templates, docs, and config
+
 ## [0.2.0] - 2026-02-07
 
 ### Added
@@ -190,7 +212,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust 2024 edition unsafe block compatibility
 - Release workflow cargo-edit installation
 
-[unreleased]: https://github.com/isala404/forge/compare/v0.2.0...HEAD
+[unreleased]: https://github.com/isala404/forge/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/isala404/forge/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/isala404/forge/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/isala404/forge/compare/v0.0.7...v0.1.0
 [0.0.7]: https://github.com/isala404/forge/compare/v0.0.6...v0.0.7

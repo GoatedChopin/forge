@@ -3,6 +3,9 @@ import { test, expect, type Page } from '@playwright/test';
 const API_URL = process.env.VITE_API_URL || 'http://localhost:8080';
 
 const INPUT = 'input[placeholder="What needs to be done?"]';
+// Reactive updates go through RPC → DB → NOTIFY → SSE → UI.
+// CI runners need more headroom than local dev.
+const ACTION_TIMEOUT = process.env.CI ? 10_000 : 5_000;
 
 function uniqueTitle(prefix: string) {
 	return `${prefix} ${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -25,15 +28,20 @@ async function deleteAllTodos() {
 	}
 }
 
-// Navigate and wait for the SSE subscription to be fully registered.
-// The subscribe POST only fires after the SSE connection is established,
-// so this guarantees live updates will work before we interact with the page.
+// Navigate and wait for UI + SSE subscription to be ready.
+// Without SSE, mutations succeed but reactive updates never arrive.
 async function gotoReady(page: Page) {
-	const subscribed = page.waitForResponse(
-		(res) => res.url().includes('/_api/subscribe') && res.status() === 200
+	const sseRequest = page.waitForRequest(
+		(req) => req.url().includes('/_api/events'),
+		{ timeout: 15000 }
 	);
 	await page.goto('/');
-	await subscribed;
+	await expect(
+		page.locator('.status, .count, ul')
+	).toBeVisible({ timeout: 15000 });
+	await sseRequest;
+	// Let the SSE handshake and subscription registration complete
+	await page.waitForTimeout(2000);
 }
 
 test.beforeEach(async () => {
@@ -69,7 +77,7 @@ test.describe('CRUD with reactivity', () => {
 		await page.fill(INPUT, title);
 		await page.click('.input-row button');
 
-		await expect(page.locator('.title', { hasText: title })).toBeVisible({ timeout: 5000 });
+		await expect(page.locator('.title', { hasText: title })).toBeVisible({ timeout: ACTION_TIMEOUT });
 	});
 
 	test('create todo via Enter key', async ({ page }) => {
@@ -79,7 +87,7 @@ test.describe('CRUD with reactivity', () => {
 		await page.fill(INPUT, title);
 		await page.press(INPUT, 'Enter');
 
-		await expect(page.locator('.title', { hasText: title })).toBeVisible({ timeout: 5000 });
+		await expect(page.locator('.title', { hasText: title })).toBeVisible({ timeout: ACTION_TIMEOUT });
 	});
 
 	test('toggle completion applies strikethrough', async ({ page }) => {
@@ -88,12 +96,12 @@ test.describe('CRUD with reactivity', () => {
 
 		await page.fill(INPUT, title);
 		await page.click('.input-row button');
-		await expect(page.locator('.title', { hasText: title })).toBeVisible({ timeout: 5000 });
+		await expect(page.locator('.title', { hasText: title })).toBeVisible({ timeout: ACTION_TIMEOUT });
 
 		const todoItem = page.locator('li', { hasText: title });
 		await todoItem.locator('input[type="checkbox"]').check();
 
-		await expect(todoItem).toHaveClass(/completed/, { timeout: 5000 });
+		await expect(todoItem).toHaveClass(/completed/, { timeout: ACTION_TIMEOUT });
 	});
 
 	test('delete removes todo from list', async ({ page }) => {
@@ -102,11 +110,11 @@ test.describe('CRUD with reactivity', () => {
 
 		await page.fill(INPUT, title);
 		await page.click('.input-row button');
-		await expect(page.locator('.title', { hasText: title })).toBeVisible({ timeout: 5000 });
+		await expect(page.locator('.title', { hasText: title })).toBeVisible({ timeout: ACTION_TIMEOUT });
 
 		await page.locator('li', { hasText: title }).locator('button.delete').click();
 
-		await expect(page.locator('.title', { hasText: title })).not.toBeVisible({ timeout: 5000 });
+		await expect(page.locator('.title', { hasText: title })).not.toBeVisible({ timeout: ACTION_TIMEOUT });
 	});
 
 	test('add button disabled when input empty', async ({ page }) => {
@@ -121,16 +129,16 @@ test.describe('reactivity', () => {
 		await gotoReady(page);
 
 		await expect(page.locator('.status', { hasText: 'No todos yet' })).toBeVisible({
-			timeout: 5000
+			timeout: ACTION_TIMEOUT
 		});
 
 		await page.fill(INPUT, title);
 		await page.click('.input-row button');
-		await expect(page.locator('.count')).toHaveText('1 remaining', { timeout: 5000 });
+		await expect(page.locator('.count')).toHaveText('1 remaining', { timeout: ACTION_TIMEOUT });
 
 		const todoItem = page.locator('li', { hasText: title });
 		await todoItem.locator('input[type="checkbox"]').check();
-		await expect(page.locator('.count')).toHaveText('0 remaining', { timeout: 5000 });
+		await expect(page.locator('.count')).toHaveText('0 remaining', { timeout: ACTION_TIMEOUT });
 	});
 
 	test('multiple rapid adds all appear', async ({ page }) => {
@@ -140,11 +148,11 @@ test.describe('reactivity', () => {
 		for (const title of titles) {
 			await page.fill(INPUT, title);
 			await page.click('.input-row button');
-			await expect(page.locator(INPUT)).toHaveValue('', { timeout: 5000 });
+			await expect(page.locator(INPUT)).toHaveValue('', { timeout: ACTION_TIMEOUT });
 		}
 
 		for (const title of titles) {
-			await expect(page.locator('.title', { hasText: title })).toBeVisible({ timeout: 5000 });
+			await expect(page.locator('.title', { hasText: title })).toBeVisible({ timeout: ACTION_TIMEOUT });
 		}
 
 		await expect(page.locator('.count')).toHaveText('3 remaining');

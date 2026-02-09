@@ -284,6 +284,7 @@ const FUNCTIONS_VERIFICATION: &str =
     include_str!("../../templates/populated/project/functions/verification.rs.tmpl");
 const FUNCTIONS_WEBHOOK: &str =
     include_str!("../../templates/populated/project/functions/webhook.rs.tmpl");
+const IGNORE: &str = include_str!("../../templates/populated/project/ignore.tmpl");
 const AGENTS_MD: &str = include_str!("../../templates/populated/project/AGENTS.md.tmpl");
 
 // Populated frontend templates (default)
@@ -332,6 +333,7 @@ const EMPTY_MIGRATION_INITIAL: &str =
 const EMPTY_SCHEMA_MOD: &str = include_str!("../../templates/empty/project/schema/mod.rs.tmpl");
 const EMPTY_FUNCTIONS_MOD: &str =
     include_str!("../../templates/empty/project/functions/mod.rs.tmpl");
+const EMPTY_IGNORE: &str = include_str!("../../templates/empty/project/ignore.tmpl");
 const EMPTY_AGENTS_MD: &str = include_str!("../../templates/empty/project/AGENTS.md.tmpl");
 
 // Empty frontend templates (for --empty flag)
@@ -547,6 +549,7 @@ pub fn create_project(dir: &Path, name: &str, demo: bool) -> Result<()> {
         fs::write(dir.join("forge.toml"), render(FORGE_TOML, &vars))?;
         fs::write(dir.join("build.rs"), BUILD_RS)?;
         fs::write(dir.join(".gitignore"), GITIGNORE)?;
+        fs::write(dir.join(".ignore"), IGNORE)?;
         fs::write(dir.join(".env"), render(ENV, &vars))?;
         fs::write(dir.join("Dockerfile"), render(DOCKERFILE, &vars))?;
         fs::write(
@@ -585,6 +588,7 @@ pub fn create_project(dir: &Path, name: &str, demo: bool) -> Result<()> {
         fs::write(dir.join("forge.toml"), render(EMPTY_FORGE_TOML, &vars))?;
         fs::write(dir.join("build.rs"), EMPTY_BUILD_RS)?;
         fs::write(dir.join(".gitignore"), EMPTY_GITIGNORE)?;
+        fs::write(dir.join(".ignore"), EMPTY_IGNORE)?;
         fs::write(dir.join(".env"), render(EMPTY_ENV, &vars))?;
         fs::write(dir.join(".env.example"), render(EMPTY_ENV, &vars))?;
         fs::write(dir.join("Dockerfile"), render(EMPTY_DOCKERFILE, &vars))?;

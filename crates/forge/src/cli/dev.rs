@@ -288,10 +288,12 @@ impl DevCommand {
                 "--watch", "migrations",
                 "--watch", "build.rs",
                 "--watch", "Cargo.toml",
-                "--watch", ".env",
                 "--watch", "forge.toml",
             ];
 
+            if std::path::Path::new(".env").exists() {
+                watch_args.extend(["--watch", ".env"]);
+            }
             if std::path::Path::new("Cargo.lock").exists() {
                 watch_args.extend(["--watch", "Cargo.lock"]);
             }
@@ -372,6 +374,13 @@ impl DevCommand {
 
             // Start frontend with bun
             println!("  {} Starting frontend with bun...", ui::step());
+
+            // Ensure frontend .env exists (gitignored, so missing after clone)
+            let frontend_env = std::path::Path::new("frontend/.env");
+            let frontend_env_example = std::path::Path::new("frontend/.env.example");
+            if !frontend_env.exists() && frontend_env_example.exists() {
+                std::fs::copy(frontend_env_example, frontend_env)?;
+            }
 
             // Always run bun install to ensure dependencies are installed
             println!(

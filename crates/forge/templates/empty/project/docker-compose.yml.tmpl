@@ -10,19 +10,7 @@ services:
       - .env
     environment:
       - DATABASE_URL=postgres://postgres:forge@db:5432/{{project_name}}
-    command: [
-      "cargo", "watch", "--poll",
-      "--watch", "src",
-      "--watch", "migrations",
-      "--watch", "build.rs",
-      "--watch", "Cargo.toml",
-      "--watch", "Cargo.lock",
-      "--watch", ".env",
-      "--watch", "forge.toml",
-      "--ignore", "frontend/*",
-      "--ignore", "**/*.json",
-      "-x", "run --no-default-features"
-    ]
+    command: cargo watch --poll -x "run --no-default-features"
     volumes:
       - .:/app
       - cargo_cache:/usr/local/cargo/registry
@@ -59,7 +47,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d {{project_name}}"]
       interval: 5s
