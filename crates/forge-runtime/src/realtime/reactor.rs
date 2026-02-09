@@ -559,6 +559,82 @@ impl Reactor {
         format!("{:x}", hasher.finish())
     }
 
+    /// Check for debounced invalidations and re-execute affected queries.
+    async fn flush_invalidations(
+        invalidation_engine: &Arc<InvalidationEngine>,
+        active_subscriptions: &Arc<RwLock<HashMap<SubscriptionId, ActiveSubscription>>>,
+        session_server: &Arc<SessionServer>,
+        registry: &FunctionRegistry,
+        db_pool: &sqlx::PgPool,
+    ) {
+        let invalidated = invalidation_engine.check_pending().await;
+        if invalidated.is_empty() {
+            return;
+        }
+
+        tracing::trace!(count = invalidated.len(), "Invalidating subscriptions");
+
+        let subs_to_process: Vec<_> = {
+            let subscriptions = active_subscriptions.read().await;
+            invalidated
+                .iter()
+                .filter_map(|sub_id| {
+                    subscriptions.get(sub_id).map(|active| {
+                        (
+                            *sub_id,
+                            active.session_id,
+                            active.client_sub_id.clone(),
+                            active.query_name.clone(),
+                            active.args.clone(),
+                            active.last_result_hash.clone(),
+                            active.auth_context.clone(),
+                        )
+                    })
+                })
+                .collect()
+        };
+
+        let mut updates: Vec<(SubscriptionId, String)> = Vec::new();
+
+        for (sub_id, session_id, client_sub_id, query_name, args, last_hash, auth_context) in
+            subs_to_process
+        {
+            match Self::execute_query_static(registry, db_pool, &query_name, &args, &auth_context)
+                .await
+            {
+                Ok((new_data, _read_set)) => {
+                    let new_hash = Self::compute_hash(&new_data);
+
+                    if last_hash.as_ref() != Some(&new_hash) {
+                        let message = RealtimeMessage::Data {
+                            subscription_id: client_sub_id.clone(),
+                            data: new_data,
+                        };
+
+                        if let Err(e) = session_server.send_to_session(session_id, message).await {
+                            tracing::debug!(client_id = %client_sub_id, error = %e, "Failed to send update");
+                        } else {
+                            tracing::trace!(client_id = %client_sub_id, "Pushed update to client");
+                            updates.push((sub_id, new_hash));
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(client_id = %client_sub_id, error = %e, "Failed to re-execute query");
+                }
+            }
+        }
+
+        if !updates.is_empty() {
+            let mut subscriptions = active_subscriptions.write().await;
+            for (sub_id, new_hash) in updates {
+                if let Some(active) = subscriptions.get_mut(&sub_id) {
+                    active.last_result_hash = Some(new_hash);
+                }
+            }
+        }
+    }
+
     /// Start the reactor (runs the change listener and invalidation loop).
     pub async fn start(&self) -> forge_core::Result<()> {
         let listener = self.change_listener.clone();
@@ -592,6 +668,10 @@ impl Reactor {
                 }
             }));
 
+            // Periodic tick to flush debounced invalidations
+            let mut flush_interval = tokio::time::interval(std::time::Duration::from_millis(25));
+            flush_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
             loop {
                 tokio::select! {
                     result = change_rx.recv() => {
@@ -600,11 +680,9 @@ impl Reactor {
                                 Self::handle_change(
                                     &change,
                                     &invalidation_engine,
-                                    &active_subscriptions,
                                     &job_subscriptions,
                                     &workflow_subscriptions,
                                     &session_server,
-                                    &registry,
                                     &db_pool,
                                 ).await;
                             }
@@ -616,6 +694,15 @@ impl Reactor {
                                 break;
                             }
                         }
+                    }
+                    _ = flush_interval.tick() => {
+                        Self::flush_invalidations(
+                            &invalidation_engine,
+                            &active_subscriptions,
+                            &session_server,
+                            &registry,
+                            &db_pool,
+                        ).await;
                     }
                     Some(error_msg) = listener_error_rx.recv() => {
                         if restart_count >= max_restarts {
@@ -672,11 +759,9 @@ impl Reactor {
     async fn handle_change(
         change: &Change,
         invalidation_engine: &Arc<InvalidationEngine>,
-        active_subscriptions: &Arc<RwLock<HashMap<SubscriptionId, ActiveSubscription>>>,
         job_subscriptions: &Arc<RwLock<HashMap<Uuid, Vec<JobSubscription>>>>,
         workflow_subscriptions: &Arc<RwLock<HashMap<Uuid, Vec<WorkflowSubscription>>>>,
         session_server: &Arc<SessionServer>,
-        registry: &FunctionRegistry,
         db_pool: &sqlx::PgPool,
     ) {
         tracing::trace!(table = %change.table, op = ?change.operation, row_id = ?change.row_id, "Processing change");
@@ -718,88 +803,8 @@ impl Reactor {
             _ => {}
         }
 
-        // Process change through invalidation engine for query subscriptions
+        // Record the change for debounced invalidation (flushed by the periodic loop)
         invalidation_engine.process_change(change.clone()).await;
-
-        // Check for subscriptions ready to invalidate based on debounce windows:
-        // - 50ms quiet period after last change
-        // - 200ms max wait from first change
-        // This prevents flooding during high-frequency updates (bulk inserts, rapid edits)
-        let invalidated = invalidation_engine.check_pending().await;
-
-        if invalidated.is_empty() {
-            return;
-        }
-
-        tracing::trace!(count = invalidated.len(), "Invalidating subscriptions");
-
-        // Collect subscription info under read lock, then release before async operations
-        let subs_to_process: Vec<_> = {
-            let subscriptions = active_subscriptions.read().await;
-            invalidated
-                .iter()
-                .filter_map(|sub_id| {
-                    subscriptions.get(sub_id).map(|active| {
-                        (
-                            *sub_id,
-                            active.session_id,
-                            active.client_sub_id.clone(),
-                            active.query_name.clone(),
-                            active.args.clone(),
-                            active.last_result_hash.clone(),
-                            active.auth_context.clone(),
-                        )
-                    })
-                })
-                .collect()
-        };
-
-        // Track updates to apply after processing
-        let mut updates: Vec<(SubscriptionId, String)> = Vec::new();
-
-        // Re-execute invalidated queries and push updates (without holding locks)
-        for (sub_id, session_id, client_sub_id, query_name, args, last_hash, auth_context) in
-            subs_to_process
-        {
-            // Re-execute the query
-            match Self::execute_query_static(registry, db_pool, &query_name, &args, &auth_context)
-                .await
-            {
-                Ok((new_data, _read_set)) => {
-                    let new_hash = Self::compute_hash(&new_data);
-
-                    // Only push if data changed
-                    if last_hash.as_ref() != Some(&new_hash) {
-                        // Send updated data to client using client_sub_id for SSE target matching
-                        let message = RealtimeMessage::Data {
-                            subscription_id: client_sub_id.clone(),
-                            data: new_data,
-                        };
-
-                        if let Err(e) = session_server.send_to_session(session_id, message).await {
-                            tracing::debug!(client_id = %client_sub_id, error = %e, "Failed to send update");
-                        } else {
-                            tracing::trace!(client_id = %client_sub_id, "Pushed update to client");
-                            // Track the hash update
-                            updates.push((sub_id, new_hash));
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(client_id = %client_sub_id, error = %e, "Failed to re-execute query");
-                }
-            }
-        }
-
-        // Update hashes for successfully sent updates
-        if !updates.is_empty() {
-            let mut subscriptions = active_subscriptions.write().await;
-            for (sub_id, new_hash) in updates {
-                if let Some(active) = subscriptions.get_mut(&sub_id) {
-                    active.last_result_hash = Some(new_hash);
-                }
-            }
-        }
     }
 
     /// Handle a job table change event.

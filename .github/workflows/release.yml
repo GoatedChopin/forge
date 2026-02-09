@@ -218,9 +218,100 @@ jobs:
 
           exit $TEST_EXIT
 
+  test-examples:
+    name: Test Examples
+    needs: [parse-changelog, validate]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build forge CLI
+        run: cargo build --release
+
+      - name: Install cargo-watch
+        run: cargo install cargo-watch
+
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Test example projects
+        run: |
+          set -euo pipefail
+
+          for example_dir in examples/*/; do
+            if [ ! -d "$example_dir/frontend" ]; then
+              echo "Skipping $example_dir (no frontend/)"
+              continue
+            fi
+
+            example_name=$(basename "$example_dir")
+            echo "=== Testing example: $example_name ==="
+
+            cd "$example_dir/frontend"
+            bun install
+            bunx playwright install chromium --with-deps
+            cd ..
+
+            ./../../target/release/forge dev --no-open &
+            FORGE_PID=$!
+
+            echo "Waiting for backend..."
+            for i in {1..180}; do
+              if curl -s http://localhost:8080/_api/health | grep -q "healthy"; then
+                echo "Backend is ready!"
+                break
+              fi
+              if [ $i -eq 180 ]; then
+                echo "Backend failed to start for $example_name"
+                kill $FORGE_PID 2>/dev/null || true
+                exit 1
+              fi
+              sleep 1
+            done
+
+            echo "Waiting for frontend..."
+            for i in {1..60}; do
+              if curl -s http://localhost:5173 > /dev/null 2>&1; then
+                echo "Frontend is ready!"
+                break
+              fi
+              if [ $i -eq 60 ]; then
+                echo "Frontend failed to start for $example_name"
+                kill $FORGE_PID 2>/dev/null || true
+                exit 1
+              fi
+              sleep 1
+            done
+
+            cd frontend
+            bunx playwright test --reporter=line
+            TEST_EXIT=$?
+            cd ..
+
+            kill $FORGE_PID 2>/dev/null || true
+            wait $FORGE_PID 2>/dev/null || true
+
+            cd "$GITHUB_WORKSPACE"
+
+            if [ "$TEST_EXIT" -ne 0 ]; then
+              echo "Tests failed for $example_name"
+              exit $TEST_EXIT
+            fi
+
+            echo "=== $example_name passed ==="
+          done
+
   bump-versions:
     name: Bump Versions
-    needs: [parse-changelog, validate, integration-test]
+    needs: [parse-changelog, validate, integration-test, test-examples]
     runs-on: ubuntu-latest
     outputs:
       commit_sha: ${{ steps.commit.outputs.sha }}
@@ -276,6 +367,38 @@ jobs:
           find docs -name "*.mdx" -o -name "*.md" | xargs -I {} sed -i "s/forge = { version = \"[^\"]*\"/forge = { version = \"$VERSION\"/g" {} 2>/dev/null || true
           find docs -name "*.mdx" -o -name "*.md" | xargs -I {} sed -i "s/forgex = { version = \"[^\"]*\"/forgex = { version = \"$VERSION\"/g" {} 2>/dev/null || true
 
+      - name: Update example Cargo.toml versions
+        run: |
+          VERSION="${{ needs.parse-changelog.outputs.version }}"
+
+          for cargo_toml in examples/*/Cargo.toml; do
+            if [ -f "$cargo_toml" ]; then
+              sed -i "s/forge = { version = \"[^\"]*\"/forge = { version = \"$VERSION\"/g" "$cargo_toml"
+            fi
+          done
+
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build forge CLI
+        run: cargo build --release
+
+      - name: Regenerate example frontend types
+        run: |
+          for example_dir in examples/*/; do
+            if [ -f "$example_dir/forge.toml" ]; then
+              echo "Regenerating types for $(basename "$example_dir")"
+              cd "$example_dir"
+              $GITHUB_WORKSPACE/target/release/forge generate -y
+              cd "$GITHUB_WORKSPACE"
+            fi
+          done
+
       - name: Verify changes
         run: |
           echo "=== Cargo.toml workspace version ==="
@@ -289,6 +412,10 @@ jobs:
           echo ""
           echo "=== Scaffold template versions ==="
           grep "forge = { version" crates/forge/templates/*/project/Cargo.toml.tmpl || true
+
+          echo ""
+          echo "=== Example versions ==="
+          grep "forge = { version" examples/*/Cargo.toml || true
 
           echo ""
           echo "=== docs/package.json version ==="

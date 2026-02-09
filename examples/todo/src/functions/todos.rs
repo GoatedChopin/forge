@@ -29,18 +29,22 @@ pub async fn create_todo(ctx: &MutationContext, input: CreateTodoInput) -> Resul
         return Err(ForgeError::Validation("Title cannot be empty".into()));
     }
 
-    sqlx::query_as("INSERT INTO todos (title) VALUES ($1) RETURNING *")
-        .bind(input.title.trim())
-        .fetch_one(ctx.db())
+    ctx.db()
+        .fetch_one(
+            sqlx::query_as("INSERT INTO todos (title) VALUES ($1) RETURNING *")
+                .bind(input.title.trim()),
+        )
         .await
         .map_err(Into::into)
 }
 
 #[forge::mutation(public)]
 pub async fn update_todo(ctx: &MutationContext, input: UpdateTodoInput) -> Result<Todo> {
-    let existing: Option<Todo> = sqlx::query_as("SELECT * FROM todos WHERE id = $1")
-        .bind(input.id)
-        .fetch_optional(ctx.db())
+    let existing: Option<Todo> = ctx
+        .db()
+        .fetch_optional(
+            sqlx::query_as("SELECT * FROM todos WHERE id = $1").bind(input.id),
+        )
         .await?;
 
     let existing = existing.ok_or_else(|| ForgeError::NotFound("Todo not found".into()))?;
@@ -48,20 +52,22 @@ pub async fn update_todo(ctx: &MutationContext, input: UpdateTodoInput) -> Resul
     let title = input.title.unwrap_or(existing.title);
     let completed = input.completed.unwrap_or(existing.completed);
 
-    sqlx::query_as("UPDATE todos SET title = $1, completed = $2 WHERE id = $3 RETURNING *")
-        .bind(title)
-        .bind(completed)
-        .bind(input.id)
-        .fetch_one(ctx.db())
+    ctx.db()
+        .fetch_one(
+            sqlx::query_as("UPDATE todos SET title = $1, completed = $2 WHERE id = $3 RETURNING *")
+                .bind(title)
+                .bind(completed)
+                .bind(input.id),
+        )
         .await
         .map_err(Into::into)
 }
 
 #[forge::mutation(public)]
 pub async fn delete_todo(ctx: &MutationContext, id: Uuid) -> Result<bool> {
-    let result = sqlx::query("DELETE FROM todos WHERE id = $1")
-        .bind(id)
-        .execute(ctx.db())
+    let result = ctx
+        .db()
+        .execute(sqlx::query("DELETE FROM todos WHERE id = $1").bind(id))
         .await?;
 
     Ok(result.rows_affected() > 0)

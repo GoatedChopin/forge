@@ -223,7 +223,8 @@ impl DevCommand {
         let mut backend: Option<Child> = None;
         let mut frontend: Option<Child> = None;
 
-        let run_result: Result<()> = async {
+        let run_result: Result<()> = tokio::select! {
+            result = async {
             let database_url = if self.no_pg {
                 load_external_database_url()
             } else {
@@ -484,12 +485,11 @@ impl DevCommand {
             println!("  Press {} to stop.", style("Ctrl+C").yellow());
             println!();
 
-            // Wait for Ctrl+C
-            signal::ctrl_c().await?;
-
-            Ok(())
-        }
-        .await;
+            // Block until shutdown
+            loop { tokio::time::sleep(Duration::from_secs(3600)).await; }
+            } => result,
+            _ = signal::ctrl_c() => Ok(()),
+        };
 
         println!();
         println!("{} Stopping development environment...", ui::stop());

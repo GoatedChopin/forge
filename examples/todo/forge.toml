@@ -20,7 +20,7 @@ url = "${DATABASE_URL}"
 [gateway]
 port = 8080
 # host = "0.0.0.0"
-# cors_origins = ["http://localhost:5173"]
+cors_origins = ["http://localhost:5173"]
 
 [observability]
 enabled = true
@@ -78,5 +78,5 @@ enabled = true
 # node_name = "node-1"  # Optional, auto-generated if not set
 
 # [node]
-# roles = ["Gateway", "Function", "Worker", "Scheduler"]
+# roles = ["gateway", "function", "worker", "scheduler"]
 # worker_capabilities = ["general"]  # general, gpu, high_cpu
