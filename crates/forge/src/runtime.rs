@@ -401,7 +401,8 @@ impl Forge {
                 cors_enabled: self.config.gateway.cors_enabled
                     || !self.config.gateway.cors_origins.is_empty(),
                 cors_origins: self.config.gateway.cors_origins.clone(),
-                auth: AuthConfig::from_forge_config(&self.config.auth),
+                auth: AuthConfig::from_forge_config(&self.config.auth)
+                    .map_err(|e| ForgeError::Config(e.to_string()))?,
             };
 
             // Build gateway server (pass Database wrapper for read replica routing)

@@ -263,7 +263,7 @@ impl AuthContext {
 
     /// Check whether this principal should be treated as privileged admin.
     pub fn is_admin(&self) -> bool {
-        self.roles.iter().any(|r| r.eq_ignore_ascii_case("admin"))
+        self.roles.iter().any(|r| r == "admin")
     }
 }
 

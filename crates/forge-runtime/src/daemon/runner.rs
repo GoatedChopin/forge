@@ -371,7 +371,9 @@ async fn run_daemon_loop(
                 Ok(Ok(())) => {
                     tracing::info!("Daemon completed gracefully");
                     Span::current().record("daemon.final_status", "completed");
-                    let _ = update_daemon_status(&pool, &name, DaemonStatus::Stopped).await;
+                    if let Err(e) = update_daemon_status(&pool, &name, DaemonStatus::Stopped).await {
+                        tracing::debug!(daemon = %name, error = %e, "Status update failed");
+                    }
                     break;
                 }
                 Ok(Err(e)) => {
@@ -395,7 +397,9 @@ async fn run_daemon_loop(
             if !restart_on_panic {
                 tracing::warn!("Restart disabled, daemon stopping");
                 Span::current().record("daemon.final_status", "failed_no_restart");
-                let _ = update_daemon_status(&pool, &name, DaemonStatus::Failed).await;
+                if let Err(e) = update_daemon_status(&pool, &name, DaemonStatus::Failed).await {
+                    tracing::debug!(daemon = %name, error = %e, "Status update failed");
+                }
                 break;
             }
 
@@ -408,12 +412,16 @@ async fn run_daemon_loop(
             {
                 tracing::error!(restarts, max, "Max restarts exceeded");
                 Span::current().record("daemon.final_status", "max_restarts_exceeded");
-                let _ = update_daemon_status(&pool, &name, DaemonStatus::Failed).await;
+                if let Err(e) = update_daemon_status(&pool, &name, DaemonStatus::Failed).await {
+                    tracing::debug!(daemon = %name, error = %e, "Status update failed");
+                }
                 break;
             }
 
             // Update status to restarting
-            let _ = update_daemon_status(&pool, &name, DaemonStatus::Restarting).await;
+            if let Err(e) = update_daemon_status(&pool, &name, DaemonStatus::Restarting).await {
+                tracing::debug!(daemon = %name, error = %e, "Status update failed");
+            }
 
             tracing::warn!(
                 restarts,
@@ -438,7 +446,9 @@ async fn run_daemon_loop(
 
         // Release leadership if we held it
         if leader_elected {
-            let _ = release_leadership(&pool, &name, node_id).await;
+            if let Err(e) = release_leadership(&pool, &name, node_id).await {
+                tracing::debug!(daemon = %name, error = %e, "Failed to release leadership");
+            }
         }
 
         tracing::info!(

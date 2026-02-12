@@ -47,22 +47,25 @@ impl Default for AuthConfig {
 
 impl AuthConfig {
     /// Create auth config from forge core config.
-    pub fn from_forge_config(config: &forge_core::config::AuthConfig) -> Self {
+    pub fn from_forge_config(
+        config: &forge_core::config::AuthConfig,
+    ) -> Result<Self, super::jwks::JwksError> {
         let algorithm = JwtAlgorithm::from(config.jwt_algorithm);
 
         let jwks_client = config
             .jwks_url
             .as_ref()
-            .map(|url| Arc::new(JwksClient::new(url.clone(), config.jwks_cache_ttl_secs)));
+            .map(|url| JwksClient::new(url.clone(), config.jwks_cache_ttl_secs).map(Arc::new))
+            .transpose()?;
 
-        Self {
+        Ok(Self {
             jwt_secret: config.jwt_secret.clone(),
             algorithm,
             jwks_client,
             issuer: config.jwt_issuer.clone(),
             audience: config.jwt_audience.clone(),
             skip_verification: false,
-        }
+        })
     }
 
     /// Create a new auth config with the given HMAC secret.
@@ -161,6 +164,10 @@ impl std::fmt::Debug for AuthMiddleware {
 impl AuthMiddleware {
     /// Create a new auth middleware.
     pub fn new(config: AuthConfig) -> Self {
+        if config.skip_verification {
+            tracing::warn!("JWT signature verification is DISABLED. Do not use in production.");
+        }
+
         // Pre-compute HMAC key if using HMAC algorithm
         let hmac_key = if config.skip_verification {
             None

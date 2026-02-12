@@ -96,16 +96,18 @@ impl JwksClient {
     ///
     /// * `url` - The JWKS endpoint URL
     /// * `cache_ttl_secs` - How long to cache keys (in seconds)
-    pub fn new(url: String, cache_ttl_secs: u64) -> Self {
-        Self {
+    pub fn new(url: String, cache_ttl_secs: u64) -> Result<Self, JwksError> {
+        let http_client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .map_err(|e| JwksError::HttpClientError(e.to_string()))?;
+
+        Ok(Self {
             url,
-            http_client: reqwest::Client::builder()
-                .timeout(Duration::from_secs(10))
-                .build()
-                .expect("Failed to create HTTP client"),
+            http_client,
             cache: Arc::new(RwLock::new(None)),
             cache_ttl: Duration::from_secs(cache_ttl_secs),
-        }
+        })
     }
 
     /// Get a decoding key by key ID.
@@ -306,6 +308,10 @@ pub enum JwksError {
     /// No usable keys in JWKS.
     #[error("No keys available in JWKS")]
     NoKeysAvailable,
+
+    /// Failed to create HTTP client.
+    #[error("Failed to create HTTP client: {0}")]
+    HttpClientError(String),
 }
 
 #[cfg(test)]
@@ -315,7 +321,7 @@ mod tests {
 
     #[test]
     fn test_parse_jwk_with_n_e() {
-        let client = JwksClient::new("http://example.com".to_string(), 3600);
+        let client = JwksClient::new("http://example.com".to_string(), 3600).unwrap();
 
         // Example RSA public key components (minimal test)
         let jwk = JsonWebKey {
@@ -336,7 +342,7 @@ mod tests {
 
     #[test]
     fn test_parse_jwk_unsupported_type() {
-        let client = JwksClient::new("http://example.com".to_string(), 3600);
+        let client = JwksClient::new("http://example.com".to_string(), 3600).unwrap();
 
         let jwk = JsonWebKey {
             kid: Some("test-key".to_string()),
@@ -355,7 +361,7 @@ mod tests {
 
     #[test]
     fn test_parse_jwk_missing_components() {
-        let client = JwksClient::new("http://example.com".to_string(), 3600);
+        let client = JwksClient::new("http://example.com".to_string(), 3600).unwrap();
 
         let jwk = JsonWebKey {
             kid: Some("test-key".to_string()),

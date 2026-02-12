@@ -92,7 +92,7 @@ impl SessionManager {
     pub async fn cleanup_old_sessions(&self, max_age: std::time::Duration) {
         let mut sessions = self.sessions.write().await;
         let cutoff = chrono::Utc::now()
-            - chrono::Duration::from_std(max_age).expect("duration within chrono range");
+            - chrono::Duration::from_std(max_age).unwrap_or(chrono::TimeDelta::MAX);
 
         sessions.retain(|_, session| {
             session.status != SessionStatus::Disconnected || session.last_active_at > cutoff

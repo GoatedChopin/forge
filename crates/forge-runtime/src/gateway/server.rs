@@ -28,7 +28,7 @@ use super::sse::{
     SseState, sse_handler, sse_job_subscribe_handler, sse_subscribe_handler,
     sse_unsubscribe_handler, sse_workflow_subscribe_handler,
 };
-use super::tracing::TracingState;
+use super::tracing::{REQUEST_ID_HEADER, SPAN_ID_HEADER, TRACE_ID_HEADER, TracingState};
 use crate::db::Database;
 use crate::function::FunctionRegistry;
 use crate::realtime::{Reactor, ReactorConfig};
@@ -322,22 +322,27 @@ async fn tracing_middleware(
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
-    use axum::http::header::HeaderName;
+    let headers = req.headers();
 
-    // Extract or generate trace ID
-    let trace_id = req
-        .headers()
-        .get(HeaderName::from_static("x-trace-id"))
+    let trace_id = headers
+        .get(TRACE_ID_HEADER)
         .and_then(|v| v.to_str().ok())
         .map(String::from)
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-    let tracing_state = TracingState::with_trace_id(trace_id.clone());
+    let parent_span_id = headers
+        .get(SPAN_ID_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .map(String::from);
+
+    let mut tracing_state = TracingState::with_trace_id(trace_id.clone());
+    if let Some(span_id) = parent_span_id {
+        tracing_state = tracing_state.with_parent_span(span_id);
+    }
 
     let mut req = req;
     req.extensions_mut().insert(tracing_state.clone());
 
-    // Also insert AuthContext default if not present
     if req
         .extensions()
         .get::<forge_core::function::AuthContext>()
@@ -349,12 +354,20 @@ async fn tracing_middleware(
 
     let mut response = next.run(req).await;
 
-    // Add trace ID to response headers
+    let elapsed = tracing_state.elapsed();
+    tracing::debug!(
+        trace_id = %trace_id,
+        request_id = %tracing_state.request_id,
+        status = %response.status().as_u16(),
+        duration_ms = %elapsed.as_millis(),
+        "Request completed"
+    );
+
     if let Ok(val) = trace_id.parse() {
-        response.headers_mut().insert("x-trace-id", val);
+        response.headers_mut().insert(TRACE_ID_HEADER, val);
     }
     if let Ok(val) = tracing_state.request_id.parse() {
-        response.headers_mut().insert("x-request-id", val);
+        response.headers_mut().insert(REQUEST_ID_HEADER, val);
     }
 
     response

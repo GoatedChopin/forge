@@ -270,7 +270,7 @@ curl -fsSL https://tryforge.dev/install.sh | sh
 forge new my-app --demo
 
 # Set up PostgreSQL
-docker run -rm -d --name forge-postgres -e POSTGRES_PASSWORD=forge -e POSTGRES_DB=my-app -p 5432:5432 postgres:18
+docker run --rm -d --name forge-postgres -e POSTGRES_PASSWORD=forge -e POSTGRES_DB=my-app -p 5432:5432 postgres:18
 
 # Start backend
 cd my-app

@@ -213,13 +213,13 @@ Add workers to specific pools as demand grows:
 
 ```bash
 # Scale GPU pool
-FORGE_NODE_CAPABILITIES=gpu forge serve
+FORGE_NODE_CAPABILITIES=gpu ./my-app
 
 # Scale media pool
-FORGE_NODE_CAPABILITIES=media forge serve
+FORGE_NODE_CAPABILITIES=media ./my-app
 
 # Scale general pool
-FORGE_NODE_CAPABILITIES=general forge serve
+FORGE_NODE_CAPABILITIES=general ./my-app
 ```
 
 Environment variables override `forge.toml` for container orchestration. Kubernetes can scale deployments per capability using separate node pools or taints/tolerations.

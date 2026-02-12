@@ -301,7 +301,7 @@ impl SessionServer {
     /// Cleanup stale connections.
     pub async fn cleanup_stale(&self, max_idle: Duration) {
         let cutoff = chrono::Utc::now()
-            - chrono::Duration::from_std(max_idle).expect("duration within chrono range");
+            - chrono::Duration::from_std(max_idle).unwrap_or(chrono::TimeDelta::MAX);
         let mut connections = self.connections.write().await;
         let mut sub_sessions = self.subscription_sessions.write().await;
 

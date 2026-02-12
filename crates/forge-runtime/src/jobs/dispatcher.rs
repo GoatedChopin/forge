@@ -43,7 +43,9 @@ impl JobDispatcher {
         J::Args: serde::Serialize,
     {
         let info = J::info();
-        let scheduled_at = Utc::now() + chrono::Duration::from_std(delay).unwrap_or_default();
+        let scheduled_at = Utc::now()
+            + chrono::Duration::from_std(delay)
+                .map_err(|_| forge_core::ForgeError::InvalidArgument("delay too large".into()))?;
         self.dispatch_at_with_info(&info, serde_json::to_value(args)?, scheduled_at)
             .await
     }

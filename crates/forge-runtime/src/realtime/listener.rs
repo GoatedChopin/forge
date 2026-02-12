@@ -91,8 +91,9 @@ impl ChangeListener {
                         Ok(notification) => {
                             if let Some(change) = self.parse_notification(notification.payload()) {
                                 tracing::trace!(table = %change.table, op = ?change.operation, "Change received");
-                                // Broadcast the change
                                 let _ = self.change_tx.send(change);
+                            } else {
+                                tracing::debug!(payload = %notification.payload(), "Failed to parse notification");
                             }
                         }
                         Err(e) => {
