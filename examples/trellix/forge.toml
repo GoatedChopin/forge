@@ -1,0 +1,17 @@
+[project]
+name = "trellix"
+
+[database]
+mode = "remote"
+url = "${DATABASE_URL}"
+
+[gateway]
+port = 8080
+cors_origins = ["http://localhost:5173"]
+
+[auth]
+jwt_algorithm = "HS256"
+jwt_secret = "${JWT_SECRET}"
+
+[observability]
+enabled = true

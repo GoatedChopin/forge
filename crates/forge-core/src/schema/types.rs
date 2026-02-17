@@ -188,7 +188,7 @@ impl RustType {
                 "Uuid" | "uuid::Uuid" => "string".to_string(),
                 "usize" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128" | "i8" | "i16"
                 | "i128" => "number".to_string(),
-                "Timestamp" | "NaiveDateTime" | "NaiveTime" => "string".to_string(),
+                "Timestamp" | "NaiveDate" | "NaiveDateTime" | "NaiveTime" => "string".to_string(),
                 "Instant" | "LocalDate" | "LocalTime" => "string".to_string(),
                 "Upload" => "File | Blob".to_string(),
                 "Bytes" => "Uint8Array".to_string(),
