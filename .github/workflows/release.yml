@@ -296,10 +296,13 @@ jobs:
             TEST_EXIT=$?
             cd ..
 
-            # Kill entire process group so child processes (PG, vite, cargo-watch) also stop
+            # Kill forge and all child processes (PG, vite, cargo-watch)
             kill -- -$FORGE_PID 2>/dev/null || kill $FORGE_PID 2>/dev/null || true
             wait $FORGE_PID 2>/dev/null || true
-            # Ensure ports are free for next example
+            # Kill anything still holding the ports
+            fuser -k 8080/tcp 2>/dev/null || true
+            fuser -k 5173/tcp 2>/dev/null || true
+            fuser -k 5432/tcp 2>/dev/null || true
             sleep 2
 
             cd "$GITHUB_WORKSPACE"
