@@ -30,7 +30,7 @@ export default defineConfig({
     command: `rm -rf pg_data && ../../target/debug/forge dev --no-open --backend-port ${BACKEND_PORT} --frontend-port ${FRONTEND_PORT} --db-port ${DB_PORT} --takeover-ports`,
     url: `http://localhost:${FRONTEND_PORT}`,
     cwd: "..",
-    reuseExistingServer: false,
+    reuseExistingServer: !!process.env.CI,
     timeout: 10 * 60 * 1000,
   },
 });
