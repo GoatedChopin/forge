@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-02-20
+
+### Added
+
+- MCP server support with `#[mcp_tool]` macro for exposing functions as MCP tools
+- MCP tool registry with JSON-RPC transport over stdio and SSE
+- MCP configuration in `forge.toml` (`[mcp]` section)
+- MCP security documentation
+- Support-desk example project demonstrating MCP integration
+- Enum variant description support in `#[forge_enum]` macro via `#[description]` attribute
+
+### Changed
+
+- Codegen parser extracts MCP tool metadata alongside API types
+
 ## [0.2.1] - 2026-02-09
 
 ### Added
@@ -212,7 +227,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust 2024 edition unsafe block compatibility
 - Release workflow cargo-edit installation
 
-[unreleased]: https://github.com/isala404/forge/compare/v0.2.1...HEAD
+[unreleased]: https://github.com/isala404/forge/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/isala404/forge/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/isala404/forge/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/isala404/forge/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/isala404/forge/compare/v0.0.7...v0.1.0
