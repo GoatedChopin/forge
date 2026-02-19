@@ -445,10 +445,10 @@ async fn run_daemon_loop(
         Span::current().record("daemon.restart_count", restarts);
 
         // Release leadership if we held it
-        if leader_elected {
-            if let Err(e) = release_leadership(&pool, &name, node_id).await {
-                tracing::debug!(daemon = %name, error = %e, "Failed to release leadership");
-            }
+        if leader_elected
+            && let Err(e) = release_leadership(&pool, &name, node_id).await
+        {
+            tracing::debug!(daemon = %name, error = %e, "Failed to release leadership");
         }
 
         tracing::info!(
