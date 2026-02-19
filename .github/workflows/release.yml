@@ -260,7 +260,7 @@ jobs:
             bunx playwright install chromium --with-deps
             cd ..
 
-            ./../../target/release/forge dev --no-open &
+            setsid ./../../target/release/forge dev --no-open &
             FORGE_PID=$!
 
             echo "Waiting for backend..."
@@ -296,8 +296,11 @@ jobs:
             TEST_EXIT=$?
             cd ..
 
-            kill $FORGE_PID 2>/dev/null || true
+            # Kill entire process group so child processes (PG, vite, cargo-watch) also stop
+            kill -- -$FORGE_PID 2>/dev/null || kill $FORGE_PID 2>/dev/null || true
             wait $FORGE_PID 2>/dev/null || true
+            # Ensure ports are free for next example
+            sleep 2
 
             cd "$GITHUB_WORKSPACE"
 
