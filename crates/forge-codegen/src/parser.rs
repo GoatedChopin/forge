@@ -98,8 +98,7 @@ fn has_forge_enum_attr(attrs: &[Attribute]) -> bool {
             || path.is_ident("enum_type")
             || path.segments.len() == 2
                 && path.segments[0].ident == "forge"
-                && (path.segments[1].ident == "enum_type"
-                    || path.segments[1].ident == "forge_enum")
+                && (path.segments[1].ident == "enum_type" || path.segments[1].ident == "forge_enum")
     })
 }
 
@@ -335,8 +334,8 @@ fn type_to_rust_type(ty: &syn::Type) -> RustType {
                 .strip_prefix("Option<")
                 .and_then(|s| s.strip_suffix('>'))
             {
-                let inner_ty: syn::Type = syn::parse_str(inner)
-                    .unwrap_or_else(|_| syn::parse_str("String").unwrap());
+                let inner_ty: syn::Type =
+                    syn::parse_str(inner).unwrap_or_else(|_| syn::parse_str("String").unwrap());
                 return RustType::Option(Box::new(type_to_rust_type(&inner_ty)));
             }
 
@@ -348,8 +347,8 @@ fn type_to_rust_type(ty: &syn::Type) -> RustType {
                 if inner == "u8" {
                     return RustType::Bytes;
                 }
-                let inner_ty: syn::Type = syn::parse_str(inner)
-                    .unwrap_or_else(|_| syn::parse_str("String").unwrap());
+                let inner_ty: syn::Type =
+                    syn::parse_str(inner).unwrap_or_else(|_| syn::parse_str("String").unwrap());
                 return RustType::Vec(Box::new(type_to_rust_type(&inner_ty)));
             }
 

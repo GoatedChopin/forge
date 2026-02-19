@@ -25,6 +25,7 @@ use forge_core::CircuitBreakerClient;
 use forge_core::cluster::{LeaderRole, NodeId, NodeInfo, NodeRole, NodeStatus};
 use forge_core::config::{ForgeConfig, NodeRole as ConfigNodeRole};
 use forge_core::error::{ForgeError, Result};
+use forge_core::mcp::ForgeMcpTool;
 use forge_runtime::migrations::{Migration, MigrationRunner, load_migrations_from_dir};
 
 use forge_runtime::cluster::{
@@ -37,6 +38,7 @@ use forge_runtime::db::Database;
 use forge_runtime::function::FunctionRegistry;
 use forge_runtime::gateway::{AuthConfig, GatewayConfig as RuntimeGatewayConfig, GatewayServer};
 use forge_runtime::jobs::{JobDispatcher, JobQueue, JobRegistry, Worker, WorkerConfig};
+use forge_runtime::mcp::McpToolRegistry;
 use forge_runtime::webhook::{WebhookRegistry, WebhookState, webhook_handler};
 use forge_runtime::workflow::{
     EventStore, WorkflowExecutor, WorkflowRegistry, WorkflowScheduler, WorkflowSchedulerConfig,
@@ -70,8 +72,10 @@ pub mod prelude {
         AuthContext, ForgeMutation, ForgeQuery, MutationContext, QueryContext,
     };
     pub use forge_core::job::{ForgeJob, JobContext, JobPriority};
+    pub use forge_core::mcp::{ForgeMcpTool, McpToolContext, McpToolResult};
     pub use forge_core::realtime::Delta;
     pub use forge_core::schema::{FieldDef, ModelMeta, SchemaRegistry, TableDef};
+    pub use forge_core::schemars::JsonSchema;
     pub use forge_core::types::Upload;
     pub use forge_core::webhook::{ForgeWebhook, WebhookContext, WebhookResult, WebhookSignature};
     pub use forge_core::workflow::{ForgeWorkflow, WorkflowContext};
@@ -85,6 +89,7 @@ pub struct Forge {
     db: Option<Database>,
     node_id: NodeId,
     function_registry: FunctionRegistry,
+    mcp_registry: McpToolRegistry,
     job_registry: JobRegistry,
     cron_registry: Arc<CronRegistry>,
     workflow_registry: WorkflowRegistry,
@@ -123,6 +128,17 @@ impl Forge {
     /// Get the function registry mutably.
     pub fn function_registry_mut(&mut self) -> &mut FunctionRegistry {
         &mut self.function_registry
+    }
+
+    /// Get the MCP tool registry mutably.
+    pub fn mcp_registry_mut(&mut self) -> &mut McpToolRegistry {
+        &mut self.mcp_registry
+    }
+
+    /// Register an MCP tool without manually accessing the registry.
+    pub fn register_mcp_tool<T: ForgeMcpTool>(&mut self) -> &mut Self {
+        self.mcp_registry.register::<T>();
+        self
     }
 
     /// Get the job registry.
@@ -403,6 +419,7 @@ impl Forge {
                 cors_origins: self.config.gateway.cors_origins.clone(),
                 auth: AuthConfig::from_forge_config(&self.config.auth)
                     .map_err(|e| ForgeError::Config(e.to_string()))?,
+                mcp: self.config.mcp.clone(),
             };
 
             // Build gateway server (pass Database wrapper for read replica routing)
@@ -412,7 +429,8 @@ impl Forge {
                 self.db.clone().expect("Database must be initialized"),
             )
             .with_job_dispatcher(job_dispatcher.clone())
-            .with_workflow_dispatcher(workflow_executor.clone());
+            .with_workflow_dispatcher(workflow_executor.clone())
+            .with_mcp_registry(self.mcp_registry.clone());
 
             // Start the reactor for real-time updates
             let reactor = gateway.reactor();
@@ -580,6 +598,7 @@ impl Forge {
 pub struct ForgeBuilder {
     config: Option<ForgeConfig>,
     function_registry: FunctionRegistry,
+    mcp_registry: McpToolRegistry,
     job_registry: JobRegistry,
     cron_registry: CronRegistry,
     workflow_registry: WorkflowRegistry,
@@ -596,6 +615,7 @@ impl ForgeBuilder {
         Self {
             config: None,
             function_registry: FunctionRegistry::new(),
+            mcp_registry: McpToolRegistry::new(),
             job_registry: JobRegistry::new(),
             cron_registry: CronRegistry::new(),
             workflow_registry: WorkflowRegistry::new(),
@@ -650,6 +670,17 @@ impl ForgeBuilder {
         &mut self.job_registry
     }
 
+    /// Get mutable access to the MCP tool registry.
+    pub fn mcp_registry_mut(&mut self) -> &mut McpToolRegistry {
+        &mut self.mcp_registry
+    }
+
+    /// Register an MCP tool without manually accessing the registry.
+    pub fn register_mcp_tool<T: ForgeMcpTool>(&mut self) -> &mut Self {
+        self.mcp_registry.register::<T>();
+        self
+    }
+
     /// Get mutable access to the cron registry.
     pub fn cron_registry_mut(&mut self) -> &mut CronRegistry {
         &mut self.cron_registry
@@ -683,6 +714,7 @@ impl ForgeBuilder {
             db: None,
             node_id: NodeId::new(),
             function_registry: self.function_registry,
+            mcp_registry: self.mcp_registry,
             job_registry: self.job_registry,
             cron_registry: Arc::new(self.cron_registry),
             workflow_registry: self.workflow_registry,
@@ -716,6 +748,40 @@ fn config_role_to_node_role(role: &ConfigNodeRole) -> NodeRole {
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+    use std::future::Future;
+    use std::pin::Pin;
+
+    use forge_core::mcp::{McpToolAnnotations, McpToolInfo};
+
+    struct TestMcpTool;
+
+    impl ForgeMcpTool for TestMcpTool {
+        type Args = serde_json::Value;
+        type Output = serde_json::Value;
+
+        fn info() -> McpToolInfo {
+            McpToolInfo {
+                name: "test.mcp.tool",
+                title: None,
+                description: None,
+                required_role: None,
+                is_public: false,
+                timeout: None,
+                rate_limit_requests: None,
+                rate_limit_per_secs: None,
+                rate_limit_key: None,
+                annotations: McpToolAnnotations::default(),
+                icons: &[],
+            }
+        }
+
+        fn execute(
+            _ctx: &forge_core::McpToolContext,
+            _args: Self::Args,
+        ) -> Pin<Box<dyn Future<Output = forge_core::Result<Self::Output>> + Send + '_>> {
+            Box::pin(async { Ok(serde_json::json!({ "ok": true })) })
+        }
+    }
 
     #[test]
     fn test_forge_builder_new() {
@@ -735,6 +801,13 @@ mod tests {
         let config = ForgeConfig::default_with_database_url("postgres://localhost/test");
         let result = ForgeBuilder::new().config(config).build();
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_forge_builder_register_mcp_tool() {
+        let mut builder = ForgeBuilder::new();
+        builder.register_mcp_tool::<TestMcpTool>();
+        assert_eq!(builder.mcp_registry.len(), 1);
     }
 
     #[test]

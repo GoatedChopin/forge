@@ -50,6 +50,10 @@ pub struct ForgeConfig {
     /// Observability configuration.
     #[serde(default)]
     pub observability: ObservabilityConfig,
+
+    /// MCP server configuration.
+    #[serde(default)]
+    pub mcp: McpConfig,
 }
 
 impl ForgeConfig {
@@ -77,6 +81,7 @@ impl ForgeConfig {
     pub fn validate(&self) -> Result<()> {
         self.database.validate()?;
         self.auth.validate()?;
+        self.mcp.validate()?;
         Ok(())
     }
 
@@ -93,6 +98,7 @@ impl ForgeConfig {
             security: SecurityConfig::default(),
             auth: AuthConfig::default(),
             observability: ObservabilityConfig::default(),
+            mcp: McpConfig::default(),
         }
     }
 }
@@ -512,6 +518,71 @@ fn default_sampling_ratio() -> f64 {
     1.0
 }
 
+/// MCP server configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpConfig {
+    /// Enable MCP endpoint exposure.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// MCP endpoint path under the gateway API namespace.
+    #[serde(default = "default_mcp_path")]
+    pub path: String,
+
+    /// Session TTL in seconds.
+    #[serde(default = "default_mcp_session_ttl_secs")]
+    pub session_ttl_secs: u64,
+
+    /// Allowed origins for Origin header validation.
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
+
+    /// Enforce MCP-Protocol-Version header on post-initialize requests.
+    #[serde(default = "default_true")]
+    pub require_protocol_version_header: bool,
+}
+
+impl Default for McpConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            path: default_mcp_path(),
+            session_ttl_secs: default_mcp_session_ttl_secs(),
+            allowed_origins: Vec::new(),
+            require_protocol_version_header: default_true(),
+        }
+    }
+}
+
+impl McpConfig {
+    pub fn validate(&self) -> Result<()> {
+        if self.path.is_empty() || !self.path.starts_with('/') {
+            return Err(ForgeError::Config(
+                "mcp.path must start with '/' (example: /mcp)".to_string(),
+            ));
+        }
+        if self.path.contains(' ') {
+            return Err(ForgeError::Config(
+                "mcp.path cannot contain spaces".to_string(),
+            ));
+        }
+        if self.session_ttl_secs == 0 {
+            return Err(ForgeError::Config(
+                "mcp.session_ttl_secs must be greater than 0".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn default_mcp_path() -> String {
+    "/mcp".to_string()
+}
+
+fn default_mcp_session_ttl_secs() -> u64 {
+    60 * 60
+}
+
 /// Substitute environment variables in the format ${VAR_NAME}.
 fn substitute_env_vars(content: &str) -> String {
     let mut result = content.to_string();
@@ -537,6 +608,8 @@ mod tests {
         let config = ForgeConfig::default_with_database_url("postgres://localhost/test");
         assert_eq!(config.gateway.port, 8080);
         assert_eq!(config.node.roles.len(), 4);
+        assert_eq!(config.mcp.path, "/mcp");
+        assert!(!config.mcp.enabled);
     }
 
     #[test]
@@ -685,5 +758,23 @@ mod tests {
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("jwks_url is required"));
+    }
+
+    #[test]
+    fn test_mcp_config_validation_rejects_invalid_path() {
+        let toml = r#"
+            [database]
+            mode = "remote"
+            url = "postgres://localhost/test"
+
+            [mcp]
+            enabled = true
+            path = "mcp"
+        "#;
+
+        let result = ForgeConfig::parse_toml(toml);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("mcp.path must start with '/'"));
     }
 }

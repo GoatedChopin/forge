@@ -235,6 +235,29 @@ Common JWKS URLs:
 | Clerk | `https://YOUR_DOMAIN.clerk.accounts.dev/.well-known/jwks.json` |
 | Supabase | `https://YOUR_PROJECT.supabase.co/auth/v1/jwks` |
 
+### [mcp]
+
+Controls Forge MCP server exposure on Streamable HTTP.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | bool | `false` | Enable MCP endpoint |
+| `path` | string | `"/mcp"` | MCP endpoint path under `/_api` |
+| `session_ttl_secs` | u64 | `3600` | MCP session lifetime |
+| `allowed_origins` | string[] | `[]` | Allowed `Origin` values |
+| `require_protocol_version_header` | bool | `true` | Require `MCP-Protocol-Version` header after initialize |
+
+```toml
+[mcp]
+enabled = true
+path = "/mcp"
+session_ttl_secs = 3600
+allowed_origins = ["https://your-app.example"]
+require_protocol_version_header = true
+```
+
+With default API routing, `path = "/mcp"` resolves to `/_api/mcp`.
+
 ### [worker]
 
 | Option | Type | Default | Description |

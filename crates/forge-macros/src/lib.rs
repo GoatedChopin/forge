@@ -6,6 +6,7 @@ mod cron;
 mod daemon;
 mod enum_type;
 mod job;
+mod mcp_tool;
 mod model;
 mod mutation;
 mod query;
@@ -130,6 +131,28 @@ pub fn query(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn mutation(attr: TokenStream, item: TokenStream) -> TokenStream {
     mutation::expand_mutation(attr, item)
+}
+
+/// Marks a function as an MCP tool.
+///
+/// MCP tools are explicitly opt-in and exposed through the MCP endpoint.
+///
+/// # Attributes
+/// - `name = "tool_name"` - Override the exposed tool name
+/// - `title = "Human title"` - Display title for MCP clients
+/// - `description = "..."` - Tool description
+/// - `public` - No authentication required
+/// - `require_role("admin")` - Require specific role
+/// - `timeout = 30` - Timeout in seconds
+/// - `rate_limit(requests = 100, per = "1m", key = "user")`
+/// - `read_only` - Annotation hint for clients
+/// - `destructive` - Annotation hint for clients
+/// - `idempotent` - Annotation hint for clients
+/// - `open_world` - Annotation hint for clients
+/// - Parameter `#[schemars(...)]` / `#[serde(...)]` attrs - Included in generated input schema
+#[proc_macro_attribute]
+pub fn mcp_tool(attr: TokenStream, item: TokenStream) -> TokenStream {
+    mcp_tool::expand_mcp_tool(attr, item)
 }
 
 /// Marks a function as a background job.

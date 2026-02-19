@@ -1,0 +1,59 @@
+# MCP Security
+
+Security hardening profile for Forge MCP (Streamable HTTP).
+
+## Baseline
+
+Use MCP with explicit exposure and strict transport settings:
+
+```toml
+[mcp]
+enabled = true
+path = "/mcp"
+session_ttl_secs = 3600
+allowed_origins = ["https://your-app.example"]
+require_protocol_version_header = true
+```
+
+## Hardening Checklist
+
+1. Keep MCP disabled by default (`enabled = false`) in environments that do not need it.
+2. Restrict `allowed_origins` for browser-based clients.
+3. Require `MCP-Protocol-Version` header and reject unsupported versions.
+4. Use short `session_ttl_secs` to limit stale session reuse.
+5. Prefer private tools by default; use `public` only when necessary.
+6. Add `require_role("...")` for sensitive tools.
+7. Add `rate_limit(...)` and `timeout` to every external-facing tool.
+
+## Authentication
+
+Forge MCP tools reuse Forge auth middleware:
+
+- JWT verification via HMAC or RSA/JWKS
+- issuer/audience validation
+- role-based authorization
+
+Recommended RSA/JWKS setup:
+
+```toml
+[auth]
+jwt_algorithm = "RS256"
+jwks_url = "https://your-provider.com/.well-known/jwks.json"
+jwt_issuer = "https://your-provider.com"
+jwt_audience = "your-app"
+```
+
+## Error Policy
+
+- Protocol errors (`-32600`, `-32601`, `-32602`, `-32603`) for malformed requests and server-side internal failures.
+- Tool validation/business failures should return MCP tool results with `isError: true`.
+
+This separation helps MCP clients and models recover from tool input errors while still treating protocol faults as transport-level failures.
+
+## Transport Notes
+
+Forge MCP v1 is Streamable HTTP only.
+
+- POST handles MCP JSON-RPC request/notification payloads.
+- GET is not used for stream transport in v1 and returns `405`.
+- Notification/response payloads accepted by the endpoint return `202`.

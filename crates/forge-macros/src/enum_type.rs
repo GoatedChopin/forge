@@ -17,6 +17,7 @@ fn expand_enum_impl(_attr: TokenStream2, input: DeriveInput) -> syn::Result<Toke
     let enum_name = &input.ident;
     let vis = &input.vis;
     let sql_name = to_snake_case(&enum_name.to_string());
+    let enum_attrs = &input.attrs;
 
     // Extract variants
     let variants = match &input.data {
@@ -81,6 +82,7 @@ fn expand_enum_impl(_attr: TokenStream2, input: DeriveInput) -> syn::Result<Toke
         .collect();
 
     let expanded = quote! {
+        #(#enum_attrs)*
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
         #[serde(rename_all = "snake_case")]
         #vis enum #enum_name {
@@ -174,4 +176,26 @@ fn to_snake_case(s: &str) -> String {
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use syn::parse_quote;
+
+    #[test]
+    fn test_expand_enum_preserves_item_attributes() {
+        let input: DeriveInput = parse_quote! {
+            #[derive(forge::forge_core::schemars::JsonSchema)]
+            pub enum TicketStatus {
+                New,
+                Working,
+                Resolved,
+            }
+        };
+
+        let expanded = expand_enum_impl(TokenStream2::new(), input).expect("macro expansion");
+        let tokens = expanded.to_string();
+        assert!(tokens.contains("forge :: forge_core :: schemars :: JsonSchema"));
+    }
 }

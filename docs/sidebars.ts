@@ -31,6 +31,7 @@ const sidebars: SidebarsConfig = {
         'build/long-processes',
         'build/persistent-services',
         'build/webhooks',
+        'build/expose-mcp-tools',
       ],
     },
     {
@@ -48,6 +49,7 @@ const sidebars: SidebarsConfig = {
       collapsed: true,
       items: [
         'ship/configuration',
+        'ship/mcp-security',
         'ship/testing',
         'ship/deploy',
       ],

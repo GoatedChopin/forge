@@ -1,0 +1,139 @@
+# Expose MCP Tools
+
+Expose explicit MCP tools from Forge over Streamable HTTP (`/_api/mcp`) with built-in auth, role checks, rate limits, and timeout controls.
+
+## The Code
+
+```rust
+use forge::prelude::*;
+
+#[derive(Debug, serde::Serialize, JsonSchema)]
+pub struct ExportProjectOutput {
+    pub job_id: uuid::Uuid,
+    pub queued: bool,
+}
+
+#[forge::mcp_tool(
+    name = "export_project",
+    title = "Export Project",
+    description = "Queue an async project export job",
+    timeout = 15,
+    rate_limit(requests = 30, per = "1m", key = "user"),
+    idempotent
+)]
+pub async fn export_project(
+    ctx: &McpToolContext,
+    #[schemars(description = "Project UUID to export")]
+    project_id: uuid::Uuid,
+) -> Result<ExportProjectOutput> {
+    let user_id = ctx.require_user_id()?;
+
+    let job_id = ctx
+        .dispatch_job(
+            "export_project",
+            serde_json::json!({
+                "user_id": user_id,
+                "project_id": project_id,
+                "format": "json"
+            }),
+        )
+        .await?;
+
+    Ok(ExportProjectOutput {
+        job_id,
+        queued: true,
+    })
+}
+```
+
+## Parameter Metadata (Descriptions, Enums, Validation)
+
+MCP clients read parameter metadata from `inputSchema` (JSON Schema). Forge generates this from your Rust input types via `schemars`.
+
+```rust
+use forge::prelude::*;
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ExportFormat {
+    Json,
+    Csv,
+}
+
+#[derive(Debug, serde::Deserialize, JsonSchema)]
+pub struct ExportProjectInput {
+    #[schemars(description = "Project UUID to export")]
+    pub project_id: uuid::Uuid,
+    #[schemars(description = "Export output format")]
+    pub format: ExportFormat,
+    #[schemars(description = "Optional target bucket", length(min = 3, max = 63))]
+    pub bucket: Option<String>,
+}
+```
+
+For inline parameters (when Forge auto-generates the tool args struct), parameter-level `#[schemars(...)]` and `#[serde(...)]` attributes are also propagated:
+
+```rust
+#[forge::mcp_tool(name = "search_projects")]
+pub async fn search_projects(
+    ctx: &McpToolContext,
+    #[schemars(description = "Query string", length(min = 2, max = 120))]
+    query: String,
+    #[serde(default)]
+    limit: Option<u32>,
+) -> Result<SearchProjectsOutput> {
+    // ...
+}
+```
+
+## Registration
+
+Register tools explicitly on the runtime builder:
+
+```rust
+let mut builder = Forge::builder();
+builder.register_mcp_tool::<functions::ExportProjectMcpTool>();
+```
+
+Only registered tools are exposed to MCP clients.
+
+## Configuration
+
+Enable the MCP endpoint in `forge.toml`:
+
+```toml
+[mcp]
+enabled = true
+path = "/mcp"
+session_ttl_secs = 3600
+allowed_origins = ["https://your-app.example"]
+require_protocol_version_header = true
+```
+
+With default routing, the MCP URL is:
+
+- `/_api/mcp`
+
+## What Happens
+
+1. Client calls `initialize` and receives a session ID.
+2. Client sends `notifications/initialized`.
+3. Client calls `tools/list` and gets JSON schemas from your Rust input/output types.
+4. Client calls `tools/call`; Forge applies auth/role/rate/timeout policy before invoking your tool.
+
+## Tool Rules
+
+- MCP tools are separate from `#[forge::query]` and `#[forge::mutation]` handlers.
+- Use `result.isError = true` for validation/business errors returned by the handler.
+- Use protocol errors for malformed RPC payloads and unsupported methods.
+
+## Context Conveniences
+
+`McpToolContext` provides:
+
+- `ctx.auth` for auth/claims/roles
+- `ctx.db()` for database access
+- `ctx.dispatch_job(...)` for background jobs
+- `ctx.start_workflow(...)` for workflow orchestration
+
+This lets MCP tools reuse Forge execution primitives without writing protocol boilerplate.

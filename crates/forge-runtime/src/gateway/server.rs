@@ -18,9 +18,11 @@ use tower::timeout::TimeoutLayer;
 use tower_http::cors::{Any, CorsLayer};
 
 use forge_core::cluster::NodeId;
+use forge_core::config::McpConfig;
 use forge_core::function::{JobDispatch, WorkflowDispatch};
 
 use super::auth::{AuthConfig, AuthMiddleware, auth_middleware};
+use super::mcp::{McpState, mcp_get_handler, mcp_post_handler};
 use super::multipart::rpc_multipart_handler;
 use super::response::{RpcError, RpcResponse};
 use super::rpc::{RpcHandler, rpc_function_handler, rpc_handler};
@@ -31,6 +33,7 @@ use super::sse::{
 use super::tracing::{REQUEST_ID_HEADER, SPAN_ID_HEADER, TRACE_ID_HEADER, TracingState};
 use crate::db::Database;
 use crate::function::FunctionRegistry;
+use crate::mcp::McpToolRegistry;
 use crate::realtime::{Reactor, ReactorConfig};
 
 const MAX_JSON_BODY_SIZE: usize = 1024 * 1024;
@@ -52,6 +55,8 @@ pub struct GatewayConfig {
     pub cors_origins: Vec<String>,
     /// Authentication configuration.
     pub auth: AuthConfig,
+    /// MCP configuration.
+    pub mcp: McpConfig,
 }
 
 impl Default for GatewayConfig {
@@ -63,6 +68,7 @@ impl Default for GatewayConfig {
             cors_enabled: false,
             cors_origins: Vec::new(),
             auth: AuthConfig::default(),
+            mcp: McpConfig::default(),
         }
     }
 }
@@ -98,6 +104,7 @@ pub struct GatewayServer {
     reactor: Arc<Reactor>,
     job_dispatcher: Option<Arc<dyn JobDispatch>>,
     workflow_dispatcher: Option<Arc<dyn WorkflowDispatch>>,
+    mcp_registry: Option<McpToolRegistry>,
 }
 
 impl GatewayServer {
@@ -118,6 +125,7 @@ impl GatewayServer {
             reactor,
             job_dispatcher: None,
             workflow_dispatcher: None,
+            mcp_registry: None,
         }
     }
 
@@ -130,6 +138,12 @@ impl GatewayServer {
     /// Set the workflow dispatcher.
     pub fn with_workflow_dispatcher(mut self, dispatcher: Arc<dyn WorkflowDispatch>) -> Self {
         self.workflow_dispatcher = Some(dispatcher);
+        self
+    }
+
+    /// Set the MCP tool registry.
+    pub fn with_mcp_registry(mut self, registry: McpToolRegistry) -> Self {
+        self.mcp_registry = Some(registry);
         self
     }
 
@@ -216,7 +230,28 @@ impl GatewayServer {
             .route("/subscribe-workflow", post(sse_workflow_subscribe_handler))
             .with_state(sse_state);
 
-        main_router = main_router.merge(multipart_router).merge(sse_router);
+        let mut mcp_router = Router::new();
+        if self.config.mcp.enabled {
+            let path = self.config.mcp.path.clone();
+            let mcp_state = Arc::new(McpState::new(
+                self.config.mcp.clone(),
+                self.mcp_registry.clone().unwrap_or_default(),
+                self.db.primary().clone(),
+                self.job_dispatcher.clone(),
+                self.workflow_dispatcher.clone(),
+            ));
+            mcp_router = mcp_router.route(
+                &path,
+                post(mcp_post_handler)
+                    .get(mcp_get_handler)
+                    .with_state(mcp_state),
+            );
+        }
+
+        main_router = main_router
+            .merge(multipart_router)
+            .merge(sse_router)
+            .merge(mcp_router);
 
         // Build middleware stack
         let service_builder = ServiceBuilder::new()

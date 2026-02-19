@@ -78,6 +78,95 @@ pub async fn create_order(ctx: &MutationContext, input: OrderInput) -> Result<Or
 
 ---
 
+## `#[forge::mcp_tool]`
+
+Explicitly exposes a function as an MCP tool (Streamable HTTP endpoint).
+
+| Attribute | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `name = "tool_name"` | `string` | fn name | Override exposed MCP tool name |
+| `title = "..."` | `string` | none | Human-friendly display title |
+| `description = "..."` | `string` | none | Tool description for MCP clients |
+| `public` | flag | `false` | Bypass authentication requirement |
+| `require_role("name")` | `string` | none | Require specific role |
+| `timeout` | `u64` | none | Timeout in seconds |
+| `rate_limit(...)` | config | none | Rate limiting (`requests`, `per`, `key`) |
+| `read_only` | flag | none | MCP annotation hint (`readOnlyHint=true`) |
+| `destructive` | flag | none | MCP annotation hint (`destructiveHint=true`) |
+| `idempotent` | flag | none | MCP annotation hint (`idempotentHint=true`) |
+| `open_world` | flag | none | MCP annotation hint (`openWorldHint=true`) |
+
+### Example
+
+```rust
+use forge::prelude::*;
+
+#[derive(Debug, serde::Serialize, JsonSchema)]
+pub struct ExportToolOutput {
+    pub job_id: uuid::Uuid,
+}
+
+#[forge::mcp_tool(
+    name = "export_project",
+    title = "Export Project",
+    description = "Queues a background export job for a project",
+    timeout = 15,
+    rate_limit(requests = 30, per = "1m", key = "user"),
+    idempotent
+)]
+pub async fn export_project(
+    ctx: &McpToolContext,
+    #[schemars(description = "Project UUID to export")]
+    project_id: uuid::Uuid,
+) -> Result<ExportToolOutput> {
+    let user_id = ctx.require_user_id()?;
+    let job_id = ctx
+        .dispatch_job(
+            "export_project",
+            serde_json::json!({
+                "user_id": user_id,
+                "project_id": project_id,
+                "format": "json"
+            }),
+        )
+        .await?;
+    Ok(ExportToolOutput { job_id })
+}
+```
+
+### Parameter Metadata in `inputSchema`
+
+MCP per-parameter metadata (descriptions, enums, defaults, constraints) is generated from JSON Schema:
+
+1. Preferred: use a dedicated input struct with `#[derive(Deserialize, JsonSchema)]` and `#[schemars(...)]` field attributes.
+2. Inline parameters are also supported: when Forge auto-generates the tool args struct, it propagates parameter `#[schemars(...)]` and `#[serde(...)]` attributes.
+
+```rust
+use forge::prelude::*;
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ExportFormat {
+    Json,
+    Csv,
+}
+
+#[forge::mcp_tool(name = "export_project")]
+pub async fn export_project_tool(
+    ctx: &McpToolContext,
+    #[schemars(description = "Project UUID to export")]
+    project_id: uuid::Uuid,
+    #[serde(default)]
+    dry_run: bool,
+    #[schemars(description = "Output format")]
+    format: ExportFormat,
+) -> Result<ExportToolOutput> {
+    // ...
+}
+```
+
+---
+
 ## `#[forge::job]`
 
 Background tasks with retries and worker routing.

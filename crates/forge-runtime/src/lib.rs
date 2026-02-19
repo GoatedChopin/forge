@@ -7,6 +7,7 @@ pub mod db;
 pub mod function;
 pub mod gateway;
 pub mod jobs;
+pub mod mcp;
 pub mod migrations;
 pub mod observability;
 pub mod rate_limit;
@@ -30,6 +31,7 @@ pub use gateway::{
 pub use jobs::{
     JobDispatcher, JobExecutor, JobQueue, JobRecord, JobRegistry, Worker, WorkerConfig,
 };
+pub use mcp::{McpToolEntry, McpToolRegistry};
 pub use migrations::{MigrationExecutor, MigrationGenerator, SchemaDiff};
 pub use observability::{TelemetryConfig, TelemetryError, init_telemetry, shutdown_telemetry};
 pub use rate_limit::RateLimiter;

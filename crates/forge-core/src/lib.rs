@@ -8,6 +8,7 @@ pub mod error;
 pub mod function;
 pub mod http;
 pub mod job;
+pub mod mcp;
 pub mod rate_limit;
 pub mod realtime;
 pub mod schema;
@@ -22,7 +23,7 @@ pub mod testing;
 
 pub use auth::{Claims, ClaimsBuilder};
 pub use cluster::{ClusterInfo, LeaderInfo, LeaderRole, NodeId, NodeInfo, NodeRole, NodeStatus};
-pub use config::ForgeConfig;
+pub use config::{ForgeConfig, McpConfig};
 pub use cron::{CronContext, CronInfo, CronSchedule, ForgeCron};
 pub use daemon::{DaemonContext, DaemonInfo, DaemonStatus, ForgeDaemon};
 pub use env::{EnvAccess, EnvProvider, MockEnvProvider, RealEnvProvider};
@@ -37,12 +38,17 @@ pub use http::{
     CircuitState, CircuitStatus,
 };
 pub use job::{ForgeJob, JobContext, JobInfo, JobPriority, JobStatus, RetryConfig};
+pub use mcp::{
+    ForgeMcpTool, McpContent, McpContentBlock, McpToolAnnotations, McpToolContext, McpToolIcon,
+    McpToolInfo, McpToolResult,
+};
 pub use rate_limit::{RateLimitConfig, RateLimitHeaders, RateLimitKey, RateLimitResult};
 pub use realtime::{
     Change, ChangeOperation, Delta, ReadSet, SessionId, SessionInfo, SessionStatus, SubscriptionId,
     SubscriptionInfo, SubscriptionState, TrackingMode,
 };
 pub use schema::{FieldDef, ModelMeta, SchemaRegistry, TableDef};
+pub use schemars;
 pub use tenant::{HasTenant, TenantContext, TenantIsolationMode};
 pub use types::{Instant, LocalDate, LocalTime, Upload};
 pub use webhook::{
