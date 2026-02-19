@@ -23,6 +23,7 @@ async function rpc(fn: string, args: unknown = null) {
 
 async function deleteAllTodos() {
 	const todos = await rpc('list_todos');
+	if (!Array.isArray(todos)) return;
 	for (const todo of todos) {
 		await rpc('delete_todo', { id: todo.id });
 	}
