@@ -260,6 +260,11 @@ jobs:
             bunx playwright install chromium --with-deps
             cd ..
 
+            # Ensure backend .env exists for examples that need it
+            if [ ! -f .env ] && [ -f .env.example ]; then
+              cp .env.example .env
+            fi
+
             setsid ./../../target/release/forge dev --no-open &
             FORGE_PID=$!
 
