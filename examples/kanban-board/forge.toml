@@ -1,5 +1,5 @@
 [project]
-name = "trellix"
+name = "kanban-board"
 
 [database]
 mode = "remote"

@@ -14,7 +14,7 @@ function uniqueId(prefix: string): string {
 }
 
 function makeUser(): UserCreds {
-  const id = uniqueId("trellix-user");
+  const id = uniqueId("kb-user");
   return {
     name: `User ${id}`,
     email: `${id}@example.com`,
@@ -24,7 +24,9 @@ function makeUser(): UserCreds {
 
 async function gotoAuth(page: Page) {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Trellix" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Kanban Board" }),
+  ).toBeVisible();
 }
 
 async function registerUser(page: Page, user: UserCreds) {
@@ -90,7 +92,7 @@ async function createTask(page: Page, title: string) {
   });
 }
 
-test.describe("Trellix UI E2E", () => {
+test.describe("Kanban Board UI E2E", () => {
   test("registers, creates project, and renames project", async ({ page }) => {
     const user = makeUser();
     const projectName = uniqueId("project");
@@ -105,12 +107,16 @@ test.describe("Trellix UI E2E", () => {
       .getByRole("button", { name: "Rename" })
       .click();
 
-    await expect(page.locator(".project-list a", { hasText: renamed })).toBeVisible({
+    await expect(
+      page.locator(".project-list a", { hasText: renamed }),
+    ).toBeVisible({
       timeout: ACTION_TIMEOUT,
     });
   });
 
-  test("opens board and performs task lifecycle through UI", async ({ page }) => {
+  test("opens board and performs task lifecycle through UI", async ({
+    page,
+  }) => {
     const user = makeUser();
     const projectName = uniqueId("board");
     const task = uniqueId("task");
@@ -123,14 +129,25 @@ test.describe("Trellix UI E2E", () => {
     await createTask(page, task);
 
     page.once("dialog", (dialog) => dialog.accept(editedTask));
-    await page.locator(".card", { hasText: task }).locator("button.edit").click();
+    await page
+      .locator(".card", { hasText: task })
+      .locator("button.edit")
+      .click();
     await expect(page.locator(".card", { hasText: editedTask })).toBeVisible({
       timeout: ACTION_TIMEOUT,
     });
 
     const card = page.locator(".card", { hasText: editedTask });
-    await card.locator(".card-actions button").filter({ hasText: "→" }).first().click();
-    await expect(page.locator(".column", { hasText: "Todo" }).locator(".card", { hasText: editedTask })).toBeVisible({
+    await card
+      .locator(".card-actions button")
+      .filter({ hasText: "→" })
+      .first()
+      .click();
+    await expect(
+      page
+        .locator(".column", { hasText: "Todo" })
+        .locator(".card", { hasText: editedTask }),
+    ).toBeVisible({
       timeout: ACTION_TIMEOUT,
     });
 
@@ -141,7 +158,11 @@ test.describe("Trellix UI E2E", () => {
       .filter({ hasText: "→" })
       .first()
       .click();
-    await expect(page.locator(".column", { hasText: "In Progress" }).locator(".card", { hasText: editedTask })).toBeVisible({
+    await expect(
+      page
+        .locator(".column", { hasText: "In Progress" })
+        .locator(".card", { hasText: editedTask }),
+    ).toBeVisible({
       timeout: ACTION_TIMEOUT,
     });
 
@@ -150,9 +171,12 @@ test.describe("Trellix UI E2E", () => {
       .locator(".card", { hasText: editedTask })
       .locator("button.delete")
       .click();
-    await expect(page.locator(".card", { hasText: editedTask })).toHaveCount(0, {
-      timeout: ACTION_TIMEOUT,
-    });
+    await expect(page.locator(".card", { hasText: editedTask })).toHaveCount(
+      0,
+      {
+        timeout: ACTION_TIMEOUT,
+      },
+    );
   });
 
   test("exports JSON and CSV through UI", async ({ page }) => {
@@ -177,7 +201,9 @@ test.describe("Trellix UI E2E", () => {
     });
   });
 
-  test("schedules deletion with countdown and allows unarchive", async ({ page }) => {
+  test("schedules deletion with countdown and allows unarchive", async ({
+    page,
+  }) => {
     const user = makeUser();
     const projectName = uniqueId("schedule-delete");
 
@@ -187,9 +213,13 @@ test.describe("Trellix UI E2E", () => {
     await createTask(page, uniqueId("task-to-delete"));
 
     page.once("dialog", (dialog) => dialog.accept());
-    await page.getByRole("button", { name: "Schedule Export + Delete" }).click();
+    await page
+      .getByRole("button", { name: "Schedule Export + Delete" })
+      .click();
 
-    await expect(page.locator(".job-status", { hasText: "Deletion workflow:" })).toBeVisible({
+    await expect(
+      page.locator(".job-status", { hasText: "Deletion workflow:" }),
+    ).toBeVisible({
       timeout: ACTION_TIMEOUT,
     });
     await expect(page.locator(".archive-notice")).toContainText(
@@ -204,7 +234,9 @@ test.describe("Trellix UI E2E", () => {
       timeout: ACTION_TIMEOUT,
     });
 
-    await page.getByRole("button", { name: "Unarchive (Cancel Delete)" }).click();
+    await page
+      .getByRole("button", { name: "Unarchive (Cancel Delete)" })
+      .click();
     await expect(page.locator(".archive-notice")).toHaveCount(0, {
       timeout: ACTION_TIMEOUT,
     });
@@ -213,7 +245,9 @@ test.describe("Trellix UI E2E", () => {
     });
   });
 
-  test("shows auth errors for duplicate register and invalid login", async ({ page }) => {
+  test("shows auth errors for duplicate register and invalid login", async ({
+    page,
+  }) => {
     const user = makeUser();
 
     await registerUser(page, user);
@@ -231,10 +265,14 @@ test.describe("Trellix UI E2E", () => {
     await page.getByLabel("Email").fill(user.email);
     await page.getByLabel("Password").fill("wrong-password");
     await page.getByRole("button", { name: "Sign in" }).click();
-    await expect(page.locator(".error")).toContainText("Invalid email or password");
+    await expect(page.locator(".error")).toContainText(
+      "Invalid email or password",
+    );
   });
 
-  test("isolates projects per user and supports sign out/sign in", async ({ page }) => {
+  test("isolates projects per user and supports sign out/sign in", async ({
+    page,
+  }) => {
     const userA = makeUser();
     const userB = makeUser();
     const projectA = uniqueId("user-a-project");
@@ -244,16 +282,22 @@ test.describe("Trellix UI E2E", () => {
     await signOut(page);
 
     await registerUser(page, userB);
-    await expect(page.locator(".project-list a", { hasText: projectA })).toHaveCount(0);
+    await expect(
+      page.locator(".project-list a", { hasText: projectA }),
+    ).toHaveCount(0);
     await signOut(page);
 
     await loginUser(page, userA);
-    await expect(page.locator(".project-list a", { hasText: projectA })).toBeVisible({
+    await expect(
+      page.locator(".project-list a", { hasText: projectA }),
+    ).toBeVisible({
       timeout: ACTION_TIMEOUT,
     });
   });
 
-  test("blocks cross-user deep-link access to another user's project", async ({ page }) => {
+  test("blocks cross-user deep-link access to another user's project", async ({
+    page,
+  }) => {
     const userA = makeUser();
     const userB = makeUser();
     const projectName = uniqueId("private-project");
@@ -278,11 +322,11 @@ test.describe("Trellix UI E2E", () => {
     await createProject(page, projectName);
 
     await page.evaluate((tamperedId) => {
-      const raw = localStorage.getItem("trellix_user");
+      const raw = localStorage.getItem("kanban_user");
       if (!raw) return;
       const parsed = JSON.parse(raw) as { id?: string };
       parsed.id = tamperedId;
-      localStorage.setItem("trellix_user", JSON.stringify(parsed));
+      localStorage.setItem("kanban_user", JSON.stringify(parsed));
     }, randomUUID());
 
     await page.goto("/app");
@@ -292,5 +336,143 @@ test.describe("Trellix UI E2E", () => {
         timeout: ACTION_TIMEOUT,
       },
     );
+  });
+
+  test("move task backward through columns", async ({ page }) => {
+    const user = makeUser();
+    const projectName = uniqueId("backward");
+    const task = uniqueId("move-back");
+
+    await registerUser(page, user);
+    await createProject(page, projectName);
+    await openProject(page, projectName);
+    await createTask(page, task);
+
+    // Move forward: Backlog -> Todo
+    await page
+      .locator(".card", { hasText: task })
+      .locator(".card-actions button")
+      .filter({ hasText: "→" })
+      .first()
+      .click();
+    await expect(
+      page
+        .locator(".column", { hasText: "Todo" })
+        .locator(".card", { hasText: task }),
+    ).toBeVisible({ timeout: ACTION_TIMEOUT });
+
+    // Move backward: Todo -> Backlog
+    await page
+      .locator(".column", { hasText: "Todo" })
+      .locator(".card", { hasText: task })
+      .locator(".card-actions button")
+      .filter({ hasText: "←" })
+      .first()
+      .click();
+    await expect(
+      page
+        .locator(".column", { hasText: "Backlog" })
+        .locator(".card", { hasText: task }),
+    ).toBeVisible({ timeout: ACTION_TIMEOUT });
+  });
+
+  test("create task via form submit (Enter key)", async ({ page }) => {
+    const user = makeUser();
+    const projectName = uniqueId("enter-create");
+    const task = uniqueId("enter-task");
+
+    await registerUser(page, user);
+    await createProject(page, projectName);
+    await openProject(page, projectName);
+
+    await page.getByPlaceholder("New task title").fill(task);
+    await page.getByPlaceholder("New task title").press("Enter");
+
+    await expect(page.locator(".card", { hasText: task })).toBeVisible({
+      timeout: ACTION_TIMEOUT,
+    });
+  });
+
+  test("add task button disabled when title is empty", async ({ page }) => {
+    const user = makeUser();
+    const projectName = uniqueId("disabled-btn");
+
+    await registerUser(page, user);
+    await createProject(page, projectName);
+    await openProject(page, projectName);
+
+    await expect(page.getByRole("button", { name: "Add task" })).toBeDisabled();
+  });
+
+  test("project count displays on projects page", async ({ page }) => {
+    const user = makeUser();
+    const p1 = uniqueId("count-p1");
+    const p2 = uniqueId("count-p2");
+
+    await registerUser(page, user);
+    await createProject(page, p1);
+    await createProject(page, p2);
+
+    await expect(page.locator(".subtitle")).toContainText("2 project");
+  });
+
+  test("empty board shows four columns with zero counts", async ({ page }) => {
+    const user = makeUser();
+    const projectName = uniqueId("empty-board");
+
+    await registerUser(page, user);
+    await createProject(page, projectName);
+    await openProject(page, projectName);
+
+    for (const label of ["Backlog", "Todo", "In Progress", "Done"]) {
+      await expect(page.locator(".column", { hasText: label })).toBeVisible();
+      await expect(
+        page
+          .locator(".column", { hasText: label })
+          .locator(".count", { hasText: "0" }),
+      ).toBeVisible();
+    }
+  });
+
+  test("task shows correct priority badge", async ({ page }) => {
+    const user = makeUser();
+    const projectName = uniqueId("priority-badge");
+    const task = uniqueId("high-task");
+
+    await registerUser(page, user);
+    await createProject(page, projectName);
+    await openProject(page, projectName);
+
+    await page.getByPlaceholder("New task title").fill(task);
+    await page.locator(".create-form select").selectOption("high");
+    await page.getByRole("button", { name: "Add task" }).click();
+
+    const card = page.locator(".card", { hasText: task });
+    await expect(card).toBeVisible({ timeout: ACTION_TIMEOUT });
+    await expect(card.locator(".priority")).toContainText("high");
+  });
+
+  test("create project via form submit (Enter key)", async ({ page }) => {
+    const user = makeUser();
+    const projectName = uniqueId("enter-project");
+
+    await registerUser(page, user);
+
+    await page.getByPlaceholder("New project name").fill(projectName);
+    await page.getByPlaceholder("New project name").press("Enter");
+
+    await expect(
+      page.locator(".project-list a", { hasText: projectName }),
+    ).toBeVisible({ timeout: ACTION_TIMEOUT });
+  });
+
+  test("create button disabled when project name empty", async ({ page }) => {
+    const user = makeUser();
+
+    await registerUser(page, user);
+
+    await expect(
+      page.locator(".create-form button[type='submit']"),
+    ).toBeDisabled();
   });
 });

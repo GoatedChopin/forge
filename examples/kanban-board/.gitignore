@@ -3,6 +3,7 @@
 
 # Node/Frontend
 node_modules/
+package-lock.json
 .svelte-kit/
 /frontend/dist
 /frontend/build

@@ -4,9 +4,12 @@ Cargo.lock
 
 # Node/Frontend
 node_modules/
+package-lock.json
 .svelte-kit/
 /frontend/dist
 /frontend/build
+/frontend/playwright-report
+/frontend/test-results
 
 # Environment
 .env

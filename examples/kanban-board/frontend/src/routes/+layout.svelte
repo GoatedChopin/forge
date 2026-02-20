@@ -9,7 +9,7 @@
   let { children }: Props = $props();
 
   function getToken() {
-    return localStorage.getItem("trellix_token");
+    return localStorage.getItem("kanban_token");
   }
 </script>
 

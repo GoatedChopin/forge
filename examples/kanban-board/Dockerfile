@@ -51,7 +51,7 @@ WORKDIR /app
 
 RUN apk add --no-cache ca-certificates libgcc
 
-COPY --from=builder /app/target/release/trellix /app/trellix
+COPY --from=builder /app/target/release/kanban-board /app/kanban-board
 COPY --from=builder /app/migrations /app/migrations
 
 EXPOSE 8080
@@ -60,4 +60,4 @@ ENV RUST_LOG=info
 ENV HOST=0.0.0.0
 ENV PORT=8080
 
-CMD ["/app/trellix"]
+CMD ["/app/kanban-board"]

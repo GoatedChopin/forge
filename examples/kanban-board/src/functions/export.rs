@@ -78,7 +78,10 @@ pub async fn export_project(ctx: &JobContext, input: ExportProjectInput) -> Resu
 
     ctx.progress(100, "Export complete")?;
 
-    Ok(ExportOutput { task_count: tasks.len(), data })
+    Ok(ExportOutput {
+        task_count: tasks.len(),
+        data,
+    })
 }
 
 fn escape_csv(s: &str) -> String {

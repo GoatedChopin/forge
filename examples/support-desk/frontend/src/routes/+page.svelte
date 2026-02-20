@@ -150,12 +150,10 @@
         <button
           data-testid="open-ticket-button"
           onclick={createTicket}
-          disabled={
-            creating ||
+          disabled={creating ||
             !customerName.trim() ||
             !title.trim() ||
-            !details.trim()
-          }
+            !details.trim()}
         >
           {creating ? "Opening..." : "Open Ticket"}
         </button>
