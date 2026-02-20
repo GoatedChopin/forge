@@ -201,10 +201,35 @@ fn init_logger(config: &TelemetryConfig) -> Result<LoggerProvider, TelemetryErro
     Ok(provider)
 }
 
-pub fn init_telemetry(config: &TelemetryConfig) -> Result<(), TelemetryError> {
+/// `forge dev` sets RUST_LOG=warn,forge=info which silences user crate logs.
+/// This ensures the user's crate is always visible at the configured level.
+pub fn build_env_filter(project_name: &str, log_level: &str) -> EnvFilter {
+    let crate_name = project_name.replace('-', "_");
+
+    let base = if let Ok(filter) = EnvFilter::try_from_default_env() {
+        filter
+    } else {
+        EnvFilter::new(log_level)
+    };
+
+    // Always ensure the user crate is visible at the configured level
+    let directive = format!("{}={}", crate_name, log_level);
+    match directive.parse() {
+        Ok(d) => base.add_directive(d),
+        Err(_) => base,
+    }
+}
+
+/// Set up tracing so logs work without any user boilerplate.
+/// Returns `Ok(false)` if a subscriber already exists (user configured their own).
+pub fn init_telemetry(
+    config: &TelemetryConfig,
+    project_name: &str,
+    log_level: &str,
+) -> Result<bool, TelemetryError> {
     global::set_text_map_propagator(TraceContextPropagator::new());
 
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let env_filter = build_env_filter(project_name, log_level);
 
     let registry = Registry::default().with(env_filter);
 
@@ -219,18 +244,20 @@ pub fn init_telemetry(config: &TelemetryConfig) -> Result<(), TelemetryError> {
         global::set_tracer_provider(tracer_provider);
 
         let otel_layer = OpenTelemetryLayer::new(tracer);
-
         let fmt_layer = tracing_subscriber::fmt::layer()
             .with_target(true)
             .with_thread_ids(false)
             .with_file(false)
             .with_line_number(false);
 
-        registry
+        if registry
             .with(otel_layer)
             .with(fmt_layer)
             .try_init()
-            .map_err(|e| TelemetryError::SubscriberInit(e.to_string()))?;
+            .is_err()
+        {
+            return Ok(false);
+        }
     } else {
         let fmt_layer = tracing_subscriber::fmt::layer()
             .with_target(true)
@@ -238,10 +265,9 @@ pub fn init_telemetry(config: &TelemetryConfig) -> Result<(), TelemetryError> {
             .with_file(false)
             .with_line_number(false);
 
-        registry
-            .with(fmt_layer)
-            .try_init()
-            .map_err(|e| TelemetryError::SubscriberInit(e.to_string()))?;
+        if registry.with(fmt_layer).try_init().is_err() {
+            return Ok(false);
+        }
     }
 
     if config.enable_metrics {
@@ -272,7 +298,7 @@ pub fn init_telemetry(config: &TelemetryConfig) -> Result<(), TelemetryError> {
         "telemetry initialized"
     );
 
-    Ok(())
+    Ok(true)
 }
 
 pub fn shutdown_telemetry() {

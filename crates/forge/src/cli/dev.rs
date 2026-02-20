@@ -307,7 +307,10 @@ impl DevCommand {
             let mut backend_child = Command::new("cargo")
                 .args(&watch_args)
                 .env("DATABASE_URL", &database_url)
-                .env("RUST_LOG", "warn,forge=info")
+                .env("RUST_LOG", format!(
+                    "warn,forge=info,forge_runtime=info,forge_core=info,{}=info",
+                    project_name.replace('-', "_")
+                ))
                 .env("HOST", "0.0.0.0")
                 .env("PORT", backend_port.to_string())
                 .env("WEBHOOK_SECRET", "demo-secret")

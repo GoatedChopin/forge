@@ -490,6 +490,10 @@ pub struct ObservabilityConfig {
     /// Trace sampling ratio (0.0 to 1.0).
     #[serde(default = "default_sampling_ratio")]
     pub sampling_ratio: f64,
+
+    /// Log level for the tracing subscriber (e.g., "debug", "info", "warn").
+    #[serde(default = "default_log_level")]
+    pub log_level: String,
 }
 
 impl Default for ObservabilityConfig {
@@ -502,6 +506,7 @@ impl Default for ObservabilityConfig {
             enable_metrics: true,
             enable_logs: true,
             sampling_ratio: default_sampling_ratio(),
+            log_level: default_log_level(),
         }
     }
 }
@@ -516,6 +521,10 @@ fn default_true() -> bool {
 
 fn default_sampling_ratio() -> f64 {
     1.0
+}
+
+fn default_log_level() -> String {
+    "info".to_string()
 }
 
 /// MCP server configuration.

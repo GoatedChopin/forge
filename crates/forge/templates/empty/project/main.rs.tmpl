@@ -47,10 +47,6 @@ mod embedded {
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
-
     let config = ForgeConfig::from_file("forge.toml")?;
     let mut builder = Forge::builder();
 

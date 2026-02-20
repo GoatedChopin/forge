@@ -33,7 +33,9 @@ pub use jobs::{
 };
 pub use mcp::{McpToolEntry, McpToolRegistry};
 pub use migrations::{MigrationExecutor, MigrationGenerator, SchemaDiff};
-pub use observability::{TelemetryConfig, TelemetryError, init_telemetry, shutdown_telemetry};
+pub use observability::{
+    TelemetryConfig, TelemetryError, build_env_filter, init_telemetry, shutdown_telemetry,
+};
 pub use rate_limit::RateLimiter;
 pub use realtime::{
     AdaptiveTracker, AdaptiveTrackingConfig, AdaptiveTrackingStats, ChangeListener,

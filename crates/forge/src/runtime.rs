@@ -178,6 +178,26 @@ impl Forge {
 
     /// Run the FORGE server.
     pub async fn run(mut self) -> Result<()> {
+        // Users shouldn't need tracing_subscriber boilerplate to see logs
+        let telemetry_config = forge_runtime::TelemetryConfig::from_observability_config(
+            &self.config.observability,
+            &self.config.project.name,
+            &self.config.project.version,
+        );
+        match forge_runtime::init_telemetry(
+            &telemetry_config,
+            &self.config.project.name,
+            &self.config.observability.log_level,
+        ) {
+            Ok(true) => {}
+            Ok(false) => {
+                // Subscriber already exists, user set one up manually
+            }
+            Err(e) => {
+                eprintln!("forge: failed to initialize telemetry: {e}");
+            }
+        }
+
         tracing::debug!("Connecting to database");
 
         // Connect to database
@@ -584,6 +604,7 @@ impl Forge {
             db.close().await;
         }
 
+        forge_runtime::shutdown_telemetry();
         tracing::info!("Forge stopped");
         Ok(())
     }
