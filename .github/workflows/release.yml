@@ -183,6 +183,8 @@ jobs:
 
       - name: Start backend and run tests
         working-directory: /tmp/forge-integration-test
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ${{ github.workspace }}/target/release/forge dev &
           FORGE_PID=$!
@@ -243,6 +245,8 @@ jobs:
           bun-version: latest
 
       - name: Test example projects
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
