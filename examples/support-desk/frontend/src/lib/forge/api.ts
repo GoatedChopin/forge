@@ -18,16 +18,11 @@ export const listSupportTicketsStore$ = () =>
   createSubscriptionStore<null, SupportTicket[]>("list_support_tickets", null);
 
 // Mutations
-export const addTicketNote = (
-  args: AddTicketNoteInput,
-): Promise<SupportTicket> => getForgeClient().call("add_ticket_note", args);
-export const createSupportTicket = (
-  args: CreateSupportTicketInput,
-): Promise<SupportTicket> =>
+export const addTicketNote = (args: AddTicketNoteInput): Promise<SupportTicket> =>
+  getForgeClient().call("add_ticket_note", args);
+export const createSupportTicket = (args: CreateSupportTicketInput): Promise<SupportTicket> =>
   getForgeClient().call("create_support_ticket", args);
-export const setTicketPriority = (
-  args: SetTicketPriorityInput,
-): Promise<SupportTicket> => getForgeClient().call("set_ticket_priority", args);
-export const setTicketStatus = (
-  args: SetTicketStatusInput,
-): Promise<SupportTicket> => getForgeClient().call("set_ticket_status", args);
+export const setTicketPriority = (args: SetTicketPriorityInput): Promise<SupportTicket> =>
+  getForgeClient().call("set_ticket_priority", args);
+export const setTicketStatus = (args: SetTicketStatusInput): Promise<SupportTicket> =>
+  getForgeClient().call("set_ticket_status", args);

@@ -21,17 +21,17 @@ export interface McpCreateSupportTicketInput {
   customer_name: string;
   title: string;
   details: string;
-  priority: McpTicketPriority;
+  priority: TicketPriority;
 }
 
 export interface McpSetTicketPriorityInput {
   id: string;
-  priority: McpTicketPriority;
+  priority: TicketPriority;
 }
 
 export interface McpSetTicketStatusInput {
   id: string;
-  status: McpTicketStatus;
+  status: TicketStatus;
 }
 
 export interface McpTicket {
@@ -39,8 +39,8 @@ export interface McpTicket {
   customer_name: string;
   title: string;
   details: string;
-  status: McpTicketStatus;
-  priority: McpTicketPriority;
+  status: TicketStatus;
+  priority: TicketPriority;
   last_note?: string;
   created_at: string;
   updated_at: string;
@@ -68,16 +68,8 @@ export interface SupportTicket {
   updated_at: string;
 }
 
-export type McpTicketPriority = "low" | "normal" | "high";
+export type TicketPriority = 'low' | 'normal' | 'high';
 
-export type McpTicketStatus = "new" | "working" | "resolved";
+export type TicketStatus = 'new' | 'working' | 'resolved';
 
-export type TicketPriority = "low" | "normal" | "high";
-
-export type TicketStatus = "new" | "working" | "resolved";
-
-export type {
-  ForgeError,
-  QueryResult,
-  SubscriptionResult,
-} from "@forge/svelte";
+export type { ForgeError, QueryResult, SubscriptionResult } from "@forge/svelte";
