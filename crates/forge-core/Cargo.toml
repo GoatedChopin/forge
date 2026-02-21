@@ -31,13 +31,6 @@ regex-lite = "0.1.8"
 once_cell = "1.19"
 base64 = "0.22"
 
-# Embedded PostgreSQL for tests (optional)
-postgresql_embedded = { version = "0.20", features = ["bundled"], optional = true }
-
-[features]
-default = []
-embedded-db = ["dep:postgresql_embedded"]
-
 [dev-dependencies]
 tokio-test = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

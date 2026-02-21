@@ -4,7 +4,6 @@
 //! options:
 //! 1. Pass a URL directly via `from_url()`
 //! 2. Use `from_env()` to explicitly read from TEST_DATABASE_URL
-//! 3. Use `embedded()` for automatic embedded PostgreSQL (requires `embedded-db` feature)
 //!
 //! This design prevents accidental use of production databases. The .env file
 //! DATABASE_URL is NEVER automatically read.
@@ -17,12 +16,6 @@ use tracing::{debug, info};
 
 use crate::error::{ForgeError, Result};
 
-#[cfg(feature = "embedded-db")]
-use tokio::sync::OnceCell;
-
-#[cfg(feature = "embedded-db")]
-static EMBEDDED_PG: OnceCell<postgresql_embedded::PostgreSQL> = OnceCell::const_new();
-
 /// Database access for tests.
 ///
 /// Test database configuration is intentionally explicit to prevent
@@ -31,14 +24,10 @@ static EMBEDDED_PG: OnceCell<postgresql_embedded::PostgreSQL> = OnceCell::const_
 /// # Examples
 ///
 /// ```ignore
-/// // Option 1: Embedded Postgres (requires embedded-db feature)
-/// // Run with: cargo test --features embedded-db
-/// let db = TestDatabase::embedded().await?;
-///
-/// // Option 2: Explicit URL
+/// // Option 1: Explicit URL
 /// let db = TestDatabase::from_url("postgres://localhost/test_db").await?;
 ///
-/// // Option 3: From TEST_DATABASE_URL env var
+/// // Option 2: From TEST_DATABASE_URL env var
 /// let db = TestDatabase::from_env().await?;
 /// ```
 pub struct TestDatabase {
@@ -73,29 +62,6 @@ impl TestDatabase {
                 "TEST_DATABASE_URL not set. Set it explicitly for database tests.".to_string(),
             )
         })?;
-        Self::from_url(&url).await
-    }
-
-    /// Start an embedded PostgreSQL instance.
-    ///
-    /// Downloads and starts a real PostgreSQL instance automatically.
-    /// Requires the `embedded-db` feature: `cargo test --features embedded-db`
-    #[cfg(feature = "embedded-db")]
-    pub async fn embedded() -> Result<Self> {
-        let pg = EMBEDDED_PG
-            .get_or_try_init(|| async {
-                let mut pg = postgresql_embedded::PostgreSQL::default();
-                pg.setup().await.map_err(|e| {
-                    ForgeError::Database(format!("Failed to setup embedded Postgres: {}", e))
-                })?;
-                pg.start().await.map_err(|e| {
-                    ForgeError::Database(format!("Failed to start embedded Postgres: {}", e))
-                })?;
-                Ok::<_, ForgeError>(pg)
-            })
-            .await?;
-
-        let url = pg.settings().url("postgres");
         Self::from_url(&url).await
     }
 
@@ -256,7 +222,7 @@ impl IsolatedTestDb {
     /// # Example
     ///
     /// ```ignore
-    /// let base = TestDatabase::embedded().await?;
+    /// let base = TestDatabase::from_env().await?;
     /// let db = base.isolated("my_test").await?;
     /// db.migrate(Path::new("migrations")).await?;
     /// ```

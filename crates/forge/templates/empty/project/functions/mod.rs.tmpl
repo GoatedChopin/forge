@@ -12,7 +12,7 @@
 //     use std::path::Path;
 //
 //     async fn setup_db() -> IsolatedTestDb {
-//         let base = TestDatabase::embedded().await.unwrap();
+//         let base = TestDatabase::from_env().await.unwrap();
 //         let db = base.isolated("my_test").await.unwrap();
 //         db.migrate(Path::new("migrations")).await.unwrap();
 //         db

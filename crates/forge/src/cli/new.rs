@@ -501,15 +501,11 @@ impl NewCommand {
         ui::section("Next Steps");
         println!("  1. {}", style(format!("cd {}", project_dir)).cyan());
         println!("  2. {}", style("forge dev").cyan());
-        println!("     Start backend + frontend + embedded PostgreSQL");
+        println!("     Start development environment (requires Docker)");
 
         ui::section("Useful Commands");
         ui::command("forge dev down", "Stop the development environment");
-        ui::command(
-            "forge dev down --clear",
-            "Stop and remove target/ and pg_data/",
-        );
-        ui::command("forge dev --docker", "Run with Docker Compose");
+        ui::command("forge dev down --clear", "Stop and remove volumes + target/");
 
         ui::section("Default Service URLs");
         ui::kv("Frontend", "http://localhost:5173");

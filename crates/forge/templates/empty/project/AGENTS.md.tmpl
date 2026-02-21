@@ -292,7 +292,7 @@ mod tests {
 
     // Shared DB setup - each test gets isolated transaction
     async fn setup() -> (IsolatedTestDb, PgPool) {
-        let base = TestDatabase::embedded().await.unwrap();
+        let base = TestDatabase::from_env().await.unwrap();
         let db = base.isolated("test").await.unwrap();
         db.run_sql(&forge::get_internal_sql()).await.unwrap();
         db.migrate(Path::new("migrations")).await.unwrap();
@@ -426,8 +426,8 @@ Use `ctx.require_subject()?` for non-UUID providers (Firebase/Auth0/Clerk).
 
 ```bash
 forge new <name> [--demo|--minimal]
-forge dev [--docker] [--no-pg] [--takeover-ports]
-forge dev --backend-port 8081 --frontend-port 4173
+forge dev
+forge dev down [--clear]
 forge add query|mutation|job|cron|workflow|daemon|webhook <name>
 forge generate          # TypeScript types
 forge migrate up|down|status

@@ -24,8 +24,5 @@ jsonwebtoken = { workspace = true }
 rust-embed = { workspace = true, optional = true }
 mime_guess = { workspace = true, optional = true }
 
-[dev-dependencies]
-forge = { workspace = true, features = ["embedded-db"] }
-
 [build-dependencies]
 which = { workspace = true }

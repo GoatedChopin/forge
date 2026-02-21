@@ -48,13 +48,6 @@ sha1 = "0.10"
 sha2 = "0.10"
 hex = "0.4"
 
-# Embedded PostgreSQL for zero-dependency deployments (optional)
-postgresql_embedded = { version = "0.20", features = ["bundled"], optional = true }
-
-[features]
-default = []
-embedded-db = ["dep:postgresql_embedded"]
-
 [dev-dependencies]
 tokio-test = { workspace = true }
 tempfile = "3.14"

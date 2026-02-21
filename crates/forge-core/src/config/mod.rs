@@ -2,7 +2,7 @@ mod cluster;
 mod database;
 
 pub use cluster::ClusterConfig;
-pub use database::{DatabaseConfig, DatabaseSource};
+pub use database::DatabaseConfig;
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -89,7 +89,7 @@ impl ForgeConfig {
     pub fn default_with_database_url(url: &str) -> Self {
         Self {
             project: ProjectConfig::default(),
-            database: DatabaseConfig::remote(url),
+            database: DatabaseConfig::new(url),
             node: NodeConfig::default(),
             gateway: GatewayConfig::default(),
             function: FunctionConfig::default(),
@@ -625,12 +625,11 @@ mod tests {
     fn test_parse_minimal_config() {
         let toml = r#"
             [database]
-            mode = "remote"
             url = "postgres://localhost/myapp"
         "#;
 
         let config = ForgeConfig::parse_toml(toml).unwrap();
-        assert_eq!(config.database.url(), Some("postgres://localhost/myapp"));
+        assert_eq!(config.database.url(), "postgres://localhost/myapp");
         assert_eq!(config.gateway.port, 8080);
     }
 
@@ -642,7 +641,6 @@ mod tests {
             version = "1.0.0"
 
             [database]
-            mode = "remote"
             url = "postgres://localhost/myapp"
             pool_size = 100
 
@@ -670,14 +668,13 @@ mod tests {
 
         let toml = r#"
             [database]
-            mode = "remote"
             url = "${TEST_DB_URL}"
         "#;
 
         let config = ForgeConfig::parse_toml(toml).unwrap();
         assert_eq!(
             config.database.url(),
-            Some("postgres://test:test@localhost/test")
+            "postgres://test:test@localhost/test"
         );
 
         unsafe {
@@ -741,7 +738,7 @@ mod tests {
     fn test_forge_config_validation_fails_on_empty_url() {
         let toml = r#"
             [database]
-            mode = "remote"
+
             url = ""
         "#;
 
@@ -755,7 +752,7 @@ mod tests {
     fn test_forge_config_validation_fails_on_invalid_auth() {
         let toml = r#"
             [database]
-            mode = "remote"
+
             url = "postgres://localhost/test"
 
             [auth]
@@ -773,7 +770,7 @@ mod tests {
     fn test_mcp_config_validation_rejects_invalid_path() {
         let toml = r#"
             [database]
-            mode = "remote"
+
             url = "postgres://localhost/test"
 
             [mcp]

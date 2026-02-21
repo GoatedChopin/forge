@@ -95,7 +95,7 @@ mod tests {
     use forge::forge_core::function::{AuthContext, RequestMetadata};
 
     async fn setup_db() -> IsolatedTestDb {
-        let base = TestDatabase::embedded().await.unwrap();
+        let base = TestDatabase::from_env().await.unwrap();
         let db = base.isolated("users_test").await.unwrap();
 
         // Create table directly (avoids forge_enable_reactivity in migrations)

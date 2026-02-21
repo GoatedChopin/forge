@@ -14,10 +14,10 @@
 //! rather than mocks. However, for unit tests that don't need database access,
 //! the test contexts can be used without a database connection.
 //!
-//! # Zero-Config Database
+//! # Database Setup
 //!
-//! `TestDatabase::embedded()` automatically downloads and starts an embedded PostgreSQL
-//! instance - no configuration required. This is the recommended approach for tests.
+//! Set `TEST_DATABASE_URL` and use `TestDatabase::from_env()` to connect to a
+//! PostgreSQL instance for tests.
 //!
 //! # Example
 //!

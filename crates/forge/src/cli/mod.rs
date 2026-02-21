@@ -25,17 +25,16 @@ Everything you need in one binary. No Redis, no Kafka, just PostgreSQL.
 Quick Start:
   forge new my-app --demo   Create a demo project with examples
   cd my-app
-  forge dev                 Start development (postgres + backend + frontend)
+  forge dev                 Start development (docker compose)
 
 Learn more: https://tryforge.dev/docs"#;
 
 const AFTER_HELP: &str = r#"Examples:
   forge new my-app --demo        Full demo with User CRUD, jobs, workflows
   forge new my-app --minimal     Clean slate with just the structure
-  forge dev                      Start development (embedded postgres, hot reload)
-  forge dev --no-pg              Use external DATABASE_URL instead
-  forge dev --takeover-ports     Kill owners and take over busy ports
-  forge dev --frontend-port 4173 Use custom frontend port
+  forge dev                      Start development (requires Docker)
+  forge dev down                 Stop the development environment
+  forge dev down --clear         Stop and remove volumes + target/
   forge check                    Validate project configuration
   forge add query get_users      Add a new query function
   forge generate                 Regenerate TypeScript types
@@ -61,7 +60,7 @@ pub enum Commands {
     /// Validate project configuration and dependencies
     Check(CheckCommand),
 
-    /// Start development environment (postgres + backend + frontend)
+    /// Start development environment with Docker Compose
     Dev(DevCommand),
 
     /// Add a new component (model, query, mutation, etc.)
