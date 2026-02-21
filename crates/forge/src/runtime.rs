@@ -80,6 +80,9 @@ pub mod prelude {
     pub use forge_core::webhook::{ForgeWebhook, WebhookContext, WebhookResult, WebhookSignature};
     pub use forge_core::workflow::{ForgeWorkflow, WorkflowContext};
 
+    // Same axum version the runtime uses, avoids type mismatches in custom handlers
+    pub use axum;
+
     pub use crate::{Forge, ForgeBuilder};
 }
 
@@ -102,6 +105,8 @@ pub struct Forge {
     extra_migrations: Vec<Migration>,
     /// Optional frontend handler for embedded SPA.
     frontend_handler: Option<FrontendHandler>,
+    /// Custom axum routes merged into the top-level router.
+    custom_routes: Option<Router>,
 }
 
 impl Forge {
@@ -540,6 +545,12 @@ impl Forge {
                 );
             }
 
+            // Merge custom routes before frontend fallback so they take precedence
+            if let Some(custom) = self.custom_routes.take() {
+                router = router.merge(custom);
+                tracing::debug!("Custom routes merged");
+            }
+
             // Add frontend handler as fallback if configured
             if let Some(handler) = self.frontend_handler {
                 use axum::routing::get;
@@ -628,6 +639,7 @@ pub struct ForgeBuilder {
     migrations_dir: PathBuf,
     extra_migrations: Vec<Migration>,
     frontend_handler: Option<FrontendHandler>,
+    custom_routes: Option<Router>,
 }
 
 impl ForgeBuilder {
@@ -645,6 +657,7 @@ impl ForgeBuilder {
             migrations_dir: PathBuf::from("migrations"),
             extra_migrations: Vec::new(),
             frontend_handler: None,
+            custom_routes: None,
         }
     }
 
@@ -673,6 +686,24 @@ impl ForgeBuilder {
     /// that includes both backend and frontend.
     pub fn frontend_handler(&mut self, handler: FrontendHandler) {
         self.frontend_handler = Some(handler);
+    }
+
+    /// Add custom axum routes to the server.
+    ///
+    /// Routes are merged at the top level, outside `/_api`, giving full
+    /// control over headers, extractors, and response types. Avoid paths
+    /// starting with `/_api` as they conflict with internal routes.
+    ///
+    /// ```ignore
+    /// use axum::{Router, routing::get};
+    ///
+    /// let routes = Router::new()
+    ///     .route("/custom/health", get(|| async { "ok" }));
+    ///
+    /// builder.custom_routes(routes);
+    /// ```
+    pub fn custom_routes(&mut self, router: Router) {
+        self.custom_routes = Some(router);
     }
 
     /// Set the configuration.
@@ -745,6 +776,7 @@ impl ForgeBuilder {
             migrations_dir: self.migrations_dir,
             extra_migrations: self.extra_migrations,
             frontend_handler: self.frontend_handler,
+            custom_routes: self.custom_routes,
         })
     }
 }
