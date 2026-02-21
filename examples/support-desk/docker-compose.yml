@@ -1,8 +1,8 @@
 services:
   backend:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: examples/support-desk/Dockerfile
       target: dev
     ports:
       - "8080:8080"
@@ -10,9 +10,9 @@ services:
       - .env
     environment:
       - DATABASE_URL=postgres://postgres:forge@db:5432/support-desk
-    command: cargo watch --poll -x "run --no-default-features"
+    command: cargo watch --poll -w examples/support-desk/src -w examples/support-desk/migrations -w examples/support-desk/Cargo.toml -w crates/ -x "run -p support-desk --no-default-features"
     volumes:
-      - .:/app
+      - ../..:/app
       - cargo_cache:/usr/local/cargo/registry
       - target_cache:/app/target
     depends_on:
@@ -45,7 +45,7 @@ services:
     env_file:
       - .env
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql
     healthcheck:

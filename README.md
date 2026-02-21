@@ -286,6 +286,8 @@ bun run dev
 
 The `--demo` flag scaffolds a working app with examples of queries, mutations, jobs, crons, and workflows. Or use `--minimal` for a clean slate.
 
+Check out the [examples](examples/) for working apps you can run with `docker compose up`.
+
 [**Read the docs →**](https://tryforge.dev/docs)
 
 ---

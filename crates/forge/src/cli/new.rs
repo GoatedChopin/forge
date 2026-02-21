@@ -48,6 +48,25 @@ forge-codegen = {{ path = "{workspace}/crates/forge-codegen" }}
     Ok(())
 }
 
+/// Add forge workspace volume to docker-compose.yml (only in debug builds).
+#[cfg(debug_assertions)]
+fn patch_docker_compose(docker_compose_path: &Path) -> Result<()> {
+    let workspace_dir = get_forge_workspace_dir()
+        .ok_or_else(|| anyhow::anyhow!("Could not determine forge workspace directory"))?;
+
+    let content = fs::read_to_string(docker_compose_path)?;
+    let patched = content.replace(
+        "      - target_cache:/app/target\n",
+        &format!(
+            "      - target_cache:/app/target\n      - {workspace}:/forge\n",
+            workspace = workspace_dir
+        ),
+    );
+    fs::write(docker_compose_path, patched)?;
+
+    Ok(())
+}
+
 /// Extract project name from a path (last segment only).
 /// Handles: "my-app", "path/to/my-app", "./my-app", "../my-app"
 pub(super) fn extract_project_name(input: &str) -> String {
@@ -535,7 +554,7 @@ pub fn create_project(dir: &Path, name: &str, demo: bool) -> Result<()> {
         // Demo templates - full example code
         fs::write(dir.join("Cargo.toml"), render(CARGO_TOML, &vars))?;
 
-        // In debug builds, add cargo patch to use local forge source
+        // In debug builds, patch for local forge development
         #[cfg(debug_assertions)]
         {
             append_cargo_patch(&dir.join("Cargo.toml"))?;
@@ -552,6 +571,9 @@ pub fn create_project(dir: &Path, name: &str, demo: bool) -> Result<()> {
             dir.join("docker-compose.yml"),
             render(DOCKER_COMPOSE, &vars),
         )?;
+
+        #[cfg(debug_assertions)]
+        patch_docker_compose(&dir.join("docker-compose.yml"))?;
         fs::write(dir.join("README.md"), render(README, &vars))?;
         fs::write(dir.join("src/main.rs"), MAIN_RS)?;
         fs::write(dir.join("migrations/0001_initial.sql"), MIGRATION_INITIAL)?;
@@ -574,7 +596,7 @@ pub fn create_project(dir: &Path, name: &str, demo: bool) -> Result<()> {
         // Minimal templates - clean scaffolding without example code
         fs::write(dir.join("Cargo.toml"), render(EMPTY_CARGO_TOML, &vars))?;
 
-        // In debug builds, add cargo patch to use local forge source
+        // In debug builds, patch for local forge development
         #[cfg(debug_assertions)]
         {
             append_cargo_patch(&dir.join("Cargo.toml"))?;
@@ -592,6 +614,9 @@ pub fn create_project(dir: &Path, name: &str, demo: bool) -> Result<()> {
             dir.join("docker-compose.yml"),
             render(EMPTY_DOCKER_COMPOSE, &vars),
         )?;
+
+        #[cfg(debug_assertions)]
+        patch_docker_compose(&dir.join("docker-compose.yml"))?;
         fs::write(dir.join("README.md"), render(EMPTY_README, &vars))?;
         fs::write(dir.join("src/main.rs"), EMPTY_MAIN_RS)?;
         fs::write(
