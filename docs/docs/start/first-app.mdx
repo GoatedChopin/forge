@@ -8,7 +8,7 @@ Create a real-time todo list using Forge queries, mutations, and PostgreSQL-back
 curl -fsSL https://tryforge.dev/install.sh | sh
 ```
 
-Requires PostgreSQL 18+ (or use embedded mode for development).
+Requires Docker (with Compose v2).
 
 ## Create and Run
 
@@ -18,25 +18,15 @@ cd my-app
 forge dev
 ```
 
-Useful options:
+This runs Docker Compose with three services:
 
-```bash
-# Use external PostgreSQL from DATABASE_URL
-forge dev --no-pg
+| Service | URL |
+|---------|-----|
+| Frontend | http://localhost:5173 |
+| Backend | http://localhost:8080 |
+| PostgreSQL | localhost:5432 |
 
-# Kill process(es) occupying default ports and take over
-forge dev --takeover-ports
-
-# Pick explicit ports
-forge dev --backend-port 8081 --frontend-port 4173
-```
-
-Three services start:
-- Frontend: http://localhost:5173
-- Backend: http://localhost:8080
-- Embedded PostgreSQL: localhost:5432
-
-Backend restarts are scoped to backend files (`src/`, `migrations/`, `Cargo.toml`, `Cargo.lock`, `build.rs`, `.env`, `forge.toml`) so unrelated root files do not trigger random restarts. By default, if a requested port is busy, Forge shows the owning process and exits.
+Backend restarts are scoped to backend files (`src/`, `migrations/`, `Cargo.toml`, `Cargo.lock`, `build.rs`, `.env`, `forge.toml`) via an `.ignore` allowlist so unrelated files do not trigger rebuilds.
 
 ## Define the Model
 
@@ -216,7 +206,7 @@ Now use them in your Svelte component:
 <button onclick={add}>Add</button>
 ```
 
-The `$` suffix subscribes to real-time updates through the Forge WebSocket client, which relays
+The `$` suffix subscribes to real-time updates through the Forge SSE client, which relays
 PostgreSQL `LISTEN/NOTIFY` changes. Create a todo in one browser tab, it appears in all others.
 
 ## What You Built

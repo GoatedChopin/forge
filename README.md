@@ -14,7 +14,7 @@ forge new my-app --demo && cd my-app
 forge dev
 ```
 
-Use `forge dev --no-pg` for an external `DATABASE_URL`. If ports are busy, Forge now fails fast and shows the occupying process; use `forge dev --takeover-ports` to kill and take over.
+`forge dev` runs Docker Compose with PostgreSQL, backend, and frontend. Use `forge dev down --clear` to reset everything.
 
 [![Crates.io](https://img.shields.io/crates/v/forgex.svg)](https://crates.io/crates/forgex)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -72,7 +72,7 @@ pub async fn create_user(ctx: &MutationContext, input: CreateUser) -> Result<Use
 }
 ```
 
-These become `/rpc/get_user` and `/rpc/create_user` automatically. A fully typed TypeScript client is generated. Call `api.get_user()` and get autocomplete, type checking, and error handling. No routing. No fetch wrappers. No manual type definitions.
+These become `/_api/rpc/get_user` and `/_api/rpc/create_user` automatically. A fully typed TypeScript client is generated. Call `api.get_user()` and get autocomplete, type checking, and error handling. No routing. No fetch wrappers. No manual type definitions.
 
 ### 2. Background Jobs (Things That Take Time)
 
@@ -152,7 +152,7 @@ Deploy new code, restart servers, scale up or down. The workflow picks up right 
 {/each}
 ```
 
-Under the hood: Compile-time SQL parsing extracts all table dependencies (including JOINs and subqueries) → PostgreSQL triggers fire NOTIFY on changes → FORGE re-runs affected queries → WebSocket pushes diffs to clients.
+Under the hood: Compile-time SQL parsing extracts all table dependencies (including JOINs and subqueries) → PostgreSQL triggers fire NOTIFY on changes → FORGE re-runs affected queries → SSE pushes diffs to clients.
 
 No WebSocket code. No manual cache invalidation. Just reactive queries.
 
@@ -177,10 +177,10 @@ No WebSocket code. No manual cache invalidation. Just reactive queries.
 
 One process. Multiple subsystems handle different concerns:
 
-- **Gateway**: HTTP/WebSocket server (built on [Axum](https://github.com/tokio-rs/axum))
+- **Gateway**: HTTP/SSE server (built on [Axum](https://github.com/tokio-rs/axum))
 - **Workers**: Pull jobs from PostgreSQL using `SKIP LOCKED`
 - **Scheduler**: Leader-elected cron runner (advisory locks prevent duplicate runs)
-- **Observability**: Built-in metrics, logs, and traces
+- **Daemons**: Long-running singleton processes with leader election
 
 Scale horizontally by running multiple instances. They coordinate through PostgreSQL. No service mesh, no gossip protocol, no Redis cluster.
 
@@ -266,23 +266,16 @@ If your Rust code compiles, your frontend types are correct. This eliminates an 
 curl -fsSL https://tryforge.dev/install.sh | sh
 # Or: cargo install forgex
 
-# Create a project
+# Create and run
 forge new my-app --demo
-
-# Set up PostgreSQL
-docker run --rm -d --name forge-postgres -e POSTGRES_PASSWORD=forge -e POSTGRES_DB=my-app -p 5432:5432 postgres:18
-
-# Start backend
 cd my-app
-cargo run
-# → API at http://localhost:8080
-
-# Start frontend (in another terminal)
-cd my-app/frontend
-bun install
-bun run dev
+forge dev
 # → Frontend at http://localhost:5173
+# → Backend at http://localhost:8080
+# → PostgreSQL at localhost:5432
 ```
+
+`forge dev` runs Docker Compose with PostgreSQL, a cargo-watch backend, and a Vite frontend. All three services start together and stop with Ctrl+C.
 
 The `--demo` flag scaffolds a working app with examples of queries, mutations, jobs, crons, and workflows. Or use `--minimal` for a clean slate.
 

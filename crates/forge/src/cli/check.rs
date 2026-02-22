@@ -210,13 +210,10 @@ impl CheckCommand {
                         );
                     }
                 }
-                Some("embedded") => {
-                    result.pass("[database] configured (embedded)");
-                }
                 _ => {
                     result.warn(
                         "[database].mode not set",
-                        "Add mode = \"remote\" with url, or mode = \"embedded\" to [database]",
+                        "Add mode = \"remote\" with url to [database]",
                     );
                 }
             }
@@ -413,7 +410,9 @@ impl CheckCommand {
                 // Check for any forge macro
                 if content.contains("#[forge::query")
                     || content.contains("#[forge::mutation")
-                    || content.contains("#[forge::action")
+                    || content.contains("#[forge::webhook")
+                    || content.contains("#[forge::daemon")
+                    || content.contains("#[forge::mcp_tool")
                     || content.contains("#[forge::job")
                     || content.contains("#[forge::cron")
                     || content.contains("#[forge::workflow")
@@ -506,7 +505,7 @@ impl CheckCommand {
         if !env_path.exists() {
             result.warn(
                 ".env file not found",
-                "Create .env with DATABASE_URL (or use forge dev for embedded postgres)",
+                "Create .env with DATABASE_URL (forge dev provides this via Docker Compose)",
             );
             return None;
         }
@@ -543,7 +542,7 @@ impl CheckCommand {
         } else {
             result.warn(
                 "DATABASE_URL not set",
-                "Set DATABASE_URL in .env or use forge dev --no-pg",
+                "Set DATABASE_URL in .env or use forge dev (Docker Compose provides PostgreSQL)",
             );
         }
 

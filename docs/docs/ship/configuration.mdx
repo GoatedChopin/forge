@@ -48,22 +48,15 @@ Environment variables use `${VAR_NAME}` syntax (uppercase letters, numbers, unde
 
 ### [database]
 
-The database section uses a `mode` field to select between remote and embedded PostgreSQL:
-
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `mode` | `"remote"` or `"embedded"` | - | Database mode (required) |
-| `url` | string | - | PostgreSQL connection URL (remote mode) |
-| `data_dir` | string | `.forge/postgres` | Data directory (embedded mode) |
+| `mode` | string | `"remote"` | Database mode |
+| `url` | string | - | PostgreSQL connection URL |
 | `pool_size` | u32 | `50` | Connection pool size |
 | `pool_timeout_secs` | u64 | `30` | Pool checkout timeout |
 | `statement_timeout_secs` | u64 | `30` | Query timeout |
 | `replica_urls` | string[] | `[]` | Read replica URLs |
 | `read_from_replica` | bool | `false` | Route reads to replicas |
-
-#### Remote PostgreSQL
-
-Connect to an external PostgreSQL instance:
 
 ```toml
 [database]
@@ -71,17 +64,7 @@ mode = "remote"
 url = "${DATABASE_URL}"
 ```
 
-#### Embedded PostgreSQL
-
-For development or small deployments, Forge bundles PostgreSQL:
-
-```toml
-[database]
-mode = "embedded"
-data_dir = ".forge/data"
-```
-
-Embedded mode runs PostgreSQL in-process and persists data in `data_dir`. It requires the `embedded-db` feature.
+During development, `forge dev` runs PostgreSQL via Docker Compose. For production, provide a `DATABASE_URL` pointing to your PostgreSQL instance.
 
 #### Read Replicas
 
@@ -206,7 +189,7 @@ openssl rand -base64 32
 | `jwt_issuer` | string | - | Expected issuer (optional) |
 | `jwt_audience` | string | - | Expected audience (optional) |
 | `token_expiry` | string | - | Token lifetime (e.g., `"15m"`, `"7d"`) |
-| `session_ttl_secs` | u64 | `604800` | WebSocket session TTL (7 days) |
+| `session_ttl_secs` | u64 | `604800` | Session TTL (7 days) |
 
 #### HMAC (Symmetric)
 
@@ -296,7 +279,7 @@ discovery = "postgres"
 
 | Role | Responsibility |
 |------|----------------|
-| `gateway` | HTTP/gRPC endpoints, WebSocket connections |
+| `gateway` | HTTP/gRPC endpoints, SSE subscriptions |
 | `function` | Query and mutation execution |
 | `worker` | Background job processing |
 | `scheduler` | Cron scheduling, leader election |
@@ -377,15 +360,18 @@ Requires an OTLP-compatible collector (Jaeger, Grafana Alloy, OpenTelemetry Coll
 
 ### Development
 
+Development uses `forge dev` which runs Docker Compose. The `forge.toml` in generated projects uses `${DATABASE_URL}` which is set by the Docker Compose environment:
+
 ```toml
 [project]
 name = "my-app"
 
 [database]
-mode = "embedded"
+mode = "remote"
+url = "${DATABASE_URL}"
 
 [gateway]
-port = 3000
+port = 8080
 ```
 
 ### Production Single Node

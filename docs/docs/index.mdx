@@ -22,13 +22,7 @@ cd my-app
 forge dev
 ```
 
-Common dev variants:
-
-```bash
-forge dev --no-pg
-forge dev --takeover-ports
-forge dev --backend-port 8081 --frontend-port 4173
-```
+Runs Docker Compose with PostgreSQL, backend (cargo-watch), and frontend (Vite). Use `forge dev down --clear` to reset.
 
 ## Queries and mutations
 
@@ -51,7 +45,7 @@ const todos = listTodos$();
 
 Queries and mutations are exposed as RPC endpoints under `/_api/rpc` and used by the
 generated TypeScript client. Subscriptions use PostgreSQL `LISTEN/NOTIFY` plus a
-WebSocket connection to push updates.
+SSE connection to push updates.
 
 ## Background jobs
 

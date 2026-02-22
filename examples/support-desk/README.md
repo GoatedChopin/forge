@@ -19,8 +19,6 @@ FORGE handles the hard parts of full-stack engineering so you can focus on busin
 - **Cron Scheduling** - Timezone-aware, catch-up runs, leader-only execution
 - **Durable Workflows** - Multi-step processes that survive restarts
 - **Real-time Updates** - SSE subscriptions with automatic invalidation
-- **Observability** - Built-in metrics, logs, and traces
-
 No Redis. No Kafka. No message queues. Just PostgreSQL.
 
 ## Quick Start
@@ -29,11 +27,10 @@ No Redis. No Kafka. No message queues. Just PostgreSQL.
 forge dev
 ```
 
-This single command:
-- Starts embedded PostgreSQL (data in `./pg_data/`)
+Requires Docker. This single command:
+- Starts PostgreSQL in Docker
 - Compiles and runs the backend with hot reload
 - Starts the frontend dev server
-- Opens your browser
 
 Backend: `http://localhost:8080` | Frontend: `http://localhost:5173`
 
@@ -70,39 +67,11 @@ Run only MCP validation (requires backend running):
 bun scripts/test-mcp.ts
 ```
 
-Useful options:
+To stop and clean up:
 
 ```bash
-# Use external PostgreSQL from DATABASE_URL
-forge dev --no-pg
-
-# Kill process(es) occupying 8080/5173/5432 and take over
-forge dev --takeover-ports
-
-# Customize ports
-forge dev --backend-port 8081 --frontend-port 4173 --db-port 5433
-```
-
-Backend hot reload watches only backend-relevant files (`src/`, `migrations/`, `build.rs`, `Cargo.toml`, `Cargo.lock`, `.env`, `forge.toml`), so unrelated root files do not trigger restarts. By default, if a requested port is busy, Forge shows the owning process and exits.
-
-## Using Docker Compose
-
-For containerized development:
-
-```bash
-docker compose up --build
-```
-
-## Using External Database
-
-If you prefer your own PostgreSQL:
-
-```bash
-# Set your database URL
-echo "DATABASE_URL=postgres://user:pass@localhost/support-desk" >> .env
-
-# Start without embedded postgres
-forge dev --no-pg
+forge dev down          # stop containers
+forge dev down --clear  # stop and remove volumes
 ```
 
 ## Build
@@ -116,10 +85,7 @@ cargo build --release
 ## Test
 
 ```bash
-# Run tests with embedded PostgreSQL (recommended)
-cargo test --features embedded-db
-
-# Or with external database
+# Requires a running PostgreSQL (forge dev provides one)
 TEST_DATABASE_URL=postgres://localhost/test cargo test
 ```
 
@@ -127,7 +93,7 @@ See `src/functions/` for test examples.
 
 ## Deployment
 
-For deployment options (Docker, VM, embedded PostgreSQL, etc.), see the [Deployment Guide](https://tryforge.dev/docs/ship/deploy).
+For deployment options (Docker, VM, etc.), see the [Deployment Guide](https://tryforge.dev/docs/ship/deploy).
 
 ## Project Structure
 

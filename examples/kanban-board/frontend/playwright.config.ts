@@ -1,8 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const FRONTEND_PORT = 5173;
-const BACKEND_PORT = 8080;
-const DB_PORT = 5432;
 
 export default defineConfig({
   testDir: "./tests",
@@ -27,7 +25,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `rm -rf pg_data && ../../target/debug/forge dev --no-open --backend-port ${BACKEND_PORT} --frontend-port ${FRONTEND_PORT} --db-port ${DB_PORT} --takeover-ports`,
+    command: `docker compose up --build`,
     url: `http://localhost:${FRONTEND_PORT}`,
     cwd: "..",
     reuseExistingServer: !!process.env.CI,

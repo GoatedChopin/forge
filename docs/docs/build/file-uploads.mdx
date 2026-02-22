@@ -180,7 +180,7 @@ function uploadWithProgress(
 
     xhr.onerror = () => reject(new Error("Upload failed"));
 
-    xhr.open("POST", `${API_URL}/rpc/upload_image/upload`);
+    xhr.open("POST", `${API_URL}/_api/rpc/upload_image/upload`);
     xhr.setRequestHeader("Authorization", `Bearer ${getToken()}`);
     xhr.send(formData);
   });
@@ -218,9 +218,9 @@ const hasFiles = this.containsFiles(args);
 
 if (hasFiles) {
   const formData = this.buildFormData(args);
-  // POST to /rpc/{function}/upload with multipart
+  // POST to /_api/rpc/{function}/upload with multipart
 } else {
-  // POST to /rpc/{function} with JSON
+  // POST to /_api/rpc/{function} with JSON
 }
 ```
 

@@ -42,6 +42,8 @@ cargo clippy --all-targets -- -D warnings && cargo test && bun lint && bun forma
 | **Job** | Background | `&JobContext` | `ctx.db()`, `ctx.http()`, `ctx.progress()`, `ctx.is_retry()`, `ctx.is_last_attempt()` |
 | **Cron** | Scheduled | `&CronContext` | `ctx.db()`, `ctx.http()`, `ctx.log`, `ctx.is_late()`, `ctx.is_catch_up` |
 | **Workflow** | Multi-step durable | `&WorkflowContext` | `ctx.db()`, `ctx.http()`, `ctx.step()`, `ctx.sleep()`, `ctx.parallel()` |
+| **Daemon** | Long-running singleton | `&DaemonContext` | `ctx.db()`, `ctx.http()`, `ctx.shutdown_signal()` |
+| **Webhook** | HTTP endpoint | `&WebhookContext` | `ctx.db()`, `ctx.http()`, `ctx.dispatch_job()`, `ctx.header()` |
 
 ---
 
@@ -147,6 +149,37 @@ pub async fn trial_flow(ctx: &WorkflowContext, user: User) -> Result<()> {
 }
 ```
 
+### Daemon
+```rust
+// Attrs: leader_elected=true, restart_on_panic=true, restart_delay="5s", startup_delay="10s", max_restarts=10
+#[forge::daemon(startup_delay = "5s")]
+pub async fn data_sync(ctx: &DaemonContext) -> Result<()> {
+    loop {
+        // Do work
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_secs(60)) => {}
+            _ = ctx.shutdown_signal() => break,  // CRITICAL for graceful shutdown
+        }
+    }
+    Ok(())
+}
+```
+
+### Webhook
+```rust
+// Attrs: path="/webhooks/x", signature=WebhookSignature::hmac_sha256(header, secret_env),
+//        idempotency="header:X-Id"|"body:$.id", timeout="30s"
+#[forge::webhook(
+    path = "/webhooks/stripe",
+    signature = WebhookSignature::hmac_sha256("X-Stripe-Signature", "STRIPE_SECRET"),
+    idempotency = "header:X-Request-Id",
+)]
+pub async fn stripe_webhook(ctx: &WebhookContext, payload: Value) -> Result<WebhookResult> {
+    ctx.dispatch_job("process_stripe", &payload).await?;
+    Ok(WebhookResult::Accepted)
+}
+```
+
 ---
 
 ## Context Methods Reference
@@ -184,6 +217,15 @@ ctx.wait_for_event::<T>("event", timeout).await?
 ctx.workflow_time()         // Deterministic time
 ctx.is_step_completed("x")
 ctx.get_step_result::<T>("x")
+
+// Daemon only
+ctx.shutdown_signal()       // Use in tokio::select! for graceful shutdown
+ctx.is_shutdown_requested() // bool
+
+// Webhook only
+ctx.header("X-Key")         // Option<&str>
+ctx.dispatch_job("name", args).await?  // -> Uuid
+ctx.idempotency_key         // Option<String>
 ```
 
 ---
@@ -314,6 +356,8 @@ mod tests {
 - `TestJobContext::builder("name").as_retry(attempt).with_max_attempts(n).build()`
 - `TestCronContext::builder().with_catch_up(true).build()`
 - `TestWorkflowContext::builder().with_step_states(map).build()`
+- `TestDaemonContext::builder("name").with_pool(pool).build()`
+- `TestWebhookContext::builder("name").with_header("X-Key", "val").with_idempotency_key("k").build()`
 
 ---
 
@@ -382,8 +426,8 @@ Use `ctx.require_subject()?` for non-UUID providers (Firebase/Auth0/Clerk).
 
 ```bash
 forge new <name> [--demo|--minimal]
-forge dev [--docker] [--no-pg] [--takeover-ports]
-forge dev --backend-port 8081 --frontend-port 4173
+forge dev                   # Requires Docker
+forge dev down [--clear]
 forge add query|mutation|job|cron|workflow|daemon|webhook <name>
 forge generate          # TypeScript types
 forge migrate up|down|status
