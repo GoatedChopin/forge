@@ -524,7 +524,10 @@ impl NewCommand {
 
         ui::section("Useful Commands");
         ui::command("forge dev down", "Stop the development environment");
-        ui::command("forge dev down --clear", "Stop and remove volumes + target/");
+        ui::command(
+            "forge dev down --clear",
+            "Stop and remove volumes + target/",
+        );
 
         ui::section("Default Service URLs");
         ui::kv("Frontend", "http://localhost:5173");

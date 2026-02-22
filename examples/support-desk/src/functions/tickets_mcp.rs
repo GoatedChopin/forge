@@ -126,7 +126,9 @@ mod tests {
     use crate::schema::{TicketPriority, TicketStatus};
 
     async fn setup_db(test_name: &str) -> IsolatedTestDb {
-        let base = TestDatabase::from_env().await.expect("TEST_DATABASE_URL required");
+        let base = TestDatabase::from_env()
+            .await
+            .expect("TEST_DATABASE_URL required");
         let db = base.isolated(test_name).await.expect("isolated db");
         db.run_sql(&forge::get_internal_sql())
             .await

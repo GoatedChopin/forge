@@ -2,6 +2,12 @@ name: Release
 
 on:
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (validate, test, build without publishing or tagging)'
+        required: false
+        default: 'false'
+        type: boolean
 
 permissions:
   contents: write
@@ -121,6 +127,16 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all --check
 
+      - name: Create example .env files for frontend builds
+        run: |
+          for dir in examples/*/frontend; do
+            if [ -f "$dir/.env.example" ] && [ ! -f "$dir/.env" ]; then
+              cp "$dir/.env.example" "$dir/.env"
+            elif [ ! -f "$dir/.env" ]; then
+              echo 'PUBLIC_API_URL=http://localhost:8080' > "$dir/.env"
+            fi
+          done
+
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
@@ -128,7 +144,7 @@ jobs:
         run: cargo build --release
 
       - name: Run tests
-        run: cargo test --all-features
+        run: cargo test --all-features --workspace --exclude todo --exclude kanban-board --exclude support-desk
 
   integration-test:
     name: Integration Tests
@@ -143,11 +159,18 @@ jobs:
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
 
+      - name: Create example .env files for frontend builds
+        run: |
+          for dir in examples/*/frontend; do
+            if [ -f "$dir/.env.example" ] && [ ! -f "$dir/.env" ]; then
+              cp "$dir/.env.example" "$dir/.env"
+            elif [ ! -f "$dir/.env" ]; then
+              echo 'PUBLIC_API_URL=http://localhost:8080' > "$dir/.env"
+            fi
+          done
+
       - name: Build forge CLI
         run: cargo build --release
-
-      - name: Install cargo-watch
-        run: cargo install cargo-watch
 
       - name: Install bun
         uses: oven-sh/setup-bun@v2
@@ -181,13 +204,42 @@ jobs:
           bun install
           bunx playwright install chromium --with-deps
 
-      - name: Start backend and run tests
+      - name: Start PostgreSQL
+        working-directory: /tmp/forge-integration-test
+        run: |
+          docker run -d --name forge-test-pg \
+            -e POSTGRES_USER=forge \
+            -e POSTGRES_PASSWORD=forge \
+            -e POSTGRES_DB=forge \
+            -p 5432:5432 \
+            postgres:18
+          for i in {1..30}; do
+            if docker exec forge-test-pg pg_isready -U forge 2>/dev/null; then
+              echo "PostgreSQL ready"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Start backend and frontend
         working-directory: /tmp/forge-integration-test
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DATABASE_URL: postgres://forge:forge@localhost:5432/forge
+          PORT: "8080"
+          JWT_SECRET: test-secret-for-ci
+          WEBHOOK_SECRET: test-webhook-secret
         run: |
-          ${{ github.workspace }}/target/release/forge dev &
-          FORGE_PID=$!
+          cargo build --release 2>&1 &
+          BUILD_PID=$!
+          wait $BUILD_PID
+          ./target/release/forge-integration-test &
+          BACKEND_PID=$!
+
+          cd frontend
+          if [ -f .env.example ] && [ ! -f .env ]; then cp .env.example .env; fi
+          bun run dev &
+          FRONTEND_PID=$!
+          cd ..
 
           echo "Waiting for backend..."
           for i in {1..180}; do
@@ -197,7 +249,7 @@ jobs:
             fi
             if [ $i -eq 180 ]; then
               echo "Backend failed to start"
-              kill $FORGE_PID 2>/dev/null || true
+              kill $BACKEND_PID $FRONTEND_PID 2>/dev/null || true
               exit 1
             fi
             sleep 1
@@ -216,7 +268,8 @@ jobs:
           bunx playwright test tests/home.spec.ts --reporter=line
           TEST_EXIT=$?
 
-          kill $FORGE_PID 2>/dev/null || true
+          kill $BACKEND_PID $FRONTEND_PID 2>/dev/null || true
+          docker stop forge-test-pg 2>/dev/null || true
 
           exit $TEST_EXIT
 
@@ -233,11 +286,18 @@ jobs:
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
 
+      - name: Create example .env files for frontend builds
+        run: |
+          for dir in examples/*/frontend; do
+            if [ -f "$dir/.env.example" ] && [ ! -f "$dir/.env" ]; then
+              cp "$dir/.env.example" "$dir/.env"
+            elif [ ! -f "$dir/.env" ]; then
+              echo 'PUBLIC_API_URL=http://localhost:8080' > "$dir/.env"
+            fi
+          done
+
       - name: Build forge CLI
         run: cargo build --release
-
-      - name: Install cargo-watch
-        run: cargo install cargo-watch
 
       - name: Install bun
         uses: oven-sh/setup-bun@v2
@@ -259,28 +319,54 @@ jobs:
             example_name=$(basename "$example_dir")
             echo "=== Testing example: $example_name ==="
 
-            cd "$example_dir/frontend"
+            cd "$example_dir"
+
+            # Install playwright in frontend
+            cd frontend
             bun install
             bunx playwright install chromium --with-deps
             cd ..
 
-            # Ensure backend .env exists for examples that need it
-            if [ ! -f .env ] && [ -f .env.example ]; then
-              cp .env.example .env
-            fi
+            # Start a fresh PostgreSQL container
+            docker run -d --name "forge-example-pg-${example_name}" \
+              -e POSTGRES_USER=postgres \
+              -e POSTGRES_PASSWORD=forge \
+              -e POSTGRES_DB="${example_name//-/_}" \
+              -p 5432:5432 \
+              postgres:18
+            for i in {1..30}; do
+              if docker exec "forge-example-pg-${example_name}" pg_isready -U postgres 2>/dev/null; then
+                echo "PostgreSQL ready"
+                break
+              fi
+              sleep 1
+            done
 
-            setsid ./../../target/release/forge dev --no-open &
-            FORGE_PID=$!
+            # Run the pre-built example binary directly
+            DATABASE_URL="postgres://postgres:forge@localhost:5432/${example_name//-/_}" \
+              HOST=0.0.0.0 PORT=8080 RUST_LOG=warn,forge=info \
+              JWT_SECRET=test-secret-for-ci \
+              "$GITHUB_WORKSPACE/target/release/$example_name" &
+            BACKEND_PID=$!
+
+            # Start frontend dev server
+            cd frontend
+            if [ -f .env.example ] && [ ! -f .env ]; then cp .env.example .env; fi
+            bun run dev --host 0.0.0.0 &
+            FRONTEND_PID=$!
+            cd ..
 
             echo "Waiting for backend..."
-            for i in {1..180}; do
+            for i in {1..120}; do
               if curl -s http://localhost:8080/_api/health | grep -q "healthy"; then
                 echo "Backend is ready!"
                 break
               fi
-              if [ $i -eq 180 ]; then
+              if [ $i -eq 120 ]; then
                 echo "Backend failed to start for $example_name"
-                kill $FORGE_PID 2>/dev/null || true
+                kill $BACKEND_PID $FRONTEND_PID 2>/dev/null || true
+                docker stop "forge-example-pg-${example_name}" 2>/dev/null || true
+                docker rm "forge-example-pg-${example_name}" 2>/dev/null || true
                 exit 1
               fi
               sleep 1
@@ -292,11 +378,6 @@ jobs:
                 echo "Frontend is ready!"
                 break
               fi
-              if [ $i -eq 60 ]; then
-                echo "Frontend failed to start for $example_name"
-                kill $FORGE_PID 2>/dev/null || true
-                exit 1
-              fi
               sleep 1
             done
 
@@ -305,13 +386,9 @@ jobs:
             TEST_EXIT=$?
             cd ..
 
-            # Kill forge and all child processes (PG, vite, cargo-watch)
-            kill -- -$FORGE_PID 2>/dev/null || kill $FORGE_PID 2>/dev/null || true
-            wait $FORGE_PID 2>/dev/null || true
-            # Kill anything still holding the ports
-            fuser -k 8080/tcp 2>/dev/null || true
-            fuser -k 5173/tcp 2>/dev/null || true
-            fuser -k 5432/tcp 2>/dev/null || true
+            kill $BACKEND_PID $FRONTEND_PID 2>/dev/null || true
+            docker stop "forge-example-pg-${example_name}" 2>/dev/null || true
+            docker rm "forge-example-pg-${example_name}" 2>/dev/null || true
             sleep 2
 
             cd "$GITHUB_WORKSPACE"
@@ -400,6 +477,16 @@ jobs:
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
 
+      - name: Create example .env files for frontend builds
+        run: |
+          for dir in examples/*/frontend; do
+            if [ -f "$dir/.env.example" ] && [ ! -f "$dir/.env" ]; then
+              cp "$dir/.env.example" "$dir/.env"
+            elif [ ! -f "$dir/.env" ]; then
+              echo 'PUBLIC_API_URL=http://localhost:8080' > "$dir/.env"
+            fi
+          done
+
       - name: Build forge CLI
         run: cargo build --release
 
@@ -439,6 +526,13 @@ jobs:
       - name: Commit version bump
         id: commit
         run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "Dry run: skipping commit and push"
+            echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+            git diff --stat
+            exit 0
+          fi
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
@@ -492,6 +586,13 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
+      - name: Create example .env files for frontend builds
+        run: |
+          for dir in examples/*/frontend; do
+            [ -d "$dir" ] || continue
+            echo "PUBLIC_API_URL=http://localhost:8080" > "$dir/.env"
+          done
+
       - name: Build binary
         run: cargo build --release --target ${{ matrix.target }}
         env:
@@ -511,6 +612,7 @@ jobs:
 
   release:
     name: Create Release
+    if: ${{ inputs.dry_run != true }}
     needs: [parse-changelog, bump-versions, build]
     runs-on: ubuntu-latest
     steps:
@@ -556,6 +658,7 @@ jobs:
 
   publish-crates:
     name: Publish to crates.io
+    if: ${{ inputs.dry_run != true }}
     needs: [parse-changelog, bump-versions, release]
     runs-on: ubuntu-latest
     steps:

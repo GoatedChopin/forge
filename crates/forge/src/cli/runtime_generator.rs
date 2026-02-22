@@ -6,7 +6,6 @@
 use anyhow::Result;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 use super::template::render;
 use crate::template_vars;
@@ -85,65 +84,6 @@ pub fn generate_runtime(frontend_dir: &Path) -> Result<()> {
         render(FORGE_PROVIDER, &vars),
     )?;
     fs::write(svelte_dir.join("index.ts"), render(INDEX_TS, &vars))?;
-
-    // Compile TS to JS so downstream builds don't recompile the runtime.
-    // Falls back gracefully: if bun/npx isn't available the raw TS still works.
-    compile_runtime(&svelte_dir)?;
-
-    Ok(())
-}
-
-/// Compile .ts files in the runtime package to .js via `bun build`.
-///
-/// When bun is available, the runtime ships as prebuilt ESM so downstream
-/// builds skip recompiling the package. Raw TS still works as fallback
-/// since Vite/SvelteKit handle TS natively.
-fn compile_runtime(svelte_dir: &Path) -> Result<()> {
-    let ts_files: Vec<_> = ["types.ts", "client.ts", "context.ts", "stores.ts", "datetime.ts", "index.ts"]
-        .iter()
-        .map(|f| svelte_dir.join(f))
-        .filter(|p| p.exists())
-        .collect();
-
-    if ts_files.is_empty() {
-        return Ok(());
-    }
-
-    let bun_result = Command::new("bun")
-        .arg("build")
-        .args(ts_files.iter().map(|p| p.to_string_lossy().to_string()))
-        .arg("--outdir")
-        .arg(svelte_dir.join("dist").to_string_lossy().to_string())
-        .arg("--format")
-        .arg("esm")
-        .arg("--external")
-        .arg("svelte")
-        .arg("--external")
-        .arg("svelte/*")
-        .current_dir(svelte_dir)
-        .output();
-
-    match bun_result {
-        Ok(output) if output.status.success() => {
-            let dist_dir = svelte_dir.join("dist");
-            if dist_dir.exists() {
-                let pkg_path = svelte_dir.join("package.json");
-                if let Ok(content) = fs::read_to_string(&pkg_path) {
-                    let updated = content
-                        .replace("\"./index.ts\"", "\"./dist/index.js\"")
-                        .replace("\"./client.ts\"", "\"./dist/client.js\"")
-                        .replace("\"./stores.ts\"", "\"./dist/stores.js\"")
-                        .replace("\"./context.ts\"", "\"./dist/context.js\"")
-                        .replace("\"./datetime.ts\"", "\"./dist/datetime.js\"");
-                    fs::write(&pkg_path, updated)?;
-                }
-            }
-            tracing::debug!("Runtime compiled to JS");
-        }
-        _ => {
-            tracing::debug!("Skipping runtime compilation (bun not available)");
-        }
-    }
 
     Ok(())
 }

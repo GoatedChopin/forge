@@ -672,10 +672,7 @@ mod tests {
         "#;
 
         let config = ForgeConfig::parse_toml(toml).unwrap();
-        assert_eq!(
-            config.database.url(),
-            "postgres://test:test@localhost/test"
-        );
+        assert_eq!(config.database.url(), "postgres://test:test@localhost/test");
 
         unsafe {
             std::env::remove_var("TEST_DB_URL");
