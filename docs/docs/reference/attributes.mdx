@@ -91,10 +91,10 @@ Explicitly exposes a function as an MCP tool (Streamable HTTP endpoint).
 | `require_role("name")` | `string` | none | Require specific role |
 | `timeout` | `u64` | none | Timeout in seconds |
 | `rate_limit(...)` | config | none | Rate limiting (`requests`, `per`, `key`) |
-| `read_only` | flag | none | MCP annotation hint (`readOnlyHint=true`) |
-| `destructive` | flag | none | MCP annotation hint (`destructiveHint=true`) |
-| `idempotent` | flag | none | MCP annotation hint (`idempotentHint=true`) |
-| `open_world` | flag | none | MCP annotation hint (`openWorldHint=true`) |
+| `read_only` | flag | none | No side effects, safe to call speculatively |
+| `destructive` | flag | none | Modifies external state irreversibly |
+| `idempotent` | flag | none | Repeated calls with same args produce same result |
+| `open_world` | flag | none | Interacts with entities beyond its dataset |
 
 ### Example
 

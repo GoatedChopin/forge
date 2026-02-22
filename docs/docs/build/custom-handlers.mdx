@@ -1,0 +1,95 @@
+# Custom Handlers
+
+Add raw axum routes when you need full control over HTTP handling outside Forge's RPC system.
+
+## The Code
+
+```rust
+use forge::prelude::*;
+use forge::prelude::axum::{
+    Router, Json,
+    extract::{Path, Query, State},
+    http::{HeaderMap, StatusCode},
+    response::IntoResponse,
+    routing::{get, post},
+};
+
+async fn health_check() -> impl IntoResponse {
+    Json(serde_json::json!({ "status": "ok" }))
+}
+
+async fn proxy_webhook(
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> impl IntoResponse {
+    // Full access to headers, raw body, status codes
+    let signature = headers
+        .get("x-signature")
+        .and_then(|v| v.to_str().ok());
+
+    match signature {
+        Some(_sig) => (StatusCode::OK, "accepted"),
+        None => (StatusCode::UNAUTHORIZED, "missing signature"),
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let config = ForgeConfig::from_file("forge.toml")?;
+
+    let custom = Router::new()
+        .route("/healthz", get(health_check))
+        .route("/hooks/external", post(proxy_webhook));
+
+    let mut builder = Forge::builder().config(config);
+    builder.custom_routes(custom);
+
+    builder.build()?.run().await
+}
+```
+
+## What Happens
+
+Custom routes are merged at the top level of the HTTP server, outside the `/_api` namespace. They run without Forge's auth middleware, rate limiting, or tracing. You handle everything yourself.
+
+## When to Use
+
+| Scenario | Use |
+|----------|-----|
+| Standard queries and mutations | `#[forge::query]`, `#[forge::mutation]` |
+| Webhook endpoints with signatures | `#[forge::webhook]` |
+| AI tool exposure | `#[forge::mcp_tool]` |
+| Custom health checks, metrics, proxies | `custom_routes()` |
+| Third-party integrations needing exact HTTP semantics | `custom_routes()` |
+
+## Route Conflicts
+
+Custom routes must not start with `/_api`. That prefix is reserved for Forge internal endpoints (RPC, SSE, MCP, webhooks). Conflicting paths cause a runtime panic.
+
+## Shared State
+
+Pass shared state to custom handlers using axum's `State` extractor:
+
+```rust
+use std::sync::Arc;
+
+struct AppState {
+    pool: sqlx::PgPool,
+}
+
+async fn custom_handler(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    // Use state.pool for database access
+    Json(serde_json::json!({ "ok": true }))
+}
+
+let state = Arc::new(AppState { pool: pool.clone() });
+let custom = Router::new()
+    .route("/custom", get(custom_handler))
+    .with_state(state);
+
+builder.custom_routes(custom);
+```
+
+Since custom routes bypass Forge middleware, you must handle authentication, logging, and error responses yourself.

@@ -121,19 +121,83 @@ With default routing, the MCP URL is:
 3. Client calls `tools/list` and gets JSON schemas from your Rust input/output types.
 4. Client calls `tools/call`; Forge applies auth/role/rate/timeout policy before invoking your tool.
 
-## Tool Rules
+## Tool Annotations
 
-- MCP tools are separate from `#[forge::query]` and `#[forge::mutation]` handlers.
-- Use `result.isError = true` for validation/business errors returned by the handler.
-- Use protocol errors for malformed RPC payloads and unsupported methods.
+Annotation hints tell MCP clients about tool behavior. Clients may use these to optimize calls or warn users.
 
-## Context Conveniences
+```rust
+#[forge::mcp_tool(
+    name = "delete_project",
+    destructive,       // Modifies external state irreversibly
+)]
+
+#[forge::mcp_tool(
+    name = "list_projects",
+    read_only,         // No side effects, safe to call speculatively
+)]
+
+#[forge::mcp_tool(
+    name = "create_export",
+    idempotent,        // Repeated calls with same args produce same result
+)]
+
+#[forge::mcp_tool(
+    name = "web_search",
+    open_world,        // Interacts with external entities beyond its dataset
+)]
+```
+
+These map to `annotations` in the `tools/list` response per the MCP specification.
+
+## Input Struct Convention
+
+When a tool takes a single struct parameter named `*Args` or `*Input`, the macro uses it directly as the tool schema:
+
+```rust
+#[derive(Debug, serde::Deserialize, JsonSchema)]
+pub struct SearchArgs {
+    #[schemars(description = "Search query")]
+    pub query: String,
+    #[schemars(description = "Max results")]
+    pub limit: Option<u32>,
+}
+
+#[forge::mcp_tool(name = "search")]
+pub async fn search(ctx: &McpToolContext, args: SearchArgs) -> Result<Vec<SearchResult>> {
+    // args.query, args.limit available directly
+}
+```
+
+For inline parameters (multiple args), Forge auto-generates the schema struct.
+
+## Error Handling
+
+Forge maps errors to MCP protocol responses:
+
+| Error Type | MCP Behavior |
+|------------|-------------|
+| `ForgeError::Validation`, `ForgeError::InvalidArgument` | Tool result with `isError: true` |
+| `ForgeError::Unauthorized` | JSON-RPC error -32001 |
+| `ForgeError::Forbidden` | JSON-RPC error -32003 |
+| Other errors | JSON-RPC error -32603 |
+
+Validation errors return as tool results so LLM clients can read and correct their input. Auth errors return as protocol errors since they indicate a session problem.
+
+## Context Methods
 
 `McpToolContext` provides:
 
-- `ctx.auth` for auth/claims/roles
-- `ctx.db()` for database access
-- `ctx.dispatch_job(...)` for background jobs
-- `ctx.start_workflow(...)` for workflow orchestration
+| Method | Description |
+|--------|-------------|
+| `ctx.db()` | Database pool |
+| `ctx.require_user_id()?` | Authenticated user UUID |
+| `ctx.require_subject()?` | Auth subject string (Firebase/Auth0/Clerk) |
+| `ctx.dispatch_job(name, args)` | Enqueue a background job |
+| `ctx.start_workflow(name, input)` | Start a workflow |
+| `ctx.env("KEY")` | Read environment variable |
+| `ctx.env_require("KEY")?` | Require environment variable |
+| `ctx.auth` | Auth context (roles, claims) |
 
-This lets MCP tools reuse Forge execution primitives without writing protocol boilerplate.
+## Protocol
+
+Forge implements MCP protocol version `2025-11-25` over Streamable HTTP. Tools are separate from `#[forge::query]` and `#[forge::mutation]` handlers.

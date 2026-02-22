@@ -44,6 +44,8 @@ cargo clippy --all-targets -- -D warnings && cargo test && bun lint && bun forma
 | **Workflow** | Multi-step durable | `&WorkflowContext` | `ctx.db()`, `ctx.http()`, `ctx.step()`, `ctx.sleep()`, `ctx.parallel()` |
 | **Daemon** | Long-running singleton | `&DaemonContext` | `ctx.db()`, `ctx.http()`, `ctx.shutdown_signal()` |
 | **Webhook** | HTTP endpoint | `&WebhookContext` | `ctx.db()`, `ctx.http()`, `ctx.dispatch_job()`, `ctx.header()` |
+| **MCP Tool** | AI tool exposure | `&McpToolContext` | `ctx.db()`, `ctx.require_user_id()`, `ctx.dispatch_job()`, `ctx.start_workflow()` |
+| **Custom Handler** | Raw axum route | N/A (raw axum) | Full control: headers, extractors, response types |
 
 ---
 
@@ -180,6 +182,42 @@ pub async fn stripe_webhook(ctx: &WebhookContext, payload: Value) -> Result<Webh
 }
 ```
 
+### MCP Tool
+```rust
+// Attrs: name, title, description, public, require_role("x"), timeout, rate_limit(...),
+//        read_only, destructive, idempotent, open_world
+#[forge::mcp_tool(
+    name = "export_project",
+    description = "Export a project as JSON",
+    read_only,
+)]
+pub async fn export_project(ctx: &McpToolContext, project_id: Uuid) -> Result<ProjectExport> {
+    let user_id = ctx.require_user_id()?;
+    sqlx::query_as("SELECT * FROM projects WHERE id = $1 AND owner_id = $2")
+        .bind(project_id)
+        .bind(user_id)
+        .fetch_one(ctx.db())
+        .await
+        .map_err(Into::into)
+}
+```
+
+Use `#[schemars(description = "...")]` on parameters for rich tool descriptions. Single-struct args (named `*Args` or `*Input`) are used directly as the tool schema.
+
+### Custom Handler
+```rust
+// In main.rs - raw axum routes outside /_api
+use forge::prelude::axum::{Router, routing::get, Json};
+
+let routes = Router::new()
+    .route("/healthz", get(|| async { Json(json!({"ok": true})) }))
+    .route("/metrics", get(prometheus_handler));
+
+builder.custom_routes(routes);
+```
+
+Custom routes are merged at the top level. Avoid paths starting with `/_api` (reserved for Forge internals).
+
 ---
 
 ## Context Methods Reference
@@ -226,6 +264,15 @@ ctx.is_shutdown_requested() // bool
 ctx.header("X-Key")         // Option<&str>
 ctx.dispatch_job("name", args).await?  // -> Uuid
 ctx.idempotency_key         // Option<String>
+
+// MCP Tool only
+ctx.db()                    // &PgPool
+ctx.require_user_id()?      // Uuid
+ctx.require_subject()?      // &str (Firebase/Auth0/Clerk)
+ctx.dispatch_job("name", args).await?    // -> Uuid
+ctx.start_workflow("name", input).await? // -> Uuid
+ctx.env("KEY")              // Option<String>
+ctx.env_require("KEY")?     // Result<String>
 ```
 
 ---
@@ -428,7 +475,7 @@ Use `ctx.require_subject()?` for non-UUID providers (Firebase/Auth0/Clerk).
 forge new <name> [--demo|--minimal]
 forge dev
 forge dev down [--clear]
-forge add query|mutation|job|cron|workflow|daemon|webhook <name>
+forge add query|mutation|job|cron|workflow|daemon|webhook|mcp_tool <name>
 forge generate          # TypeScript types
 forge migrate up|down|status
 forge check
