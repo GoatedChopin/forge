@@ -43,7 +43,7 @@ The generated TypeScript client calls this mutation as a type-safe RPC.
 |-----------|------|---------|-------------|
 | `public` | flag | - | Skip authentication |
 | `require_role("x")` | string | - | Require specific role |
-| `timeout` | seconds | 30 | Request timeout |
+| `timeout` | seconds | from `[function]` config | Request timeout (overrides global `timeout_secs`) |
 | `rate_limit(...)` | - | - | Token bucket rate limiting |
 | `transactional` | flag | - | Wrap in database transaction with outbox pattern for jobs/workflows |
 | `log` | string | - | Log level override |

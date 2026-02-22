@@ -88,6 +88,7 @@ pub async fn get_user(ctx: &QueryContext, user_id: Uuid) -> Result<User> {
 ### Mutation
 ```rust
 // Attrs: public, require_role("x"), timeout, rate_limit(...), transactional, log
+// Input structs can use `Upload` type for file uploads (multipart)
 #[forge::mutation(transactional)]  // BEGIN/COMMIT + outbox for jobs
 pub async fn create_order(ctx: &MutationContext, input: OrderInput) -> Result<Order> {
     let order = sqlx::query_as("INSERT INTO orders (...) RETURNING *")
@@ -101,7 +102,8 @@ pub async fn create_order(ctx: &MutationContext, input: OrderInput) -> Result<Or
 ```rust
 // Attrs: timeout="30m", priority="high|normal|low|background|critical",
 //        retry(max_attempts=5, backoff="exponential|linear|fixed", max_backoff="5m"),
-//        idempotent, idempotent(key="input.id"), worker_capability="gpu", public
+//        idempotent, idempotent(key="input.id"), worker_capability="gpu", public,
+//        compensate="rollback_fn", ttl="30d"
 #[forge::job(timeout = "10m", priority = "high", retry(max_attempts = 5, backoff = "exponential"))]
 pub async fn send_email(ctx: &JobContext, input: EmailInput) -> Result<()> {
     ctx.progress(0, "Starting")?;
@@ -146,7 +148,7 @@ pub async fn trial_flow(ctx: &WorkflowContext, user: User) -> Result<()> {
         .step("b", || task_b())
         .run().await?;
 
-    ctx.wait_for_event::<Payment>("payment", Duration::from_days(3)).await?;
+    ctx.wait_for_event::<Payment>("payment", Some(Duration::from_days(3))).await?;
     Ok(())
 }
 ```
@@ -224,45 +226,60 @@ Custom routes are merged at the top level. Avoid paths starting with `/_api` (re
 
 ```rust
 // ALL contexts
-ctx.db()                    // &PgPool
+ctx.db()                    // &PgPool (MutationContext returns DbConn<'_>)
 ctx.require_user_id()?      // Uuid
 ctx.require_subject()?      // &str
 ctx.env("KEY")              // Option<String>
 ctx.env_require("KEY")?     // Result<String>
 
-// Mutation, Job, Cron, Workflow
+// Mutation, Job, Cron, Workflow, Daemon, Webhook
 ctx.http()                  // &reqwest::Client
 
 // Mutation only
-ctx.dispatch_job("name", args).await?    // -> Uuid
-ctx.start_workflow("name", input).await? // -> Uuid
+ctx.dispatch_job("name", args).await?                // -> Uuid
+ctx.dispatch_job_with_context("name", args, ctx_json).await?  // with initial context
+ctx.start_workflow("name", input).await?             // -> Uuid
+ctx.cancel_job(job_id, reason).await?                // -> bool
+ctx.pool()                  // &PgPool (bypass transaction)
 
 // Job only
 ctx.progress(pct, "msg")?   // 0-100
 ctx.is_retry()              // attempt > 1
 ctx.is_last_attempt()       // attempt >= max
+ctx.save("key", json!(v)).await?      // persist across retries + compensation
+ctx.saved().await            // get all saved data
+ctx.heartbeat().await?       // keep alive for long-running jobs
+ctx.is_cancel_requested().await?      // check if cancellation pending
+ctx.check_cancelled().await?          // error if cancel requested
 
 // Cron only
 ctx.is_late()               // delay > 1min
 ctx.is_catch_up             // bool
+ctx.delay()                 // Duration between scheduled and actual
 ctx.log.info/warn/error/debug("msg", json!({}))
 
 // Workflow only
 ctx.step("x").run(|| ...).retry(count, delay).compensate(|r| ...).await?
 ctx.parallel().step("a", || ...).step("b", || ...).run().await?
 ctx.sleep(Duration).await?
-ctx.wait_for_event::<T>("event", timeout).await?
+ctx.wait_for_event::<T>("event", Some(timeout)).await?  // Option<Duration>
 ctx.workflow_time()         // Deterministic time
 ctx.is_step_completed("x")
+ctx.is_step_started("x")   // running, completed, or failed
 ctx.get_step_result::<T>("x")
+ctx.is_resumed()            // true if resumed after suspension
+ctx.tenant_id()             // Option<Uuid> for multi-tenancy
 
 // Daemon only
 ctx.shutdown_signal()       // Use in tokio::select! for graceful shutdown
 ctx.is_shutdown_requested() // bool
+ctx.heartbeat().await?      // keep alive signal
 
 // Webhook only
 ctx.header("X-Key")         // Option<&str>
+ctx.headers()               // &HashMap<String, String>
 ctx.dispatch_job("name", args).await?  // -> Uuid
+ctx.cancel_job(job_id, reason).await?  // -> bool
 ctx.idempotency_key         // Option<String>
 
 // MCP Tool only
@@ -291,6 +308,39 @@ pub struct User {
 // Auto-generates: Display, FromStr, Serialize, Deserialize, sqlx::Encode/Decode
 #[forge::forge_enum]
 pub enum Status { Pending, Active, Completed }
+```
+
+---
+
+## File Uploads
+
+Use `Upload` type in mutation input. Methods: `name()`, `content_type()`, `bytes()`, `into_bytes()`, `len()`. Limits: 10MB/file, 20MB total, 20 fields.
+
+```rust
+pub struct UploadInput { pub file: Upload }
+
+#[forge::mutation]
+pub async fn upload_file(ctx: &MutationContext, input: UploadInput) -> Result<FileRecord> { ... }
+```
+
+---
+
+## Job Compensation
+
+`ctx.save(key, val).await?` persists data across retries. Compensation handler receives `(ctx, original_args, reason)`.
+
+```rust
+#[forge::job(compensate = "rollback_charge")]
+pub async fn charge_card(ctx: &JobContext, input: ChargeInput) -> Result<()> {
+    ctx.save("charge_id", json!(charge.id)).await?;
+    Ok(())
+}
+
+pub async fn rollback_charge(ctx: &JobContext, input: ChargeInput, reason: &str) -> Result<()> {
+    let saved = ctx.saved().await;
+    // use saved["charge_id"] to rollback
+    Ok(())
+}
 ```
 
 ---
@@ -401,7 +451,7 @@ mod tests {
 - `TestQueryContext::builder().as_user(id).with_role("x").with_pool(pool).build()`
 - `TestMutationContext::builder().as_user(id).mock_http_json(pattern, response).build()`
 - `TestJobContext::builder("name").as_retry(attempt).with_max_attempts(n).build()`
-- `TestCronContext::builder().with_catch_up(true).build()`
+- `TestCronContext::builder("name").as_catch_up().build()`
 - `TestWorkflowContext::builder().with_step_states(map).build()`
 - `TestDaemonContext::builder("name").with_pool(pool).build()`
 - `TestWebhookContext::builder("name").with_header("X-Key", "val").with_idempotency_key("k").build()`

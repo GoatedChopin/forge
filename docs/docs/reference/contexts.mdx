@@ -268,9 +268,10 @@ Created via `ctx.step(name, || async { ... })`.
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `compensate` | `fn compensate<F, Fut>(self, f: F) -> Self` | Set rollback handler |
+| `retry` | `fn retry(self, count: u32, delay: Duration) -> Self` | Retry on failure |
 | `timeout` | `fn timeout(self, duration: Duration) -> Self` | Set step timeout |
 | `optional` | `fn optional(self) -> Self` | Mark step as optional (failure continues workflow) |
-| `run` | `async fn run(self) -> Result<T>` | Execute the step |
+| `run` | `async fn run(self) -> Result<Option<T>>` | Execute the step (None if already completed on resume) |
 
 ### ParallelBuilder
 

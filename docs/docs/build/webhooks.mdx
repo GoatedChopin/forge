@@ -221,6 +221,9 @@ pub async fn events_webhook(ctx: &WebhookContext, payload: Value) -> Result<Webh
 | `ctx.header(name)` | `Option<&str>` | Get header value (case-insensitive) |
 | `ctx.headers()` | `&HashMap<String, String>` | All request headers |
 | `ctx.dispatch_job(name, args)` | `Result<Uuid>` | Dispatch background job |
+| `ctx.cancel_job(job_id, reason)` | `Result<bool>` | Cancel a dispatched job |
+| `ctx.env(key)` | `Option<String>` | Environment variable |
+| `ctx.env_require(key)` | `Result<String>` | Required environment variable |
 
 ## Context Fields
 

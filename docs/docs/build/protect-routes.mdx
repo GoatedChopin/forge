@@ -266,8 +266,7 @@ async fn test_protected_query() {
     let ctx = TestQueryContext::builder()
         .as_user(Uuid::new_v4())
         .with_role("admin")
-        .build()
-        .await;
+        .build();
 
     let result = get_orders(&ctx).await;
     assert!(result.is_ok());
@@ -276,9 +275,7 @@ async fn test_protected_query() {
 #[tokio::test]
 async fn test_unauthenticated() {
     let ctx = TestQueryContext::builder()
-        .unauthenticated()
-        .build()
-        .await;
+        .build();  // No user = unauthenticated
 
     let result = get_user(&ctx, Uuid::new_v4()).await;
     assert!(result.is_err());
@@ -289,8 +286,7 @@ async fn test_missing_role() {
     let ctx = TestQueryContext::builder()
         .as_user(Uuid::new_v4())
         .with_role("user")  // Not admin
-        .build()
-        .await;
+        .build();
 
     let result = delete_user(&ctx, Uuid::new_v4()).await;
     assert!(matches!(result, Err(ForgeError::Forbidden(_))));
