@@ -106,7 +106,7 @@ test.describe("CRUD with reactivity", () => {
     });
 
     const todoItem = page.locator("li", { hasText: title });
-    await todoItem.locator('input[type="checkbox"]').check();
+    await todoItem.locator("label").click();
 
     await expect(todoItem).toHaveClass(/completed/, {
       timeout: ACTION_TIMEOUT,
@@ -157,7 +157,7 @@ test.describe("reactivity", () => {
     });
 
     const todoItem = page.locator("li", { hasText: title });
-    await todoItem.locator('input[type="checkbox"]').check();
+    await todoItem.locator("label").click();
     await expect(page.locator(".count")).toHaveText("0 remaining", {
       timeout: ACTION_TIMEOUT,
     });
@@ -230,12 +230,12 @@ test.describe("UX details", () => {
     const todoItem = page.locator("li", { hasText: title });
     await expect(todoItem).toBeVisible({ timeout: ACTION_TIMEOUT });
 
-    await todoItem.locator('input[type="checkbox"]').check();
+    await todoItem.locator("label").click();
     await expect(todoItem).toHaveClass(/completed/, {
       timeout: ACTION_TIMEOUT,
     });
 
-    await todoItem.locator('input[type="checkbox"]').uncheck();
+    await todoItem.locator("label").click();
     await expect(todoItem).not.toHaveClass(/completed/, {
       timeout: ACTION_TIMEOUT,
     });
