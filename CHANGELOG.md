@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-02-22
+
+### Added
+
+- Custom HTTP handler support via `#[forge::handler]` for raw request/response control
+- Prebuilt Svelte runtime shipped with the CLI (no more regenerating on every codegen)
+- Configurable log level with auto-initialized tracing subscriber
+- Kanban board example (renamed from trellix) with redesigned UI
+- Comprehensive Playwright test suites for all examples
+- MCP and custom handler documentation
+- Examples README with overview of all example projects
+
+### Changed
+
+- `forge dev` is now docker-only, removed embedded PostgreSQL support
+- Examples moved into workspace with shared workspace dependencies
+- Release pipeline overhauled for docker-only dev workflow
+- Example UIs redesigned, replaced JS dialogs with inline UI
+- Auth middleware fixes for edge cases
+- AGENTS template updated for new context methods
+- Docs updated to reflect docker-only dev and new context API
+
+### Removed
+
+- Embedded PostgreSQL support (use Docker Compose instead)
+- Standalone `Cargo.lock` files from examples (now workspace members)
+
 ## [0.3.0] - 2026-02-20
 
 ### Added
@@ -227,7 +254,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust 2024 edition unsafe block compatibility
 - Release workflow cargo-edit installation
 
-[unreleased]: https://github.com/isala404/forge/compare/v0.3.0...HEAD
+[unreleased]: https://github.com/isala404/forge/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/isala404/forge/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/isala404/forge/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/isala404/forge/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/isala404/forge/compare/v0.1.0...v0.2.0
