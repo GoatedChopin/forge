@@ -950,7 +950,7 @@ checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 
 [[package]]
 name = "forge-codegen"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "forge-core",
  "quote",
@@ -964,7 +964,7 @@ dependencies = [
 
 [[package]]
 name = "forge-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64",
  "bytes",
@@ -991,7 +991,7 @@ dependencies = [
 
 [[package]]
 name = "forge-macros"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -1002,7 +1002,7 @@ dependencies = [
 
 [[package]]
 name = "forge-runtime"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1045,7 +1045,7 @@ dependencies = [
 
 [[package]]
 name = "forgex"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "axum 0.8.8",
@@ -1770,7 +1770,7 @@ dependencies = [
 
 [[package]]
 name = "kanban-board"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "axum 0.8.8",
  "bcrypt",
@@ -3420,7 +3420,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "support-desk"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "axum 0.8.8",
  "bcrypt",
@@ -3612,7 +3612,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "todo"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "axum 0.8.8",
  "bcrypt",
