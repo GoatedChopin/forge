@@ -101,14 +101,13 @@
 </script>
 
 <main class="desk-shell">
-  <section class="hero">
-    <p class="kicker">Support Desk Example</p>
-    <h1>Human and LLM share the same inbox actions.</h1>
+  <header class="hero">
+    <h1>Support Desk</h1>
     <p class="lede">
-      Agents use this UI, while an MCP client can run equivalent actions at
+      Shared inbox for humans and LLM agents. MCP endpoint at
       <code>/_api/mcp</code>.
     </p>
-  </section>
+  </header>
 
   <section class="create-panel">
     <h2>Open Ticket</h2>
@@ -148,6 +147,7 @@
       </label>
       <div class="actions">
         <button
+          class="btn-primary"
           data-testid="open-ticket-button"
           onclick={createTicket}
           disabled={creating ||
@@ -193,10 +193,10 @@
                 <h3>{ticket.title}</h3>
               </div>
               <div class="chips">
-                <span class="chip status status-{ticket.status}">
+                <span class="chip status-chip status-{ticket.status}">
                   {laneLabel(ticket.status)}
                 </span>
-                <span class="chip priority priority-{ticket.priority}">
+                <span class="chip priority-chip priority-{ticket.priority}">
                   {ticket.priority}
                 </span>
               </div>
@@ -256,6 +256,7 @@
                   placeholder="Add latest internal note"
                 />
                 <button
+                  class="ghost"
                   onclick={() => saveNote(ticket)}
                   disabled={busyKey === `${ticket.id}:note`}
                 >
@@ -271,97 +272,84 @@
 </main>
 
 <style>
-  @import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700;9..144,900&family=IBM+Plex+Sans:wght@400;500;600&display=swap");
-
   :global(body) {
     margin: 0;
-    background:
-      radial-gradient(circle at 15% 20%, #fbdc9f 0%, transparent 45%),
-      radial-gradient(circle at 82% 12%, #9fd5c4 0%, transparent 42%),
-      linear-gradient(145deg, #152126 0%, #0d1419 55%, #1b2830 100%);
-    color: #eaf5f0;
-    font-family: "IBM Plex Sans", sans-serif;
+    background: #fff;
+    color: #222;
+    font-family:
+      -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     min-height: 100vh;
   }
 
   .desk-shell {
-    width: min(1040px, calc(100% - 2.25rem));
-    margin: 1.8rem auto 2.6rem;
+    width: min(960px, calc(100% - 2rem));
+    margin: 1.5rem auto 2.5rem;
     display: grid;
     gap: 1rem;
   }
 
-  .hero,
-  .create-panel,
-  .board {
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: 20px;
-    background: rgba(11, 18, 24, 0.74);
-    backdrop-filter: blur(7px);
-    box-shadow: 0 18px 45px rgba(0, 0, 0, 0.32);
-  }
-
   .hero {
-    padding: 1.4rem 1.45rem;
-    animation: rise 0.55s ease-out;
-  }
-
-  .kicker {
-    margin: 0;
-    font-size: 0.74rem;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: #c9e9de;
+    padding: 0 0 0.75rem;
+    border-bottom: 1px solid #e5e5e5;
   }
 
   h1 {
-    margin: 0.4rem 0;
-    font-family: "Fraunces", serif;
-    font-weight: 900;
-    line-height: 1.1;
-    font-size: clamp(1.7rem, 4vw, 2.6rem);
-    max-width: 18ch;
+    margin: 0;
+    font-weight: 600;
+    font-size: 1.5rem;
+    color: #111;
   }
 
   .lede {
-    margin: 0;
-    color: #bed8cf;
+    margin: 0.25rem 0 0;
+    color: #666;
+    font-size: 0.88rem;
   }
 
   .create-panel {
-    padding: 1.2rem 1.1rem;
-    animation: rise 0.68s ease-out;
+    border: 1px solid #e5e5e5;
+    border-radius: 6px;
+    padding: 1rem;
   }
 
   .create-panel h2,
   .board h2 {
-    margin: 0 0 0.9rem;
-    font-family: "Fraunces", serif;
-    font-size: 1.3rem;
+    margin: 0 0 0.75rem;
+    font-weight: 600;
+    font-size: 1.1rem;
+    color: #111;
   }
 
   .grid {
     display: grid;
-    gap: 0.8rem;
+    gap: 0.65rem;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   label {
     display: grid;
-    gap: 0.38rem;
-    font-size: 0.83rem;
-    color: #cde0d8;
+    gap: 0.25rem;
+    font-size: 0.82rem;
+    color: #555;
   }
 
   input,
   textarea,
   select {
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: 12px;
-    padding: 0.6rem 0.72rem;
-    background: rgba(255, 255, 255, 0.06);
-    color: #eff8f5;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    padding: 0.5rem 0.65rem;
+    background: #fff;
+    color: #222;
     font: inherit;
+    font-size: 0.88rem;
+    outline: none;
+  }
+
+  input:focus,
+  textarea:focus,
+  select:focus {
+    border-color: #888;
   }
 
   textarea {
@@ -377,31 +365,31 @@
     align-items: end;
   }
 
-  button {
-    border: 0;
-    border-radius: 999px;
-    padding: 0.62rem 1rem;
-    background: linear-gradient(96deg, #fed68b 0%, #78d6c0 100%);
-    color: #0f1d23;
-    font-weight: 700;
-    letter-spacing: 0.01em;
+  .btn-primary {
+    border: none;
+    border-radius: 4px;
+    padding: 0.5rem 1rem;
+    background: #111;
+    color: #fff;
+    font-weight: 500;
     cursor: pointer;
-    transition: transform 0.18s ease;
+    font-family: inherit;
+    font-size: 0.88rem;
   }
 
-  button:hover {
-    transform: translateY(-1px);
+  .btn-primary:hover {
+    background: #333;
   }
 
-  button:disabled {
+  .btn-primary:disabled {
     cursor: not-allowed;
-    opacity: 0.56;
-    transform: none;
+    opacity: 0.4;
   }
 
   .board {
-    padding: 1.1rem;
-    animation: rise 0.8s ease-out;
+    border: 1px solid #e5e5e5;
+    border-radius: 6px;
+    padding: 1rem;
   }
 
   .board-head {
@@ -413,9 +401,9 @@
 
   .board-head span {
     font-size: 0.78rem;
-    letter-spacing: 0.11em;
     text-transform: uppercase;
-    color: #b9d9cf;
+    letter-spacing: 0.06em;
+    color: #888;
   }
 
   .ticket-list {
@@ -423,159 +411,164 @@
     margin: 0;
     padding: 0;
     display: grid;
-    gap: 0.72rem;
+    gap: 0.6rem;
   }
 
   .ticket {
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 14px;
-    padding: 0.88rem;
-    background: rgba(4, 9, 14, 0.45);
+    border: 1px solid #e5e5e5;
+    border-radius: 6px;
+    padding: 0.75rem;
   }
 
   .ticket header {
     display: flex;
     justify-content: space-between;
     align-items: start;
-    gap: 0.8rem;
+    gap: 0.75rem;
   }
 
   .customer {
     margin: 0;
-    font-size: 0.77rem;
+    font-size: 0.75rem;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: #abcbbe;
+    letter-spacing: 0.06em;
+    color: #888;
   }
 
   h3 {
-    margin: 0.26rem 0 0;
-    font-size: 1.05rem;
+    margin: 0.15rem 0 0;
+    font-size: 0.95rem;
+    font-weight: 600;
     line-height: 1.2;
   }
 
   .chips {
     display: flex;
-    gap: 0.35rem;
+    gap: 0.3rem;
     flex-wrap: wrap;
   }
 
   .chip {
-    border-radius: 999px;
-    padding: 0.22rem 0.56rem;
-    font-size: 0.72rem;
+    border-radius: 3px;
+    padding: 0.15rem 0.45rem;
+    font-size: 0.7rem;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.05em;
+    font-weight: 500;
   }
 
   .status-new {
-    background: rgba(255, 241, 204, 0.17);
-    color: #ffe29e;
+    background: #fffbeb;
+    color: #92400e;
   }
 
   .status-working {
-    background: rgba(162, 227, 255, 0.17);
-    color: #9fd9f3;
+    background: #f0f9ff;
+    color: #0c4a6e;
   }
 
   .status-resolved {
-    background: rgba(170, 242, 185, 0.17);
-    color: #9be0aa;
+    background: #f0fdf4;
+    color: #166534;
   }
 
   .priority-low {
-    background: rgba(196, 221, 214, 0.18);
-    color: #c9ebe1;
+    background: #f0fdf4;
+    color: #166534;
   }
 
   .priority-normal {
-    background: rgba(201, 215, 252, 0.2);
-    color: #c7d7ff;
+    background: #f0f9ff;
+    color: #0c4a6e;
   }
 
   .priority-high {
-    background: rgba(255, 174, 154, 0.21);
-    color: #ffb39f;
+    background: #fef2f2;
+    color: #991b1b;
   }
 
   .details {
-    margin: 0.58rem 0 0;
-    color: #d4ebe2;
+    margin: 0.4rem 0 0;
+    color: #444;
+    font-size: 0.88rem;
   }
 
   .note {
-    margin: 0.52rem 0 0;
-    font-size: 0.86rem;
-    color: #e8bf8e;
+    margin: 0.35rem 0 0;
+    font-size: 0.82rem;
+    color: #92400e;
   }
 
   .controls {
-    margin-top: 0.72rem;
+    margin-top: 0.6rem;
     display: grid;
-    gap: 0.58rem;
+    gap: 0.45rem;
   }
 
   .button-row {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.42rem;
+    gap: 0.3rem;
   }
 
   .ghost {
-    background: rgba(255, 255, 255, 0.1);
-    color: #ecf7f2;
-    border-radius: 10px;
-    font-size: 0.8rem;
-    padding: 0.4rem 0.62rem;
-    font-weight: 600;
+    background: #f5f5f5;
+    color: #333;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 0.78rem;
+    padding: 0.3rem 0.55rem;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .ghost:hover {
+    background: #eee;
+    border-color: #bbb;
+  }
+
+  .ghost:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
   }
 
   .note-row {
     display: grid;
-    gap: 0.55rem;
+    gap: 0.4rem;
     grid-template-columns: 1fr auto;
   }
 
   .status {
     margin: 0;
-    color: #c2ddd3;
-    padding: 0.72rem;
-    border-radius: 12px;
-    background: rgba(255, 255, 255, 0.07);
+    color: #888;
+    padding: 0.6rem;
+    text-align: center;
+    font-size: 0.88rem;
   }
 
   .error {
-    margin: 0.72rem 0 0;
-    color: #ffd7c7;
-    background: rgba(188, 63, 32, 0.28);
-    border: 1px solid rgba(255, 184, 161, 0.35);
-    border-radius: 11px;
-    padding: 0.58rem 0.65rem;
-    font-size: 0.9rem;
+    margin: 0.5rem 0 0;
+    color: #b91c1c;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 4px;
+    padding: 0.5rem 0.6rem;
+    font-size: 0.85rem;
   }
 
   code {
-    font-family: "IBM Plex Sans", sans-serif;
-    background: rgba(255, 255, 255, 0.12);
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    border-radius: 0.45rem;
-    padding: 0.15rem 0.38rem;
-  }
-
-  @keyframes rise {
-    from {
-      opacity: 0;
-      transform: translateY(8px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
+    font-family: ui-monospace, monospace;
+    background: #f5f5f5;
+    border: 1px solid #e5e5e5;
+    border-radius: 3px;
+    padding: 0.1rem 0.3rem;
+    font-size: 0.85em;
   }
 
   @media (max-width: 760px) {
     .desk-shell {
-      width: min(1040px, calc(100% - 1rem));
+      width: min(960px, calc(100% - 1rem));
     }
 
     .grid {

@@ -10,7 +10,8 @@ services:
       - .env
     environment:
       - DATABASE_URL=postgres://postgres:forge@db:5432/todo
-    command: cargo watch --poll -w examples/todo/src -w examples/todo/migrations -w examples/todo/Cargo.toml -w crates/ -x "run -p todo --no-default-features"
+    working_dir: /app/examples/todo
+    command: cargo watch --poll -w src -w migrations -w Cargo.toml -w ../../crates/ -x "run --no-default-features"
     volumes:
       - ../..:/app
       - cargo_cache:/usr/local/cargo/registry

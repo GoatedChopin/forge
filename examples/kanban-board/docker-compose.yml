@@ -10,7 +10,8 @@ services:
       - .env
     environment:
       - DATABASE_URL=postgres://postgres:forge@db:5432/kanban_board
-    command: cargo watch --poll -w examples/kanban-board/src -w examples/kanban-board/migrations -w examples/kanban-board/Cargo.toml -w crates/ -x "run -p kanban-board --no-default-features"
+    working_dir: /app/examples/kanban-board
+    command: cargo watch --poll -w src -w migrations -w Cargo.toml -w ../../crates/ -x "run --no-default-features"
     volumes:
       - ../..:/app
       - cargo_cache:/usr/local/cargo/registry

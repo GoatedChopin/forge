@@ -16,6 +16,10 @@
     loading = true;
 
     try {
+      // Clear stale tokens so the auth middleware doesn't reject public endpoints
+      localStorage.removeItem("kanban_token");
+      localStorage.removeItem("kanban_user");
+
       const result =
         mode === "register"
           ? await register({ email, name, password })
@@ -40,13 +44,9 @@
 
 <main>
   <div class="auth-shell">
-    <section class="brand">
-      <p class="kicker">Kanban Board Example</p>
+    <header class="brand">
       <h1>Kanban Board</h1>
-      <p class="lede">
-        Auth, projects, tasks, jobs, workflows, cron. All from one Rust binary.
-      </p>
-    </section>
+    </header>
 
     <section class="form-panel">
       <form
@@ -100,24 +100,12 @@
 </main>
 
 <style>
-  @import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700;9..144,900&family=IBM+Plex+Sans:wght@400;500;600&display=swap");
-
   :global(body) {
     margin: 0;
-    background:
-      radial-gradient(
-        circle at 20% 25%,
-        rgba(251, 220, 159, 0.12) 0%,
-        transparent 50%
-      ),
-      radial-gradient(
-        circle at 80% 75%,
-        rgba(120, 214, 192, 0.08) 0%,
-        transparent 45%
-      ),
-      linear-gradient(155deg, #111a1f 0%, #0a1015 50%, #141e25 100%);
-    color: #eaf5f0;
-    font-family: "IBM Plex Sans", sans-serif;
+    background: #fff;
+    color: #222;
+    font-family:
+      -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     min-height: 100vh;
   }
 
@@ -130,146 +118,110 @@
   }
 
   .auth-shell {
-    width: min(420px, 100%);
+    width: min(380px, 100%);
     display: grid;
-    gap: 1rem;
-  }
-
-  .brand,
-  .form-panel {
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 18px;
-    background: rgba(11, 18, 24, 0.7);
-    backdrop-filter: blur(8px);
-    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.3);
-    padding: 1.3rem;
+    gap: 1.5rem;
   }
 
   .brand {
-    animation: rise 0.5s ease-out;
     text-align: center;
   }
 
-  .form-panel {
-    animation: rise 0.65s ease-out;
-  }
-
-  .kicker {
-    margin: 0;
-    font-size: 0.72rem;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: #a8d4c4;
-  }
-
   h1 {
-    margin: 0.3rem 0 0;
-    font-family: "Fraunces", serif;
-    font-weight: 900;
-    font-size: 2rem;
+    margin: 0;
+    font-weight: 600;
+    font-size: 1.5rem;
+    color: #111;
   }
 
-  .lede {
-    margin: 0.3rem 0 0;
-    color: #b0cfc4;
-    font-size: 0.88rem;
+  .form-panel {
+    border: 1px solid #e5e5e5;
+    border-radius: 6px;
+    padding: 1.5rem;
   }
 
   form {
     display: flex;
     flex-direction: column;
-    gap: 0.9rem;
+    gap: 0.75rem;
   }
 
   h2 {
     margin: 0;
-    font-family: "Fraunces", serif;
-    font-size: 1.25rem;
+    font-weight: 600;
+    font-size: 1.1rem;
+    color: #111;
   }
 
   label {
     display: flex;
     flex-direction: column;
-    gap: 0.3rem;
+    gap: 0.25rem;
     font-size: 0.82rem;
-    color: #b8d8cc;
+    color: #555;
   }
 
   input {
-    padding: 0.6rem 0.75rem;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 10px;
-    background: rgba(255, 255, 255, 0.06);
-    color: #eef8f4;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: #fff;
+    color: #222;
     font: inherit;
-    font-size: 0.95rem;
+    font-size: 0.9rem;
     outline: none;
-    transition: border-color 0.2s;
   }
 
   input:focus {
-    border-color: rgba(254, 214, 139, 0.45);
+    border-color: #888;
   }
 
   button[type="submit"] {
-    padding: 0.7rem;
-    background: linear-gradient(96deg, #fed68b 0%, #78d6c0 100%);
-    color: #0f1d23;
-    border: 0;
-    border-radius: 12px;
-    font-size: 0.95rem;
-    font-weight: 700;
+    padding: 0.6rem;
+    background: #111;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    font-weight: 500;
     cursor: pointer;
     font-family: inherit;
-    transition: transform 0.15s ease;
   }
 
   button[type="submit"]:hover {
-    transform: translateY(-1px);
+    background: #333;
   }
 
   button[type="submit"]:disabled {
-    opacity: 0.5;
+    opacity: 0.4;
     cursor: not-allowed;
-    transform: none;
   }
 
   .error {
-    color: #ffd7c7;
-    font-size: 0.88rem;
+    color: #b91c1c;
+    font-size: 0.85rem;
     margin: 0;
-    padding: 0.55rem 0.7rem;
-    background: rgba(188, 63, 32, 0.25);
-    border: 1px solid rgba(255, 184, 161, 0.25);
-    border-radius: 10px;
+    padding: 0.5rem 0.7rem;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 4px;
   }
 
   .toggle {
     text-align: center;
     font-size: 0.85rem;
-    color: #8ab5a7;
+    color: #666;
     margin: 0;
   }
 
   .toggle button {
     background: none;
     border: none;
-    color: #fed68b;
+    color: #111;
     cursor: pointer;
     text-decoration: underline;
     font-size: 0.85rem;
     font-family: inherit;
     padding: 0;
-  }
-
-  @keyframes rise {
-    from {
-      opacity: 0;
-      transform: translateY(10px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
   }
 </style>

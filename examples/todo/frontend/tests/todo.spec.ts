@@ -280,4 +280,91 @@ test.describe("UX details", () => {
 
     await expect(page.locator(".summary")).toContainText("2 remaining");
   });
+
+  test("todos persist after page reload", async ({ page }) => {
+    const title = uniqueTitle("persist");
+    await gotoReady(page);
+
+    await page.fill(INPUT, title);
+    await page.click(".input-row button");
+    await expect(page.locator(".title", { hasText: title })).toBeVisible({
+      timeout: ACTION_TIMEOUT,
+    });
+
+    await page.reload();
+    await expect(page.locator(".title", { hasText: title })).toBeVisible({
+      timeout: ACTION_TIMEOUT,
+    });
+  });
+
+  test("completed state persists after page reload", async ({ page }) => {
+    const title = uniqueTitle("persist-done");
+    await gotoReady(page);
+
+    await page.fill(INPUT, title);
+    await page.click(".input-row button");
+    const todoItem = page.locator("li", { hasText: title });
+    await expect(todoItem).toBeVisible({ timeout: ACTION_TIMEOUT });
+
+    await todoItem.locator('input[type="checkbox"]').check();
+    await expect(todoItem).toHaveClass(/completed/, {
+      timeout: ACTION_TIMEOUT,
+    });
+
+    await page.reload();
+    const reloaded = page.locator("li", { hasText: title });
+    await expect(reloaded).toHaveClass(/completed/, {
+      timeout: ACTION_TIMEOUT,
+    });
+    await expect(reloaded.locator('input[type="checkbox"]')).toBeChecked();
+  });
+
+  test("delete button becomes visible on hover", async ({ page }) => {
+    const title = uniqueTitle("hover-del");
+    await gotoReady(page);
+
+    await page.fill(INPUT, title);
+    await page.click(".input-row button");
+    const todoItem = page.locator("li", { hasText: title });
+    await expect(todoItem).toBeVisible({ timeout: ACTION_TIMEOUT });
+
+    const deleteBtn = todoItem.locator("button.delete");
+    await expect(deleteBtn).toHaveCSS("opacity", "0");
+
+    await todoItem.hover();
+    await expect(deleteBtn).toHaveCSS("opacity", "1");
+  });
+
+  test("bottom count reflects mix of completed and active", async ({
+    page,
+  }) => {
+    const t1 = uniqueTitle("mix-1");
+    const t2 = uniqueTitle("mix-2");
+    const t3 = uniqueTitle("mix-3");
+    await gotoReady(page);
+
+    for (const t of [t1, t2, t3]) {
+      await page.fill(INPUT, t);
+      await page.click(".input-row button");
+      await expect(page.locator(".title", { hasText: t })).toBeVisible({
+        timeout: ACTION_TIMEOUT,
+      });
+    }
+
+    await page
+      .locator("li", { hasText: t1 })
+      .locator('input[type="checkbox"]')
+      .check();
+    await expect(page.locator(".count")).toHaveText("2 remaining", {
+      timeout: ACTION_TIMEOUT,
+    });
+
+    await page
+      .locator("li", { hasText: t2 })
+      .locator('input[type="checkbox"]')
+      .check();
+    await expect(page.locator(".count")).toHaveText("1 remaining", {
+      timeout: ACTION_TIMEOUT,
+    });
+  });
 });

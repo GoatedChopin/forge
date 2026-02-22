@@ -18,6 +18,8 @@
   let newName = $state("");
   let creating = $state(false);
   let error: string | null = $state(null);
+  let renamingId: string | null = $state(null);
+  let renameValue = $state("");
   let visibleProjects: Project[] = $derived.by(() => {
     const map = new SvelteMap<string, Project>();
     for (const project of projects.data ?? []) {
@@ -48,15 +50,21 @@
     }
   }
 
-  async function handleRename(project: { id: string; name: string }) {
-    const next = prompt("Rename project", project.name);
-    if (!next) return;
+  function startRename(project: { id: string; name: string }) {
+    renamingId = project.id;
+    renameValue = project.name;
+  }
 
+  async function submitRename(projectId: string) {
+    if (!renameValue.trim()) {
+      renamingId = null;
+      return;
+    }
     try {
       const updated = await updateProject({
         user_id: userId,
-        id: project.id,
-        name: next.trim(),
+        id: projectId,
+        name: renameValue.trim(),
       });
       localProjects = [
         updated,
@@ -64,6 +72,16 @@
       ];
     } catch (e) {
       error = (e as ForgeError).message;
+    } finally {
+      renamingId = null;
+    }
+  }
+
+  function handleRenameKeydown(event: KeyboardEvent, projectId: string) {
+    if (event.key === "Enter") {
+      void submitRename(projectId);
+    } else if (event.key === "Escape") {
+      renamingId = null;
     }
   }
 
@@ -123,27 +141,38 @@
         </section>
       {:else}
         <ul class="project-list">
-          {#each visibleProjects as project, i (project.id)}
-            <li style="animation-delay: {i * 50}ms">
+          {#each visibleProjects as project (project.id)}
+            <li>
               <div class="project-row">
-                <a href={resolve(`/app/${project.id}`)}>
-                  <span class="name">{project.name}</span>
-                  {#if project.archive_delete_at}
-                    <span class="badge archived">scheduled</span>
-                  {:else if project.archived}
-                    <span class="badge archived">completed</span>
-                  {/if}
-                  {#if project.description}
-                    <span class="desc">{project.description}</span>
-                  {/if}
-                </a>
-                <button
-                  class="rename"
-                  onclick={() => handleRename(project)}
-                  disabled={project.archived}
-                >
-                  Rename
-                </button>
+                {#if renamingId === project.id}
+                  <div class="rename-form">
+                    <input
+                      class="rename-input"
+                      bind:value={renameValue}
+                      onkeydown={(e) => handleRenameKeydown(e, project.id)}
+                      onblur={() => submitRename(project.id)}
+                    />
+                  </div>
+                {:else}
+                  <a href={resolve(`/app/${project.id}`)}>
+                    <span class="name">{project.name}</span>
+                    {#if project.archive_delete_at}
+                      <span class="badge archived">scheduled</span>
+                    {:else if project.archived}
+                      <span class="badge archived">completed</span>
+                    {/if}
+                    {#if project.description}
+                      <span class="desc">{project.description}</span>
+                    {/if}
+                  </a>
+                  <button
+                    class="rename"
+                    onclick={() => startRename(project)}
+                    disabled={project.archived}
+                  >
+                    Rename
+                  </button>
+                {/if}
               </div>
             </li>
           {/each}
@@ -154,29 +183,17 @@
 </main>
 
 <style>
-  @import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700;9..144,900&family=IBM+Plex+Sans:wght@400;500;600&display=swap");
-
   :global(body) {
     margin: 0;
-    background:
-      radial-gradient(
-        circle at 20% 25%,
-        rgba(251, 220, 159, 0.12) 0%,
-        transparent 50%
-      ),
-      radial-gradient(
-        circle at 80% 75%,
-        rgba(120, 214, 192, 0.08) 0%,
-        transparent 45%
-      ),
-      linear-gradient(155deg, #111a1f 0%, #0a1015 50%, #141e25 100%);
-    color: #eaf5f0;
-    font-family: "IBM Plex Sans", sans-serif;
+    background: #fff;
+    color: #222;
+    font-family:
+      -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     min-height: 100vh;
   }
 
   main {
-    max-width: 640px;
+    max-width: 600px;
     margin: 0 auto;
     padding: 0 1rem;
   }
@@ -191,47 +208,41 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    animation: rise 0.5s ease-out;
   }
 
   h1 {
     margin: 0;
-    font-family: "Fraunces", serif;
-    font-weight: 900;
-    font-size: 1.8rem;
+    font-weight: 600;
+    font-size: 1.5rem;
+    color: #111;
   }
 
   .subtitle {
     margin: 0.15rem 0 0;
     font-size: 0.82rem;
-    color: #9cc4b6;
-    letter-spacing: 0.04em;
+    color: #888;
   }
 
   .logout {
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    padding: 0.4rem 0.85rem;
-    border-radius: 10px;
+    background: none;
+    border: 1px solid #ccc;
+    padding: 0.35rem 0.75rem;
+    border-radius: 4px;
     cursor: pointer;
     font-size: 0.82rem;
-    color: #c2ddd3;
+    color: #555;
     font-family: inherit;
-    transition: background 0.15s;
   }
 
   .logout:hover {
-    background: rgba(255, 255, 255, 0.12);
+    border-color: #999;
+    color: #222;
   }
 
   .create-section {
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 16px;
-    background: rgba(11, 18, 24, 0.7);
-    backdrop-filter: blur(8px);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
-    padding: 1rem;
-    animation: rise 0.6s ease-out;
+    border: 1px solid #e5e5e5;
+    border-radius: 6px;
+    padding: 0.75rem;
   }
 
   .create-form {
@@ -241,41 +252,39 @@
 
   .create-form input {
     flex: 1;
-    padding: 0.6rem 0.75rem;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 10px;
-    background: rgba(255, 255, 255, 0.06);
-    color: #eef8f4;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: #fff;
+    color: #222;
     font: inherit;
-    font-size: 0.95rem;
+    font-size: 0.9rem;
     outline: none;
-    transition: border-color 0.2s;
   }
 
   .create-form input:focus {
-    border-color: rgba(254, 214, 139, 0.45);
+    border-color: #888;
   }
 
   .create-form button {
-    padding: 0.6rem 1.1rem;
-    background: linear-gradient(96deg, #fed68b 0%, #78d6c0 100%);
-    color: #0f1d23;
-    border: 0;
-    border-radius: 10px;
+    padding: 0.5rem 1rem;
+    background: #111;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
     cursor: pointer;
-    font-weight: 700;
+    font-weight: 500;
     font-family: inherit;
-    transition: transform 0.15s ease;
+    font-size: 0.9rem;
   }
 
   .create-form button:hover {
-    transform: translateY(-1px);
+    background: #333;
   }
 
   .create-form button:disabled {
-    opacity: 0.45;
+    opacity: 0.4;
     cursor: not-allowed;
-    transform: none;
   }
 
   .project-list {
@@ -284,31 +293,22 @@
     margin: 0;
     display: flex;
     flex-direction: column;
-    gap: 0.55rem;
-  }
-
-  .project-list li {
-    animation: slideIn 0.4s ease-out both;
+    gap: 0.5rem;
   }
 
   .project-list li a {
     display: block;
     flex: 1;
-    padding: 1rem 1.1rem;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 14px;
+    padding: 0.75rem 1rem;
+    border: 1px solid #e5e5e5;
+    border-radius: 6px;
     text-decoration: none;
     color: inherit;
-    background: rgba(11, 18, 24, 0.6);
-    backdrop-filter: blur(6px);
-    transition:
-      border-color 0.2s,
-      background 0.2s;
   }
 
   .project-list li a:hover {
-    border-color: rgba(254, 214, 139, 0.35);
-    background: rgba(20, 30, 37, 0.8);
+    border-color: #bbb;
+    background: #fafafa;
   }
 
   .project-row {
@@ -318,19 +318,19 @@
   }
 
   .rename {
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    background: rgba(255, 255, 255, 0.06);
-    border-radius: 10px;
-    padding: 0 0.75rem;
+    border: 1px solid #ddd;
+    background: #fff;
+    border-radius: 4px;
+    padding: 0 0.6rem;
     cursor: pointer;
-    font-size: 0.82rem;
-    color: #b0cfc4;
+    font-size: 0.8rem;
+    color: #555;
     font-family: inherit;
-    transition: background 0.15s;
   }
 
   .rename:hover {
-    background: rgba(255, 255, 255, 0.1);
+    border-color: #999;
+    color: #222;
   }
 
   .rename:disabled {
@@ -338,74 +338,68 @@
     cursor: not-allowed;
   }
 
+  .rename-form {
+    flex: 1;
+    display: flex;
+  }
+
+  .rename-input {
+    flex: 1;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #888;
+    border-radius: 4px;
+    font: inherit;
+    font-size: 0.9rem;
+    outline: none;
+    background: #fff;
+    color: #222;
+  }
+
   .name {
-    font-weight: 600;
-    font-size: 1.05rem;
+    font-weight: 500;
+    font-size: 0.95rem;
   }
 
   .desc {
     display: block;
-    color: #8ab5a7;
-    font-size: 0.85rem;
-    margin-top: 0.2rem;
+    color: #888;
+    font-size: 0.82rem;
+    margin-top: 0.15rem;
   }
 
   .badge {
-    font-size: 0.7rem;
-    padding: 0.15rem 0.5rem;
-    border-radius: 9999px;
-    margin-left: 0.5rem;
-    letter-spacing: 0.06em;
+    font-size: 0.68rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    margin-left: 0.4rem;
+    letter-spacing: 0.04em;
     text-transform: uppercase;
   }
 
   .badge.archived {
-    background: rgba(254, 214, 139, 0.15);
-    color: #fed68b;
+    background: #fef3c7;
+    color: #92400e;
   }
 
   .empty-panel {
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 16px;
-    background: rgba(11, 18, 24, 0.5);
+    border: 1px solid #e5e5e5;
+    border-radius: 6px;
     padding: 2rem;
   }
 
   .error {
-    color: #ffd7c7;
-    font-size: 0.88rem;
-    padding: 0.55rem 0.7rem;
-    background: rgba(188, 63, 32, 0.25);
-    border: 1px solid rgba(255, 184, 161, 0.25);
-    border-radius: 10px;
+    color: #b91c1c;
+    font-size: 0.85rem;
+    padding: 0.5rem 0.7rem;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 4px;
   }
 
   .status {
-    color: #8ab5a7;
+    color: #888;
     text-align: center;
     padding: 1rem;
     margin: 0;
-  }
-
-  @keyframes rise {
-    from {
-      opacity: 0;
-      transform: translateY(10px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  @keyframes slideIn {
-    from {
-      opacity: 0;
-      transform: translateY(8px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
   }
 </style>

@@ -5,7 +5,7 @@ use axum::{
     extract::{Request, State},
     http::StatusCode,
     middleware::Next,
-    response::{IntoResponse, Response},
+    response::{IntoResponse, Json, Response},
 };
 use forge_core::auth::Claims;
 use forge_core::config::JwtAlgorithm as CoreJwtAlgorithm;
@@ -402,7 +402,14 @@ pub async fn auth_middleware(
         Ok(token) => token,
         Err(e) => {
             tracing::warn!(error = %e, "Invalid authorization header");
-            return (StatusCode::UNAUTHORIZED, "Invalid authorization header").into_response();
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({
+                    "success": false,
+                    "error": { "code": "UNAUTHORIZED", "message": "Invalid authorization header" }
+                })),
+            )
+                .into_response();
         }
     };
     tracing::trace!(
@@ -414,7 +421,14 @@ pub async fn auth_middleware(
         Ok(auth_context) => auth_context,
         Err(e) => {
             tracing::warn!(error = %e, "Token validation failed");
-            return (StatusCode::UNAUTHORIZED, "Invalid authentication token").into_response();
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({
+                    "success": false,
+                    "error": { "code": "UNAUTHORIZED", "message": "Invalid authentication token" }
+                })),
+            )
+                .into_response();
         }
     };
     tracing::trace!(

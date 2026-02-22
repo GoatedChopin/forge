@@ -49,13 +49,9 @@
 
 <main>
   <div class="shell">
-    <section class="hero">
-      <p class="kicker">Todo Example</p>
+    <header class="hero">
       <h1>Todos</h1>
-      <p class="lede">
-        Real-time CRUD in one file. Every change syncs via SSE.
-      </p>
-    </section>
+    </header>
 
     <section class="input-panel">
       <div class="input-row">
@@ -92,20 +88,14 @@
           <p class="status">No todos yet. Add one above!</p>
         {:else}
           <ul>
-            {#each todos.data as todo, i (todo.id)}
-              <li
-                class:completed={todo.completed}
-                style="animation-delay: {i * 40}ms"
-              >
+            {#each todos.data as todo (todo.id)}
+              <li class:completed={todo.completed}>
                 <label>
                   <input
                     type="checkbox"
                     checked={todo.completed}
                     onchange={() => handleToggle(todo.id, todo.completed)}
                   />
-                  <span class="check-icon">
-                    {#if todo.completed}&#10003;{/if}
-                  </span>
                   <span class="title">{todo.title}</span>
                 </label>
                 <button class="delete" onclick={() => handleDelete(todo.id)}>
@@ -124,82 +114,40 @@
 </main>
 
 <style>
-  @import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700;9..144,900&family=IBM+Plex+Sans:wght@400;500;600&display=swap");
-
   :global(body) {
     margin: 0;
-    background:
-      radial-gradient(
-        circle at 30% 15%,
-        rgba(251, 220, 159, 0.15) 0%,
-        transparent 50%
-      ),
-      radial-gradient(
-        circle at 75% 80%,
-        rgba(120, 214, 192, 0.1) 0%,
-        transparent 45%
-      ),
-      linear-gradient(155deg, #111a1f 0%, #0a1015 50%, #141e25 100%);
-    color: #eaf5f0;
-    font-family: "IBM Plex Sans", sans-serif;
+    background: #fff;
+    color: #222;
+    font-family:
+      -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     min-height: 100vh;
   }
 
   main {
-    max-width: 32rem;
+    max-width: 480px;
     margin: 0 auto;
     padding: 0 1rem;
   }
 
   .shell {
-    padding: 2.5rem 0 3rem;
-    display: grid;
-    gap: 1rem;
-  }
-
-  .hero,
-  .input-panel,
-  .list-panel {
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 18px;
-    background: rgba(11, 18, 24, 0.7);
-    backdrop-filter: blur(8px);
-    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.3);
-    padding: 1.3rem;
+    padding: 2rem 0 3rem;
   }
 
   .hero {
-    animation: rise 0.5s ease-out;
-  }
-
-  .input-panel {
-    animation: rise 0.6s ease-out;
-  }
-
-  .list-panel {
-    animation: rise 0.7s ease-out;
-  }
-
-  .kicker {
-    margin: 0;
-    font-size: 0.72rem;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: #a8d4c4;
+    padding: 0 0 0.75rem;
+    border-bottom: 1px solid #e5e5e5;
+    margin-bottom: 1rem;
   }
 
   h1 {
-    margin: 0.35rem 0 0;
-    font-family: "Fraunces", serif;
-    font-weight: 900;
-    line-height: 1.1;
-    font-size: clamp(1.5rem, 4vw, 2rem);
+    margin: 0;
+    font-weight: 600;
+    font-size: 1.5rem;
+    color: #111;
   }
 
-  .lede {
-    margin: 0.3rem 0 0;
-    color: #b0cfc4;
-    font-size: 0.92rem;
+  .input-panel {
+    margin-bottom: 1.5rem;
   }
 
   .input-row {
@@ -209,45 +157,40 @@
 
   .input-row input {
     flex: 1;
-    padding: 0.65rem 0.8rem;
-    font-size: 0.95rem;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 12px;
-    background: rgba(255, 255, 255, 0.06);
-    color: #eef8f4;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.9rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: #fff;
+    color: #222;
     font-family: inherit;
     outline: none;
-    transition: border-color 0.2s;
   }
 
   .input-row input:focus {
-    border-color: rgba(254, 214, 139, 0.5);
+    border-color: #888;
   }
 
   .input-row button {
-    padding: 0.65rem 1.2rem;
-    font-size: 0.95rem;
-    background: linear-gradient(96deg, #fed68b 0%, #78d6c0 100%);
-    color: #0f1d23;
-    border: 0;
-    border-radius: 12px;
+    padding: 0.5rem 1rem;
+    font-size: 0.9rem;
+    background: #111;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
     cursor: pointer;
-    font-weight: 700;
+    font-weight: 500;
     font-family: inherit;
-    transition:
-      transform 0.15s ease,
-      opacity 0.15s;
     white-space: nowrap;
   }
 
   .input-row button:hover {
-    transform: translateY(-1px);
+    background: #333;
   }
 
   .input-row button:disabled {
-    opacity: 0.45;
+    opacity: 0.4;
     cursor: not-allowed;
-    transform: none;
   }
 
   .list-head {
@@ -257,10 +200,10 @@
   }
 
   .summary {
-    font-size: 0.76rem;
-    letter-spacing: 0.08em;
+    font-size: 0.75rem;
     text-transform: uppercase;
-    color: #9cc4b6;
+    letter-spacing: 0.05em;
+    color: #888;
   }
 
   ul {
@@ -273,10 +216,8 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0.7rem 0.6rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-    animation: fadeIn 0.35s ease-out both;
-    transition: opacity 0.25s;
+    padding: 0.6rem 0;
+    border-bottom: 1px solid #eee;
   }
 
   li:last-child {
@@ -286,64 +227,38 @@
   li label {
     display: flex;
     align-items: center;
-    gap: 0.6rem;
+    gap: 0.5rem;
     flex: 1;
     cursor: pointer;
   }
 
   li label input[type="checkbox"] {
-    position: absolute;
-    opacity: 0;
-    width: 0;
-    height: 0;
-  }
-
-  .check-icon {
-    width: 1.35rem;
-    height: 1.35rem;
-    border: 1.5px solid rgba(255, 255, 255, 0.25);
-    border-radius: 6px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.75rem;
-    color: #78d6c0;
+    width: 1rem;
+    height: 1rem;
+    margin: 0;
+    cursor: pointer;
     flex-shrink: 0;
-    transition:
-      border-color 0.2s,
-      background 0.2s;
-  }
-
-  li.completed .check-icon {
-    border-color: rgba(120, 214, 192, 0.4);
-    background: rgba(120, 214, 192, 0.12);
+    accent-color: #111;
   }
 
   .title {
-    font-size: 0.95rem;
-    transition:
-      color 0.2s,
-      opacity 0.2s;
+    font-size: 0.9rem;
   }
 
   li.completed .title {
     text-decoration: line-through;
-    color: #6a8e82;
-    opacity: 0.7;
+    color: #999;
   }
 
   .delete {
     background: none;
-    border: none;
-    color: rgba(255, 160, 140, 0.7);
+    border: 1px solid transparent;
+    color: #c44;
     cursor: pointer;
-    padding: 0.25rem 0.5rem;
-    font-size: 0.8rem;
+    padding: 0.2rem 0.5rem;
+    font-size: 0.78rem;
     font-family: inherit;
-    border-radius: 6px;
-    transition:
-      color 0.15s,
-      background 0.15s;
+    border-radius: 3px;
     opacity: 0;
   }
 
@@ -352,54 +267,32 @@
   }
 
   .delete:hover {
-    color: #ffa08c;
-    background: rgba(255, 140, 120, 0.1);
+    background: #fef0f0;
+    border-color: #e8c0c0;
   }
 
   .status {
-    color: #8ab5a7;
+    color: #888;
     text-align: center;
     padding: 1.5rem 1rem;
-    font-size: 0.9rem;
-  }
-
-  .error {
-    color: #ffd7c7;
-    padding: 0.55rem 0.7rem;
-    background: rgba(188, 63, 32, 0.25);
-    border: 1px solid rgba(255, 184, 161, 0.25);
-    border-radius: 10px;
-    margin-top: 0.7rem;
     font-size: 0.88rem;
   }
 
+  .error {
+    color: #b91c1c;
+    padding: 0.5rem 0.7rem;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 4px;
+    margin-top: 0.5rem;
+    font-size: 0.85rem;
+  }
+
   .count {
-    color: #8ab5a7;
+    color: #888;
     text-align: center;
-    font-size: 0.82rem;
-    margin-top: 0.6rem;
+    font-size: 0.8rem;
+    margin-top: 0.5rem;
     padding-top: 0.5rem;
-  }
-
-  @keyframes rise {
-    from {
-      opacity: 0;
-      transform: translateY(10px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  @keyframes fadeIn {
-    from {
-      opacity: 0;
-      transform: translateX(-6px);
-    }
-    to {
-      opacity: 1;
-      transform: translateX(0);
-    }
   }
 </style>

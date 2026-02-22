@@ -34,6 +34,9 @@
   let newPriority: TaskPriority = $state("medium");
   let creating = $state(false);
   let error: string | null = $state(null);
+  let editingTaskId: string | null = $state(null);
+  let editingTaskTitle = $state("");
+  let showDeleteConfirm = $state(false);
   let visibleTasks: Task[] = $derived.by(() => {
     const taskMap = new SvelteMap<string, Task>();
 
@@ -80,10 +83,10 @@
     { status: "done", label: "Done" },
   ];
 
-  const priorityColors: Record<TaskPriority, string> = {
-    low: "#4ade80",
-    medium: "#fbbf24",
-    high: "#f87171",
+  const priorityLabels: Record<TaskPriority, string> = {
+    low: "Low",
+    medium: "Med",
+    high: "High",
   };
 
   function tasksByStatus(allTasks: Task[], status: TaskStatus): Task[] {
@@ -148,19 +151,35 @@
     }
   }
 
-  async function handleEdit(task: Task) {
-    const nextTitle = prompt("Update task title", task.title);
-    if (!nextTitle?.trim()) return;
+  function startEdit(task: Task) {
+    editingTaskId = task.id;
+    editingTaskTitle = task.title;
+  }
 
+  async function submitEdit(taskId: string) {
+    if (!editingTaskTitle.trim()) {
+      editingTaskId = null;
+      return;
+    }
     try {
       const updated = await updateTask({
         user_id: userId,
-        id: task.id,
-        title: nextTitle.trim(),
+        id: taskId,
+        title: editingTaskTitle.trim(),
       });
       localTasks = [updated, ...localTasks.filter((t) => t.id !== updated.id)];
     } catch (e) {
       error = (e as ForgeError).message;
+    } finally {
+      editingTaskId = null;
+    }
+  }
+
+  function handleEditKeydown(event: KeyboardEvent, taskId: string) {
+    if (event.key === "Enter") {
+      void submitEdit(taskId);
+    } else if (event.key === "Escape") {
+      editingTaskId = null;
     }
   }
 
@@ -183,11 +202,11 @@
   }
 
   function handleScheduleDeletion() {
-    const accepted = confirm(
-      "Tasks will be exported now and permanently deleted in 7 days. You can unarchive before the deadline.",
-    );
-    if (!accepted) return;
+    showDeleteConfirm = true;
+  }
 
+  function confirmScheduleDeletion() {
+    showDeleteConfirm = false;
     archiveWorkflow = trackScheduleProjectArchive({
       user_id: userId,
       project_id: projectId,
@@ -242,10 +261,10 @@
         {/if}
       </div>
       <div class="actions">
-        <button class="export-btn" onclick={() => handleExport("json")}>
+        <button class="btn-secondary" onclick={() => handleExport("json")}>
           Export JSON
         </button>
-        <button class="export-btn" onclick={() => handleExport("csv")}>
+        <button class="btn-secondary" onclick={() => handleExport("csv")}>
           Export CSV
         </button>
         <button
@@ -269,6 +288,24 @@
       <p class="error">{error}</p>
     {/if}
 
+    {#if showDeleteConfirm}
+      <div class="confirm-banner">
+        <p>
+          Tasks will be exported and permanently deleted in 7 days. You can
+          unarchive before the deadline.
+        </p>
+        <div class="confirm-actions">
+          <button class="btn-danger" onclick={confirmScheduleDeletion}
+            >Confirm Delete</button
+          >
+          <button
+            class="btn-secondary"
+            onclick={() => (showDeleteConfirm = false)}>Cancel</button
+          >
+        </div>
+      </div>
+    {/if}
+
     {#if archiveWorkflowStatus}
       <div class="job-status">
         Deletion workflow: {archiveWorkflowStatus}
@@ -277,7 +314,7 @@
 
     {#if project.data?.project.archive_delete_at}
       <div class="archive-notice">
-        <p>Tasks are exported now and scheduled for deletion in 7 days.</p>
+        <p>Tasks are exported and scheduled for deletion in 7 days.</p>
         <p>
           Time left:
           <strong
@@ -359,12 +396,18 @@
               {#each tasksByStatus(visibleTasks, col.status) as task (task.id)}
                 <div class="card">
                   <div class="card-header">
-                    <span class="title">{task.title}</span>
-                    <span
-                      class="priority"
-                      style="background: {priorityColors[task.priority]}"
-                    >
-                      {task.priority}
+                    {#if editingTaskId === task.id}
+                      <input
+                        class="edit-input"
+                        bind:value={editingTaskTitle}
+                        onkeydown={(e) => handleEditKeydown(e, task.id)}
+                        onblur={() => submitEdit(task.id)}
+                      />
+                    {:else}
+                      <span class="title">{task.title}</span>
+                    {/if}
+                    <span class="priority priority-{task.priority}">
+                      {priorityLabels[task.priority]}
                     </span>
                   </div>
                   {#if task.due_date}
@@ -387,7 +430,7 @@
                         &rarr;
                       </button>
                     {/if}
-                    <button class="edit" onclick={() => handleEdit(task)}>
+                    <button class="edit" onclick={() => startEdit(task)}>
                       Edit
                     </button>
                     <button
@@ -408,29 +451,17 @@
 </main>
 
 <style>
-  @import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700;9..144,900&family=IBM+Plex+Sans:wght@400;500;600&display=swap");
-
   :global(body) {
     margin: 0;
-    background:
-      radial-gradient(
-        circle at 10% 15%,
-        rgba(251, 220, 159, 0.1) 0%,
-        transparent 50%
-      ),
-      radial-gradient(
-        circle at 90% 85%,
-        rgba(120, 214, 192, 0.06) 0%,
-        transparent 40%
-      ),
-      linear-gradient(155deg, #111a1f 0%, #0a1015 50%, #141e25 100%);
-    color: #eaf5f0;
-    font-family: "IBM Plex Sans", sans-serif;
+    background: #fff;
+    color: #222;
+    font-family:
+      -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     min-height: 100vh;
   }
 
   main {
-    max-width: 1280px;
+    max-width: 1200px;
     margin: 0 auto;
     padding: 0 1rem;
   }
@@ -438,7 +469,7 @@
   .shell {
     padding: 1.5rem 0 3rem;
     display: grid;
-    gap: 0.85rem;
+    gap: 0.75rem;
   }
 
   header {
@@ -447,70 +478,67 @@
     align-items: flex-start;
     gap: 1rem;
     flex-wrap: wrap;
-    animation: rise 0.4s ease-out;
   }
 
   header a {
-    color: #9cc4b6;
+    color: #888;
     text-decoration: none;
     font-size: 0.82rem;
-    transition: color 0.15s;
   }
 
   header a:hover {
-    color: #fed68b;
+    color: #111;
   }
 
   header h1 {
-    margin: 0.2rem 0 0;
-    font-family: "Fraunces", serif;
-    font-weight: 900;
-    font-size: 1.6rem;
+    margin: 0.15rem 0 0;
+    font-weight: 600;
+    font-size: 1.4rem;
+    color: #111;
   }
 
   .desc {
-    color: #8ab5a7;
-    margin: 0.15rem 0 0;
-    font-size: 0.88rem;
+    color: #888;
+    margin: 0.1rem 0 0;
+    font-size: 0.85rem;
   }
 
   .actions {
     display: flex;
-    gap: 0.4rem;
+    gap: 0.35rem;
     align-items: center;
     flex-wrap: wrap;
   }
 
-  .export-btn {
-    padding: 0.38rem 0.7rem;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.06);
+  .btn-secondary {
+    padding: 0.35rem 0.6rem;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background: #fff;
     cursor: pointer;
-    font-size: 0.8rem;
-    color: #c2ddd3;
+    font-size: 0.78rem;
+    color: #555;
     font-family: inherit;
-    transition: background 0.15s;
   }
 
-  .export-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
+  .btn-secondary:hover {
+    border-color: #999;
+    color: #222;
   }
 
   .schedule-btn {
-    padding: 0.38rem 0.7rem;
-    border: 1px solid rgba(254, 214, 139, 0.3);
-    border-radius: 8px;
-    background: rgba(254, 214, 139, 0.08);
-    color: #fed68b;
+    padding: 0.35rem 0.6rem;
+    border: 1px solid #e5c07b;
+    border-radius: 4px;
+    background: #fffbeb;
+    color: #92400e;
     cursor: pointer;
-    font-size: 0.8rem;
+    font-size: 0.78rem;
     font-family: inherit;
-    transition: background 0.15s;
   }
 
   .schedule-btn:hover {
-    background: rgba(254, 214, 139, 0.15);
+    background: #fef3c7;
   }
 
   .schedule-btn:disabled {
@@ -520,208 +548,258 @@
 
   .badge {
     font-size: 0.68rem;
-    padding: 0.18rem 0.55rem;
-    border-radius: 9999px;
-    letter-spacing: 0.06em;
+    padding: 0.12rem 0.4rem;
+    border-radius: 3px;
+    letter-spacing: 0.04em;
     text-transform: uppercase;
   }
 
   .badge.archived {
-    background: rgba(254, 214, 139, 0.15);
-    color: #fed68b;
+    background: #fef3c7;
+    color: #92400e;
+  }
+
+  .confirm-banner {
+    padding: 0.75rem 1rem;
+    border: 1px solid #fecaca;
+    background: #fef2f2;
+    border-radius: 6px;
+  }
+
+  .confirm-banner p {
+    margin: 0 0 0.5rem;
+    font-size: 0.88rem;
+    color: #991b1b;
+  }
+
+  .confirm-actions {
+    display: flex;
+    gap: 0.4rem;
+  }
+
+  .btn-danger {
+    padding: 0.35rem 0.7rem;
+    border: none;
+    border-radius: 4px;
+    background: #dc2626;
+    color: #fff;
+    cursor: pointer;
+    font-size: 0.82rem;
+    font-family: inherit;
+    font-weight: 500;
+  }
+
+  .btn-danger:hover {
+    background: #b91c1c;
   }
 
   .archive-notice {
-    padding: 0.85rem 1rem;
-    border: 1px solid rgba(254, 214, 139, 0.25);
-    background: rgba(254, 214, 139, 0.06);
-    border-radius: 12px;
+    padding: 0.75rem 1rem;
+    border: 1px solid #e5c07b;
+    background: #fffbeb;
+    border-radius: 6px;
   }
 
   .archive-notice p {
     margin: 0;
-    color: #e8d5a8;
-    font-size: 0.88rem;
+    color: #92400e;
+    font-size: 0.85rem;
   }
 
   .archive-notice p + p {
-    margin-top: 0.3rem;
+    margin-top: 0.2rem;
   }
 
   .unarchive-btn {
-    margin-top: 0.6rem;
-    padding: 0.4rem 0.8rem;
-    border: 1px solid rgba(254, 214, 139, 0.3);
-    border-radius: 8px;
-    background: rgba(254, 214, 139, 0.08);
-    color: #fed68b;
+    margin-top: 0.5rem;
+    padding: 0.35rem 0.7rem;
+    border: 1px solid #e5c07b;
+    border-radius: 4px;
+    background: #fff;
+    color: #92400e;
     cursor: pointer;
     font-size: 0.82rem;
     font-family: inherit;
-    transition: background 0.15s;
   }
 
   .unarchive-btn:hover {
-    background: rgba(254, 214, 139, 0.15);
+    background: #fef3c7;
   }
 
   .create-section {
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 14px;
-    background: rgba(11, 18, 24, 0.6);
-    backdrop-filter: blur(6px);
-    padding: 0.85rem;
-    animation: rise 0.55s ease-out;
+    border: 1px solid #e5e5e5;
+    border-radius: 6px;
+    padding: 0.75rem;
   }
 
   .create-form {
     display: flex;
-    gap: 0.45rem;
+    gap: 0.4rem;
   }
 
   .create-form input {
     flex: 1;
-    padding: 0.55rem 0.7rem;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.06);
-    color: #eef8f4;
+    padding: 0.45rem 0.7rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: #fff;
+    color: #222;
     font: inherit;
-    font-size: 0.92rem;
+    font-size: 0.88rem;
     outline: none;
-    transition: border-color 0.2s;
   }
 
   .create-form input:focus {
-    border-color: rgba(254, 214, 139, 0.45);
+    border-color: #888;
   }
 
   .create-form select {
-    padding: 0.55rem 0.5rem;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.06);
-    color: #eef8f4;
+    padding: 0.45rem 0.4rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: #fff;
+    color: #222;
     font: inherit;
-    font-size: 0.88rem;
+    font-size: 0.85rem;
     outline: none;
   }
 
   .create-form button {
-    padding: 0.55rem 1rem;
-    background: linear-gradient(96deg, #fed68b 0%, #78d6c0 100%);
-    color: #0f1d23;
-    border: 0;
-    border-radius: 8px;
+    padding: 0.45rem 0.85rem;
+    background: #111;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
     cursor: pointer;
-    font-weight: 700;
+    font-weight: 500;
     font-family: inherit;
-    font-size: 0.88rem;
-    transition: transform 0.15s ease;
+    font-size: 0.85rem;
     white-space: nowrap;
   }
 
   .create-form button:hover {
-    transform: translateY(-1px);
+    background: #333;
   }
 
   .create-form button:disabled {
-    opacity: 0.45;
+    opacity: 0.4;
     cursor: not-allowed;
-    transform: none;
   }
 
   .board {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    gap: 0.7rem;
-    animation: rise 0.65s ease-out;
+    gap: 0.6rem;
   }
 
   .column {
-    background: rgba(11, 18, 24, 0.5);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 14px;
-    padding: 0.7rem;
-    min-height: 220px;
+    background: #f9f9f9;
+    border: 1px solid #e5e5e5;
+    border-radius: 6px;
+    padding: 0.6rem;
+    min-height: 200px;
   }
 
   .column h2 {
-    font-size: 0.78rem;
+    font-size: 0.75rem;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: #8ab5a7;
-    margin: 0 0 0.65rem;
+    letter-spacing: 0.08em;
+    color: #888;
+    margin: 0 0 0.5rem;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    font-family: "IBM Plex Sans", sans-serif;
     font-weight: 600;
   }
 
   .count {
-    background: rgba(255, 255, 255, 0.08);
-    padding: 0.1rem 0.45rem;
-    border-radius: 9999px;
-    font-size: 0.7rem;
-    color: #a8d4c4;
+    background: #eee;
+    padding: 0.08rem 0.35rem;
+    border-radius: 3px;
+    font-size: 0.68rem;
+    color: #666;
   }
 
   .cards {
     display: flex;
     flex-direction: column;
-    gap: 0.45rem;
+    gap: 0.4rem;
   }
 
   .card {
-    background: rgba(20, 30, 37, 0.8);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 10px;
-    padding: 0.65rem;
-    transition: border-color 0.2s;
+    background: #fff;
+    border: 1px solid #e5e5e5;
+    border-radius: 4px;
+    padding: 0.55rem;
   }
 
   .card:hover {
-    border-color: rgba(255, 255, 255, 0.18);
+    border-color: #ccc;
   }
 
   .card-header {
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    gap: 0.4rem;
+    gap: 0.35rem;
   }
 
   .title {
     font-weight: 500;
-    font-size: 0.85rem;
+    font-size: 0.82rem;
     word-break: break-word;
     line-height: 1.3;
   }
 
+  .edit-input {
+    flex: 1;
+    padding: 0.2rem 0.4rem;
+    border: 1px solid #888;
+    border-radius: 3px;
+    font: inherit;
+    font-size: 0.82rem;
+    outline: none;
+    background: #fff;
+    color: #222;
+  }
+
   .priority {
     font-size: 0.6rem;
-    padding: 0.1rem 0.35rem;
-    border-radius: 9999px;
-    color: #0f1d23;
+    padding: 0.08rem 0.3rem;
+    border-radius: 3px;
     text-transform: uppercase;
-    font-weight: 700;
+    font-weight: 600;
     white-space: nowrap;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.03em;
+  }
+
+  .priority-low {
+    background: #f0fdf4;
+    color: #166534;
+  }
+
+  .priority-medium {
+    background: #fffbeb;
+    color: #92400e;
+  }
+
+  .priority-high {
+    background: #fef2f2;
+    color: #991b1b;
   }
 
   .due-date {
-    font-size: 0.72rem;
-    color: #8ab5a7;
-    margin-top: 0.3rem;
+    font-size: 0.7rem;
+    color: #888;
+    margin-top: 0.25rem;
   }
 
   .card-actions {
     display: flex;
-    gap: 0.2rem;
-    margin-top: 0.45rem;
+    gap: 0.15rem;
+    margin-top: 0.35rem;
     opacity: 0;
-    transition: opacity 0.15s;
+    transition: opacity 0.1s;
   }
 
   .card:hover .card-actions {
@@ -729,114 +807,102 @@
   }
 
   .card-actions button {
-    padding: 0.15rem 0.45rem;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 5px;
-    background: rgba(255, 255, 255, 0.04);
+    padding: 0.12rem 0.35rem;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    background: #fff;
     cursor: pointer;
-    font-size: 0.8rem;
-    color: #b0cfc4;
+    font-size: 0.75rem;
+    color: #555;
     font-family: inherit;
-    transition: background 0.12s;
   }
 
   .card-actions button:hover {
-    background: rgba(255, 255, 255, 0.1);
+    border-color: #999;
+    color: #222;
   }
 
   .card-actions .delete {
     margin-left: auto;
-    color: #f87171;
-    border-color: rgba(248, 113, 113, 0.2);
+    color: #dc2626;
+    border-color: #fecaca;
   }
 
   .card-actions .delete:hover {
-    background: rgba(248, 113, 113, 0.1);
+    background: #fef2f2;
   }
 
   .card-actions .edit {
-    color: #78d6c0;
-    border-color: rgba(120, 214, 192, 0.2);
+    color: #2563eb;
+    border-color: #bfdbfe;
   }
 
   .card-actions .edit:hover {
-    background: rgba(120, 214, 192, 0.1);
+    background: #eff6ff;
   }
 
   .job-status {
-    padding: 0.75rem 0.9rem;
-    background: rgba(120, 214, 192, 0.06);
-    border: 1px solid rgba(120, 214, 192, 0.15);
-    border-radius: 10px;
-    font-size: 0.85rem;
-    color: #a8d4c4;
+    padding: 0.6rem 0.8rem;
+    background: #f0f9ff;
+    border: 1px solid #bae6fd;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    color: #0c4a6e;
   }
 
   .job-status pre {
-    margin: 0.4rem 0 0;
-    font-size: 0.72rem;
+    margin: 0.3rem 0 0;
+    font-size: 0.7rem;
     max-height: 200px;
     overflow: auto;
-    background: rgba(0, 0, 0, 0.3);
-    padding: 0.5rem;
-    border-radius: 6px;
-    color: #c2ddd3;
+    background: #f5f5f5;
+    padding: 0.4rem;
+    border-radius: 4px;
+    color: #333;
   }
 
   .job-status details summary {
     cursor: pointer;
-    margin-top: 0.3rem;
-    color: #78d6c0;
-    font-size: 0.82rem;
+    margin-top: 0.25rem;
+    color: #2563eb;
+    font-size: 0.8rem;
   }
 
   .progress-bar {
     display: inline-block;
-    width: 60px;
-    height: 4px;
-    background: rgba(255, 255, 255, 0.08);
+    width: 50px;
+    height: 3px;
+    background: #e5e5e5;
     border-radius: 2px;
     vertical-align: middle;
-    margin: 0 0.3rem;
+    margin: 0 0.25rem;
     overflow: hidden;
   }
 
   .progress-fill {
     display: block;
     height: 100%;
-    background: linear-gradient(90deg, #78d6c0, #fed68b);
+    background: #2563eb;
     border-radius: 2px;
-    transition: width 0.3s ease;
   }
 
   .error {
-    color: #ffd7c7;
-    font-size: 0.88rem;
-    padding: 0.55rem 0.7rem;
-    background: rgba(188, 63, 32, 0.25);
-    border: 1px solid rgba(255, 184, 161, 0.25);
-    border-radius: 10px;
+    color: #b91c1c;
+    font-size: 0.85rem;
+    padding: 0.5rem 0.7rem;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 4px;
   }
 
   .error-text {
-    color: #f87171;
+    color: #dc2626;
   }
 
   .status {
-    color: #8ab5a7;
+    color: #888;
     text-align: center;
     padding: 2rem;
-  }
-
-  @keyframes rise {
-    from {
-      opacity: 0;
-      transform: translateY(10px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
   }
 
   @media (max-width: 860px) {

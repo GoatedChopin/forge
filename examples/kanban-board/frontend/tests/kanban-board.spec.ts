@@ -101,11 +101,18 @@ test.describe("Kanban Board UI E2E", () => {
     await registerUser(page, user);
     await createProject(page, projectName);
 
-    page.once("dialog", (dialog) => dialog.accept(renamed));
+    // Click rename to show inline input
     await page
       .locator(".project-row", { hasText: projectName })
       .getByRole("button", { name: "Rename" })
       .click();
+
+    // Fill inline rename input and submit with Enter
+    const renameInput = page.locator(".rename-input");
+    await expect(renameInput).toBeVisible();
+    await renameInput.clear();
+    await renameInput.fill(renamed);
+    await renameInput.press("Enter");
 
     await expect(
       page.locator(".project-list a", { hasText: renamed }),
@@ -128,11 +135,18 @@ test.describe("Kanban Board UI E2E", () => {
 
     await createTask(page, task);
 
-    page.once("dialog", (dialog) => dialog.accept(editedTask));
+    // Click edit to show inline input
     await page
       .locator(".card", { hasText: task })
       .locator("button.edit")
       .click();
+
+    const editInput = page.locator(".edit-input");
+    await expect(editInput).toBeVisible();
+    await editInput.clear();
+    await editInput.fill(editedTask);
+    await editInput.press("Enter");
+
     await expect(page.locator(".card", { hasText: editedTask })).toBeVisible({
       timeout: ACTION_TIMEOUT,
     });
@@ -212,10 +226,13 @@ test.describe("Kanban Board UI E2E", () => {
     await openProject(page, projectName);
     await createTask(page, uniqueId("task-to-delete"));
 
-    page.once("dialog", (dialog) => dialog.accept());
+    // Click schedule and confirm via inline banner
     await page
       .getByRole("button", { name: "Schedule Export + Delete" })
       .click();
+
+    await expect(page.locator(".confirm-banner")).toBeVisible();
+    await page.getByRole("button", { name: "Confirm Delete" }).click();
 
     await expect(
       page.locator(".job-status", { hasText: "Deletion workflow:" }),
@@ -449,7 +466,7 @@ test.describe("Kanban Board UI E2E", () => {
 
     const card = page.locator(".card", { hasText: task });
     await expect(card).toBeVisible({ timeout: ACTION_TIMEOUT });
-    await expect(card.locator(".priority")).toContainText("high");
+    await expect(card.locator(".priority")).toContainText("High");
   });
 
   test("create project via form submit (Enter key)", async ({ page }) => {
@@ -474,5 +491,159 @@ test.describe("Kanban Board UI E2E", () => {
     await expect(
       page.locator(".create-form button[type='submit']"),
     ).toBeDisabled();
+  });
+
+  test("empty projects page shows placeholder message", async ({ page }) => {
+    const user = makeUser();
+
+    await registerUser(page, user);
+
+    await expect(page.locator(".empty-panel")).toContainText("No projects yet");
+  });
+
+  test("rename via Escape cancels edit", async ({ page }) => {
+    const user = makeUser();
+    const projectName = uniqueId("esc-rename");
+
+    await registerUser(page, user);
+    await createProject(page, projectName);
+
+    await page
+      .locator(".project-row", { hasText: projectName })
+      .getByRole("button", { name: "Rename" })
+      .click();
+
+    const renameInput = page.locator(".rename-input");
+    await expect(renameInput).toBeVisible();
+    await renameInput.clear();
+    await renameInput.fill("should-not-save");
+    await renameInput.press("Escape");
+
+    await expect(
+      page.locator(".project-list a", { hasText: projectName }),
+    ).toBeVisible({ timeout: ACTION_TIMEOUT });
+    await expect(
+      page.locator(".project-list a", { hasText: "should-not-save" }),
+    ).toHaveCount(0);
+  });
+
+  test("edit task via Escape cancels edit", async ({ page }) => {
+    const user = makeUser();
+    const projectName = uniqueId("esc-edit");
+    const task = uniqueId("esc-task");
+
+    await registerUser(page, user);
+    await createProject(page, projectName);
+    await openProject(page, projectName);
+    await createTask(page, task);
+
+    await page
+      .locator(".card", { hasText: task })
+      .locator("button.edit")
+      .click();
+
+    const editInput = page.locator(".edit-input");
+    await expect(editInput).toBeVisible();
+    await editInput.clear();
+    await editInput.fill("should-not-save");
+    await editInput.press("Escape");
+
+    await expect(page.locator(".card", { hasText: task })).toBeVisible({
+      timeout: ACTION_TIMEOUT,
+    });
+    await expect(
+      page.locator(".card", { hasText: "should-not-save" }),
+    ).toHaveCount(0);
+  });
+
+  test("task column counts update correctly", async ({ page }) => {
+    const user = makeUser();
+    const projectName = uniqueId("col-count");
+    const t1 = uniqueId("count-1");
+    const t2 = uniqueId("count-2");
+
+    await registerUser(page, user);
+    await createProject(page, projectName);
+    await openProject(page, projectName);
+
+    await createTask(page, t1);
+    await createTask(page, t2);
+
+    await expect(
+      page
+        .locator(".column", { hasText: "Backlog" })
+        .locator(".count", { hasText: "2" }),
+    ).toBeVisible({ timeout: ACTION_TIMEOUT });
+
+    // Move one task forward
+    await page
+      .locator(".card", { hasText: t1 })
+      .locator(".card-actions button")
+      .filter({ hasText: "→" })
+      .first()
+      .click();
+
+    await expect(
+      page
+        .locator(".column", { hasText: "Backlog" })
+        .locator(".count", { hasText: "1" }),
+    ).toBeVisible({ timeout: ACTION_TIMEOUT });
+    await expect(
+      page
+        .locator(".column", { hasText: "Todo" })
+        .locator(".count", { hasText: "1" }),
+    ).toBeVisible({ timeout: ACTION_TIMEOUT });
+  });
+
+  test("sign in via Enter key submits form", async ({ page }) => {
+    const user = makeUser();
+
+    await registerUser(page, user);
+    await signOut(page);
+
+    await gotoAuth(page);
+    await page.getByLabel("Email").fill(user.email);
+    await page.getByLabel("Password").fill(user.password);
+    await page.getByLabel("Password").press("Enter");
+
+    await expect(page).toHaveURL(/\/app$/);
+  });
+
+  test("delete task removes it from the board", async ({ page }) => {
+    const user = makeUser();
+    const projectName = uniqueId("del-task");
+    const task = uniqueId("to-delete");
+
+    await registerUser(page, user);
+    await createProject(page, projectName);
+    await openProject(page, projectName);
+    await createTask(page, task);
+
+    await page
+      .locator(".card", { hasText: task })
+      .locator("button.delete")
+      .click();
+
+    await expect(page.locator(".card", { hasText: task })).toHaveCount(0, {
+      timeout: ACTION_TIMEOUT,
+    });
+    await expect(
+      page
+        .locator(".column", { hasText: "Backlog" })
+        .locator(".count", { hasText: "0" }),
+    ).toBeVisible({ timeout: ACTION_TIMEOUT });
+  });
+
+  test("back to projects link navigates correctly", async ({ page }) => {
+    const user = makeUser();
+    const projectName = uniqueId("back-nav");
+
+    await registerUser(page, user);
+    await createProject(page, projectName);
+    await openProject(page, projectName);
+
+    await page.locator("a", { hasText: "Projects" }).click();
+    await expect(page).toHaveURL(/\/app$/);
+    await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
   });
 });
