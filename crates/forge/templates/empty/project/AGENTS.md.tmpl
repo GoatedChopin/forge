@@ -8,7 +8,7 @@ Full-stack Rust + Svelte 5 framework. **PostgreSQL-only** (no Redis/Kafka/etc ne
 
 ## CRITICAL: Test-Driven Development
 
-**ALWAYS write tests while implementing.** Use `forge::testing::*` primitives. Run before delivering:
+**ALWAYS write tests while implementing.** Use `forge::testing::*` primitives. For database tests, either set `TEST_DATABASE_URL` or run with `--features testcontainers` to auto-start a PG container via Docker. Run before delivering:
 
 ```bash
 cargo clippy --all-targets -- -D warnings && cargo test && bun lint && bun format

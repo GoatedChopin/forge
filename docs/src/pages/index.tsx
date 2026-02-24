@@ -60,8 +60,8 @@ const FeatureList: FeatureItem[] = [
     title: 'Real-Time Built-In',
     description: (
       <>
-        Queries automatically become reactive subscriptions. Data syncs instantly
-        across all clients via WebSocket. No extra setup required.
+        Queries automatically become reactive subscriptions. Data syncs across
+        all clients via Server-Sent Events. No extra setup required.
       </>
     ),
   },
@@ -75,11 +75,11 @@ const FeatureList: FeatureItem[] = [
     ),
   },
   {
-    title: 'Observable by Default',
+    title: 'AI-Ready with MCP',
     description: (
       <>
-        Built-in observability tools show metrics, logs, traces, and alerts. See everything
-        happening in your app without any extra configuration.
+        Expose backend functions as MCP tools with a single macro. LLM agents can call
+        your queries and mutations directly, with the same auth and rate limiting.
       </>
     ),
   },
@@ -214,7 +214,7 @@ export default function Home(): JSX.Element {
   return (
     <Layout
       title={`${siteConfig.title} - Full-Stack Rust Framework`}
-      description="Build full-stack apps in hours, not weeks. Database, API, real-time updates, background jobs, and observability - all in one package.">
+      description="Build full-stack apps in hours, not weeks. Database, API, real-time updates, background jobs, and durable workflows - all backed by PostgreSQL.">
       <HomepageHeader />
       <main>
         <HomepageFeatures />

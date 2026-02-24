@@ -24,7 +24,7 @@ async fn test_admin_can_delete_user() {
 
 ## What Happens
 
-Each test context builder creates an isolated environment with mocked authentication, configurable environment variables, HTTP interception, and dispatch recording. Tests run against real PostgreSQL when needed via embedded or isolated databases. This avoids global state pollution between tests.
+Each test context builder creates an isolated environment with mocked authentication, configurable environment variables, HTTP interception, and dispatch recording. Tests run against real PostgreSQL when needed via testcontainers, embedded, or isolated databases. This avoids global state pollution between tests.
 
 ## Test Contexts
 
@@ -255,9 +255,52 @@ async fn test_github_webhook_dispatches_job() {
 
 ## Database Testing
 
+Three ways to get a PostgreSQL connection in tests:
+
+| Method | Feature flag | Env var needed | What happens |
+|--------|-------------|----------------|--------------|
+| Testcontainers | `testcontainers` | No | Starts a Docker container per `TestDatabase` |
+| Embedded PG | `embedded-db` | No | Downloads and runs PG as a child process |
+| Explicit URL | None | `TEST_DATABASE_URL` | Connects to whatever you point it at |
+
+All three go through `TestDatabase::from_env()`. If `TEST_DATABASE_URL` is set it always wins, regardless of features.
+
+### Testcontainers
+
+Spins up a throwaway PG container via Docker. No local PG install needed.
+
+```toml
+# Cargo.toml
+[dev-dependencies]
+forge = { version = "0.4.0", features = ["testcontainers"] }
+```
+
+```rust
+#[tokio::test]
+async fn test_with_container() {
+    // Starts a PG container automatically (requires Docker)
+    let db = TestDatabase::from_env().await.unwrap();
+
+    let ctx = TestQueryContext::builder()
+        .as_user(Uuid::new_v4())
+        .with_pool(db.pool().clone())
+        .build();
+
+    let users = list_users(&ctx).await.unwrap();
+}
+```
+
+The container lives as long as the `TestDatabase`. When it drops, the container stops.
+
+To use an external PG instead, set `TEST_DATABASE_URL` and the container is skipped entirely:
+
+```bash
+TEST_DATABASE_URL=postgres://localhost/test_db cargo test --features testcontainers
+```
+
 ### Embedded PostgreSQL
 
-For embedded database tests, use embedded PostgreSQL. Requires the `embedded-db` feature.
+Downloads and starts a real PostgreSQL binary. Cached after first run.
 
 ```toml
 # Cargo.toml
@@ -268,7 +311,6 @@ forge = { version = "0.4.0", features = ["embedded-db"] }
 ```rust
 #[tokio::test]
 async fn test_with_embedded_db() {
-    // Downloads and starts PostgreSQL automatically (cached after first run)
     let db = TestDatabase::embedded().await.unwrap();
 
     let ctx = TestQueryContext::builder()
@@ -276,12 +318,13 @@ async fn test_with_embedded_db() {
         .with_pool(db.pool().clone())
         .build();
 
-    // Test with real database
     let users = list_users(&ctx).await.unwrap();
 }
 ```
 
 ### Explicit Database URL
+
+No feature flags. Set `TEST_DATABASE_URL` and go.
 
 ```rust
 #[tokio::test]
@@ -304,10 +347,9 @@ Each test gets its own database. Prevents data collision between parallel tests.
 ```rust
 #[tokio::test]
 async fn test_user_creation() {
-    let base = TestDatabase::embedded().await.unwrap();
+    let base = TestDatabase::from_env().await.unwrap();
     let db = base.isolated("test_user_creation").await.unwrap();
 
-    // Run migrations
     db.migrate(Path::new("migrations")).await.unwrap();
 
     // Or run setup SQL directly
@@ -323,7 +365,6 @@ async fn test_user_creation() {
         .with_pool(db.pool().clone())
         .build();
 
-    // Test in isolation
     create_user(&ctx, user_args).await.unwrap();
 
     // Optional: explicit cleanup (otherwise orphaned DBs are cleaned on next run)
@@ -757,9 +798,9 @@ Test contexts provide deterministic alternatives to non-deterministic operations
 - Environment comes from test configuration, not system
 - Job/workflow dispatch records instead of executing
 
-### Embedded PostgreSQL
+### Real PostgreSQL
 
-`TestDatabase::embedded()` downloads and starts a real PostgreSQL instance. The binary is cached after first download. Tests run against real SQL with real constraints, indexes, and behavior.
+All database test modes (testcontainers, embedded, explicit URL) run against real PostgreSQL. Tests exercise real SQL with real constraints, indexes, and behavior.
 
 ### Transactional Rollback
 

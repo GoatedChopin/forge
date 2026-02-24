@@ -72,7 +72,9 @@ pub async fn create_user(ctx: &MutationContext, input: CreateUser) -> Result<Use
 }
 ```
 
-These become `/_api/rpc/get_user` and `/_api/rpc/create_user` automatically. A fully typed TypeScript client is generated. Call `api.get_user()` and get autocomplete, type checking, and error handling. No routing. No fetch wrappers. No manual type definitions.
+These become `/_api/rpc/get_user` and `/_api/rpc/create_user` automatically. A fully typed TypeScript client is generated. No routing. No fetch wrappers. No manual type definitions.
+
+Mutations run inside a database transaction. The `dispatch_job` call above doesn't fire immediately. It gets buffered and inserted atomically when the transaction commits. If the mutation fails, the job never gets created. No orphaned jobs, no missing side effects.
 
 ### 2. Background Jobs (Things That Take Time)
 
@@ -154,7 +156,41 @@ Deploy new code, restart servers, scale up or down. The workflow picks up right 
 
 Under the hood: Compile-time SQL parsing extracts all table dependencies (including JOINs and subqueries) → PostgreSQL triggers fire NOTIFY on changes → FORGE re-runs affected queries → SSE pushes diffs to clients.
 
-No WebSocket code. No manual cache invalidation. Just reactive queries.
+No manual cache invalidation. No pub/sub wiring. Just reactive queries.
+
+### 6. Webhooks (Receive External Events)
+
+```rust
+#[forge::webhook(
+    path = "/hooks/stripe",
+    signature = WebhookSignature::hmac_sha256("Stripe-Signature", "STRIPE_WEBHOOK_SECRET"),
+    idempotency = "header:Idempotency-Key",
+)]
+pub async fn stripe(ctx: &WebhookContext, payload: Value) -> Result<WebhookResult> {
+    ctx.dispatch_job("process_payment", payload.clone()).await?;
+    Ok(WebhookResult::Accepted)
+}
+```
+
+Signature validation, idempotency tracking, and job dispatch in one handler. Supports HMAC and RSA signatures.
+
+### 7. MCP Tools (Give AI Agents Access)
+
+```rust
+#[forge::mcp_tool(
+    name = "tickets.list",
+    title = "List Support Tickets",
+    read_only,
+)]
+pub async fn list_tickets(ctx: &McpToolContext) -> Result<Vec<Ticket>> {
+    sqlx::query_as("SELECT * FROM tickets")
+        .fetch_all(ctx.db())
+        .await
+        .map_err(Into::into)
+}
+```
+
+Expose any function as an MCP tool. LLM agents can call your backend with the same auth, rate limiting, and validation as regular API calls. One macro, same business logic.
 
 ---
 
@@ -165,7 +201,7 @@ No WebSocket code. No manual cache invalidation. Just reactive queries.
 │                    forge run                     │
 ├─────────────┬─────────────┬─────────────┤
 │   Gateway   │   Workers   │  Scheduler  │
-│  (HTTP/WS)  │   (Jobs)    │   (Cron)    │
+│ (HTTP/SSE)  │   (Jobs)    │   (Cron)    │
 └──────┬──────┴──────┬──────┴──────┬──────┘
        │             │             │
        └─────────────┴──────┬──────┘
@@ -248,12 +284,14 @@ If your Rust code compiles, your frontend types are correct. This eliminates an 
 | **Query Caching** | Built-in | ❌ | ❌ | ❌ |
 | **Rate Limiting** | Built-in | ❌ | ❌ | ❌ |
 | **Real-time** | Built-in | Built-in | Built-in | ❌ |
+| **Webhooks** | Built-in | ❌ | Cloud Functions | ❌ |
+| **MCP Tools** | Built-in | ❌ | ❌ | ❌ |
 | **Full Type Safety** | Rust → TS | Partial | ❌ | ❌ |
 | **Self-Hosted** | One binary | Complex | ❌ | One binary |
 | **Vendor Lock-in** | None | Low | High | None |
 | **Database** | PostgreSQL | PostgreSQL | Firestore | SQLite |
 
-**vs. Temporal/Inngest**: FORGE workflows are simpler (no separate service) but less feature-complete. If you need advanced workflow features (versioning, signals, child workflows), use Temporal. If you need "good enough" workflows without the operational overhead, use FORGE.
+**vs. Temporal/Inngest**: FORGE workflows run in-process with no separate orchestration service, but you lose some features. If you need child workflows, signals, or advanced versioning, use Temporal. If you need durable multi-step processes without the ops overhead, FORGE handles that.
 
 **vs. Node.js + BullMQ + etc.**: FORGE trades ecosystem breadth for operational simplicity. You get fewer npm packages but also fewer 3 AM pages about Redis running out of memory.
 
@@ -279,6 +317,28 @@ forge dev
 
 The `--demo` flag scaffolds a working app with examples of queries, mutations, jobs, crons, and workflows. Or use `--minimal` for a clean slate.
 
+Scaffold new components without writing boilerplate:
+
+```bash
+forge add query list_orders      # new query function
+forge add mutation create_order  # new mutation
+forge add job send_receipt       # background job
+forge add workflow onboarding    # durable workflow
+forge add cron daily_report      # scheduled task
+forge check                      # validate project health
+```
+
+`forge generate` syncs TypeScript types from your Rust models. `forge check` validates config, migrations, function signatures, and frontend setup.
+
+### Deployment
+
+```bash
+cargo build --release
+./target/release/my-app
+```
+
+The release binary embeds the frontend build and the Forge runtime. One file to deploy. Point it at a PostgreSQL instance and it runs.
+
 Check out the [examples](examples/) for working apps you can run with `docker compose up`.
 
 [**Read the docs →**](https://tryforge.dev/docs)
@@ -301,11 +361,13 @@ Probably not the right fit if:
 
 ---
 
-## Status
+## Project Maturity
 
-FORGE is in **alpha**. The API is stabilizing but may change. It's been used in production for small projects, but you should evaluate it yourself before betting your company on it.
+FORGE is pre-1.0. Expect breaking changes between releases. Not ready for production yet. Good for side projects, internal tools, and kicking the tires.
 
-We're actively working on these. [Contributions welcome](CONTRIBUTING.md).
+Breaking changes are documented in [CHANGELOG.md](CHANGELOG.md). Pin your version if you need stability. Once the core API settles, we will cut 1.0 and commit to semver.
+
+[Contributions welcome](CONTRIBUTING.md).
 
 ---
 

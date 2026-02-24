@@ -1,44 +1,37 @@
 //! Database provisioning for tests.
 //!
-//! Provides PostgreSQL access for integration tests. Database configuration
-//! options:
-//! 1. Pass a URL directly via `from_url()`
-//! 2. Use `from_env()` to explicitly read from TEST_DATABASE_URL
-//!
-//! This design prevents accidental use of production databases. The .env file
-//! DATABASE_URL is NEVER automatically read.
+//! Deliberately avoids reading DATABASE_URL to prevent accidental production use.
 
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
 use sqlx::PgPool;
 use std::path::Path;
+#[cfg(feature = "testcontainers")]
+use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::error::{ForgeError, Result};
 
+#[cfg(feature = "testcontainers")]
+type PgContainer = Arc<Option<testcontainers::ContainerAsync<testcontainers_modules::postgres::Postgres>>>;
+
 /// Database access for tests.
-///
-/// Test database configuration is intentionally explicit to prevent
-/// accidental use of production databases.
 ///
 /// # Examples
 ///
 /// ```ignore
-/// // Option 1: Explicit URL
 /// let db = TestDatabase::from_url("postgres://localhost/test_db").await?;
-///
-/// // Option 2: From TEST_DATABASE_URL env var
 /// let db = TestDatabase::from_env().await?;
 /// ```
 pub struct TestDatabase {
     pool: PgPool,
     url: String,
+    #[cfg(feature = "testcontainers")]
+    _container: PgContainer,
 }
 
 impl TestDatabase {
     /// Connect to database at the given URL.
-    ///
-    /// Use this for explicit database configuration in tests.
     pub async fn from_url(url: &str) -> Result<Self> {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(10)
@@ -49,20 +42,64 @@ impl TestDatabase {
         Ok(Self {
             pool,
             url: url.to_string(),
+            #[cfg(feature = "testcontainers")]
+            _container: Arc::new(None),
         })
     }
 
-    /// Connect using TEST_DATABASE_URL environment variable.
-    ///
-    /// Note: This reads TEST_DATABASE_URL (not DATABASE_URL) to prevent
-    /// accidental use of production databases in tests.
+    /// Connect using `TEST_DATABASE_URL`, or start a container if the
+    /// `testcontainers` feature is enabled and the var is unset.
     pub async fn from_env() -> Result<Self> {
-        let url = std::env::var("TEST_DATABASE_URL").map_err(|_| {
-            ForgeError::Database(
-                "TEST_DATABASE_URL not set. Set it explicitly for database tests.".to_string(),
-            )
-        })?;
-        Self::from_url(&url).await
+        match std::env::var("TEST_DATABASE_URL") {
+            Ok(url) => Self::from_url(&url).await,
+            Err(_) => {
+                #[cfg(feature = "testcontainers")]
+                {
+                    return Self::from_container().await;
+                }
+                #[cfg(not(feature = "testcontainers"))]
+                {
+                    Err(ForgeError::Database(
+                        "TEST_DATABASE_URL not set. Set it explicitly for database tests, \
+                         or enable the `testcontainers` feature for automatic provisioning."
+                            .to_string(),
+                    ))
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "testcontainers")]
+    async fn from_container() -> Result<Self> {
+        use testcontainers::runners::AsyncRunner;
+        use testcontainers::ImageExt;
+        use testcontainers_modules::postgres::Postgres;
+
+        // PG 13+ required for gen_random_uuid() without pgcrypto
+        let container = Postgres::default()
+            .with_tag("18-alpine")
+            .start()
+            .await
+            .map_err(|e| ForgeError::Database(format!("Failed to start PG container: {e}")))?;
+
+        let port = container
+            .get_host_port_ipv4(5432)
+            .await
+            .map_err(|e| ForgeError::Database(format!("Failed to get container port: {e}")))?;
+
+        let url = format!("postgres://postgres:postgres@localhost:{port}/postgres");
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(10)
+            .acquire_timeout(std::time::Duration::from_secs(30))
+            .connect(&url)
+            .await
+            .map_err(ForgeError::Sql)?;
+
+        Ok(Self {
+            pool,
+            url,
+            _container: Arc::new(Some(container)),
+        })
     }
 
     /// Get the connection pool.
@@ -123,6 +160,8 @@ impl TestDatabase {
             pool: test_pool,
             db_name,
             base_url,
+            #[cfg(feature = "testcontainers")]
+            _container: self._container.clone(),
         })
     }
 }
@@ -136,6 +175,8 @@ pub struct IsolatedTestDb {
     pool: PgPool,
     db_name: String,
     base_url: String,
+    #[cfg(feature = "testcontainers")]
+    _container: PgContainer,
 }
 
 impl IsolatedTestDb {
@@ -163,22 +204,15 @@ impl IsolatedTestDb {
     /// This handles SQL with multiple statements separated by semicolons,
     /// including PL/pgSQL functions with dollar-quoted strings.
     pub async fn run_sql(&self, sql: &str) -> Result<()> {
-        let statements = split_sql_statements(sql);
-        for statement in statements {
-            let statement = statement.trim();
-            if statement.is_empty()
-                || statement.lines().all(|l| {
-                    let l = l.trim();
-                    l.is_empty() || l.starts_with("--")
-                })
-            {
+        for stmt in split_sql_statements(sql) {
+            let stmt = stmt.trim();
+            if is_blank_sql(stmt) {
                 continue;
             }
-
-            sqlx::query(statement)
+            sqlx::query(stmt)
                 .execute(&self.pool)
                 .await
-                .map_err(|e| ForgeError::Database(format!("Failed to execute SQL: {}", e)))?;
+                .map_err(|e| ForgeError::Database(format!("Failed to execute SQL: {e}")))?;
         }
         Ok(())
     }
@@ -264,29 +298,29 @@ impl IsolatedTestDb {
             let up_sql = parse_up_sql(&content);
 
             // Split into individual statements and execute
-            let statements = split_sql_statements(&up_sql);
-            for statement in statements {
-                let statement = statement.trim();
-                if statement.is_empty()
-                    || statement.lines().all(|l| {
-                        let l = l.trim();
-                        l.is_empty() || l.starts_with("--")
-                    })
-                {
+            for stmt in split_sql_statements(&up_sql) {
+                let stmt = stmt.trim();
+                if is_blank_sql(stmt) {
                     continue;
                 }
-
-                sqlx::query(statement)
+                sqlx::query(stmt)
                     .execute(&self.pool)
                     .await
                     .map_err(|e| {
-                        ForgeError::Database(format!("Failed to apply migration '{}': {}", name, e))
+                        ForgeError::Database(format!("Failed to apply migration '{name}': {e}"))
                     })?;
             }
         }
 
         Ok(())
     }
+}
+
+fn is_blank_sql(sql: &str) -> bool {
+    sql.is_empty()
+        || sql
+            .lines()
+            .all(|l| l.trim().is_empty() || l.trim().starts_with("--"))
 }
 
 /// Sanitize a test name for use in a database name.
@@ -316,24 +350,17 @@ fn replace_db_name(url: &str, new_db: &str) -> String {
 
 /// Parse migration content, extracting only the up SQL (before -- @down marker).
 fn parse_up_sql(content: &str) -> String {
-    let down_marker_patterns = ["-- @down", "--@down", "-- @DOWN", "--@DOWN"];
+    let down_markers = ["-- @down", "--@down", "-- @DOWN", "--@DOWN"];
+    let up_part = down_markers
+        .iter()
+        .find_map(|m| content.find(m).map(|idx| &content[..idx]))
+        .unwrap_or(content);
 
-    for pattern in down_marker_patterns {
-        if let Some(idx) = content.find(pattern) {
-            let up_part = &content[..idx];
-            return up_part
-                .replace("-- @up", "")
-                .replace("--@up", "")
-                .replace("-- @UP", "")
-                .replace("--@UP", "")
-                .trim()
-                .to_string();
-        }
-    }
+    strip_up_markers(up_part)
+}
 
-    // No @down marker found - treat entire content as up SQL
-    content
-        .replace("-- @up", "")
+fn strip_up_markers(sql: &str) -> String {
+    sql.replace("-- @up", "")
         .replace("--@up", "")
         .replace("-- @UP", "")
         .replace("--@UP", "")

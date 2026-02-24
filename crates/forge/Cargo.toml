@@ -52,6 +52,9 @@ axum = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
 
+[features]
+testcontainers = ["forge-core/testcontainers"]
+
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", features = ["signal"] }
 

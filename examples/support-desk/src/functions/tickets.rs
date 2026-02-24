@@ -161,7 +161,7 @@ mod tests {
     async fn setup_db(test_name: &str) -> IsolatedTestDb {
         let base = TestDatabase::from_env()
             .await
-            .expect("TEST_DATABASE_URL required");
+            .expect("test database");
         let db = base.isolated(test_name).await.expect("isolated db");
         db.run_sql(&forge::get_internal_sql())
             .await
