@@ -217,6 +217,7 @@ pub async fn events_webhook(ctx: &WebhookContext, payload: Value) -> Result<Webh
 | Method | Return Type | Description |
 |--------|-------------|-------------|
 | `ctx.db()` | `&PgPool` | Database connection pool |
+| `ctx.db_conn()` | `DbConn<'_>` | Database connection as `DbConn` for shared helpers |
 | `ctx.http()` | `&reqwest::Client` | HTTP client for external calls |
 | `ctx.header(name)` | `Option<&str>` | Get header value (case-insensitive) |
 | `ctx.headers()` | `&HashMap<String, String>` | All request headers |

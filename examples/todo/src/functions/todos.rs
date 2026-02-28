@@ -40,25 +40,21 @@ pub async fn create_todo(ctx: &MutationContext, input: CreateTodoInput) -> Resul
 
 #[forge::mutation(public)]
 pub async fn update_todo(ctx: &MutationContext, input: UpdateTodoInput) -> Result<Todo> {
-    let existing: Option<Todo> = ctx
-        .db()
-        .fetch_optional(sqlx::query_as("SELECT * FROM todos WHERE id = $1").bind(input.id))
-        .await?;
-
-    let existing = existing.ok_or_else(|| ForgeError::NotFound("Todo not found".into()))?;
-
-    let title = input.title.unwrap_or(existing.title);
-    let completed = input.completed.unwrap_or(existing.completed);
-
     ctx.db()
-        .fetch_one(
-            sqlx::query_as("UPDATE todos SET title = $1, completed = $2 WHERE id = $3 RETURNING *")
-                .bind(title)
-                .bind(completed)
-                .bind(input.id),
+        .fetch_optional(
+            sqlx::query_as(
+                "UPDATE todos
+                 SET title = COALESCE($1, title),
+                     completed = COALESCE($2, completed)
+                 WHERE id = $3
+                 RETURNING *",
+            )
+            .bind(input.title.as_deref())
+            .bind(input.completed)
+            .bind(input.id),
         )
-        .await
-        .map_err(Into::into)
+        .await?
+        .ok_or_else(|| ForgeError::NotFound("Todo not found".into()))
 }
 
 #[forge::mutation(public)]

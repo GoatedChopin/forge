@@ -202,10 +202,12 @@ Rate limit keys: `user` (per authenticated user), `ip` (per client IP), `tenant`
 | Method | Return Type | Description |
 |--------|-------------|-------------|
 | `ctx.db()` | `DbConn<'_>` | Database connection (pool or transaction handle) |
+| `ctx.pool()` | `&PgPool` | Direct pool access for non-transactional operations |
 | `ctx.http()` | `&reqwest::Client` | HTTP client for external APIs |
 | `ctx.require_user_id()` | `Result<Uuid>` | Authenticated user ID or error |
 | `ctx.require_subject()` | `Result<&str>` | Raw subject claim (Firebase, Clerk) |
 | `ctx.dispatch_job(name, args)` | `Result<Uuid>` | Dispatch background job |
+| `ctx.cancel_job(job_id, reason)` | `Result<bool>` | Request cancellation for a job |
 | `ctx.start_workflow(name, input)` | `Result<Uuid>` | Start workflow |
 | `ctx.env(key)` | `Option<String>` | Environment variable |
 | `ctx.env_require(key)` | `Result<String>` | Required environment variable |

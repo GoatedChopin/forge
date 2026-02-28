@@ -347,18 +347,12 @@ Each test gets its own database. Prevents data collision between parallel tests.
 ```rust
 #[tokio::test]
 async fn test_user_creation() {
-    let base = TestDatabase::from_env().await.unwrap();
-    let db = base.isolated("test_user_creation").await.unwrap();
-
-    db.migrate(Path::new("migrations")).await.unwrap();
-
-    // Or run setup SQL directly
-    db.run_sql(r#"
-        CREATE TABLE users (
-            id UUID PRIMARY KEY,
-            email TEXT NOT NULL UNIQUE
-        );
-    "#).await.unwrap();
+    // One-liner: creates isolated DB, runs internal SQL, and applies migrations
+    let db = IsolatedTestDb::setup(
+        "test_user_creation",
+        &forge::get_internal_sql(),
+        Path::new("migrations"),
+    ).await.unwrap();
 
     let ctx = TestMutationContext::builder()
         .as_user(Uuid::new_v4())
@@ -368,6 +362,32 @@ async fn test_user_creation() {
     create_user(&ctx, user_args).await.unwrap();
 
     // Optional: explicit cleanup (otherwise orphaned DBs are cleaned on next run)
+    db.cleanup().await.unwrap();
+}
+```
+
+For more control over the setup steps, use the manual approach:
+
+```rust
+#[tokio::test]
+async fn test_with_custom_setup() {
+    let base = TestDatabase::from_env().await.unwrap();
+    let db = base.isolated("test_custom_setup").await.unwrap();
+
+    db.run_sql(r#"
+        CREATE TABLE users (
+            id UUID PRIMARY KEY,
+            email TEXT NOT NULL UNIQUE
+        );
+    "#).await.unwrap();
+    db.migrate(Path::new("migrations")).await.unwrap();
+
+    let ctx = TestMutationContext::builder()
+        .as_user(Uuid::new_v4())
+        .with_pool(db.pool().clone())
+        .build();
+
+    create_user(&ctx, user_args).await.unwrap();
     db.cleanup().await.unwrap();
 }
 ```
@@ -808,4 +828,4 @@ Isolated databases are created fresh per test. Manual cleanup or transaction rol
 
 ### Production Parity
 
-Test contexts mirror production contexts. The same methods (`ctx.db()`, `ctx.http()`, `ctx.env()`) work identically. Tests written against test contexts run against production contexts without modification.
+Test contexts mirror production contexts. The same methods (`ctx.db()`, `ctx.db_conn()`, `ctx.http()`, `ctx.env()`) work identically. Tests written against test contexts run against production contexts without modification.

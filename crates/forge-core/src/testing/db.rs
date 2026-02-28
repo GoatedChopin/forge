@@ -13,7 +13,8 @@ use tracing::{debug, info};
 use crate::error::{ForgeError, Result};
 
 #[cfg(feature = "testcontainers")]
-type PgContainer = Arc<Option<testcontainers::ContainerAsync<testcontainers_modules::postgres::Postgres>>>;
+type PgContainer =
+    Arc<Option<testcontainers::ContainerAsync<testcontainers_modules::postgres::Postgres>>>;
 
 /// Database access for tests.
 ///
@@ -55,7 +56,7 @@ impl TestDatabase {
             Err(_) => {
                 #[cfg(feature = "testcontainers")]
                 {
-                    return Self::from_container().await;
+                    Self::from_container().await
                 }
                 #[cfg(not(feature = "testcontainers"))]
                 {
@@ -71,8 +72,8 @@ impl TestDatabase {
 
     #[cfg(feature = "testcontainers")]
     async fn from_container() -> Result<Self> {
-        use testcontainers::runners::AsyncRunner;
         use testcontainers::ImageExt;
+        use testcontainers::runners::AsyncRunner;
         use testcontainers_modules::postgres::Postgres;
 
         // PG 13+ required for gen_random_uuid() without pgcrypto
@@ -180,6 +181,27 @@ pub struct IsolatedTestDb {
 }
 
 impl IsolatedTestDb {
+    /// Create a fully initialized test database in one call.
+    ///
+    /// Combines `TestDatabase::from_env()`, `isolated()`, `run_sql(internal_sql)`,
+    /// and `migrate()` into a single convenience method.
+    ///
+    /// ```ignore
+    /// let db = IsolatedTestDb::setup(
+    ///     "my_test",
+    ///     &forge::get_internal_sql(),
+    ///     Path::new("migrations"),
+    /// ).await?;
+    /// let pool = db.pool().clone();
+    /// ```
+    pub async fn setup(test_name: &str, internal_sql: &str, migrations_dir: &Path) -> Result<Self> {
+        let base = TestDatabase::from_env().await?;
+        let db = base.isolated(test_name).await?;
+        db.run_sql(internal_sql).await?;
+        db.migrate(migrations_dir).await?;
+        Ok(db)
+    }
+
     /// Get the connection pool for this isolated database.
     pub fn pool(&self) -> &PgPool {
         &self.pool
@@ -303,12 +325,9 @@ impl IsolatedTestDb {
                 if is_blank_sql(stmt) {
                     continue;
                 }
-                sqlx::query(stmt)
-                    .execute(&self.pool)
-                    .await
-                    .map_err(|e| {
-                        ForgeError::Database(format!("Failed to apply migration '{name}': {e}"))
-                    })?;
+                sqlx::query(stmt).execute(&self.pool).await.map_err(|e| {
+                    ForgeError::Database(format!("Failed to apply migration '{name}': {e}"))
+                })?;
             }
         }
 

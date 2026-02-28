@@ -201,6 +201,7 @@ pub async fn poll_iss_location(ctx: &CronContext) -> Result<()> {
 | Method | Return Type | Description |
 |--------|-------------|-------------|
 | `ctx.db()` | `&PgPool` | Database connection pool |
+| `ctx.db_conn()` | `DbConn<'_>` | Database connection as `DbConn` for shared helpers |
 | `ctx.http()` | `&reqwest::Client` | HTTP client |
 | `ctx.delay()` | `Duration` | Time between scheduled and actual execution |
 | `ctx.is_late()` | `bool` | `true` if delay exceeds 1 minute |

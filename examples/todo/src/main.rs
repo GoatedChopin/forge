@@ -51,16 +51,9 @@ async fn main() -> Result<()> {
     let mut builder = Forge::builder();
 
     builder
-        .function_registry_mut()
-        .register_query::<functions::ListTodosQuery>();
-    builder
-        .function_registry_mut()
-        .register_mutation::<functions::CreateTodoMutation>();
-    builder
-        .function_registry_mut()
-        .register_mutation::<functions::UpdateTodoMutation>();
-    builder
-        .function_registry_mut()
+        .register_query::<functions::ListTodosQuery>()
+        .register_mutation::<functions::CreateTodoMutation>()
+        .register_mutation::<functions::UpdateTodoMutation>()
         .register_mutation::<functions::DeleteTodoMutation>();
 
     #[cfg(feature = "embedded-frontend")]

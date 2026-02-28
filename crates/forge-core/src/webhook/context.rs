@@ -70,6 +70,11 @@ impl WebhookContext {
         &self.db_pool
     }
 
+    /// Returns a `DbConn` wrapping the pool for shared helper functions.
+    pub fn db_conn(&self) -> crate::function::DbConn<'_> {
+        crate::function::DbConn::Pool(&self.db_pool)
+    }
+
     /// Get HTTP client.
     pub fn http(&self) -> &reqwest::Client {
         &self.http_client

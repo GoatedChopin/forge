@@ -42,7 +42,7 @@ cargo clippy --all-targets -- -D warnings && cargo test && bun lint && bun forma
 | **Job** | Background | `&JobContext` | `ctx.db()`, `ctx.http()`, `ctx.progress()`, `ctx.is_retry()`, `ctx.is_last_attempt()` |
 | **Cron** | Scheduled | `&CronContext` | `ctx.db()`, `ctx.http()`, `ctx.log`, `ctx.is_late()`, `ctx.is_catch_up` |
 | **Workflow** | Multi-step durable | `&WorkflowContext` | `ctx.db()`, `ctx.http()`, `ctx.step()`, `ctx.sleep()`, `ctx.parallel()` |
-| **Daemon** | Long-running singleton | `&DaemonContext` | `ctx.db()`, `ctx.http()`, `ctx.shutdown_signal()` |
+| **Daemon** | Long-running singleton | `&DaemonContext` | `ctx.db()`, `ctx.http()`, `ctx.shutdown_signal()`, `ctx.dispatch_job()`, `ctx.start_workflow()` |
 | **Webhook** | HTTP endpoint | `&WebhookContext` | `ctx.db()`, `ctx.http()`, `ctx.dispatch_job()`, `ctx.header()` |
 | **MCP Tool** | AI tool exposure | `&McpToolContext` | `ctx.db()`, `ctx.require_user_id()`, `ctx.dispatch_job()`, `ctx.start_workflow()` |
 | **Custom Handler** | Raw axum route | N/A (raw axum) | Full control: headers, extractors, response types |
@@ -227,6 +227,7 @@ Custom routes are merged at the top level. Avoid paths starting with `/_api` (re
 ```rust
 // ALL contexts
 ctx.db()                    // &PgPool (MutationContext returns DbConn<'_>)
+ctx.db_conn()               // DbConn<'_> - use for shared helpers across context types
 ctx.require_user_id()?      // Uuid
 ctx.require_subject()?      // &str
 ctx.env("KEY")              // Option<String>
@@ -274,6 +275,8 @@ ctx.tenant_id()             // Option<Uuid> for multi-tenancy
 ctx.shutdown_signal()       // Use in tokio::select! for graceful shutdown
 ctx.is_shutdown_requested() // bool
 ctx.heartbeat().await?      // keep alive signal
+ctx.dispatch_job("name", args).await?   // -> Uuid
+ctx.start_workflow("name", input).await? // -> Uuid
 
 // Webhook only
 ctx.header("X-Key")         // Option<&str>
@@ -387,22 +390,19 @@ mod tests {
     use super::*;
     use forge::testing::*;
 
-    // Shared DB setup - each test gets isolated transaction
-    async fn setup() -> (IsolatedTestDb, PgPool) {
-        let base = TestDatabase::from_env().await.unwrap();
-        let db = base.isolated("test").await.unwrap();
-        db.run_sql(&forge::get_internal_sql()).await.unwrap();
-        db.migrate(Path::new("migrations")).await.unwrap();
-        (db, db.pool().clone())
+    // Shared DB setup - each test gets isolated database
+    async fn setup(test_name: &str) -> IsolatedTestDb {
+        IsolatedTestDb::setup(test_name, &forge::get_internal_sql(), Path::new("migrations"))
+            .await.unwrap()
     }
 
     #[tokio::test]
     async fn test_query() {
-        let (_db, pool) = setup().await;
+        let db = setup("test_query").await;
         let ctx = TestQueryContext::builder()
             .as_user(Uuid::new_v4())
             .with_role("admin")
-            .with_pool(pool)
+            .with_pool(db.pool().clone())
             .build();
 
         // Call your query function and assert results
@@ -412,10 +412,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_mutation_with_job_dispatch() {
-        let (_db, pool) = setup().await;
+        let db = setup("test_mutation_dispatch").await;
         let ctx = TestMutationContext::builder()
             .as_user(Uuid::new_v4())
-            .with_pool(pool)
+            .with_pool(db.pool().clone())
             .mock_http_json("https://api.example.com/*", json!({"ok": true}))
             .build();
 

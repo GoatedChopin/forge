@@ -45,28 +45,22 @@ async fn main() -> Result<()> {
     let config = ForgeConfig::from_file("forge.toml")?;
     let mut builder = Forge::builder();
 
-    let reg = builder.function_registry_mut();
-    reg.register_mutation::<functions::RegisterMutation>();
-    reg.register_mutation::<functions::LoginMutation>();
-    reg.register_query::<functions::ListProjectsQuery>();
-    reg.register_query::<functions::GetProjectQuery>();
-    reg.register_mutation::<functions::CreateProjectMutation>();
-    reg.register_mutation::<functions::UpdateProjectMutation>();
-    reg.register_mutation::<functions::UnarchiveProjectMutation>();
-    reg.register_query::<functions::ListTasksQuery>();
-    reg.register_mutation::<functions::CreateTaskMutation>();
-    reg.register_mutation::<functions::UpdateTaskMutation>();
-    reg.register_mutation::<functions::DeleteTaskMutation>();
-    reg.register_mutation::<functions::MoveTaskMutation>();
     builder
-        .job_registry_mut()
-        .register::<functions::ExportProjectJob>();
-    builder
-        .cron_registry_mut()
-        .register::<functions::OverdueCheckerCron>();
-    builder
-        .workflow_registry_mut()
-        .register::<functions::ScheduleProjectArchiveWorkflow>();
+        .register_mutation::<functions::RegisterMutation>()
+        .register_mutation::<functions::LoginMutation>()
+        .register_query::<functions::ListProjectsQuery>()
+        .register_query::<functions::GetProjectQuery>()
+        .register_mutation::<functions::CreateProjectMutation>()
+        .register_mutation::<functions::UpdateProjectMutation>()
+        .register_mutation::<functions::UnarchiveProjectMutation>()
+        .register_query::<functions::ListTasksQuery>()
+        .register_mutation::<functions::CreateTaskMutation>()
+        .register_mutation::<functions::UpdateTaskMutation>()
+        .register_mutation::<functions::DeleteTaskMutation>()
+        .register_mutation::<functions::MoveTaskMutation>()
+        .register_job::<functions::ExportProjectJob>()
+        .register_cron::<functions::OverdueCheckerCron>()
+        .register_workflow::<functions::ScheduleProjectArchiveWorkflow>();
 
     #[cfg(feature = "embedded-frontend")]
     builder.frontend_handler(embedded::serve_frontend);

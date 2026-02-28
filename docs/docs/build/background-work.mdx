@@ -301,6 +301,7 @@ pub async fn send_notification(ctx: &JobContext, args: NotifyArgs) -> Result<()>
 | Method | Return Type | Description |
 |--------|-------------|-------------|
 | `ctx.db()` | `&PgPool` | Database connection pool |
+| `ctx.db_conn()` | `DbConn<'_>` | Database connection as `DbConn` for shared helpers |
 | `ctx.http()` | `&Client` | HTTP client for external calls |
 | `ctx.progress(percent, msg)` | `Result<()>` | Report progress (0-100) |
 | `ctx.heartbeat()` | `Result<()>` | Send heartbeat to prevent stale reclaim |

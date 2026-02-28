@@ -51,36 +51,16 @@ async fn main() -> Result<()> {
     let mut builder = Forge::builder();
 
     builder
-        .function_registry_mut()
-        .register_query::<functions::ListSupportTicketsQuery>();
-    builder
-        .function_registry_mut()
-        .register_mutation::<functions::CreateSupportTicketMutation>();
-    builder
-        .function_registry_mut()
-        .register_mutation::<functions::SetTicketStatusMutation>();
-    builder
-        .function_registry_mut()
-        .register_mutation::<functions::SetTicketPriorityMutation>();
-    builder
-        .function_registry_mut()
-        .register_mutation::<functions::AddTicketNoteMutation>();
-
-    builder
-        .mcp_registry_mut()
-        .register::<functions::McpListSupportTicketsMcpTool>();
-    builder
-        .mcp_registry_mut()
-        .register::<functions::McpCreateSupportTicketMcpTool>();
-    builder
-        .mcp_registry_mut()
-        .register::<functions::McpSetTicketStatusMcpTool>();
-    builder
-        .mcp_registry_mut()
-        .register::<functions::McpSetTicketPriorityMcpTool>();
-    builder
-        .mcp_registry_mut()
-        .register::<functions::McpAddTicketNoteMcpTool>();
+        .register_query::<functions::ListSupportTicketsQuery>()
+        .register_mutation::<functions::CreateSupportTicketMutation>()
+        .register_mutation::<functions::SetTicketStatusMutation>()
+        .register_mutation::<functions::SetTicketPriorityMutation>()
+        .register_mutation::<functions::AddTicketNoteMutation>()
+        .register_mcp_tool::<functions::McpListSupportTicketsMcpTool>()
+        .register_mcp_tool::<functions::McpCreateSupportTicketMcpTool>()
+        .register_mcp_tool::<functions::McpSetTicketStatusMcpTool>()
+        .register_mcp_tool::<functions::McpSetTicketPriorityMcpTool>()
+        .register_mcp_tool::<functions::McpAddTicketNoteMcpTool>();
 
     #[cfg(feature = "embedded-frontend")]
     builder.frontend_handler(embedded::serve_frontend);

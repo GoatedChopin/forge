@@ -210,7 +210,10 @@ pub async fn depends_on_other_services(ctx: &DaemonContext) -> Result<()> {
 | Method | Return Type | Description |
 |--------|-------------|-------------|
 | `ctx.db()` | `&PgPool` | Database connection pool |
+| `ctx.db_conn()` | `DbConn<'_>` | Database connection as `DbConn` for shared helpers |
 | `ctx.http()` | `&reqwest::Client` | HTTP client |
+| `ctx.dispatch_job(name, args)` | `Result<Uuid>` | Dispatch a background job |
+| `ctx.start_workflow(name, input)` | `Result<Uuid>` | Start a workflow |
 | `ctx.shutdown_signal()` | `Future<()>` | Resolves when shutdown requested |
 | `ctx.heartbeat()` | `Result<()>` | Update last heartbeat timestamp |
 | `ctx.env(key)` | `Option<String>` | Environment variable |

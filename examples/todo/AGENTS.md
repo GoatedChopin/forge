@@ -42,7 +42,7 @@ cargo clippy --all-targets -- -D warnings && cargo test && bun lint && bun forma
 | **Job** | Background | `&JobContext` | `ctx.db()`, `ctx.http()`, `ctx.progress()`, `ctx.is_retry()`, `ctx.is_last_attempt()` |
 | **Cron** | Scheduled | `&CronContext` | `ctx.db()`, `ctx.http()`, `ctx.log`, `ctx.is_late()`, `ctx.is_catch_up` |
 | **Workflow** | Multi-step durable | `&WorkflowContext` | `ctx.db()`, `ctx.http()`, `ctx.step()`, `ctx.sleep()`, `ctx.parallel()` |
-| **Daemon** | Long-running singleton | `&DaemonContext` | `ctx.db()`, `ctx.http()`, `ctx.shutdown_signal()` |
+| **Daemon** | Long-running singleton | `&DaemonContext` | `ctx.db()`, `ctx.http()`, `ctx.shutdown_signal()`, `ctx.dispatch_job()`, `ctx.start_workflow()` |
 | **Webhook** | HTTP endpoint | `&WebhookContext` | `ctx.db()`, `ctx.http()`, `ctx.dispatch_job()`, `ctx.header()` |
 
 ---
@@ -186,18 +186,21 @@ pub async fn stripe_webhook(ctx: &WebhookContext, payload: Value) -> Result<Webh
 
 ```rust
 // ALL contexts
-ctx.db()                    // &PgPool
+ctx.db()                    // &PgPool (MutationContext returns DbConn<'_>)
+ctx.db_conn()               // DbConn<'_> - use for shared helpers across context types
 ctx.require_user_id()?      // Uuid
 ctx.require_subject()?      // &str
 ctx.env("KEY")              // Option<String>
 ctx.env_require("KEY")?     // Result<String>
 
-// Mutation, Job, Cron, Workflow
+// Mutation, Job, Cron, Workflow, Daemon, Webhook
 ctx.http()                  // &reqwest::Client
 
 // Mutation only
 ctx.dispatch_job("name", args).await?    // -> Uuid
 ctx.start_workflow("name", input).await? // -> Uuid
+ctx.cancel_job(job_id, reason).await?    // -> bool
+ctx.pool()                  // &PgPool (bypass transaction)
 
 // Job only
 ctx.progress(pct, "msg")?   // 0-100
@@ -221,10 +224,13 @@ ctx.get_step_result::<T>("x")
 // Daemon only
 ctx.shutdown_signal()       // Use in tokio::select! for graceful shutdown
 ctx.is_shutdown_requested() // bool
+ctx.dispatch_job("name", args).await?   // -> Uuid
+ctx.start_workflow("name", input).await? // -> Uuid
 
 // Webhook only
 ctx.header("X-Key")         // Option<&str>
 ctx.dispatch_job("name", args).await?  // -> Uuid
+ctx.cancel_job(job_id, reason).await?  // -> bool
 ctx.idempotency_key         // Option<String>
 ```
 

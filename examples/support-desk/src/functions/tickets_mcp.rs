@@ -1,4 +1,3 @@
-use forge::forge_core::DbConn;
 use forge::forge_core::mcp::McpToolContext;
 
 use super::tickets::{add_note, create_ticket, list_tickets, set_priority, set_status};
@@ -18,7 +17,7 @@ use crate::schema::{
 pub async fn mcp_list_support_tickets(
     ctx: &McpToolContext,
 ) -> forge::forge_core::Result<Vec<McpTicket>> {
-    Ok(list_tickets(DbConn::Pool(ctx.db()))
+    Ok(list_tickets(ctx.db_conn())
         .await?
         .into_iter()
         .map(McpTicket::from)
@@ -37,7 +36,7 @@ pub async fn mcp_create_support_ticket(
     input: McpCreateSupportTicketInput,
 ) -> forge::forge_core::Result<McpTicket> {
     let ticket = create_ticket(
-        DbConn::Pool(ctx.db()),
+        ctx.db_conn(),
         CreateSupportTicketInput {
             customer_name: input.customer_name,
             title: input.title,
@@ -61,7 +60,7 @@ pub async fn mcp_set_ticket_status(
     input: McpSetTicketStatusInput,
 ) -> forge::forge_core::Result<McpTicket> {
     let ticket = set_status(
-        DbConn::Pool(ctx.db()),
+        ctx.db_conn(),
         SetTicketStatusInput {
             id: input.id,
             status: input.status,
@@ -83,7 +82,7 @@ pub async fn mcp_set_ticket_priority(
     input: McpSetTicketPriorityInput,
 ) -> forge::forge_core::Result<McpTicket> {
     let ticket = set_priority(
-        DbConn::Pool(ctx.db()),
+        ctx.db_conn(),
         SetTicketPriorityInput {
             id: input.id,
             priority: input.priority,
@@ -105,7 +104,7 @@ pub async fn mcp_add_ticket_note(
     input: McpAddTicketNoteInput,
 ) -> forge::forge_core::Result<McpTicket> {
     let ticket = add_note(
-        DbConn::Pool(ctx.db()),
+        ctx.db_conn(),
         AddTicketNoteInput {
             id: input.id,
             note: input.note,
@@ -120,23 +119,19 @@ pub async fn mcp_add_ticket_note(
 mod tests {
     use super::*;
     use forge::forge_core::function::{AuthContext, RequestMetadata};
-    use forge::testing::{IsolatedTestDb, TestDatabase};
+    use forge::testing::IsolatedTestDb;
     use std::path::Path;
 
     use crate::schema::{TicketPriority, TicketStatus};
 
     async fn setup_db(test_name: &str) -> IsolatedTestDb {
-        let base = TestDatabase::from_env()
-            .await
-            .expect("test database");
-        let db = base.isolated(test_name).await.expect("isolated db");
-        db.run_sql(&forge::get_internal_sql())
-            .await
-            .expect("internal sql loaded");
-        db.migrate(Path::new("migrations"))
-            .await
-            .expect("migrations applied");
-        db
+        IsolatedTestDb::setup(
+            test_name,
+            &forge::get_internal_sql(),
+            Path::new("migrations"),
+        )
+        .await
+        .expect("test database setup")
     }
 
     fn mcp_ctx(pool: sqlx::PgPool) -> McpToolContext {

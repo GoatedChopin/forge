@@ -339,6 +339,7 @@ The version is recorded when a workflow is started. On resume, the runtime loads
 | `ctx.record_step_start(name)` | `()` | Mark step as started |
 | `ctx.record_step_complete(name, value)` | `()` | Mark step as completed |
 | `ctx.db()` | `&PgPool` | Database connection pool |
+| `ctx.db_conn()` | `DbConn<'_>` | Database connection as `DbConn` for shared helpers |
 | `ctx.http()` | `&Client` | HTTP client |
 | `ctx.env(key)` | `Option<String>` | Environment variable |
 

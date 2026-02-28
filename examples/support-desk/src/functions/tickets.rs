@@ -21,19 +21,19 @@ fn normalized_non_empty(label: &str, raw: &str, max: usize) -> Result<String> {
 }
 
 pub(crate) async fn list_tickets(db: DbConn<'_>) -> Result<Vec<SupportTicket>> {
-    db.fetch_all(sqlx::query_as(
-        "SELECT *
-         FROM support_tickets
-         ORDER BY
-           CASE status
-             WHEN 'new' THEN 0
-             WHEN 'working' THEN 1
-             ELSE 2
-           END,
-           updated_at DESC",
-    ))
-    .await
-    .map_err(Into::into)
+    Ok(db
+        .fetch_all(sqlx::query_as(
+            "SELECT *
+             FROM support_tickets
+             ORDER BY
+               CASE status
+                 WHEN 'new' THEN 0
+                 WHEN 'working' THEN 1
+                 ELSE 2
+               END,
+               updated_at DESC",
+        ))
+        .await?)
 }
 
 pub(crate) async fn create_ticket(
@@ -45,19 +45,19 @@ pub(crate) async fn create_ticket(
     let details = normalized_non_empty("Details", &input.details, 1000)?;
     let priority = input.priority.unwrap_or(TicketPriority::Normal);
 
-    db.fetch_one(
-        sqlx::query_as(
-            "INSERT INTO support_tickets (customer_name, title, details, priority)
-         VALUES ($1, $2, $3, $4)
-         RETURNING *",
+    Ok(db
+        .fetch_one(
+            sqlx::query_as(
+                "INSERT INTO support_tickets (customer_name, title, details, priority)
+             VALUES ($1, $2, $3, $4)
+             RETURNING *",
+            )
+            .bind(customer_name)
+            .bind(title)
+            .bind(details)
+            .bind(priority),
         )
-        .bind(customer_name)
-        .bind(title)
-        .bind(details)
-        .bind(priority),
-    )
-    .await
-    .map_err(Into::into)
+        .await?)
 }
 
 pub(crate) async fn set_status(
@@ -115,7 +115,7 @@ pub(crate) async fn add_note(db: DbConn<'_>, input: AddTicketNoteInput) -> Resul
 
 #[forge::query(public, tables = ["support_tickets"])]
 pub async fn list_support_tickets(ctx: &QueryContext) -> Result<Vec<SupportTicket>> {
-    list_tickets(DbConn::Pool(ctx.db())).await
+    list_tickets(ctx.db_conn()).await
 }
 
 #[forge::mutation(public)]
@@ -153,23 +153,19 @@ pub async fn add_ticket_note(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use forge::testing::{IsolatedTestDb, TestDatabase};
+    use forge::testing::IsolatedTestDb;
     use std::path::Path;
 
     use crate::schema::TicketStatus;
 
     async fn setup_db(test_name: &str) -> IsolatedTestDb {
-        let base = TestDatabase::from_env()
-            .await
-            .expect("test database");
-        let db = base.isolated(test_name).await.expect("isolated db");
-        db.run_sql(&forge::get_internal_sql())
-            .await
-            .expect("internal sql loaded");
-        db.migrate(Path::new("migrations"))
-            .await
-            .expect("migrations applied");
-        db
+        IsolatedTestDb::setup(
+            test_name,
+            &forge::get_internal_sql(),
+            Path::new("migrations"),
+        )
+        .await
+        .expect("test database setup")
     }
 
     #[tokio::test]

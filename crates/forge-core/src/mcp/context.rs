@@ -64,6 +64,12 @@ impl McpToolContext {
         &self.db_pool
     }
 
+    /// Returns a `DbConn` wrapping the pool, allowing shared helper functions
+    /// that accept `DbConn` to work across all context types.
+    pub fn db_conn(&self) -> crate::function::DbConn<'_> {
+        crate::function::DbConn::Pool(&self.db_pool)
+    }
+
     pub fn require_user_id(&self) -> Result<Uuid> {
         self.auth.require_user_id()
     }

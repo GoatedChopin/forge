@@ -354,6 +354,12 @@ impl QueryContext {
         &self.db_pool
     }
 
+    /// Returns a `DbConn` wrapping the pool, allowing shared helper functions
+    /// that accept `DbConn` to work with both query and mutation contexts.
+    pub fn db_conn(&self) -> DbConn<'_> {
+        DbConn::Pool(&self.db_pool)
+    }
+
     pub fn require_user_id(&self) -> crate::error::Result<Uuid> {
         self.auth.require_user_id()
     }

@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use forge_core::CircuitBreakerClient;
 use forge_core::Result;
 use forge_core::daemon::{DaemonContext, DaemonStatus};
+use forge_core::function::{JobDispatch, WorkflowDispatch};
 use futures_util::FutureExt;
 use sqlx::PgPool;
 use tokio::sync::{broadcast, watch};
@@ -41,6 +42,8 @@ pub struct DaemonRunner {
     node_id: Uuid,
     config: DaemonRunnerConfig,
     shutdown_rx: broadcast::Receiver<()>,
+    job_dispatch: Option<Arc<dyn JobDispatch>>,
+    workflow_dispatch: Option<Arc<dyn WorkflowDispatch>>,
 }
 
 impl DaemonRunner {
@@ -59,7 +62,21 @@ impl DaemonRunner {
             node_id,
             config: DaemonRunnerConfig::default(),
             shutdown_rx,
+            job_dispatch: None,
+            workflow_dispatch: None,
         }
+    }
+
+    /// Set job dispatcher for daemon contexts.
+    pub fn with_job_dispatch(mut self, dispatcher: Arc<dyn JobDispatch>) -> Self {
+        self.job_dispatch = Some(dispatcher);
+        self
+    }
+
+    /// Set workflow dispatcher for daemon contexts.
+    pub fn with_workflow_dispatch(mut self, dispatcher: Arc<dyn WorkflowDispatch>) -> Self {
+        self.workflow_dispatch = Some(dispatcher);
+        self
     }
 
     /// Set custom configuration.
@@ -130,6 +147,8 @@ impl DaemonRunner {
                 let max_restarts = info.max_restarts;
                 let leader_elected = info.leader_elected;
                 let node_id = self.node_id;
+                let job_dispatch = self.job_dispatch.clone();
+                let workflow_dispatch = self.workflow_dispatch.clone();
 
                 tokio::spawn(async move {
                     run_daemon_loop(
@@ -144,6 +163,8 @@ impl DaemonRunner {
                         restart_delay,
                         max_restarts,
                         leader_elected,
+                        job_dispatch,
+                        workflow_dispatch,
                     )
                     .await
                 });
@@ -248,6 +269,8 @@ async fn run_daemon_loop(
     restart_delay: Duration,
     max_restarts: Option<u32>,
     leader_elected: bool,
+    job_dispatch: Option<Arc<dyn JobDispatch>>,
+    workflow_dispatch: Option<Arc<dyn WorkflowDispatch>>,
 ) {
     let daemon_span = tracing::info_span!(
         "daemon.lifecycle",
@@ -346,13 +369,19 @@ async fn run_daemon_loop(
                     }
                 });
 
-                let ctx = DaemonContext::new(
+                let mut ctx = DaemonContext::new(
                     name.clone(),
                     instance_id,
                     pool.clone(),
                     http_client.inner().clone(),
                     daemon_shutdown_rx,
                 );
+                if let Some(ref jd) = job_dispatch {
+                    ctx = ctx.with_job_dispatch(jd.clone());
+                }
+                if let Some(ref wd) = workflow_dispatch {
+                    ctx = ctx.with_workflow_dispatch(wd.clone());
+                }
 
                 // Run the daemon
                 let result = std::panic::AssertUnwindSafe((entry.handler)(&ctx))

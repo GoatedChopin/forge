@@ -25,6 +25,7 @@ use forge_core::CircuitBreakerClient;
 use forge_core::cluster::{LeaderRole, NodeId, NodeInfo, NodeRole, NodeStatus};
 use forge_core::config::{ForgeConfig, NodeRole as ConfigNodeRole};
 use forge_core::error::{ForgeError, Result};
+use forge_core::function::{ForgeMutation, ForgeQuery};
 use forge_core::mcp::ForgeMcpTool;
 use forge_runtime::migrations::{Migration, MigrationRunner, load_migrations_from_dir};
 
@@ -391,6 +392,18 @@ impl Forge {
             tracing::debug!("Workflow scheduler started");
         }
 
+        // Create job dispatcher and workflow executor for dispatch capabilities
+        let job_queue_for_dispatch = JobQueue::new(pool.clone());
+        let job_dispatcher = Arc::new(JobDispatcher::new(
+            job_queue_for_dispatch,
+            self.job_registry.clone(),
+        ));
+        let workflow_executor = Arc::new(WorkflowExecutor::new(
+            Arc::new(self.workflow_registry.clone()),
+            pool.clone(),
+            http_client.clone(),
+        ));
+
         // Start daemon runner if scheduler role (daemons run as singletons)
         if roles.contains(&NodeRole::Scheduler) && !self.daemon_registry.is_empty() {
             let daemon_registry = self.daemon_registry.clone();
@@ -404,7 +417,9 @@ impl Forge {
                 daemon_http,
                 node_id.as_uuid(),
                 daemon_shutdown_rx,
-            );
+            )
+            .with_job_dispatch(job_dispatcher.clone())
+            .with_workflow_dispatch(workflow_executor.clone());
 
             handles.push(tokio::spawn(async move {
                 if let Err(e) = daemon_runner.run().await {
@@ -417,15 +432,6 @@ impl Forge {
 
         // Reactor handle for shutdown
         let mut reactor_handle = None;
-
-        // Create job dispatcher and workflow executor for dispatch capabilities
-        let job_queue = JobQueue::new(pool.clone());
-        let job_dispatcher = Arc::new(JobDispatcher::new(job_queue, self.job_registry.clone()));
-        let workflow_executor = Arc::new(WorkflowExecutor::new(
-            Arc::new(self.workflow_registry.clone()),
-            pool.clone(),
-            http_client.clone(),
-        ));
 
         // PORT env var overrides config (used by --backend-port in forge dev)
         let gateway_port = std::env::var("PORT")
@@ -751,6 +757,64 @@ impl ForgeBuilder {
     /// Get mutable access to the webhook registry.
     pub fn webhook_registry_mut(&mut self) -> &mut WebhookRegistry {
         &mut self.webhook_registry
+    }
+
+    /// Register a query function.
+    pub fn register_query<Q: ForgeQuery>(&mut self) -> &mut Self
+    where
+        Q::Args: serde::de::DeserializeOwned + Send + 'static,
+        Q::Output: serde::Serialize + Send + 'static,
+    {
+        self.function_registry.register_query::<Q>();
+        self
+    }
+
+    /// Register a mutation function.
+    pub fn register_mutation<M: ForgeMutation>(&mut self) -> &mut Self
+    where
+        M::Args: serde::de::DeserializeOwned + Send + 'static,
+        M::Output: serde::Serialize + Send + 'static,
+    {
+        self.function_registry.register_mutation::<M>();
+        self
+    }
+
+    /// Register a background job.
+    pub fn register_job<J: forge_core::ForgeJob>(&mut self) -> &mut Self
+    where
+        J::Args: serde::de::DeserializeOwned + Send + 'static,
+        J::Output: serde::Serialize + Send + 'static,
+    {
+        self.job_registry.register::<J>();
+        self
+    }
+
+    /// Register a cron handler.
+    pub fn register_cron<C: forge_core::ForgeCron>(&mut self) -> &mut Self {
+        self.cron_registry.register::<C>();
+        self
+    }
+
+    /// Register a workflow.
+    pub fn register_workflow<W: forge_core::ForgeWorkflow>(&mut self) -> &mut Self
+    where
+        W::Input: serde::de::DeserializeOwned,
+        W::Output: serde::Serialize,
+    {
+        self.workflow_registry.register::<W>();
+        self
+    }
+
+    /// Register a daemon.
+    pub fn register_daemon<D: forge_core::ForgeDaemon>(&mut self) -> &mut Self {
+        self.daemon_registry.register::<D>();
+        self
+    }
+
+    /// Register a webhook.
+    pub fn register_webhook<W: forge_core::ForgeWebhook>(&mut self) -> &mut Self {
+        self.webhook_registry.register::<W>();
+        self
     }
 
     /// Build the FORGE runtime.

@@ -190,6 +190,7 @@ Validation errors return as tool results so LLM clients can read and correct the
 | Method | Description |
 |--------|-------------|
 | `ctx.db()` | Database pool |
+| `ctx.db_conn()` | Database connection as `DbConn` for shared helpers |
 | `ctx.require_user_id()?` | Authenticated user UUID |
 | `ctx.require_subject()?` | Auth subject string (Firebase/Auth0/Clerk) |
 | `ctx.dispatch_job(name, args)` | Enqueue a background job |

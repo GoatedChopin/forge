@@ -155,6 +155,7 @@ pub async fn expensive_report(ctx: &QueryContext) -> Result<Report> {
 | Method | Return Type | Description |
 |--------|-------------|-------------|
 | `ctx.db()` | `&PgPool` | Database connection pool |
+| `ctx.db_conn()` | `DbConn<'_>` | Database connection as `DbConn` for shared helpers |
 | `ctx.auth` | `AuthContext` | Authentication context (field access) |
 | `ctx.request` | `RequestMetadata` | Request metadata (field access) |
 | `ctx.require_user_id()` | `Result<Uuid>` | Get user ID or error if unauthenticated |

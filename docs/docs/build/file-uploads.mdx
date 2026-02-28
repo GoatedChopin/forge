@@ -192,6 +192,7 @@ function uploadWithProgress(
 | Method | Return Type | Description |
 |--------|-------------|-------------|
 | `ctx.db()` | `&PgPool` | Database connection pool |
+| `ctx.db_conn()` | `DbConn<'_>` | Database connection as `DbConn` for shared helpers |
 | `ctx.http()` | `HttpClient` | HTTP client for external calls |
 | `ctx.auth` | `AuthContext` | Current user authentication |
 | `ctx.env(key)` | `Option<String>` | Environment variable lookup |
