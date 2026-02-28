@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-02-28
+
+### Added
+
+- `db_conn()` method on all context types for shared helper functions across queries, mutations, jobs, webhooks, crons, MCP tools, and daemons
+- Daemon contexts can now dispatch jobs and start workflows via `dispatch_job()` and `start_workflow()`
+- Testcontainers support: `from_env()` auto-starts a PostgreSQL container when `TEST_DATABASE_URL` is unset and the `testcontainers` feature is enabled
+- `IsolatedTestDb::setup()` convenience method combining env detection, isolation, internal SQL, and migrations in one call
+- Builder API: `register_query()`, `register_mutation()`, `register_job()`, `register_cron()`, `register_workflow()`, `register_daemon()`, `register_webhook()`, `register_mcp_tool()` methods on `ForgeBuilder`
+- Webhook and MCP documentation improvements
+
+### Changed
+
+- Simplified example `main.rs` files to use new builder registration methods
+- Test database helpers cleaned up with less verbose error formatting
+
 ## [0.4.0] - 2026-02-22
 
 ### Added
@@ -254,7 +270,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust 2024 edition unsafe block compatibility
 - Release workflow cargo-edit installation
 
-[unreleased]: https://github.com/isala404/forge/compare/v0.4.0...HEAD
+[unreleased]: https://github.com/isala404/forge/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/isala404/forge/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/isala404/forge/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/isala404/forge/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/isala404/forge/compare/v0.2.0...v0.2.1
