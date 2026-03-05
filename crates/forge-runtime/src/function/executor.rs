@@ -4,7 +4,7 @@ use std::time::Duration;
 use forge_core::{AuthContext, ForgeError, JobDispatch, RequestMetadata, Result, WorkflowDispatch};
 use serde_json::Value;
 use tokio::time::timeout;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{Instrument, debug, error, info, trace, warn};
 
 use super::registry::FunctionRegistry;
 use super::router::{FunctionRouter, RouteResult};
@@ -70,18 +70,26 @@ impl FunctionExecutor {
         request: RequestMetadata,
     ) -> Result<ExecutionResult> {
         let start = std::time::Instant::now();
-
-        // Get function-specific timeout or use default
         let fn_timeout = self.get_function_timeout(function_name);
-
-        // Get log level for this function (default to trace)
         let log_level = self.get_function_log_level(function_name);
 
-        // Execute with timeout
+        let kind = self
+            .router
+            .get_function_kind(function_name)
+            .map(|k| k.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let span = tracing::info_span!(
+            "fn.execute",
+            function = function_name,
+            kind = %kind,
+        );
+
         let result = match timeout(
             fn_timeout,
             self.router
-                .route(function_name, args.clone(), auth, request),
+                .route(function_name, args.clone(), auth, request)
+                .instrument(span),
         )
         .await
         {
@@ -108,18 +116,18 @@ impl FunctionExecutor {
 
         match result {
             Ok(route_result) => {
-                let (kind, value) = match route_result {
+                let (result_kind, value) = match route_result {
                     RouteResult::Query(v) => ("query", v),
                     RouteResult::Mutation(v) => ("mutation", v),
                     RouteResult::Job(v) => ("job", v),
                     RouteResult::Workflow(v) => ("workflow", v),
                 };
 
-                self.log_execution(log_level, function_name, kind, &args, duration, true, None);
+                self.log_execution(log_level, function_name, result_kind, &args, duration, true, None);
 
                 Ok(ExecutionResult {
                     function_name: function_name.to_string(),
-                    function_kind: kind.to_string(),
+                    function_kind: result_kind.to_string(),
                     result: value,
                     duration,
                     success: true,
@@ -127,12 +135,6 @@ impl FunctionExecutor {
                 })
             }
             Err(e) => {
-                let kind = self
-                    .router
-                    .get_function_kind(function_name)
-                    .map(|k| k.to_string())
-                    .unwrap_or_else(|| "unknown".to_string());
-
                 self.log_execution(
                     log_level,
                     function_name,
@@ -195,12 +197,21 @@ impl FunctionExecutor {
         }
     }
 
-    /// Get the log level for a specific function.
+    /// Mutations default to "info" because writes are worth tracking.
+    /// Queries default to "debug" since they're high-volume.
     fn get_function_log_level(&self, function_name: &str) -> &'static str {
         self.registry
             .get(function_name)
-            .and_then(|entry| entry.info().log_level)
-            .unwrap_or("trace")
+            .map(|entry| {
+                entry
+                    .info()
+                    .log_level
+                    .unwrap_or(match entry.kind() {
+                        forge_core::FunctionKind::Mutation => "info",
+                        forge_core::FunctionKind::Query => "debug",
+                    })
+            })
+            .unwrap_or("info")
     }
 
     /// Get the timeout for a specific function.

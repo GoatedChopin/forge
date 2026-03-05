@@ -75,6 +75,9 @@ impl TelemetryConfig {
         project_name: &str,
         project_version: &str,
     ) -> Self {
+        // When observability is disabled, turn off OTLP export but keep the
+        // fmt subscriber so console logs still work.
+        let otlp_enabled = obs.enabled;
         Self {
             otlp_endpoint: obs.otlp_endpoint.clone(),
             service_name: obs
@@ -83,9 +86,9 @@ impl TelemetryConfig {
                 .unwrap_or_else(|| project_name.to_string()),
             service_version: project_version.to_string(),
             environment: "production".to_string(),
-            enable_traces: obs.enable_traces,
-            enable_metrics: obs.enable_metrics,
-            enable_logs: obs.enable_logs,
+            enable_traces: otlp_enabled && obs.enable_traces,
+            enable_metrics: otlp_enabled && obs.enable_metrics,
+            enable_logs: otlp_enabled && obs.enable_logs,
             sampling_ratio: obs.sampling_ratio,
         }
     }

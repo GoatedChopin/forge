@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
+use tracing::Instrument;
 use uuid::Uuid;
 
 use super::executor::JobExecutor;
@@ -156,30 +157,42 @@ impl Worker {
                         let job_type = job.job_type.clone();
 
                         tokio::spawn(async move {
-                            tracing::trace!(job_id = %job_id, job_type = %job_type, "Processing job");
+                            let start = std::time::Instant::now();
+                            let span = tracing::info_span!(
+                                "job.execute",
+                                job_id = %job_id,
+                                job_type = %job_type,
+                            );
 
-                            let result = executor.execute(&job).await;
+                            let result = executor.execute(&job).instrument(span).await;
+
+                            let duration_secs = start.elapsed().as_secs_f64();
 
                             match &result {
                                 super::executor::ExecutionResult::Completed { .. } => {
-                                    tracing::debug!(job_id = %job_id, job_type = %job_type, "Job completed");
+                                    tracing::info!(job_id = %job_id, job_type = %job_type, duration_ms = (duration_secs * 1000.0) as u64, "Job completed");
+                                    crate::observability::record_job_execution(&job_type, "completed", duration_secs);
                                 }
                                 super::executor::ExecutionResult::Failed { error, retryable } => {
                                     if *retryable {
-                                        tracing::debug!(job_id = %job_id, error = %error, "Job failed, will retry");
+                                        tracing::info!(job_id = %job_id, job_type = %job_type, error = %error, "Job failed, will retry");
+                                        crate::observability::record_job_execution(&job_type, "retrying", duration_secs);
                                     } else {
                                         tracing::warn!(job_id = %job_id, job_type = %job_type, error = %error, "Job failed permanently");
+                                        crate::observability::record_job_execution(&job_type, "failed", duration_secs);
                                     }
                                 }
                                 super::executor::ExecutionResult::TimedOut { retryable } => {
-                                    tracing::debug!(job_id = %job_id, will_retry = %retryable, "Job timed out");
+                                    tracing::warn!(job_id = %job_id, job_type = %job_type, will_retry = %retryable, "Job timed out");
+                                    crate::observability::record_job_execution(&job_type, "timeout", duration_secs);
                                 }
                                 super::executor::ExecutionResult::Cancelled { reason } => {
-                                    tracing::debug!(job_id = %job_id, reason = %reason, "Job cancelled");
+                                    tracing::info!(job_id = %job_id, job_type = %job_type, reason = %reason, "Job cancelled");
+                                    crate::observability::record_job_execution(&job_type, "cancelled", duration_secs);
                                 }
                             }
 
-                            drop(permit); // Release semaphore
+                            drop(permit);
                         });
                     }
                 }

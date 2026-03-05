@@ -20,6 +20,7 @@ use tower_http::cors::{Any, CorsLayer};
 use forge_core::cluster::NodeId;
 use forge_core::config::McpConfig;
 use forge_core::function::{JobDispatch, WorkflowDispatch};
+use tracing::Instrument;
 
 use super::auth::{AuthConfig, AuthMiddleware, auth_middleware};
 use super::mcp::{McpState, mcp_get_handler, mcp_post_handler};
@@ -57,6 +58,8 @@ pub struct GatewayConfig {
     pub auth: AuthConfig,
     /// MCP configuration.
     pub mcp: McpConfig,
+    /// Routes excluded from request logs, metrics, and traces.
+    pub quiet_routes: Vec<String>,
 }
 
 impl Default for GatewayConfig {
@@ -69,6 +72,7 @@ impl Default for GatewayConfig {
             cors_origins: Vec::new(),
             auth: AuthConfig::default(),
             mcp: McpConfig::default(),
+            quiet_routes: Vec::new(),
         }
     }
 }
@@ -265,7 +269,10 @@ impl GatewayServer {
                 auth_middleware_state,
                 auth_middleware,
             ))
-            .layer(middleware::from_fn(tracing_middleware));
+            .layer(middleware::from_fn_with_state(
+                Arc::new(self.config.quiet_routes.clone()),
+                tracing_middleware,
+            ));
 
         // Apply the remaining middleware layers
         main_router.layer(service_builder)
@@ -352,8 +359,24 @@ async fn handle_middleware_error(err: BoxError) -> axum::response::Response {
         .into_response()
 }
 
-/// Simple tracing middleware that adds TracingState to extensions.
+fn set_tracing_headers(
+    response: &mut axum::response::Response,
+    trace_id: &str,
+    request_id: &str,
+) {
+    if let Ok(val) = trace_id.parse() {
+        response.headers_mut().insert(TRACE_ID_HEADER, val);
+    }
+    if let Ok(val) = request_id.parse() {
+        response.headers_mut().insert(REQUEST_ID_HEADER, val);
+    }
+}
+
+/// Wraps each request in a span with HTTP semantics.
+/// Quiet routes skip spans, logs, and metrics to avoid noise from
+/// probes or high-frequency internal endpoints.
 async fn tracing_middleware(
+    axum::extract::State(quiet_routes): axum::extract::State<Arc<Vec<String>>>,
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
@@ -369,6 +392,9 @@ async fn tracing_middleware(
         .get(SPAN_ID_HEADER)
         .and_then(|v| v.to_str().ok())
         .map(String::from);
+
+    let method = req.method().to_string();
+    let path = req.uri().path().to_string();
 
     let mut tracing_state = TracingState::with_trace_id(trace_id.clone());
     if let Some(span_id) = parent_span_id {
@@ -387,24 +413,36 @@ async fn tracing_middleware(
             .insert(forge_core::function::AuthContext::unauthenticated());
     }
 
-    let mut response = next.run(req).await;
+    // Config uses full paths (/_api/health) but axum strips the prefix
+    // for nested routers, so the middleware sees /health not /_api/health.
+    let full_path = format!("/_api{}", path);
+    let is_quiet = quiet_routes.iter().any(|r| *r == full_path || *r == path);
 
-    let elapsed = tracing_state.elapsed();
-    tracing::debug!(
+    if is_quiet {
+        let mut response = next.run(req).await;
+        set_tracing_headers(&mut response, &trace_id, &tracing_state.request_id);
+        return response;
+    }
+
+    let span = tracing::info_span!(
+        "http.request",
+        http.method = %method,
+        http.route = %path,
+        http.status_code = tracing::field::Empty,
         trace_id = %trace_id,
         request_id = %tracing_state.request_id,
-        status = %response.status().as_u16(),
-        duration_ms = %elapsed.as_millis(),
-        "Request completed"
     );
 
-    if let Ok(val) = trace_id.parse() {
-        response.headers_mut().insert(TRACE_ID_HEADER, val);
-    }
-    if let Ok(val) = tracing_state.request_id.parse() {
-        response.headers_mut().insert(REQUEST_ID_HEADER, val);
-    }
+    let mut response = next.run(req).instrument(span.clone()).await;
 
+    let status = response.status().as_u16();
+    let elapsed = tracing_state.elapsed();
+
+    span.record("http.status_code", status);
+    tracing::info!(parent: &span, duration_ms = elapsed.as_millis() as u64, "Request completed");
+    crate::observability::record_http_request(&method, &path, status, elapsed.as_secs_f64());
+
+    set_tracing_headers(&mut response, &trace_id, &tracing_state.request_id);
     response
 }
 

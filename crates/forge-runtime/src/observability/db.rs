@@ -9,6 +9,9 @@ const DB_SYSTEM: &str = "db.system";
 const DB_OPERATION_NAME: &str = "db.operation.name";
 const DB_SYSTEM_POSTGRESQL: &str = "postgresql";
 
+// Catch performance regressions before they hit production
+const SLOW_QUERY_THRESHOLD: Duration = Duration::from_millis(500);
+
 static DB_METRICS: OnceLock<DbMetrics> = OnceLock::new();
 
 struct DbMetrics {
@@ -151,7 +154,17 @@ where
 
     let start = Instant::now();
     let result = f.instrument(span).await;
-    record_query_duration(operation, start.elapsed());
+    let elapsed = start.elapsed();
+    record_query_duration(operation, elapsed);
+
+    if elapsed > SLOW_QUERY_THRESHOLD {
+        tracing::warn!(
+            db.operation.name = operation,
+            db.collection.name = table,
+            duration_ms = elapsed.as_millis() as u64,
+            "Slow query detected"
+        );
+    }
 
     result
 }

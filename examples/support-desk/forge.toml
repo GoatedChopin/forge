@@ -16,6 +16,7 @@ url = "${DATABASE_URL}"
 port = 8080
 # host = "0.0.0.0"
 cors_origins = ["http://localhost:5173"]
+# quiet_routes = ["/_api/health", "/_api/ready"]  # Routes excluded from traces/metrics/logs
 
 [mcp]
 enabled = true

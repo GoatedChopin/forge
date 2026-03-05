@@ -451,6 +451,7 @@ impl Forge {
                 auth: AuthConfig::from_forge_config(&self.config.auth)
                     .map_err(|e| ForgeError::Config(e.to_string()))?,
                 mcp: self.config.mcp.clone(),
+                quiet_routes: self.config.gateway.quiet_routes.clone(),
             };
 
             // Build gateway server (pass Database wrapper for read replica routing)
@@ -575,6 +576,28 @@ impl Forge {
                     tracing::error!("Gateway server error: {}", e);
                 }
             }));
+        }
+
+        tracing::info!(
+            queries = self.function_registry.queries().count(),
+            mutations = self.function_registry.mutations().count(),
+            jobs = self.job_registry.len(),
+            crons = self.cron_registry.len(),
+            workflows = self.workflow_registry.len(),
+            daemons = self.daemon_registry.len(),
+            webhooks = self.webhook_registry.len(),
+            mcp_tools = self.mcp_registry.len(),
+            "Functions registered"
+        );
+
+        {
+            let metrics_pool = pool.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(15)).await;
+                    forge_runtime::observability::record_pool_metrics(&metrics_pool);
+                }
+            });
         }
 
         tracing::info!(

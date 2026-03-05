@@ -202,6 +202,11 @@ pub struct GatewayConfig {
     /// Allowed CORS origins.
     #[serde(default = "default_cors_origins")]
     pub cors_origins: Vec<String>,
+
+    /// Routes excluded from request logs, metrics, and traces.
+    /// Defaults to `["/_api/health", "/_api/ready"]`. Set to `[]` to monitor everything.
+    #[serde(default = "default_quiet_routes")]
+    pub quiet_routes: Vec<String>,
 }
 
 impl Default for GatewayConfig {
@@ -213,6 +218,7 @@ impl Default for GatewayConfig {
             request_timeout_secs: default_request_timeout(),
             cors_enabled: default_cors_enabled(),
             cors_origins: default_cors_origins(),
+            quiet_routes: default_quiet_routes(),
         }
     }
 }
@@ -239,6 +245,10 @@ fn default_cors_enabled() -> bool {
 
 fn default_cors_origins() -> Vec<String> {
     Vec::new()
+}
+
+fn default_quiet_routes() -> Vec<String> {
+    vec!["/_api/health".to_string(), "/_api/ready".to_string()]
 }
 
 /// Function execution configuration.

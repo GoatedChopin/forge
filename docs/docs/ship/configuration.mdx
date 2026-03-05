@@ -134,6 +134,7 @@ A slow analytics query exhausting 5 connections cannot touch the 30 connections 
 | `request_timeout_secs` | u64 | `30` | Request timeout |
 | `cors_enabled` | bool | `false` | Enable CORS handling |
 | `cors_origins` | string[] | `[]` | Allowed CORS origins (use `["*"]` for any) |
+| `quiet_routes` | string[] | `["/_api/health", "/_api/ready"]` | Routes excluded from traces, metrics, and logs |
 
 ### [function]
 
@@ -335,7 +336,7 @@ Jobs requiring `worker_capability = "gpu"` only run on workers with that capabil
 
 ### [observability]
 
-OTLP-based telemetry for traces, metrics, and logs. Disabled by default.
+OTLP-based telemetry for traces, metrics, and logs. Disabled by default. When enabled, Forge auto-instruments HTTP requests, function calls, job execution, and database queries without any application code changes.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
@@ -346,6 +347,7 @@ OTLP-based telemetry for traces, metrics, and logs. Disabled by default.
 | `enable_metrics` | bool | `true` | Export metrics |
 | `enable_logs` | bool | `true` | Export logs via OTLP |
 | `sampling_ratio` | f64 | `1.0` | Trace sampling ratio (0.0 to 1.0) |
+| `log_level` | string | `"info"` | Log level for the tracing subscriber |
 
 ```toml
 [observability]
@@ -355,6 +357,21 @@ sampling_ratio = 0.5
 ```
 
 Requires an OTLP-compatible collector (Jaeger, Grafana Alloy, OpenTelemetry Collector, etc).
+
+#### What Gets Instrumented
+
+With `enabled = true`, Forge automatically creates spans and records metrics for:
+
+- **HTTP requests** (`http.request` span): method, route, status code, duration, trace ID, request ID
+- **Function calls** (`fn.execute` span): function name, kind (query/mutation), duration
+- **Job execution** (`job.execute` span): job ID, job type, duration, outcome (completed/retrying/failed/timeout)
+- **Database queries**: operation, table, duration, connection pool utilization
+
+Slow queries (over 500ms) emit a warning automatically. Database pool metrics (size, active, idle, waiting) are recorded every 15 seconds.
+
+Routes listed in `[gateway].quiet_routes` are excluded from all telemetry. Health and readiness probes are excluded by default to avoid noise from Kubernetes liveness checks. Set `quiet_routes = []` to monitor everything.
+
+Console logs always work regardless of the `enabled` flag. The flag only controls OTLP export.
 
 ## Patterns
 
