@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use sqlx::postgres::{PgPool, PgPoolOptions};
@@ -119,10 +119,7 @@ impl Database {
         }
 
         let len = self.replicas.len();
-        let start = self
-            .replica_counter
-            .fetch_add(1, Ordering::Relaxed)
-            % len;
+        let start = self.replica_counter.fetch_add(1, Ordering::Relaxed) % len;
 
         // Try each replica starting from round-robin position
         for offset in 0..len {
@@ -141,25 +138,19 @@ impl Database {
     /// Pool for background jobs, cron, daemons, and workflows.
     /// Falls back to primary if no isolated pool is configured.
     pub fn jobs_pool(&self) -> &PgPool {
-        self.jobs_pool
-            .as_deref()
-            .unwrap_or(&self.primary)
+        self.jobs_pool.as_deref().unwrap_or(&self.primary)
     }
 
     /// Pool for observability writes (metrics, slow query logs).
     /// Falls back to primary if no isolated pool is configured.
     pub fn observability_pool(&self) -> &PgPool {
-        self.observability_pool
-            .as_deref()
-            .unwrap_or(&self.primary)
+        self.observability_pool.as_deref().unwrap_or(&self.primary)
     }
 
     /// Pool for long-running analytics queries.
     /// Falls back to primary if no isolated pool is configured.
     pub fn analytics_pool(&self) -> &PgPool {
-        self.analytics_pool
-            .as_deref()
-            .unwrap_or(&self.primary)
+        self.analytics_pool.as_deref().unwrap_or(&self.primary)
     }
 
     /// Start background health monitoring for replicas. Returns None if no replicas configured.

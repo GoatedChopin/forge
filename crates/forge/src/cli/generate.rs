@@ -111,7 +111,6 @@ impl GenerateCommand {
                 style("bun install").cyan()
             );
             println!();
-
         }
 
         // Step 2: Check runtime version and update if needed

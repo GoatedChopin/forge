@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use futures_util::stream::FuturesUnordered;
 use futures_util::StreamExt;
+use futures_util::stream::FuturesUnordered;
 use tokio::sync::{RwLock, Semaphore, broadcast, mpsc};
 use uuid::Uuid;
 
@@ -143,13 +143,8 @@ impl Reactor {
     }
 
     /// Register a new session.
-    pub fn register_session(
-        &self,
-        session_id: SessionId,
-        sender: mpsc::Sender<RealtimeMessage>,
-    ) {
-        self.session_server
-            .register_connection(session_id, sender);
+    pub fn register_session(&self, session_id: SessionId, sender: mpsc::Sender<RealtimeMessage>) {
+        self.session_server.register_connection(session_id, sender);
         tracing::trace!(?session_id, "Session registered");
     }
 
@@ -200,17 +195,15 @@ impl Reactor {
             _ => (&[] as &[&str], &[] as &[&str]),
         };
 
-        let (group_id, subscription_id, is_new_group) = self
-            .subscription_manager
-            .subscribe(
-                session_id,
-                client_sub_id,
-                &query_name,
-                &args,
-                &auth_context,
-                table_deps,
-                selected_cols,
-            )?;
+        let (group_id, subscription_id, is_new_group) = self.subscription_manager.subscribe(
+            session_id,
+            client_sub_id,
+            &query_name,
+            &args,
+            &auth_context,
+            table_deps,
+            selected_cols,
+        )?;
 
         // Register subscription in session server for message routing
         if let Err(error) = self
@@ -223,14 +216,14 @@ impl Reactor {
 
         // Only execute the query if this is a new group (no cached result yet)
         let data = if is_new_group {
-            let (data, read_set) =
-                match self.execute_query(&query_name, &args, &auth_context).await {
-                    Ok(result) => result,
-                    Err(error) => {
-                        self.unsubscribe(subscription_id);
-                        return Err(error);
-                    }
-                };
+            let (data, read_set) = match self.execute_query(&query_name, &args, &auth_context).await
+            {
+                Ok(result) => result,
+                Err(error) => {
+                    self.unsubscribe(subscription_id);
+                    return Err(error);
+                }
+            };
 
             let result_hash = Self::compute_hash(&data);
 
@@ -358,8 +351,14 @@ impl Reactor {
         args: &serde_json::Value,
         auth_context: &forge_core::function::AuthContext,
     ) -> forge_core::Result<(serde_json::Value, ReadSet)> {
-        Self::execute_query_static(&self.registry, &self.db_pool, query_name, args, auth_context)
-            .await
+        Self::execute_query_static(
+            &self.registry,
+            &self.db_pool,
+            query_name,
+            args,
+            auth_context,
+        )
+        .await
     }
 
     fn compute_hash(data: &serde_json::Value) -> String {
@@ -386,7 +385,10 @@ impl Reactor {
             return;
         }
 
-        tracing::trace!(count = invalidated_groups.len(), "Invalidating query groups");
+        tracing::trace!(
+            count = invalidated_groups.len(),
+            "Invalidating query groups"
+        );
 
         // Collect group data we need for re-execution
         let groups_to_process: Vec<_> = invalidated_groups
@@ -448,8 +450,7 @@ impl Reactor {
                                 data: new_data.clone(),
                             };
 
-                            if let Err(e) =
-                                session_server.try_send_to_session(session_id, message)
+                            if let Err(e) = session_server.try_send_to_session(session_id, message)
                             {
                                 tracing::trace!(
                                     client_id = %client_sub_id,
@@ -685,7 +686,10 @@ impl Reactor {
                 job: job_data.clone(),
             };
 
-            if let Err(e) = session_server.send_to_session(sub.session_id, message).await {
+            if let Err(e) = session_server
+                .send_to_session(sub.session_id, message)
+                .await
+            {
                 tracing::trace!(%job_id, error = %e, "Failed to send job update");
             }
         }
@@ -693,9 +697,8 @@ impl Reactor {
         if !unauthorized.is_empty() {
             let mut subs = job_subscriptions.write().await;
             if let Some(entries) = subs.get_mut(&job_id) {
-                entries.retain(|e| {
-                    !unauthorized.contains(&(e.session_id, e.client_sub_id.clone()))
-                });
+                entries
+                    .retain(|e| !unauthorized.contains(&(e.session_id, e.client_sub_id.clone())));
             }
             subs.retain(|_, v| !v.is_empty());
         }
@@ -744,7 +747,10 @@ impl Reactor {
                 workflow: workflow_data.clone(),
             };
 
-            if let Err(e) = session_server.send_to_session(sub.session_id, message).await {
+            if let Err(e) = session_server
+                .send_to_session(sub.session_id, message)
+                .await
+            {
                 tracing::trace!(%workflow_id, error = %e, "Failed to send workflow update");
             }
         }
@@ -752,9 +758,8 @@ impl Reactor {
         if !unauthorized.is_empty() {
             let mut subs = workflow_subscriptions.write().await;
             if let Some(entries) = subs.get_mut(&workflow_id) {
-                entries.retain(|e| {
-                    !unauthorized.contains(&(e.session_id, e.client_sub_id.clone()))
-                });
+                entries
+                    .retain(|e| !unauthorized.contains(&(e.session_id, e.client_sub_id.clone())));
             }
             subs.retain(|_, v| !v.is_empty());
         }
@@ -1123,13 +1128,12 @@ impl Reactor {
         job_id: Uuid,
         auth: &forge_core::function::AuthContext,
     ) -> forge_core::Result<()> {
-        let owner_subject_row: Option<(Option<String>,)> = sqlx::query_as(
-            r#"SELECT owner_subject FROM forge_jobs WHERE id = $1"#,
-        )
-        .bind(job_id)
-        .fetch_optional(db_pool)
-        .await
-        .map_err(forge_core::ForgeError::Sql)?;
+        let owner_subject_row: Option<(Option<String>,)> =
+            sqlx::query_as(r#"SELECT owner_subject FROM forge_jobs WHERE id = $1"#)
+                .bind(job_id)
+                .fetch_optional(db_pool)
+                .await
+                .map_err(forge_core::ForgeError::Sql)?;
 
         let owner_subject = owner_subject_row
             .ok_or_else(|| forge_core::ForgeError::NotFound(format!("Job {} not found", job_id)))?
@@ -1143,13 +1147,12 @@ impl Reactor {
         workflow_id: Uuid,
         auth: &forge_core::function::AuthContext,
     ) -> forge_core::Result<()> {
-        let owner_subject_row: Option<(Option<String>,)> = sqlx::query_as(
-            r#"SELECT owner_subject FROM forge_workflow_runs WHERE id = $1"#,
-        )
-        .bind(workflow_id)
-        .fetch_optional(db_pool)
-        .await
-        .map_err(forge_core::ForgeError::Sql)?;
+        let owner_subject_row: Option<(Option<String>,)> =
+            sqlx::query_as(r#"SELECT owner_subject FROM forge_workflow_runs WHERE id = $1"#)
+                .bind(workflow_id)
+                .fetch_optional(db_pool)
+                .await
+                .map_err(forge_core::ForgeError::Sql)?;
 
         let owner_subject = owner_subject_row
             .ok_or_else(|| {

@@ -359,11 +359,7 @@ async fn handle_middleware_error(err: BoxError) -> axum::response::Response {
         .into_response()
 }
 
-fn set_tracing_headers(
-    response: &mut axum::response::Response,
-    trace_id: &str,
-    request_id: &str,
-) {
+fn set_tracing_headers(response: &mut axum::response::Response, trace_id: &str, request_id: &str) {
     if let Ok(val) = trace_id.parse() {
         response.headers_mut().insert(TRACE_ID_HEADER, val);
     }

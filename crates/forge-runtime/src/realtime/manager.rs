@@ -150,7 +150,9 @@ impl SubscriberStore {
     }
 
     fn remove(&mut self, key: usize) -> Subscriber {
-        self.entries.remove(&key).expect("key not found in subscriber store")
+        self.entries
+            .remove(&key)
+            .expect("key not found in subscriber store")
     }
 
     fn contains(&self, key: usize) -> bool {
@@ -368,19 +370,15 @@ impl SubscriptionManager {
         subscriber_ids
             .iter()
             .filter_map(|sid| {
-                store.get(sid.0 as usize)
+                store
+                    .get(sid.0 as usize)
                     .map(|s| (s.session_id, s.client_sub_id.clone()))
             })
             .collect()
     }
 
     /// Update a group after re-execution.
-    pub fn update_group(
-        &self,
-        group_id: QueryGroupId,
-        read_set: ReadSet,
-        result_hash: String,
-    ) {
+    pub fn update_group(&self, group_id: QueryGroupId, read_set: ReadSet, result_hash: String) {
         if let Some(mut group) = self.groups.get_mut(&group_id) {
             group.record_execution(read_set, result_hash);
         }
@@ -473,10 +471,26 @@ mod tests {
         let auth = AuthContext::unauthenticated();
 
         let (g1, _, is_new1) = manager
-            .subscribe(session1, "s1".to_string(), "get_projects", &serde_json::json!({}), &auth, &[], &[])
+            .subscribe(
+                session1,
+                "s1".to_string(),
+                "get_projects",
+                &serde_json::json!({}),
+                &auth,
+                &[],
+                &[],
+            )
             .unwrap();
         let (g2, _, is_new2) = manager
-            .subscribe(session2, "s2".to_string(), "get_projects", &serde_json::json!({}), &auth, &[], &[])
+            .subscribe(
+                session2,
+                "s2".to_string(),
+                "get_projects",
+                &serde_json::json!({}),
+                &auth,
+                &[],
+                &[],
+            )
             .unwrap();
 
         assert!(is_new1);
@@ -495,14 +509,36 @@ mod tests {
         let auth = AuthContext::unauthenticated();
 
         manager
-            .subscribe(session_id, "s1".to_string(), "q1", &serde_json::json!({}), &auth, &[], &[])
+            .subscribe(
+                session_id,
+                "s1".to_string(),
+                "q1",
+                &serde_json::json!({}),
+                &auth,
+                &[],
+                &[],
+            )
             .unwrap();
         manager
-            .subscribe(session_id, "s2".to_string(), "q2", &serde_json::json!({}), &auth, &[], &[])
+            .subscribe(
+                session_id,
+                "s2".to_string(),
+                "q2",
+                &serde_json::json!({}),
+                &auth,
+                &[],
+                &[],
+            )
             .unwrap();
 
         let result = manager.subscribe(
-            session_id, "s3".to_string(), "q3", &serde_json::json!({}), &auth, &[], &[],
+            session_id,
+            "s3".to_string(),
+            "q3",
+            &serde_json::json!({}),
+            &auth,
+            &[],
+            &[],
         );
         assert!(result.is_err());
     }
@@ -514,10 +550,26 @@ mod tests {
         let auth = AuthContext::unauthenticated();
 
         manager
-            .subscribe(session_id, "s1".to_string(), "q1", &serde_json::json!({}), &auth, &[], &[])
+            .subscribe(
+                session_id,
+                "s1".to_string(),
+                "q1",
+                &serde_json::json!({}),
+                &auth,
+                &[],
+                &[],
+            )
             .unwrap();
         manager
-            .subscribe(session_id, "s2".to_string(), "q2", &serde_json::json!({}), &auth, &[], &[])
+            .subscribe(
+                session_id,
+                "s2".to_string(),
+                "q2",
+                &serde_json::json!({}),
+                &auth,
+                &[],
+                &[],
+            )
             .unwrap();
 
         let counts = manager.counts();

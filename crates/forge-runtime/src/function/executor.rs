@@ -123,7 +123,15 @@ impl FunctionExecutor {
                     RouteResult::Workflow(v) => ("workflow", v),
                 };
 
-                self.log_execution(log_level, function_name, result_kind, &args, duration, true, None);
+                self.log_execution(
+                    log_level,
+                    function_name,
+                    result_kind,
+                    &args,
+                    duration,
+                    true,
+                    None,
+                );
 
                 Ok(ExecutionResult {
                     function_name: function_name.to_string(),
@@ -203,13 +211,10 @@ impl FunctionExecutor {
         self.registry
             .get(function_name)
             .map(|entry| {
-                entry
-                    .info()
-                    .log_level
-                    .unwrap_or(match entry.kind() {
-                        forge_core::FunctionKind::Mutation => "info",
-                        forge_core::FunctionKind::Query => "debug",
-                    })
+                entry.info().log_level.unwrap_or(match entry.kind() {
+                    forge_core::FunctionKind::Mutation => "info",
+                    forge_core::FunctionKind::Query => "debug",
+                })
             })
             .unwrap_or("info")
     }

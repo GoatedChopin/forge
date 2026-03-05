@@ -272,8 +272,7 @@ impl HybridRateLimiter {
     /// Clean up expired local buckets (call periodically).
     pub fn cleanup_local(&self, max_idle: Duration) {
         let cutoff = std::time::Instant::now() - max_idle;
-        self.local
-            .retain(|_, bucket| bucket.last_refill > cutoff);
+        self.local.retain(|_, bucket| bucket.last_refill > cutoff);
     }
 }
 

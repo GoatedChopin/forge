@@ -119,12 +119,11 @@ impl HeartbeatLoop {
 
     /// Query the number of active nodes in the cluster.
     async fn active_node_count(&self) -> forge_core::Result<u32> {
-        let row: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM forge_nodes WHERE status = 'active'",
-        )
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+        let row: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM forge_nodes WHERE status = 'active'")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
 
         Ok(row.0 as u32)
     }

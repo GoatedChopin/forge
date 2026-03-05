@@ -59,7 +59,9 @@ pub enum RealtimeMessage {
         query: String,
         args: serde_json::Value,
     },
-    Unsubscribe { subscription_id: SubscriptionId },
+    Unsubscribe {
+        subscription_id: SubscriptionId,
+    },
     Ping,
     Pong,
     Data {
@@ -70,19 +72,27 @@ pub enum RealtimeMessage {
         subscription_id: String,
         delta: Delta<serde_json::Value>,
     },
-    JobUpdate { client_sub_id: String, job: JobData },
+    JobUpdate {
+        client_sub_id: String,
+        job: JobData,
+    },
     WorkflowUpdate {
         client_sub_id: String,
         workflow: WorkflowData,
     },
-    Error { code: String, message: String },
+    Error {
+        code: String,
+        message: String,
+    },
     ErrorWithId {
         id: String,
         code: String,
         message: String,
     },
     AuthSuccess,
-    AuthFailed { reason: String },
+    AuthFailed {
+        reason: String,
+    },
     /// Sent to slow clients before disconnecting them.
     Lagging,
 }
@@ -237,12 +247,9 @@ impl SessionServer {
         message: RealtimeMessage,
     ) -> forge_core::Result<()> {
         let sender = {
-            let conn = self
-                .connections
-                .get(&session_id)
-                .ok_or_else(|| {
-                    forge_core::ForgeError::Validation("Session not found".to_string())
-                })?;
+            let conn = self.connections.get(&session_id).ok_or_else(|| {
+                forge_core::ForgeError::Validation("Session not found".to_string())
+            })?;
             conn.sender.clone()
         };
 
@@ -258,10 +265,7 @@ impl SessionServer {
         subscription_id: SubscriptionId,
         delta: Delta<serde_json::Value>,
     ) -> forge_core::Result<()> {
-        let session_id = self
-            .subscription_sessions
-            .get(&subscription_id)
-            .map(|r| *r);
+        let session_id = self.subscription_sessions.get(&subscription_id).map(|r| *r);
 
         if let Some(session_id) = session_id {
             let message = RealtimeMessage::DeltaUpdate {
@@ -292,11 +296,8 @@ impl SessionServer {
 
     /// Get server statistics.
     pub fn stats(&self) -> SessionStats {
-        let total_subscriptions: usize = self
-            .connections
-            .iter()
-            .map(|c| c.subscriptions.len())
-            .sum();
+        let total_subscriptions: usize =
+            self.connections.iter().map(|c| c.subscriptions.len()).sum();
 
         SessionStats {
             connections: self.connections.len(),

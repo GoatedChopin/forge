@@ -421,7 +421,10 @@ mod tests {
         }
 
         for id in &ids {
-            assert!(filter.might_contain(*id), "bloom filter should never miss an inserted item");
+            assert!(
+                filter.might_contain(*id),
+                "bloom filter should never miss an inserted item"
+            );
         }
     }
 
@@ -493,8 +496,8 @@ mod tests {
     #[test]
     fn test_column_invalidation_non_update() {
         // Inserts and deletes always invalidate regardless of columns
-        let change = Change::new("users", ChangeOperation::Insert)
-            .with_columns(vec!["name".to_string()]);
+        let change =
+            Change::new("users", ChangeOperation::Insert).with_columns(vec!["name".to_string()]);
         assert!(change.invalidates_columns(&["age"]));
     }
 
