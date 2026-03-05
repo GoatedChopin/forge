@@ -179,6 +179,7 @@ impl SubscriptionManager {
 
     /// Subscribe to a query group. Returns the group ID and whether this is a new group.
     /// If a group already exists for this query+args+auth_scope, the subscriber joins it.
+    #[allow(clippy::too_many_arguments)]
     pub fn subscribe(
         &self,
         session_id: SessionId,
@@ -190,13 +191,13 @@ impl SubscriptionManager {
         selected_cols: &'static [&'static str],
     ) -> forge_core::Result<(QueryGroupId, SubscriptionId, bool)> {
         // Check per-session limit
-        if let Some(subs) = self.session_subscribers.get(&session_id) {
-            if subs.len() >= self.max_per_session {
-                return Err(forge_core::ForgeError::Validation(format!(
-                    "Maximum subscriptions per session ({}) exceeded",
-                    self.max_per_session
-                )));
-            }
+        if let Some(subs) = self.session_subscribers.get(&session_id)
+            && subs.len() >= self.max_per_session
+        {
+            return Err(forge_core::ForgeError::Validation(format!(
+                "Maximum subscriptions per session ({}) exceeded",
+                self.max_per_session
+            )));
         }
 
         let auth_scope = AuthScope::from_auth(auth_context);

@@ -603,6 +603,7 @@ fn default_mcp_session_ttl_secs() -> u64 {
 }
 
 /// Substitute environment variables in the format ${VAR_NAME}.
+#[allow(clippy::indexing_slicing)]
 fn substitute_env_vars(content: &str) -> String {
     let mut result = String::with_capacity(content.len());
     let bytes = content.as_bytes();
@@ -610,18 +611,20 @@ fn substitute_env_vars(content: &str) -> String {
     let mut i = 0;
 
     while i < len {
-        if i + 1 < len && bytes[i] == b'$' && bytes[i + 1] == b'{' {
-            if let Some(end) = content[i + 2..].find('}') {
-                let var_name = &content[i + 2..i + 2 + end];
-                if is_valid_env_var_name(var_name) {
-                    if let Ok(value) = std::env::var(var_name) {
-                        result.push_str(&value);
-                    } else {
-                        result.push_str(&content[i..i + 2 + end + 1]);
-                    }
-                    i += 2 + end + 1;
-                    continue;
+        if i + 1 < len
+            && bytes[i] == b'$'
+            && bytes[i + 1] == b'{'
+            && let Some(end) = content[i + 2..].find('}')
+        {
+            let var_name = &content[i + 2..i + 2 + end];
+            if is_valid_env_var_name(var_name) {
+                if let Ok(value) = std::env::var(var_name) {
+                    result.push_str(&value);
+                } else {
+                    result.push_str(&content[i..i + 2 + end + 1]);
                 }
+                i += 2 + end + 1;
+                continue;
             }
         }
         result.push(bytes[i] as char);
@@ -632,12 +635,14 @@ fn substitute_env_vars(content: &str) -> String {
 }
 
 fn is_valid_env_var_name(name: &str) -> bool {
-    let bytes = name.as_bytes();
-    !bytes.is_empty()
-        && (bytes[0].is_ascii_uppercase() || bytes[0] == b'_')
-        && bytes
-            .iter()
-            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || *b == b'_')
+    let first = match name.as_bytes().first() {
+        Some(b) => b,
+        None => return false,
+    };
+    (first.is_ascii_uppercase() || *first == b'_')
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
 }
 
 #[cfg(test)]

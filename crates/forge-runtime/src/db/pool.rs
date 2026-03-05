@@ -124,10 +124,10 @@ impl Database {
         // Try each replica starting from round-robin position
         for offset in 0..len {
             let idx = (start + offset) % len;
-            if let Some(entry) = self.replicas.get(idx) {
-                if entry.healthy.load(Ordering::Relaxed) {
-                    return &entry.pool;
-                }
+            if let Some(entry) = self.replicas.get(idx)
+                && entry.healthy.load(Ordering::Relaxed)
+            {
+                return &entry.pool;
             }
         }
 

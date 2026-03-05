@@ -462,10 +462,10 @@ pub async fn sse_handler(
                                     })
                                 }
                             };
-                            if let Some(evt) = event {
-                                if event_tx.send(Ok(evt)).await.is_err() {
-                                    break;
-                                }
+                            if let Some(evt) = event
+                                && event_tx.send(Ok(evt)).await.is_err()
+                            {
+                                break;
                             }
                         }
                         None => break,

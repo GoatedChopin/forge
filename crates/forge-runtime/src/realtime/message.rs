@@ -197,10 +197,10 @@ impl SessionServer {
 
     /// Remove a subscription from a connection.
     pub fn remove_subscription(&self, subscription_id: SubscriptionId) {
-        if let Some((_, session_id)) = self.subscription_sessions.remove(&subscription_id) {
-            if let Some(mut conn) = self.connections.get_mut(&session_id) {
-                conn.subscriptions.retain(|id| *id != subscription_id);
-            }
+        if let Some((_, session_id)) = self.subscription_sessions.remove(&subscription_id)
+            && let Some(mut conn) = self.connections.get_mut(&session_id)
+        {
+            conn.subscriptions.retain(|id| *id != subscription_id);
         }
     }
 

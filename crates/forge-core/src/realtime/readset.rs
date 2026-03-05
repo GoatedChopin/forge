@@ -69,7 +69,7 @@ impl BloomFilter {
     pub fn new(expected_items: usize) -> Self {
         // ~10 bits per element for ~1% FPR
         let num_bits = (expected_items as u64 * 10).max(64);
-        let num_words = ((num_bits + 63) / 64) as usize;
+        let num_words = num_bits.div_ceil(64) as usize;
         // Optimal number of hash functions: (m/n) * ln(2) ~ 7 for 10 bits/element
         let num_hashes = 7;
 

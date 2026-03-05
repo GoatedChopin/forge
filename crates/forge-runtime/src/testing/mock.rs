@@ -7,6 +7,7 @@ use serde::Serialize;
 use tokio::sync::RwLock;
 
 /// Simple glob matcher: `*` matches any sequence, `?` matches one char.
+#[allow(clippy::indexing_slicing)]
 fn glob_matches(pattern: &str, text: &str) -> bool {
     let pat = pattern.as_bytes();
     let txt = text.as_bytes();
