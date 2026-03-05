@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Removed 20 direct dependencies by reimplementing minimal usages inline (async-stream, hex, regex, regex-lite, walkdir, darling, dialoguer, indicatif, hostname, arc-swap, sysinfo, slab, smallvec, once_cell, futures, axum-extra, tonic, prost, hyper, and gRPC features from opentelemetry-otlp)
+- Switched OTLP telemetry transport from gRPC (port 4317) to HTTP (port 4318), eliminating duplicate transitive dependency trees (axum 0.7, tower 0.4, matchit 0.7)
+
 ## [0.4.1] - 2026-02-28
 
 ### Added

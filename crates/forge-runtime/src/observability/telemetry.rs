@@ -49,7 +49,7 @@ pub struct TelemetryConfig {
 impl Default for TelemetryConfig {
     fn default() -> Self {
         Self {
-            otlp_endpoint: "http://localhost:4317".to_string(),
+            otlp_endpoint: "http://localhost:4318".to_string(),
             service_name: "forge-service".to_string(),
             service_version: "0.1.0".to_string(),
             environment: "development".to_string(),
@@ -149,7 +149,7 @@ fn build_resource(config: &TelemetryConfig) -> Resource {
 
 fn init_tracer(config: &TelemetryConfig) -> Result<TracerProvider, TelemetryError> {
     let exporter = SpanExporter::builder()
-        .with_tonic()
+        .with_http()
         .with_endpoint(&config.otlp_endpoint)
         .build()
         .map_err(|e| TelemetryError::TracerInit(e.to_string()))?;
@@ -174,7 +174,7 @@ fn init_tracer(config: &TelemetryConfig) -> Result<TracerProvider, TelemetryErro
 
 fn init_meter(config: &TelemetryConfig) -> Result<SdkMeterProvider, TelemetryError> {
     let exporter = MetricExporter::builder()
-        .with_tonic()
+        .with_http()
         .with_endpoint(&config.otlp_endpoint)
         .build()
         .map_err(|e| TelemetryError::MeterInit(e.to_string()))?;
@@ -191,7 +191,7 @@ fn init_meter(config: &TelemetryConfig) -> Result<SdkMeterProvider, TelemetryErr
 
 fn init_logger(config: &TelemetryConfig) -> Result<LoggerProvider, TelemetryError> {
     let exporter = LogExporter::builder()
-        .with_tonic()
+        .with_http()
         .with_endpoint(&config.otlp_endpoint)
         .build()
         .map_err(|e| TelemetryError::LoggerInit(e.to_string()))?;
@@ -333,7 +333,7 @@ mod tests {
     #[test]
     fn test_config_builder() {
         let config = TelemetryConfig::new("test-service")
-            .with_endpoint("http://otel:4317")
+            .with_endpoint("http://otel:4318")
             .with_version("1.0.0")
             .with_environment("production")
             .with_traces(true)
@@ -341,7 +341,7 @@ mod tests {
             .with_logs(true);
 
         assert_eq!(config.service_name, "test-service");
-        assert_eq!(config.otlp_endpoint, "http://otel:4317");
+        assert_eq!(config.otlp_endpoint, "http://otel:4318");
         assert_eq!(config.service_version, "1.0.0");
         assert_eq!(config.environment, "production");
         assert!(config.enable_traces);
@@ -353,7 +353,7 @@ mod tests {
     fn test_default_config() {
         let config = TelemetryConfig::default();
 
-        assert_eq!(config.otlp_endpoint, "http://localhost:4317");
+        assert_eq!(config.otlp_endpoint, "http://localhost:4318");
         assert_eq!(config.service_name, "forge-service");
         assert_eq!(config.environment, "development");
         assert!(config.enable_traces);

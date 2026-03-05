@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 use std::convert::Infallible;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use axum::Json;
@@ -10,9 +12,22 @@ use axum::extract::{Extension, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::response::sse::{Event, KeepAlive, Sse};
+use futures_util::Stream;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{RwLock, mpsc};
 use tokio_util::sync::CancellationToken;
+
+/// Wraps an mpsc::Receiver as a Stream for SSE.
+struct ReceiverStream<T> {
+    rx: mpsc::Receiver<T>,
+}
+
+impl<T> Stream for ReceiverStream<T> {
+    type Item = T;
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<T>> {
+        self.rx.poll_recv(cx)
+    }
+}
 
 use forge_core::function::AuthContext;
 use forge_core::realtime::{SessionId, SubscriptionId};
@@ -406,9 +421,10 @@ pub async fn sse_handler(
         }
     });
 
-    // Create the SSE stream
-    let stream = async_stream::stream! {
-        // Move guard into stream so it's dropped when stream ends
+    // Spawn a task that feeds SSE events into a channel
+    let (event_tx, event_rx) = mpsc::channel::<Result<Event, Infallible>>(buffer_size);
+
+    tokio::spawn(async move {
         let mut _guard = cleanup_guard;
 
         // Send connected event
@@ -418,7 +434,9 @@ pub async fn sse_handler(
         };
         match serde_json::to_string(&connected) {
             Ok(json) => {
-                yield Ok::<Event, Infallible>(Event::default().event("connected").data(json));
+                let _ = event_tx
+                    .send(Ok(Event::default().event("connected").data(json)))
+                    .await;
             }
             Err(e) => {
                 tracing::error!("Failed to serialize SSE connected payload: {}", e);
@@ -429,25 +447,24 @@ pub async fn sse_handler(
             tokio::select! {
                 msg = rx.recv() => {
                     match msg {
-                        Some(SseMessage::Data { target, payload }) => {
-                            let event_data = SsePayload::Update { target, payload };
-                            match serde_json::to_string(&event_data) {
-                                Ok(json) => {
-                                    yield Ok::<Event, Infallible>(Event::default().event("update").data(json));
+                        Some(sse_msg) => {
+                            let event = match sse_msg {
+                                SseMessage::Data { target, payload } => {
+                                    let data = SsePayload::Update { target, payload };
+                                    serde_json::to_string(&data).ok().map(|json| {
+                                        Event::default().event("update").data(json)
+                                    })
                                 }
-                                Err(e) => {
-                                    tracing::error!("Failed to serialize SSE update payload: {}", e);
+                                SseMessage::Error { target, code, message } => {
+                                    let data = SsePayload::Error { target, code, message };
+                                    serde_json::to_string(&data).ok().map(|json| {
+                                        Event::default().event("error").data(json)
+                                    })
                                 }
-                            }
-                        }
-                        Some(SseMessage::Error { target, code, message }) => {
-                            let event_data = SsePayload::Error { target, code, message };
-                            match serde_json::to_string(&event_data) {
-                                Ok(json) => {
-                                    yield Ok::<Event, Infallible>(Event::default().event("error").data(json));
-                                }
-                                Err(e) => {
-                                    tracing::error!("Failed to serialize SSE error payload: {}", e);
+                            };
+                            if let Some(evt) = event {
+                                if event_tx.send(Ok(evt)).await.is_err() {
+                                    break;
                                 }
                             }
                         }
@@ -458,11 +475,13 @@ pub async fn sse_handler(
             }
         }
 
-        // Clean shutdown - mark guard as handled so Drop doesn't duplicate cleanup
+        // Clean shutdown
         _guard.mark_closed();
         reactor.remove_session(session_id).await;
         sessions.write().await.remove(&session_id);
-    };
+    });
+
+    let stream = ReceiverStream { rx: event_rx };
 
     Sse::new(stream)
         .keep_alive(

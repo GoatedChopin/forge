@@ -1,11 +1,9 @@
 use anyhow::Result;
 use clap::Parser;
 use console::style;
-use indicatif::{ProgressBar, ProgressStyle};
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
-use std::time::Duration;
 
 use super::runtime_generator::{
     FORGE_VERSION, generate_runtime, get_installed_version, has_legacy_runtime, needs_update,
@@ -55,19 +53,10 @@ impl GenerateCommand {
             .and_then(|p| p.parent())
             .unwrap_or(Path::new("."));
 
-        // Show progress
-        let pb = ProgressBar::new(6);
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green} {msg}")
-                .expect("valid progress template"),
-        );
-        pb.enable_steady_tick(Duration::from_millis(100));
-
         // Step 1: Check for legacy runtime and handle migration
-        pb.set_message("Checking project structure...");
+        eprint!("  Checking project structure...");
         if has_legacy_runtime(frontend_dir) {
-            pb.finish_and_clear();
+            eprintln!();
 
             ui::section("Runtime Migration");
             println!("{} Legacy project structure detected.", ui::warn());
@@ -123,22 +112,15 @@ impl GenerateCommand {
             );
             println!();
 
-            // Continue with type generation
-            pb.reset();
-            pb.enable_steady_tick(Duration::from_millis(100));
         }
 
         // Step 2: Check runtime version and update if needed
         if !self.skip_runtime {
-            pb.set_message("Checking @forge/svelte version...");
-
             let forge_dir_exists = frontend_dir.join(".forge/svelte").exists();
 
             if forge_dir_exists && needs_update(frontend_dir) {
                 let installed =
                     get_installed_version(frontend_dir).unwrap_or_else(|| "unknown".to_string());
-
-                pb.finish_and_clear();
 
                 println!();
                 println!("{} Version mismatch detected:", ui::warn());
@@ -167,10 +149,9 @@ impl GenerateCommand {
                     }
                 }
 
-                pb.reset();
-                pb.enable_steady_tick(Duration::from_millis(100));
-                pb.set_message("Updating @forge/svelte runtime...");
+                eprint!("  Updating @forge/svelte runtime...");
                 generate_runtime(frontend_dir)?;
+                eprintln!(" done");
 
                 println!();
                 println!(
@@ -181,25 +162,21 @@ impl GenerateCommand {
                 );
             } else if !forge_dir_exists {
                 // First time generation
-                pb.set_message("Generating @forge/svelte runtime...");
+                eprint!("  Generating @forge/svelte runtime...");
                 generate_runtime(frontend_dir)?;
                 update_frontend_package_json(frontend_dir)?;
+                eprintln!(" done");
             }
-            pb.inc(1);
-        } else {
-            pb.set_message("Skipping runtime generation...");
-            pb.inc(1);
         }
 
         // Step 3: Parse source files
-        pb.set_message("Scanning Rust source files...");
+        eprint!("  Scanning Rust source files...");
         let registry = if src_path.exists() {
             forge_codegen::parse_project(src_path)?
         } else {
-            pb.set_message("No src directory found, using defaults...");
             forge_core::schema::SchemaRegistry::new()
         };
-        pb.inc(1);
+        eprintln!(" done");
 
         // Check if we have any schema definitions (tables, enums, or functions)
         let has_schema = !registry.all_tables().is_empty()
@@ -208,7 +185,7 @@ impl GenerateCommand {
 
         if has_schema {
             // Use forge_codegen to generate TypeScript
-            pb.set_message("Generating TypeScript from schema...");
+            eprint!("  Generating TypeScript from schema...");
 
             // Check if auth is configured in forge.toml
             let generate_auth = forge_core::config::ForgeConfig::from_file("forge.toml")
@@ -220,38 +197,21 @@ impl GenerateCommand {
             };
             let generator = forge_codegen::TypeScriptGenerator::with_options(&output_dir, options);
             generator.generate(&registry)?;
-            pb.inc(4);
+            eprintln!(" done");
         } else {
             // Fall back to default templates if no schema found
-            pb.set_message("No schema found, generating defaults...");
-
-            // Create output directory if it doesn't exist
             if !output_path.exists() {
                 fs::create_dir_all(output_path)?;
             }
 
-            // Generate default files
-            pb.set_message("Generating types...");
+            eprint!("  Generating defaults...");
             generate_types(output_path, self.force)?;
-            pb.inc(1);
-
-            pb.set_message("Generating API bindings...");
             generate_api(output_path, self.force)?;
-            pb.inc(1);
-
-            pb.set_message("Generating stores...");
             generate_stores(output_path, self.force)?;
-            pb.inc(1);
-
-            pb.set_message("Generating runes...");
             generate_runes(output_path)?;
-
-            pb.set_message("Generating index...");
             generate_index(output_path)?;
-            pb.inc(1);
+            eprintln!(" done");
         }
-
-        pb.finish_with_message("Done!");
 
         println!();
         if !self.skip_runtime {

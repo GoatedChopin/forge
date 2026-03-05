@@ -341,7 +341,7 @@ OTLP-based telemetry for traces, metrics, and logs. Disabled by default. When en
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `enabled` | bool | `false` | Enable OTLP telemetry export |
-| `otlp_endpoint` | string | `"http://localhost:4317"` | OTLP collector endpoint (gRPC) |
+| `otlp_endpoint` | string | `"http://localhost:4318"` | OTLP collector endpoint (HTTP) |
 | `service_name` | string | project name | Service name in telemetry data |
 | `enable_traces` | bool | `true` | Export distributed traces |
 | `enable_metrics` | bool | `true` | Export metrics |
@@ -352,7 +352,7 @@ OTLP-based telemetry for traces, metrics, and logs. Disabled by default. When en
 ```toml
 [observability]
 enabled = true
-otlp_endpoint = "http://localhost:4317"
+otlp_endpoint = "http://localhost:4318"
 sampling_ratio = 0.5
 ```
 

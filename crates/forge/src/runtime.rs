@@ -225,9 +225,7 @@ impl Forge {
         tracing::debug!("Migrations applied");
 
         // Get local node info
-        let hostname = hostname::get()
-            .map(|h| h.to_string_lossy().to_string())
-            .unwrap_or_else(|_| "unknown".to_string());
+        let hostname = get_hostname();
 
         let ip_address: IpAddr = "127.0.0.1".parse().expect("valid IP literal");
         let roles: Vec<NodeRole> = self
@@ -872,6 +870,20 @@ impl Default for ForgeBuilder {
     fn default() -> Self {
         Self::new()
     }
+}
+
+#[cfg(unix)]
+fn get_hostname() -> String {
+    nix::unistd::gethostname()
+        .map(|h| h.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "unknown".to_string())
+}
+
+#[cfg(not(unix))]
+fn get_hostname() -> String {
+    std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "unknown".to_string())
 }
 
 /// Convert config NodeRole to cluster NodeRole.

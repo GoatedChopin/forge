@@ -144,7 +144,10 @@ impl<'a> ParallelBuilder<'a> {
             .collect();
 
         // Collect results
-        let step_results = futures::future::join_all(handles).await;
+        let mut step_results = Vec::with_capacity(handles.len());
+        for handle in handles {
+            step_results.push(handle.await);
+        }
         let mut failed = false;
         let mut first_error: Option<ForgeError> = None;
 

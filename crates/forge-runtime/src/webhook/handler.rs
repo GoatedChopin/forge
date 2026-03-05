@@ -293,9 +293,9 @@ fn validate_signature(
         .unwrap_or(signature);
 
     // Decode expected signature from hex
-    let expected = match hex::decode(sig_hex) {
-        Ok(b) => b,
-        Err(_) => return false,
+    let expected = match decode_hex(sig_hex) {
+        Some(b) => b,
+        None => return false,
     };
 
     match algorithm {
@@ -318,6 +318,16 @@ fn validate_signature(
             mac.verify_slice(&expected).is_ok()
         }
     }
+}
+
+fn decode_hex(s: &str) -> Option<Vec<u8>> {
+    if s.len() % 2 != 0 {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok())
+        .collect()
 }
 
 /// Extract value from JSON using a simple path (e.g., "$.id" or "$.data.id").
@@ -395,6 +405,14 @@ async fn release_idempotency(
 mod tests {
     use super::*;
 
+    fn encode_hex(bytes: &[u8]) -> String {
+        bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
+            use std::fmt::Write;
+            let _ = write!(s, "{b:02x}");
+            s
+        })
+    }
+
     #[test]
     fn test_extract_json_path_simple() {
         let value = json!({"id": "test-123"});
@@ -435,7 +453,7 @@ mod tests {
 
         let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
         mac.update(body);
-        let signature = hex::encode(mac.finalize().into_bytes());
+        let signature = encode_hex(&mac.finalize().into_bytes());
 
         assert!(validate_signature(
             SignatureAlgorithm::HmacSha256,

@@ -522,7 +522,7 @@ impl Default for ObservabilityConfig {
 }
 
 fn default_otlp_endpoint() -> String {
-    "http://localhost:4317".to_string()
+    "http://localhost:4318".to_string()
 }
 
 fn default_true() -> bool {
@@ -604,17 +604,40 @@ fn default_mcp_session_ttl_secs() -> u64 {
 
 /// Substitute environment variables in the format ${VAR_NAME}.
 fn substitute_env_vars(content: &str) -> String {
-    let mut result = content.to_string();
-    let re = regex_lite::Regex::new(r"\$\{([A-Z_][A-Z0-9_]*)\}").expect("valid regex pattern");
+    let mut result = String::with_capacity(content.len());
+    let bytes = content.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
 
-    for cap in re.captures_iter(content) {
-        let var_name = &cap[1];
-        if let Ok(value) = std::env::var(var_name) {
-            result = result.replace(&cap[0], &value);
+    while i < len {
+        if i + 1 < len && bytes[i] == b'$' && bytes[i + 1] == b'{' {
+            if let Some(end) = content[i + 2..].find('}') {
+                let var_name = &content[i + 2..i + 2 + end];
+                if is_valid_env_var_name(var_name) {
+                    if let Ok(value) = std::env::var(var_name) {
+                        result.push_str(&value);
+                    } else {
+                        result.push_str(&content[i..i + 2 + end + 1]);
+                    }
+                    i += 2 + end + 1;
+                    continue;
+                }
+            }
         }
+        result.push(bytes[i] as char);
+        i += 1;
     }
 
     result
+}
+
+fn is_valid_env_var_name(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    !bytes.is_empty()
+        && (bytes[0].is_ascii_uppercase() || bytes[0] == b'_')
+        && bytes
+            .iter()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || *b == b'_')
 }
 
 #[cfg(test)]

@@ -26,10 +26,6 @@ opentelemetry = { workspace = true }
 sqlx = { workspace = true }
 reqwest = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync"] }
-futures = "0.3"
-regex-lite = "0.1.8"
-smallvec = { workspace = true }
-once_cell = "1.19"
 base64 = "0.22"
 testcontainers = { workspace = true, optional = true }
 testcontainers-modules = { workspace = true, optional = true }

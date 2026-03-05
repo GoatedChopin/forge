@@ -44,16 +44,9 @@ schemars = { version = "0.8", features = ["chrono", "uuid1"] }
 
 # HTTP/WebSocket
 axum = { version = "0.8", features = ["ws", "multipart"] }
-axum-extra = { version = "0.10", features = ["typed-header"] }
 tower = { version = "0.5", features = ["limit", "timeout", "util"] }
 tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip"] }
-hyper = { version = "1.8", features = ["full"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-async-stream = "0.3"
-
-# gRPC
-tonic = "0.14"
-prost = "0.14"
 
 # Utilities
 uuid = { version = "1.19", features = ["v4", "serde"] }
@@ -66,28 +59,23 @@ anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 tracing-opentelemetry = "0.28"
-sysinfo = "0.37"
 
 # OpenTelemetry
 opentelemetry = { version = "0.27", features = ["trace", "metrics", "logs"] }
 opentelemetry_sdk = { version = "0.27", features = ["rt-tokio", "trace", "metrics", "logs"] }
-opentelemetry-otlp = { version = "0.27", features = ["tonic", "trace", "metrics", "logs"] }
+opentelemetry-otlp = { version = "0.27", default-features = false, features = ["http-json", "reqwest-client", "trace", "metrics", "logs", "internal-logs"] }
 opentelemetry-semantic-conventions = "0.27"
 
 # Proc macros
 syn = { version = "2.0", features = ["full", "extra-traits", "visit"] }
 quote = "1.0"
 proc-macro2 = "1.0"
-darling = "0.23"
 
 # SQL parsing
 sqlparser = "0.54"
 
 # Concurrent data structures
 dashmap = "6"
-slab = "0.4"
-arc-swap = "1"
-smallvec = "1"
 
 # Testing
 tokio-test = "0.4"

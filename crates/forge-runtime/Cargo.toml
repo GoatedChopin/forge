@@ -15,13 +15,8 @@ forge-core = { version = "0.4.1", path = "../forge-core" }
 tokio = { workspace = true }
 sqlx = { workspace = true }
 axum = { workspace = true }
-axum-extra = { workspace = true }
-async-stream = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
-hyper = { workspace = true }
-tonic = { workspace = true }
-prost = { workspace = true }
 reqwest = { workspace = true }
 bytes = { workspace = true }
 
@@ -40,17 +35,12 @@ opentelemetry_sdk = { workspace = true }
 opentelemetry-otlp = { workspace = true }
 opentelemetry-semantic-conventions = { workspace = true }
 dashmap = { workspace = true }
-slab = { workspace = true }
-arc-swap = { workspace = true }
-smallvec = { workspace = true }
-regex = "1.12"
 jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto", "use_pem"] }
 futures-util = "0.3"
 tokio-util = "0.7"
 hmac = "0.12"
 sha1 = "0.10"
 sha2 = "0.10"
-hex = "0.4"
 
 [dev-dependencies]
 tokio-test = { workspace = true }

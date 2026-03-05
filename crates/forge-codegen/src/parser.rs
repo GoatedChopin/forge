@@ -3,7 +3,7 @@
 //! This module parses Rust source files to extract model, enum, and function
 //! definitions without requiring compilation.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use forge_core::schema::{
     EnumDef, EnumVariant, FieldDef, FunctionArg, FunctionDef, FunctionKind, RustType,
@@ -12,25 +12,36 @@ use forge_core::schema::{
 use forge_core::util::to_snake_case;
 use quote::ToTokens;
 use syn::{Attribute, Expr, Fields, FnArg, Lit, Meta, Pat, ReturnType};
-use walkdir::WalkDir;
 
 use crate::Error;
+
+fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_rs_files(&path, out);
+        } else if path.extension().is_some_and(|ext| ext == "rs") {
+            out.push(path);
+        }
+    }
+}
 
 /// Parse all Rust source files in a directory and extract schema definitions.
 pub fn parse_project(src_dir: &Path) -> Result<SchemaRegistry, Error> {
     let registry = SchemaRegistry::new();
 
-    let mut files: Vec<_> = WalkDir::new(src_dir)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map(|ext| ext == "rs").unwrap_or(false))
-        .collect();
-    files.sort_by(|a, b| a.path().cmp(b.path()));
+    let mut files = Vec::new();
+    collect_rs_files(src_dir, &mut files);
+    files.sort();
 
-    for entry in files {
-        let content = std::fs::read_to_string(entry.path())?;
+    for path in &files {
+        let content = std::fs::read_to_string(path)?;
         if let Err(e) = parse_file(&content, &registry) {
-            tracing::debug!(file = ?entry.path(), error = %e, "Failed to parse file");
+            tracing::debug!(file = ?path, error = %e, "Failed to parse file");
         }
     }
 

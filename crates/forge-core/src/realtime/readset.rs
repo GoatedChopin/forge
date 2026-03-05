@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
-use smallvec::SmallVec;
 use uuid::Uuid;
 
 /// Tracking mode for read sets.
@@ -130,7 +129,7 @@ impl BloomFilter {
 #[derive(Debug, Clone, Default)]
 pub struct ReadSet {
     /// Tables accessed (stack-allocated for common case of 1-4 tables).
-    pub tables: SmallVec<[String; 4]>,
+    pub tables: Vec<String>,
     /// Probabilistic row tracking per table. None means table-level only.
     pub row_filter: HashMap<String, BloomFilter>,
     /// Row counts per table (for memory estimation).

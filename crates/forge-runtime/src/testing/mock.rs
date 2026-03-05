@@ -3,9 +3,38 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use regex::Regex;
 use serde::Serialize;
 use tokio::sync::RwLock;
+
+/// Simple glob matcher: `*` matches any sequence, `?` matches one char.
+fn glob_matches(pattern: &str, text: &str) -> bool {
+    let pat = pattern.as_bytes();
+    let txt = text.as_bytes();
+    let (mut pi, mut ti) = (0, 0);
+    let (mut star_pi, mut star_ti) = (usize::MAX, 0);
+
+    while ti < txt.len() {
+        if pi < pat.len() && (pat[pi] == b'?' || pat[pi] == txt[ti]) {
+            pi += 1;
+            ti += 1;
+        } else if pi < pat.len() && pat[pi] == b'*' {
+            star_pi = pi;
+            star_ti = ti;
+            pi += 1;
+        } else if star_pi != usize::MAX {
+            pi = star_pi + 1;
+            star_ti += 1;
+            ti = star_ti;
+        } else {
+            return false;
+        }
+    }
+
+    while pi < pat.len() && pat[pi] == b'*' {
+        pi += 1;
+    }
+    pi == pat.len()
+}
 
 /// Mock HTTP client for testing.
 #[derive(Clone)]
@@ -16,9 +45,7 @@ pub struct MockHttp {
 
 /// A mock handler.
 struct MockHandler {
-    #[allow(dead_code)]
     pattern: String,
-    regex: Regex,
     handler: Arc<dyn Fn(&MockRequest) -> MockResponse + Send + Sync>,
 }
 
@@ -115,46 +142,18 @@ impl MockHttp {
     where
         F: Fn(&MockRequest) -> MockResponse + Send + Sync + 'static,
     {
-        // Convert glob pattern to regex
-        let regex_pattern = pattern
-            .replace('.', "\\.")
-            .replace('*', ".*")
-            .replace('?', ".");
-
-        let regex = Regex::new(&format!("^{}$", regex_pattern)).expect("valid mock URL pattern");
-
-        // We need to use blocking since RwLock::write is async
         let mocks = self.mocks.clone();
+        let pattern = pattern.to_string();
+        let handler = Arc::new(handler);
         tokio::task::block_in_place(|| {
             let rt = tokio::runtime::Handle::try_current();
             if let Ok(rt) = rt {
                 rt.block_on(async {
                     let mut mocks = mocks.write().await;
-                    mocks.push(MockHandler {
-                        pattern: pattern.to_string(),
-                        regex,
-                        handler: Arc::new(handler),
-                    });
+                    mocks.push(MockHandler { pattern, handler });
                 });
             }
         });
-    }
-
-    /// Add a mock handler (sync version).
-    #[allow(unused_variables)]
-    pub fn add_mock_sync<F>(&self, pattern: &str, handler: F)
-    where
-        F: Fn(&MockRequest) -> MockResponse + Send + Sync + 'static,
-    {
-        let regex_pattern = pattern
-            .replace('.', "\\.")
-            .replace('*', ".*")
-            .replace('?', ".");
-
-        let _regex = Regex::new(&format!("^{}$", regex_pattern)).expect("valid mock URL pattern");
-
-        // For testing, just create a new mock handler without async
-        // This is a simplified version
     }
 
     /// Execute a mock request.
@@ -173,7 +172,9 @@ impl MockHttp {
         // Find matching mock
         let mocks = self.mocks.read().await;
         for mock in mocks.iter() {
-            if mock.regex.is_match(&request.url) || mock.regex.is_match(&request.path) {
+            if glob_matches(&mock.pattern, &request.url)
+                || glob_matches(&mock.pattern, &request.path)
+            {
                 return (mock.handler)(&request);
             }
         }
@@ -189,17 +190,11 @@ impl MockHttp {
 
     /// Get requests to a specific URL pattern.
     pub async fn requests_to(&self, pattern: &str) -> Vec<RecordedRequest> {
-        let regex_pattern = pattern
-            .replace('.', "\\.")
-            .replace('*', ".*")
-            .replace('?', ".");
-        let regex = Regex::new(&format!("^{}$", regex_pattern)).expect("valid mock URL pattern");
-
         self.requests
             .read()
             .await
             .iter()
-            .filter(|r| regex.is_match(&r.url))
+            .filter(|r| glob_matches(pattern, &r.url))
             .cloned()
             .collect()
     }

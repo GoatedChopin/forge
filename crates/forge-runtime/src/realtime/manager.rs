@@ -1,8 +1,8 @@
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use dashmap::DashMap;
-use slab::Slab;
 
 use forge_core::cluster::NodeId;
 use forge_core::function::AuthContext;
@@ -107,15 +107,15 @@ pub struct SessionCounts {
 ///
 /// Primary index: groups by QueryGroupId (DashMap, 64 shards).
 /// Secondary: lookup key -> QueryGroupId for dedup.
-/// Subscribers stored in a Slab for O(1) insert/remove.
+/// Subscribers stored in a HashMap for O(1) insert/remove by key.
 /// Session -> subscribers mapping for cleanup.
 pub struct SubscriptionManager {
     /// Query groups indexed by ID. Sharded for concurrent access.
     groups: DashMap<QueryGroupId, QueryGroup>,
     /// Lookup: hash(query_name+args+auth_scope) -> QueryGroupId for dedup.
     group_lookup: DashMap<u64, QueryGroupId>,
-    /// Subscribers stored in a slab for O(1) insert/remove by index.
-    subscribers: Arc<Mutex<Slab<Subscriber>>>,
+    /// Subscribers indexed by auto-incrementing key.
+    subscribers: Arc<Mutex<SubscriberStore>>,
     /// Session -> subscriber IDs for fast cleanup on disconnect.
     session_subscribers: DashMap<SessionId, Vec<SubscriberId>>,
     /// Monotonic counter for group IDs.
@@ -124,13 +124,51 @@ pub struct SubscriptionManager {
     max_per_session: usize,
 }
 
+/// Simple indexed store replacing the `slab` crate.
+struct SubscriberStore {
+    entries: HashMap<usize, Subscriber>,
+    next_key: usize,
+}
+
+impl SubscriberStore {
+    fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+            next_key: 0,
+        }
+    }
+
+    fn insert(&mut self, value: Subscriber) -> usize {
+        let key = self.next_key;
+        self.next_key += 1;
+        self.entries.insert(key, value);
+        key
+    }
+
+    fn get(&self, key: usize) -> Option<&Subscriber> {
+        self.entries.get(&key)
+    }
+
+    fn remove(&mut self, key: usize) -> Subscriber {
+        self.entries.remove(&key).expect("key not found in subscriber store")
+    }
+
+    fn contains(&self, key: usize) -> bool {
+        self.entries.contains_key(&key)
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (usize, &Subscriber)> {
+        self.entries.iter().map(|(&k, v)| (k, v))
+    }
+}
+
 impl SubscriptionManager {
     /// Create a new subscription manager.
     pub fn new(max_per_session: usize) -> Self {
         Self {
             groups: DashMap::new(),
             group_lookup: DashMap::new(),
-            subscribers: Arc::new(Mutex::new(Slab::new())),
+            subscribers: Arc::new(Mutex::new(SubscriberStore::new())),
             session_subscribers: DashMap::new(),
             next_group_id: AtomicU32::new(0),
             max_per_session,
@@ -185,14 +223,13 @@ impl SubscriptionManager {
             id
         });
 
-        // Create subscriber in the slab
+        // Create subscriber in the store
         let subscription_id = SubscriptionId::new();
         let subscriber_id = {
-            let mut slab = self.subscribers.lock().expect("subscriber slab poisoned");
-            // Reserve key first so we can embed it in the subscriber
-            let key = slab.vacant_key();
+            let mut store = self.subscribers.lock().expect("subscriber store poisoned");
+            let key = store.next_key;
             let sid = SubscriberId(key as u32);
-            slab.insert(Subscriber {
+            store.insert(Subscriber {
                 id: sid,
                 session_id,
                 client_sub_id,
@@ -218,20 +255,20 @@ impl SubscriptionManager {
 
     /// Remove a subscriber by its subscription ID.
     pub fn unsubscribe(&self, subscription_id: SubscriptionId) {
-        let mut slab = self.subscribers.lock().expect("subscriber slab poisoned");
+        let mut store = self.subscribers.lock().expect("subscriber store poisoned");
 
         // Find the subscriber by subscription_id
-        let sub_key = slab
+        let sub_key = store
             .iter()
             .find(|(_, s)| s.subscription_id == subscription_id)
             .map(|(key, s)| (key, s.group_id, s.session_id));
 
         if let Some((key, group_id, session_id)) = sub_key {
             let subscriber_id = SubscriberId(key as u32);
-            slab.remove(key);
+            store.remove(key);
 
             // Remove from group
-            drop(slab); // Release lock before accessing DashMap
+            drop(store); // Release lock before accessing DashMap
             if let Some(mut group) = self.groups.get_mut(&group_id) {
                 group.subscribers.retain(|s| *s != subscriber_id);
 
@@ -264,12 +301,12 @@ impl SubscriptionManager {
             .unwrap_or_default();
 
         let mut removed_sub_ids = Vec::new();
-        let mut slab = self.subscribers.lock().expect("subscriber slab poisoned");
+        let mut store = self.subscribers.lock().expect("subscriber store poisoned");
 
         for sid in subscriber_ids {
             let key = sid.0 as usize;
-            if slab.contains(key) {
-                let sub = slab.remove(key);
+            if store.contains(key) {
+                let sub = store.remove(key);
                 removed_sub_ids.push(sub.subscription_id);
 
                 // Remove from group
@@ -327,11 +364,11 @@ impl SubscriptionManager {
             .map(|g| g.subscribers.clone())
             .unwrap_or_default();
 
-        let slab = self.subscribers.lock().expect("subscriber slab poisoned");
+        let store = self.subscribers.lock().expect("subscriber store poisoned");
         subscriber_ids
             .iter()
             .filter_map(|sid| {
-                slab.get(sid.0 as usize)
+                store.get(sid.0 as usize)
                     .map(|s| (s.session_id, s.client_sub_id.clone()))
             })
             .collect()

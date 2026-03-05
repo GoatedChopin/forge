@@ -41,12 +41,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 clap = { version = "4.5", features = ["derive"] }
 console = "0.16"
-dialoguer = "0.12"
 dotenvy = "0.15"
 toml = { workspace = true }
 sqlx = { workspace = true }
-indicatif = "0.18"
-hostname = "0.4"
 reqwest = { version = "0.12", features = ["json"] }
 axum = { workspace = true }
 tower = { workspace = true }
@@ -56,7 +53,7 @@ tower-http = { workspace = true }
 testcontainers = ["forge-core/testcontainers"]
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.29", features = ["signal"] }
+nix = { version = "0.29", features = ["signal", "hostname"] }
 
 [dev-dependencies]
 tempfile = "3"
