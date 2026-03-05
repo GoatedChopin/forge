@@ -43,6 +43,10 @@ pub struct FunctionInfo {
     /// Only applies to mutations. When true, jobs are buffered and inserted
     /// atomically with the mutation via the outbox pattern.
     pub transactional: bool,
+    /// Force this query to read from the primary database instead of replicas.
+    /// Use for read-after-write consistency (e.g., post-mutation confirmation,
+    /// permission checks depending on just-written state).
+    pub consistent: bool,
 }
 
 /// The kind of function.
@@ -136,6 +140,7 @@ mod tests {
             table_dependencies: &["users"],
             selected_columns: &["id", "name", "email"],
             transactional: false,
+            consistent: false,
         };
 
         assert_eq!(info.name, "get_user");

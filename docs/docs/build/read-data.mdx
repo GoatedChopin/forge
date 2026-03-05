@@ -31,6 +31,7 @@ Cache keys are content-addressable: function name + argument hash. Same query wi
 | Attribute | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `public` | flag | `false` | Bypass authentication requirement |
+| `consistent` | flag | `false` | Force reads from primary database (skip replicas) |
 | `cache` | `"duration"` | none | Cache TTL (e.g., `"30s"`, `"5m"`, `"1h"`) |
 | `timeout` | `u64` | none | Statement timeout in seconds |
 | `require_role("name")` | `string` | none | Require specific role (returns 403 if missing) |
@@ -132,6 +133,23 @@ pub async fn search(ctx: &QueryContext, table: String, term: String) -> Result<V
 }
 ```
 
+### Consistent Read (Skip Replicas)
+
+When read replicas are configured, queries automatically route there. If a query must see the latest data immediately after a write, use `consistent` to force it to the primary.
+
+```rust
+#[forge::query(consistent)]
+pub async fn get_order_confirmation(ctx: &QueryContext, order_id: Uuid) -> Result<Order> {
+    sqlx::query_as("SELECT * FROM orders WHERE id = $1")
+        .bind(order_id)
+        .fetch_one(ctx.db())
+        .await
+        .map_err(Into::into)
+}
+```
+
+Use this for post-mutation confirmation screens and permission checks that depend on just-written state. Most queries tolerate eventual consistency and should leave this off.
+
 ### Query with Timeout
 
 Enforce a 10 second statement timeout. Long-running queries will be cancelled.
@@ -225,7 +243,9 @@ When exceeded, the query returns `ForgeError::RateLimitExceeded` with:
 
 ### Read Replica Routing
 
-When read replicas are configured, queries automatically route to the replica pool. Round-robin distribution via atomic counter balances load across replicas.
+When read replicas are configured, queries automatically route to a healthy replica via round-robin. Unhealthy replicas are skipped (a background monitor pings each replica every 15 seconds). If all replicas are down, reads fall back to the primary.
+
+Queries marked `consistent` always read from the primary, bypassing replica routing entirely.
 
 ## Testing
 

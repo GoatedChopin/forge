@@ -79,7 +79,9 @@ replica_urls = [
 read_from_replica = true
 ```
 
-Queries route to replicas via round-robin. Mutations always use the primary. If all replicas fail, reads fall back to primary.
+Queries route to healthy replicas via round-robin. Mutations always use the primary. A background monitor pings each replica every 15 seconds and removes unhealthy ones from rotation. If all replicas fail, reads fall back to primary.
+
+Queries that need read-after-write consistency can use `#[forge::query(consistent)]` to bypass replicas and read directly from the primary.
 
 #### Pool Isolation (Bulkhead)
 
@@ -111,18 +113,16 @@ timeout_secs = 5
 statement_timeout_secs = 10
 ```
 
-Available pool names and their purposes:
+Available pool names and what uses them:
 
-| Pool | Purpose |
+| Pool | Used By |
 |------|---------|
-| `default` | User requests (queries, mutations) |
-| `jobs` | Background job execution |
-| `analytics` | Long-running reports and aggregations |
-| `observability` | Health checks, metrics collection, internal monitoring |
+| `default` | Queries, mutations, rate limiter, reactor, cluster coordination |
+| `jobs` | Job workers, cron runners, daemon processes, workflow executors |
+| `analytics` | Available via `db.analytics_pool()` for user code |
+| `observability` | Internal metrics collection (pool utilization, slow query tracking) |
 
-The observability pool is used for internal operations like health checks and metrics scraping. It should have low timeouts to fail fast and not block monitoring.
-
-A slow analytics query exhausting 5 connections cannot touch the 30 connections reserved for user requests. Each pool has independent size limits and statement timeouts.
+Without pool isolation configured, everything shares the primary pool. With it configured, a spike in background job processing cannot starve user-facing query connections. Each pool enforces independent connection limits, checkout timeouts, and statement timeouts.
 
 ### [gateway]
 
@@ -507,11 +507,7 @@ Connection pools isolate workloads:
     └─────────┘   └─────────┘   └─────────┘
 ```
 
-A runaway batch job cannot exhaust connections needed for user requests. Each pool enforces independent:
-
-- Connection count limits
-- Checkout timeouts
-- Statement timeouts
+A runaway batch job cannot exhaust connections reserved for user requests.
 
 ### Cluster Discovery
 

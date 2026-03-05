@@ -418,6 +418,7 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
                     table_dependencies: &[],
                     selected_columns: &[],
                     transactional: #transactional,
+                    consistent: false,
                 }
             }
 

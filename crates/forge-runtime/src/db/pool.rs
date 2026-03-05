@@ -1,25 +1,31 @@
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use sqlx::postgres::{PgPool, PgPoolOptions};
+use tokio::task::JoinHandle;
 
-use forge_core::config::DatabaseConfig;
+use forge_core::config::{DatabaseConfig, PoolConfig};
 use forge_core::error::{ForgeError, Result};
 
-/// Database connection wrapper providing connection pooling.
+struct ReplicaEntry {
+    pool: Arc<PgPool>,
+    healthy: Arc<AtomicBool>,
+}
+
+/// Database connection wrapper with health-aware replica routing and workload isolation.
 #[derive(Clone)]
 pub struct Database {
-    /// Primary connection pool.
     primary: Arc<PgPool>,
-
-    /// Read replica pools (optional).
-    replicas: Vec<Arc<PgPool>>,
-
-    /// Configuration.
+    replicas: Arc<Vec<ReplicaEntry>>,
     config: DatabaseConfig,
-
-    /// Counter for round-robin replica selection.
-    replica_counter: Arc<std::sync::atomic::AtomicUsize>,
+    replica_counter: Arc<AtomicUsize>,
+    /// Isolated pool for background jobs, cron, daemons, workflows.
+    jobs_pool: Option<Arc<PgPool>>,
+    /// Isolated pool for observability writes.
+    observability_pool: Option<Arc<PgPool>>,
+    /// Isolated pool for long-running analytics queries.
+    analytics_pool: Option<Arc<PgPool>>,
 }
 
 impl Database {
@@ -31,7 +37,21 @@ impl Database {
             ));
         }
 
-        let primary = Self::create_pool(&config.url, config.pool_size, config.pool_timeout_secs)
+        // If pools.default overrides the primary pool size, use it
+        let primary_size = config
+            .pools
+            .default
+            .as_ref()
+            .map(|p| p.size)
+            .unwrap_or(config.pool_size);
+        let primary_timeout = config
+            .pools
+            .default
+            .as_ref()
+            .map(|p| p.timeout_secs)
+            .unwrap_or(config.pool_timeout_secs);
+
+        let primary = Self::create_pool(&config.url, primary_size, primary_timeout)
             .await
             .map_err(|e| ForgeError::Database(format!("Failed to connect to primary: {}", e)))?;
 
@@ -43,18 +63,29 @@ impl Database {
                     .map_err(|e| {
                         ForgeError::Database(format!("Failed to connect to replica: {}", e))
                     })?;
-            replicas.push(Arc::new(pool));
+            replicas.push(ReplicaEntry {
+                pool: Arc::new(pool),
+                healthy: Arc::new(AtomicBool::new(true)),
+            });
         }
+
+        let jobs_pool = Self::create_isolated_pool(&config.url, config.pools.jobs.as_ref()).await?;
+        let observability_pool =
+            Self::create_isolated_pool(&config.url, config.pools.observability.as_ref()).await?;
+        let analytics_pool =
+            Self::create_isolated_pool(&config.url, config.pools.analytics.as_ref()).await?;
 
         Ok(Self {
             primary: Arc::new(primary),
-            replicas,
+            replicas: Arc::new(replicas),
             config: config.clone(),
-            replica_counter: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            replica_counter: Arc::new(AtomicUsize::new(0)),
+            jobs_pool,
+            observability_pool,
+            analytics_pool,
         })
     }
 
-    /// Create a connection pool with the given parameters.
     async fn create_pool(url: &str, size: u32, timeout_secs: u64) -> sqlx::Result<PgPool> {
         PgPoolOptions::new()
             .max_connections(size)
@@ -63,22 +94,101 @@ impl Database {
             .await
     }
 
+    async fn create_isolated_pool(
+        url: &str,
+        config: Option<&PoolConfig>,
+    ) -> Result<Option<Arc<PgPool>>> {
+        let Some(cfg) = config else {
+            return Ok(None);
+        };
+        let pool = Self::create_pool(url, cfg.size, cfg.timeout_secs)
+            .await
+            .map_err(|e| ForgeError::Database(format!("Failed to create isolated pool: {}", e)))?;
+        Ok(Some(Arc::new(pool)))
+    }
+
     /// Get the primary pool for writes.
     pub fn primary(&self) -> &PgPool {
         &self.primary
     }
 
-    /// Get a pool for reads (uses replica if configured, otherwise primary).
+    /// Get a pool for reads. Skips unhealthy replicas, falls back to primary.
     pub fn read_pool(&self) -> &PgPool {
-        if self.config.read_from_replica && !self.replicas.is_empty() {
-            let idx = self
-                .replica_counter
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                % self.replicas.len();
-            self.replicas.get(idx).unwrap_or(&self.primary)
-        } else {
-            &self.primary
+        if !self.config.read_from_replica || self.replicas.is_empty() {
+            return &self.primary;
         }
+
+        let len = self.replicas.len();
+        let start = self
+            .replica_counter
+            .fetch_add(1, Ordering::Relaxed)
+            % len;
+
+        // Try each replica starting from round-robin position
+        for offset in 0..len {
+            let idx = (start + offset) % len;
+            if let Some(entry) = self.replicas.get(idx) {
+                if entry.healthy.load(Ordering::Relaxed) {
+                    return &entry.pool;
+                }
+            }
+        }
+
+        // All replicas unhealthy, fall back to primary
+        &self.primary
+    }
+
+    /// Pool for background jobs, cron, daemons, and workflows.
+    /// Falls back to primary if no isolated pool is configured.
+    pub fn jobs_pool(&self) -> &PgPool {
+        self.jobs_pool
+            .as_deref()
+            .unwrap_or(&self.primary)
+    }
+
+    /// Pool for observability writes (metrics, slow query logs).
+    /// Falls back to primary if no isolated pool is configured.
+    pub fn observability_pool(&self) -> &PgPool {
+        self.observability_pool
+            .as_deref()
+            .unwrap_or(&self.primary)
+    }
+
+    /// Pool for long-running analytics queries.
+    /// Falls back to primary if no isolated pool is configured.
+    pub fn analytics_pool(&self) -> &PgPool {
+        self.analytics_pool
+            .as_deref()
+            .unwrap_or(&self.primary)
+    }
+
+    /// Start background health monitoring for replicas. Returns None if no replicas configured.
+    pub fn start_health_monitor(&self) -> Option<JoinHandle<()>> {
+        if self.replicas.is_empty() {
+            return None;
+        }
+
+        let replicas = Arc::clone(&self.replicas);
+        let handle = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(15));
+            loop {
+                interval.tick().await;
+                for entry in replicas.iter() {
+                    let ok = sqlx::query("SELECT 1")
+                        .execute(entry.pool.as_ref())
+                        .await
+                        .is_ok();
+                    let was_healthy = entry.healthy.swap(ok, Ordering::Relaxed);
+                    if was_healthy && !ok {
+                        tracing::warn!("Replica marked unhealthy");
+                    } else if !was_healthy && ok {
+                        tracing::info!("Replica recovered");
+                    }
+                }
+            }
+        });
+
+        Some(handle)
     }
 
     /// Create a Database wrapper from an existing pool (for testing).
@@ -86,9 +196,12 @@ impl Database {
     pub fn from_pool(pool: PgPool) -> Self {
         Self {
             primary: Arc::new(pool),
-            replicas: Vec::new(),
+            replicas: Arc::new(Vec::new()),
             config: DatabaseConfig::default(),
-            replica_counter: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            replica_counter: Arc::new(AtomicUsize::new(0)),
+            jobs_pool: None,
+            observability_pool: None,
+            analytics_pool: None,
         }
     }
 
@@ -104,8 +217,17 @@ impl Database {
     /// Close all connections gracefully.
     pub async fn close(&self) {
         self.primary.close().await;
-        for replica in &self.replicas {
-            replica.close().await;
+        for entry in self.replicas.iter() {
+            entry.pool.close().await;
+        }
+        if let Some(ref p) = self.jobs_pool {
+            p.close().await;
+        }
+        if let Some(ref p) = self.observability_pool {
+            p.close().await;
+        }
+        if let Some(ref p) = self.analytics_pool {
+            p.close().await;
         }
     }
 }

@@ -101,6 +101,12 @@ impl FunctionRouter {
 
             return match entry {
                 FunctionEntry::Query { handler, info, .. } => {
+                    let pool = if info.consistent {
+                        self.db.primary().clone()
+                    } else {
+                        self.db.read_pool().clone()
+                    };
+
                     let auth_scope = Self::auth_cache_scope(&auth);
                     if let Some(ttl) = info.cache_ttl {
                         if let Some(cached) =
@@ -110,8 +116,7 @@ impl FunctionRouter {
                             return Ok(RouteResult::Query(Value::clone(&cached)));
                         }
 
-                        // Execute and cache result (use read replica for queries)
-                        let ctx = QueryContext::new(self.db.read_pool().clone(), auth, request);
+                        let ctx = QueryContext::new(pool, auth, request);
                         let result = handler(&ctx, args.clone()).await?;
 
                         self.query_cache.set(
@@ -124,8 +129,7 @@ impl FunctionRouter {
 
                         Ok(RouteResult::Query(result))
                     } else {
-                        // Use read replica for queries
-                        let ctx = QueryContext::new(self.db.read_pool().clone(), auth, request);
+                        let ctx = QueryContext::new(pool, auth, request);
                         let result = handler(&ctx, args).await?;
                         Ok(RouteResult::Query(result))
                     }
@@ -603,6 +607,7 @@ mod tests {
             table_dependencies: &[],
             selected_columns: &[],
             transactional: false,
+            consistent: false,
         };
 
         let _auth = AuthContext::unauthenticated();

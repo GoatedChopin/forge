@@ -27,6 +27,7 @@ struct QueryAttrs {
     cache_ttl: Option<u64>,
     required_role: Option<String>,
     is_public: bool,
+    consistent: bool,
     timeout: Option<u64>,
     rate_limit_requests: Option<u32>,
     rate_limit_per_secs: Option<u64>,
@@ -43,6 +44,10 @@ fn parse_query_attrs(attr: TokenStream) -> QueryAttrs {
 
     if has_attr_flag(&attr_str, "public") {
         attrs.is_public = true;
+    }
+
+    if has_attr_flag(&attr_str, "consistent") {
+        attrs.consistent = true;
     }
 
     if let Some(role_start) = attr_str.find("require_role")
@@ -317,6 +322,7 @@ fn expand_query_impl(input: ItemFn, attrs: QueryAttrs) -> syn::Result<TokenStrea
     };
 
     let is_public = attrs.is_public;
+    let consistent = attrs.consistent;
 
     let required_role = match &attrs.required_role {
         Some(role) => quote! { Some(#role) },
@@ -479,6 +485,7 @@ fn expand_query_impl(input: ItemFn, attrs: QueryAttrs) -> syn::Result<TokenStrea
                     table_dependencies: #table_deps_tokens,
                     selected_columns: #selected_cols_tokens,
                     transactional: false,
+                    consistent: #consistent,
                 }
             }
 

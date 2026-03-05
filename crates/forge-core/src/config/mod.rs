@@ -2,7 +2,7 @@ mod cluster;
 mod database;
 
 pub use cluster::ClusterConfig;
-pub use database::DatabaseConfig;
+pub use database::{DatabaseConfig, PoolConfig};
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;

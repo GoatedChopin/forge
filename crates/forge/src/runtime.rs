@@ -209,6 +209,17 @@ impl Forge {
         // Connect to database
         let db = Database::from_config(&self.config.database).await?;
         let pool = db.primary().clone();
+        let jobs_pool = db.jobs_pool().clone();
+        let observability_pool = db.observability_pool().clone();
+        if let Some(handle) = db.start_health_monitor() {
+            let mut shutdown_rx = self.shutdown_tx.subscribe();
+            tokio::spawn(async move {
+                tokio::select! {
+                    _ = shutdown_rx.recv() => {}
+                    _ = handle => {}
+                }
+            });
+        }
         self.db = Some(db);
 
         tracing::debug!("Database connected");
@@ -315,7 +326,7 @@ impl Forge {
 
         // Start job worker if worker role
         if roles.contains(&NodeRole::Worker) {
-            let job_queue = JobQueue::new(pool.clone());
+            let job_queue = JobQueue::new(jobs_pool.clone());
             let worker_config = WorkerConfig {
                 id: Some(node_id.as_uuid()),
                 capabilities: self.config.node.worker_capabilities.clone(),
@@ -328,7 +339,7 @@ impl Forge {
                 worker_config,
                 job_queue,
                 self.job_registry.clone(),
-                pool.clone(),
+                jobs_pool.clone(),
             );
 
             handles.push(tokio::spawn(async move {
@@ -343,7 +354,7 @@ impl Forge {
         // Start cron runner if scheduler role and is leader
         if roles.contains(&NodeRole::Scheduler) {
             let cron_registry = self.cron_registry.clone();
-            let cron_pool = pool.clone();
+            let cron_pool = jobs_pool.clone();
             let cron_http = http_client.clone();
             let cron_leader_election = leader_election.clone();
 
@@ -371,12 +382,12 @@ impl Forge {
         if roles.contains(&NodeRole::Scheduler) {
             let scheduler_executor = Arc::new(WorkflowExecutor::new(
                 Arc::new(self.workflow_registry.clone()),
-                pool.clone(),
+                jobs_pool.clone(),
                 http_client.clone(),
             ));
-            let event_store = Arc::new(EventStore::new(pool.clone()));
+            let event_store = Arc::new(EventStore::new(jobs_pool.clone()));
             let scheduler = WorkflowScheduler::new(
-                pool.clone(),
+                jobs_pool.clone(),
                 scheduler_executor,
                 event_store,
                 WorkflowSchedulerConfig::default(),
@@ -391,21 +402,21 @@ impl Forge {
         }
 
         // Create job dispatcher and workflow executor for dispatch capabilities
-        let job_queue_for_dispatch = JobQueue::new(pool.clone());
+        let job_queue_for_dispatch = JobQueue::new(jobs_pool.clone());
         let job_dispatcher = Arc::new(JobDispatcher::new(
             job_queue_for_dispatch,
             self.job_registry.clone(),
         ));
         let workflow_executor = Arc::new(WorkflowExecutor::new(
             Arc::new(self.workflow_registry.clone()),
-            pool.clone(),
+            jobs_pool.clone(),
             http_client.clone(),
         ));
 
         // Start daemon runner if scheduler role (daemons run as singletons)
         if roles.contains(&NodeRole::Scheduler) && !self.daemon_registry.is_empty() {
             let daemon_registry = self.daemon_registry.clone();
-            let daemon_pool = pool.clone();
+            let daemon_pool = jobs_pool.clone();
             let daemon_http = http_client.clone();
             let daemon_shutdown_rx = self.shutdown_tx.subscribe();
 
@@ -589,7 +600,7 @@ impl Forge {
         );
 
         {
-            let metrics_pool = pool.clone();
+            let metrics_pool = observability_pool;
             tokio::spawn(async move {
                 loop {
                     tokio::time::sleep(Duration::from_secs(15)).await;

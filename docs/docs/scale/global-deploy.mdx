@@ -18,7 +18,9 @@ pool_size = 50
 
 ## What Happens
 
-Forge maintains separate connection pools for the primary database and each replica. Queries route to replicas via round-robin distribution using an atomic counter. Mutations always go to the primary. If a replica becomes unavailable, that pool is skipped and reads continue from remaining replicas or fall back to the primary.
+Forge maintains separate connection pools for the primary database and each replica. Queries route to healthy replicas via round-robin. Mutations always go to the primary. A background health monitor pings each replica every 15 seconds and removes unhealthy replicas from rotation. If all replicas are down, reads fall back to the primary automatically.
+
+Queries that need read-after-write consistency can opt out of replica routing with the `consistent` attribute (see below).
 
 All cluster coordination happens through PostgreSQL. Nodes in different regions find each other via the shared `forge_nodes` table without a service mesh or separate discovery service.
 
@@ -31,6 +33,10 @@ All cluster coordination happens through PostgreSQL. Nodes in different regions 
 | `read_from_replica` | `bool` | `false` | Route queries to replicas |
 | `pool_size` | `u32` | `50` | Primary pool size (replicas get half) |
 | `pool_timeout_secs` | `u64` | `30` | Connection acquire timeout |
+| `pools.default` | config | none | Override primary pool size/timeout |
+| `pools.jobs` | config | none | Isolated pool for background work |
+| `pools.observability` | config | none | Isolated pool for metrics collection |
+| `pools.analytics` | config | none | Isolated pool for long-running reports |
 
 ## Multi-Region Pattern
 
@@ -140,6 +146,23 @@ pool_size = 100
 
 The atomic counter distributes reads evenly across all three replicas.
 
+### Consistent Reads
+
+Most queries tolerate replication lag (typically under 100ms). For queries that must see the latest data right after a mutation, use the `consistent` attribute to force reads from the primary:
+
+```rust
+#[forge::query(consistent)]
+pub async fn get_order_receipt(ctx: &QueryContext, order_id: Uuid) -> Result<Order> {
+    sqlx::query_as("SELECT * FROM orders WHERE id = $1")
+        .bind(order_id)
+        .fetch_one(ctx.db())
+        .await
+        .map_err(Into::into)
+}
+```
+
+Without `consistent`, this query would read from a replica which might not have the order yet if it was just created. With `consistent`, it reads from the primary.
+
 ### Isolated Pools for Workloads
 
 Separate connection pools prevent one workload from starving another:
@@ -165,7 +188,7 @@ timeout_secs = 120
 statement_timeout_secs = 600
 ```
 
-A runaway analytics query cannot exhaust connections needed for user requests.
+When configured, background jobs, cron runners, daemon processes, and workflow executors all use the `jobs` pool. The `observability` pool handles internal metrics collection. The `analytics` pool is available via `db.analytics_pool()` for user code. A runaway analytics query cannot exhaust connections needed for user requests.
 
 ### Cross-Region Cluster Discovery
 
@@ -189,16 +212,23 @@ Nodes query this table to find peers. Leader election uses PostgreSQL advisory l
 
 ## Under the Hood
 
-### Round-Robin Distribution
+### Health-Aware Round-Robin
 
-Read queries distribute across replicas via atomic counter:
+Read queries distribute across healthy replicas via atomic counter:
 
 ```rust
-let idx = replica_counter.fetch_add(1, Ordering::Relaxed) % replicas.len();
-replicas[idx]
+let start = replica_counter.fetch_add(1, Ordering::Relaxed) % replicas.len();
+for offset in 0..replicas.len() {
+    let idx = (start + offset) % replicas.len();
+    if replicas[idx].healthy {
+        return replicas[idx].pool;
+    }
+}
+// All unhealthy, fall back to primary
+primary
 ```
 
-Lock-free, O(1) selection. Each query goes to the next replica in rotation. Uniform distribution regardless of query complexity or duration.
+Lock-free selection. A background task pings each replica every 15 seconds with `SELECT 1` and marks it healthy or unhealthy. Unhealthy replicas are skipped in rotation. When all replicas are down, reads fall back to the primary with no configuration changes needed.
 
 ### Separate Connection Pools
 
@@ -221,28 +251,32 @@ Primary pool handles all writes. Replica pools handle reads when `read_from_repl
 
 ### Graceful Degradation
 
-If a replica connection fails:
+Replica health is monitored proactively:
 
-1. Pool marks connection as unhealthy
-2. Next read skips that pool in rotation
-3. If all replicas fail, reads fall back to primary
-4. Replica reconnects automatically when healthy
+1. Background task pings each replica every 15 seconds
+2. Failed ping marks the replica unhealthy (logged as warning)
+3. `read_pool()` skips unhealthy replicas in round-robin
+4. If all replicas are down, reads fall back to the primary
+5. When a replica recovers, the next health check marks it healthy again (logged as info)
 
-Configuration changes are not required, and failover occurs automatically. Reads continue with higher latency until replicas recover.
+No configuration changes needed. Failover and recovery are both automatic. Reads continue with higher latency until replicas recover.
 
-### Write Path
+### Connection Routing
 
-Mutations always use the primary pool:
+The context determines which pool handles your query:
 
 ```rust
-// Mutation context
+// Mutation context - always primary
 ctx.db()  // → primary pool
 
-// Query context (with read_from_replica = true)
-ctx.db()  // → round-robin replica pool
+// Query context (default)
+ctx.db()  // → round-robin across healthy replicas
+
+// Query context (consistent = true)
+ctx.db()  // → primary pool (bypass replicas)
 ```
 
-The primary receives all writes, replicates to replicas via PostgreSQL streaming replication. Forge does not manage replication, only connection routing.
+Forge does not manage replication, only connection routing. The primary receives all writes and replicates to read replicas via PostgreSQL streaming replication.
 
 ### Cluster Coordination via PostgreSQL
 

@@ -271,9 +271,13 @@ DROP TABLE IF EXISTS todos;
 This creates triggers that emit changes to the `forge_changes` channel:
 
 ```sql
--- Payload format: table:operation:row_id
--- Example: todos:INSERT:550e8400-e29b-41d4-a716-446655440000
+-- Payload format: table:operation:row_id[:changed_columns]
+-- INSERT: todos:INSERT:550e8400-e29b-41d4-a716-446655440000
+-- UPDATE: todos:UPDATE:550e8400-e29b-41d4-a716-446655440000:title,completed
+-- DELETE: todos:DELETE:550e8400-e29b-41d4-a716-446655440000
 ```
+
+On UPDATE, the trigger includes which columns actually changed. Forge uses this for fine-grained invalidation (see below).
 
 ### LISTEN/NOTIFY
 
@@ -313,6 +317,25 @@ Forge tracks changes at different granularities based on subscription count:
 Hysteresis prevents oscillation: threshold up (100 rows) differs from threshold down (50 rows).
 
 Row-level tracking is more efficient for few subscriptions. Table-level avoids memory overhead when many clients subscribe. Forge re-evaluates every 60 seconds with a maximum of 10,000 tracked rows per table.
+
+### Column-Aware Invalidation
+
+Forge extracts which columns a query SELECTs at compile time. When an UPDATE arrives with a list of changed columns, Forge checks whether any changed column overlaps with the query's selected columns. If there's no overlap, the query is not re-executed.
+
+```rust
+// Extracted columns: ["title", "completed"]
+#[forge::query]
+pub async fn list_todos(ctx: &QueryContext) -> Result<Vec<Todo>> {
+    sqlx::query_as("SELECT title, completed FROM todos")
+        .fetch_all(ctx.db())
+        .await
+        .map_err(Into::into)
+}
+```
+
+An `UPDATE todos SET updated_at = now()` would not trigger re-execution for this query because `updated_at` is not in the selected columns. An `UPDATE todos SET title = 'new'` would.
+
+For `SELECT *` queries or dynamic SQL where columns can't be determined, all UPDATEs trigger re-execution.
 
 ### Auto-Reconnect
 
