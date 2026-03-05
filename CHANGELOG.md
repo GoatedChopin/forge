@@ -7,10 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-03-06
+
+### Added
+
+- Observability instrumentation: tracing spans on RPC handlers, job workers, and cron ticks with structured fields; Prometheus-style metrics for request count, latency, and queue depth; slow query logging with configurable threshold; startup summary banner
+- Consistent query routing via `#[forge::query(consistent)]` attribute to force reads from primary, bypassing replicas for read-after-write consistency
+- Health-aware replica selection: background monitor pings replicas every 15s, automatically skips unhealthy replicas and falls back to primary
+- Workload-isolated connection pools (`pools.default`, `pools.jobs`, `pools.observability`, `pools.analytics`) with independent size and timeout configuration
+- Coalesced real-time subscriptions: identical query subscriptions share a single re-execution instead of running per-client
+- Hybrid rate limiting combining in-memory token bucket with PostgreSQL-backed sliding window for cluster-wide consistency
+- Cluster-aware cache invalidation via `forge_invalidations` table so nodes only re-execute queries affected by changes on other nodes
+- `forge-idiomatic-engineer` Claude Code skill shipped with scaffolded projects for AI-assisted development
+
 ### Changed
 
 - Removed 20 direct dependencies by reimplementing minimal usages inline (async-stream, hex, regex, regex-lite, walkdir, darling, dialoguer, indicatif, hostname, arc-swap, sysinfo, slab, smallvec, once_cell, futures, axum-extra, tonic, prost, hyper, and gRPC features from opentelemetry-otlp)
 - Switched OTLP telemetry transport from gRPC (port 4317) to HTTP (port 4318), eliminating duplicate transitive dependency trees (axum 0.7, tower 0.4, matchit 0.7)
+- Dropped bundled `AGENTS.md` from project templates in favor of the installed skill
 
 ## [0.4.1] - 2026-02-28
 
@@ -275,7 +289,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust 2024 edition unsafe block compatibility
 - Release workflow cargo-edit installation
 
-[unreleased]: https://github.com/isala404/forge/compare/v0.4.1...HEAD
+[unreleased]: https://github.com/isala404/forge/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/isala404/forge/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/isala404/forge/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/isala404/forge/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/isala404/forge/compare/v0.2.1...v0.3.0
