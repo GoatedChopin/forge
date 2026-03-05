@@ -239,6 +239,50 @@ fn generate_bun_lockfile(dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Install the forge-idiomatic-engineer skill for AI agents.
+fn install_skill(dir: &Path) -> Result<()> {
+    println!(
+        "  {} Installing forge-idiomatic-engineer skill...",
+        ui::step()
+    );
+
+    let bun_check = Command::new("bun").arg("--version").output();
+    if !matches!(bun_check, Ok(ref o) if o.status.success()) {
+        eprintln!(
+            "  {} bun not found, skipping skill installation",
+            ui::warn()
+        );
+        eprintln!(
+            "    Run {} to install later",
+            style("bunx skills add https://github.com/isala404/forge/tree/main/docs/skills/forge-idiomatic-engineer -y").cyan()
+        );
+        return Ok(());
+    }
+
+    let output = Command::new("bunx")
+        .args([
+            "skills",
+            "add",
+            "https://github.com/isala404/forge/tree/main/docs/skills/forge-idiomatic-engineer",
+            "-y",
+        ])
+        .current_dir(dir)
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!(
+            "  {} Failed to install skill: {}",
+            ui::warn(),
+            stderr.trim()
+        );
+        return Ok(());
+    }
+
+    println!("  {} forge-idiomatic-engineer skill installed", ui::ok());
+    Ok(())
+}
+
 /// Initialize git repository and create initial commit.
 /// Skips if directory is already inside a git repository.
 fn init_git_repo(dir: &Path) -> Result<()> {
@@ -304,7 +348,6 @@ const FUNCTIONS_VERIFICATION: &str =
 const FUNCTIONS_WEBHOOK: &str =
     include_str!("../../templates/populated/project/functions/webhook.rs.tmpl");
 const IGNORE: &str = include_str!("../../templates/populated/project/ignore.tmpl");
-const AGENTS_MD: &str = include_str!("../../templates/populated/project/AGENTS.md.tmpl");
 
 // Populated frontend templates (default)
 const FRONTEND_PACKAGE_JSON: &str =
@@ -353,7 +396,6 @@ const EMPTY_SCHEMA_MOD: &str = include_str!("../../templates/empty/project/schem
 const EMPTY_FUNCTIONS_MOD: &str =
     include_str!("../../templates/empty/project/functions/mod.rs.tmpl");
 const EMPTY_IGNORE: &str = include_str!("../../templates/empty/project/ignore.tmpl");
-const EMPTY_AGENTS_MD: &str = include_str!("../../templates/empty/project/AGENTS.md.tmpl");
 
 // Empty frontend templates (for --empty flag)
 const EMPTY_FRONTEND_PACKAGE_JSON: &str =
@@ -506,6 +548,9 @@ impl NewCommand {
         // Run formatters before git commit
         run_formatters(path)?;
 
+        // Install forge-idiomatic-engineer skill for AI agents
+        install_skill(path)?;
+
         // Initialize git repository if git is available
         if is_git_available() {
             init_git_repo(path)?;
@@ -592,7 +637,6 @@ pub fn create_project(dir: &Path, name: &str, demo: bool) -> Result<()> {
             FUNCTIONS_VERIFICATION,
         )?;
         fs::write(dir.join("src/functions/webhook.rs"), FUNCTIONS_WEBHOOK)?;
-        fs::write(dir.join("AGENTS.md"), AGENTS_MD)?;
         // Demo frontend
         create_frontend(dir, name, true)?;
     } else {
@@ -628,7 +672,6 @@ pub fn create_project(dir: &Path, name: &str, demo: bool) -> Result<()> {
         )?;
         fs::write(dir.join("src/schema/mod.rs"), EMPTY_SCHEMA_MOD)?;
         fs::write(dir.join("src/functions/mod.rs"), EMPTY_FUNCTIONS_MOD)?;
-        fs::write(dir.join("AGENTS.md"), EMPTY_AGENTS_MD)?;
         // Minimal frontend
         create_frontend(dir, name, false)?;
     }
@@ -806,7 +849,6 @@ mod tests {
         assert!(path.join("Dockerfile").exists());
         assert!(path.join("docker-compose.yml").exists());
         assert!(path.join("README.md").exists());
-        assert!(path.join("AGENTS.md").exists());
         // Playwright test files
         assert!(path.join("frontend/playwright.config.ts").exists());
         assert!(path.join("frontend/tests/global-setup.ts").exists());
@@ -828,7 +870,6 @@ mod tests {
         assert!(path.join("src/schema/mod.rs").exists());
         assert!(path.join("src/functions/mod.rs").exists());
         assert!(path.join("migrations/0001_initial.sql.example").exists());
-        assert!(path.join("AGENTS.md").exists());
 
         // Example files should NOT exist
         assert!(!path.join("src/schema/user.rs").exists());

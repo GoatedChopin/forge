@@ -1,44 +1,33 @@
 # support-desk
 
-A compact support inbox example built with [FORGE](https://tryforge.dev).
+Built with [FORGE](https://tryforge.dev). One binary, one database, everything else is just code.
 
-This app demonstrates a practical MCP pattern:
+A compact support inbox demonstrating a practical MCP pattern:
 - Human agents act through a small web UI.
 - An LLM agent can perform the same ticket actions through MCP on `/_api/mcp`.
 - Both paths hit the same domain actions (create ticket, update status/priority, add note).
 
-## What is FORGE?
-
-FORGE handles the hard parts of full-stack engineering so you can focus on business logic:
-
-- **Auth & Sessions** - JWT validation, role-based access, multi-tenancy
-- **Smart Caching** - Query-level caching with rate limiting out of the box
-- **Transactional Safety** - Atomic writes with automatic rollback on failure
-- **End-to-End Type Safety** - Backend types flow directly to your frontend
-- **Background Jobs** - Retries, progress tracking, worker capabilities
-- **Cron Scheduling** - Timezone-aware, catch-up runs, leader-only execution
-- **Durable Workflows** - Multi-step processes that survive restarts
-- **Real-time Updates** - SSE subscriptions with automatic invalidation
-No Redis. No Kafka. No message queues. Just PostgreSQL.
-
-## Quick Start
+## Development
 
 ```bash
 forge dev
 ```
 
-Requires Docker. This single command:
-- Starts PostgreSQL in Docker
-- Compiles and runs the backend with hot reload
-- Starts the frontend dev server
+Starts PostgreSQL, the Rust backend, and the SvelteKit frontend. All three.
 
-Backend: `http://localhost:8080` | Frontend: `http://localhost:5173`
+- Frontend: http://localhost:5173
+- Backend: http://localhost:8080
+- MCP endpoint: http://localhost:8080/_api/mcp
+- PostgreSQL: localhost:5432
 
-MCP endpoint: `http://localhost:8080/_api/mcp`
+```bash
+forge dev down          # stop everything
+forge dev down --clear  # stop + remove volumes and target/
+```
 
-## MCP Quick Check
+### MCP Quick Check
 
-Initialize:
+Initialize a session:
 
 ```bash
 curl -i -X POST http://localhost:8080/_api/mcp \
@@ -53,47 +42,49 @@ Use the returned `mcp-session-id` header with:
 - `support.set_priority`
 - `support.add_note`
 
-## Integration Tests
-
-Run the full integration suite (boots `forge dev`, runs Playwright UI flow, then MCP script):
+### Integration Tests
 
 ```bash
+# Full suite (boots forge dev, runs Playwright UI flow, then MCP script)
 ./scripts/run-integration-e2e.sh
-```
 
-Run only MCP validation (requires backend running):
-
-```bash
+# MCP validation only (requires backend running)
 bun scripts/test-mcp.ts
 ```
 
-To stop and clean up:
+### Useful Commands
 
 ```bash
-forge dev down          # stop containers
-forge dev down --clear  # stop and remove volumes
+forge add query list_items         # read data
+forge add mutation create_item     # write data
+forge add job process_item         # background work
+forge add cron nightly_cleanup     # scheduled task
+forge add workflow user_onboarding # multi-step process
+forge generate                     # regenerate TypeScript types from Rust models
+forge check                        # validate config, migrations, project health
+forge migrate status               # check which migrations have run
+forge migrate up                   # apply pending migrations
+forge migrate down                 # rollback the last migration
 ```
 
-## Build
-
-Single binary (backend + embedded frontend):
-```bash
-cd frontend && bun install && bun run build && cd ..
-cargo build --release
-```
-
-## Test
+### Running Tests
 
 ```bash
-# Requires a running PostgreSQL (forge dev provides one)
 TEST_DATABASE_URL=postgres://localhost/test cargo test
 ```
 
 See `src/functions/` for test examples.
 
-## Deployment
+## Production Build
 
-For deployment options (Docker, VM, etc.), see the [Deployment Guide](https://tryforge.dev/docs/ship/deploy).
+```bash
+cd frontend && bun install && bun run build && cd ..
+cargo build --release
+```
+
+The release binary embeds the compiled frontend and the full runtime. One file to deploy. Point it at a PostgreSQL instance and it runs.
+
+For Docker, VM, and other deployment options: [Deployment Guide](https://tryforge.dev/docs/ship/deploy)
 
 ## Project Structure
 
@@ -101,11 +92,47 @@ For deployment options (Docker, VM, etc.), see the [Deployment Guide](https://tr
 support-desk/
 ├── src/
 │   ├── main.rs              # Entry point
-│   ├── schema/              # Data models
+│   ├── schema/              # Data models (Rust types that generate TS types)
 │   └── functions/           # Queries, mutations, jobs, crons, workflows
-├── migrations/              # SQL migrations
-├── frontend/                # SvelteKit frontend
-├── forge.toml               # FORGE configuration
-├── docker-compose.yml       # Development containers
+├── migrations/              # SQL migrations (applied on startup)
+├── frontend/                # SvelteKit app
+├── forge.toml               # Runtime configuration
+├── docker-compose.yml       # Development environment
 └── Dockerfile               # Production image
 ```
+
+## Debugging
+
+**Logs**: Set `log_level = "debug"` in `forge.toml` under `[observability]`, or run with `RUST_LOG=debug`. Queries slower than 500ms are warned automatically.
+
+**Health check**: `GET /health` (liveness) and `GET /ready` (checks DB + realtime reactor).
+
+**Inspect jobs and workflows** directly in PostgreSQL:
+
+```sql
+-- failed jobs
+SELECT job_type, last_error, attempts FROM forge_jobs
+WHERE status = 'failed' ORDER BY failed_at DESC;
+
+-- active workflows
+SELECT workflow_name, status, current_step FROM forge_workflow_runs
+WHERE status IN ('created', 'running');
+
+-- recent cron runs
+SELECT cron_name, status, error FROM forge_cron_runs
+ORDER BY scheduled_time DESC LIMIT 10;
+```
+
+**Realtime not updating?** Check that the SSE connection is open (network tab, `/events` endpoint) and that reactivity is enabled on the table (`SELECT forge_enable_reactivity('table_name');`). Don't call `refetch()` after mutations, the SSE pipeline handles it.
+
+**Traces**: FORGE exports OpenTelemetry spans over HTTP. Point `otlp_endpoint` in `forge.toml` at your collector (Jaeger, Grafana, etc.).
+
+## AI Agents
+
+If you're using an AI coding agent, install the `forge-idiomatic-engineer` skill for Forge-aware code generation:
+
+```bash
+bunx skills add https://github.com/isala404/forge/tree/main/docs/skills/forge-idiomatic-engineer
+```
+
+[Documentation](https://tryforge.dev/docs)

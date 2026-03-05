@@ -1,6 +1,8 @@
-# {{project_name}}
+# kanban-board
 
 Built with [FORGE](https://tryforge.dev). One binary, one database, everything else is just code.
+
+A kanban board with auth, real-time project/task management, a daily overdue check cron, CSV export as a background job, and a project archival workflow.
 
 ## Development
 
@@ -19,7 +21,7 @@ forge dev down          # stop everything
 forge dev down --clear  # stop + remove volumes and target/
 ```
 
-### Adding Features
+### Useful Commands
 
 ```bash
 forge add query list_items         # read data
@@ -27,18 +29,11 @@ forge add mutation create_item     # write data
 forge add job process_item         # background work
 forge add cron nightly_cleanup     # scheduled task
 forge add workflow user_onboarding # multi-step process
-```
-
-Functions go in `src/functions/`. Types are generated for the frontend automatically.
-
-### Useful Commands
-
-```bash
-forge generate              # regenerate TypeScript types from Rust models
-forge check                 # validate config, migrations, and project health
-forge migrate status        # check which migrations have run
-forge migrate up            # apply pending migrations
-forge migrate down          # rollback the last migration
+forge generate                     # regenerate TypeScript types from Rust models
+forge check                        # validate config, migrations, project health
+forge migrate status               # check which migrations have run
+forge migrate up                   # apply pending migrations
+forge migrate down                 # rollback the last migration
 ```
 
 ### Running Tests
@@ -46,6 +41,8 @@ forge migrate down          # rollback the last migration
 ```bash
 TEST_DATABASE_URL=postgres://localhost/test cargo test
 ```
+
+See `src/functions/` for test examples.
 
 ## Production Build
 
@@ -61,11 +58,20 @@ For Docker, VM, and other deployment options: [Deployment Guide](https://tryforg
 ## Project Structure
 
 ```
-{{project_name}}/
+kanban-board/
 ├── src/
 │   ├── main.rs              # Entry point
 │   ├── schema/              # Data models (Rust types that generate TS types)
-│   └── functions/           # Queries, mutations, jobs, crons, workflows
+│   │   ├── user.rs          # User model
+│   │   ├── project.rs       # Project model
+│   │   └── task.rs          # Task model with status/priority enums
+│   └── functions/
+│       ├── auth.rs           # Register and login mutations
+│       ├── projects.rs       # Project CRUD queries and mutations
+│       ├── tasks.rs          # Task CRUD with drag-and-drop reordering
+│       ├── overdue.rs        # Daily cron: flag overdue tasks
+│       ├── export.rs         # Background job: CSV export
+│       └── archive.rs        # Durable workflow: project archival
 ├── migrations/              # SQL migrations (applied on startup)
 ├── frontend/                # SvelteKit app
 ├── forge.toml               # Runtime configuration
@@ -98,12 +104,6 @@ ORDER BY scheduled_time DESC LIMIT 10;
 **Realtime not updating?** Check that the SSE connection is open (network tab, `/events` endpoint) and that reactivity is enabled on the table (`SELECT forge_enable_reactivity('table_name');`). Don't call `refetch()` after mutations, the SSE pipeline handles it.
 
 **Traces**: FORGE exports OpenTelemetry spans over HTTP. Point `otlp_endpoint` in `forge.toml` at your collector (Jaeger, Grafana, etc.).
-
-## What You Get
-
-This is a FORGE project. That means your single binary handles API serving, background jobs with retries and progress tracking, cron scheduling with leader election, durable workflows that survive restarts, real-time subscriptions via SSE, webhook processing, and MCP tool endpoints. All coordinated through PostgreSQL.
-
-No Redis. No message queues. No separate worker processes.
 
 ## AI Agents
 
