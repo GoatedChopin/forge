@@ -83,6 +83,12 @@ darling = "0.23"
 # SQL parsing
 sqlparser = "0.54"
 
+# Concurrent data structures
+dashmap = "6"
+slab = "0.4"
+arc-swap = "1"
+smallvec = "1"
+
 # Testing
 tokio-test = "0.4"
 testcontainers = "0.27"

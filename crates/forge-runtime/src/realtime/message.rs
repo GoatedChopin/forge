@@ -1,9 +1,9 @@
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
+use dashmap::DashMap;
 use serde::Serialize;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::mpsc;
 
 use forge_core::cluster::NodeId;
 use forge_core::realtime::{Delta, SessionId, SubscriptionId};
@@ -54,101 +54,60 @@ pub struct WorkflowStepData {
 /// Message types for real-time communication.
 #[derive(Debug, Clone)]
 pub enum RealtimeMessage {
-    /// Subscribe to a query.
     Subscribe {
         id: String,
         query: String,
         args: serde_json::Value,
     },
-    /// Unsubscribe from a subscription.
     Unsubscribe { subscription_id: SubscriptionId },
-    /// Ping for keepalive.
     Ping,
-    /// Pong response.
     Pong,
-    /// Initial data for subscription.
     Data {
         subscription_id: String,
         data: serde_json::Value,
     },
-    /// Delta update for subscription.
     DeltaUpdate {
         subscription_id: String,
         delta: Delta<serde_json::Value>,
     },
-    /// Job progress update.
     JobUpdate { client_sub_id: String, job: JobData },
-    /// Workflow progress update.
     WorkflowUpdate {
         client_sub_id: String,
         workflow: WorkflowData,
     },
-    /// Error message.
     Error { code: String, message: String },
-    /// Error message with subscription ID.
     ErrorWithId {
         id: String,
         code: String,
         message: String,
     },
-    /// Authentication successful.
     AuthSuccess,
-    /// Authentication failed.
     AuthFailed { reason: String },
+    /// Sent to slow clients before disconnecting them.
+    Lagging,
 }
 
-#[derive(Debug)]
-pub struct RealtimeSession {
+/// Per-session state with backpressure tracking.
+struct SessionEntry {
+    sender: mpsc::Sender<RealtimeMessage>,
+    subscriptions: Vec<SubscriptionId>,
     #[allow(dead_code)]
-    pub session_id: SessionId,
-    pub subscriptions: Vec<SubscriptionId>,
-    pub sender: mpsc::Sender<RealtimeMessage>,
-    #[allow(dead_code)]
-    pub connected_at: chrono::DateTime<chrono::Utc>,
-    pub last_active: chrono::DateTime<chrono::Utc>,
+    connected_at: chrono::DateTime<chrono::Utc>,
+    last_active: chrono::DateTime<chrono::Utc>,
+    /// Consecutive failed try_send attempts. Resets on success.
+    consecutive_drops: AtomicU32,
 }
 
-impl RealtimeSession {
-    /// Create a new session.
-    pub fn new(session_id: SessionId, sender: mpsc::Sender<RealtimeMessage>) -> Self {
-        let now = chrono::Utc::now();
-        Self {
-            session_id,
-            subscriptions: Vec::new(),
-            sender,
-            connected_at: now,
-            last_active: now,
-        }
-    }
-
-    /// Add a subscription.
-    pub fn add_subscription(&mut self, subscription_id: SubscriptionId) {
-        self.subscriptions.push(subscription_id);
-        self.last_active = chrono::Utc::now();
-    }
-
-    /// Remove a subscription.
-    pub fn remove_subscription(&mut self, subscription_id: SubscriptionId) {
-        self.subscriptions.retain(|id| *id != subscription_id);
-        self.last_active = chrono::Utc::now();
-    }
-
-    /// Send a message to the client.
-    pub async fn send(
-        &self,
-        message: RealtimeMessage,
-    ) -> Result<(), mpsc::error::SendError<RealtimeMessage>> {
-        self.sender.send(message).await
-    }
-}
+/// Maximum consecutive drops before evicting a slow client.
+const MAX_CONSECUTIVE_DROPS: u32 = 10;
 
 pub struct SessionServer {
     config: RealtimeConfig,
     node_id: NodeId,
-    /// Active connections by session ID.
-    connections: Arc<RwLock<HashMap<SessionId, RealtimeSession>>>,
-    /// Subscription to session mapping for fast lookup.
-    subscription_sessions: Arc<RwLock<HashMap<SubscriptionId, SessionId>>>,
+    /// Active connections by session ID. DashMap for concurrent access.
+    connections: DashMap<SessionId, SessionEntry>,
+    /// Subscription to session mapping for fast reverse lookup.
+    subscription_sessions: DashMap<SubscriptionId, SessionId>,
 }
 
 impl SessionServer {
@@ -157,39 +116,41 @@ impl SessionServer {
         Self {
             config,
             node_id,
-            connections: Arc::new(RwLock::new(HashMap::new())),
-            subscription_sessions: Arc::new(RwLock::new(HashMap::new())),
+            connections: DashMap::new(),
+            subscription_sessions: DashMap::new(),
         }
     }
 
-    /// Get the node ID.
     pub fn node_id(&self) -> NodeId {
         self.node_id
     }
 
-    /// Get the configuration.
     pub fn config(&self) -> &RealtimeConfig {
         &self.config
     }
 
     /// Register a new connection.
-    pub async fn register_connection(
+    pub fn register_connection(
         &self,
         session_id: SessionId,
         sender: mpsc::Sender<RealtimeMessage>,
     ) {
-        let connection = RealtimeSession::new(session_id, sender);
-        let mut connections = self.connections.write().await;
-        connections.insert(session_id, connection);
+        let now = chrono::Utc::now();
+        let entry = SessionEntry {
+            sender,
+            subscriptions: Vec::new(),
+            connected_at: now,
+            last_active: now,
+            consecutive_drops: AtomicU32::new(0),
+        };
+        self.connections.insert(session_id, entry);
     }
 
     /// Remove a connection.
-    pub async fn remove_connection(&self, session_id: SessionId) -> Option<Vec<SubscriptionId>> {
-        let mut connections = self.connections.write().await;
-        if let Some(conn) = connections.remove(&session_id) {
-            let mut sub_sessions = self.subscription_sessions.write().await;
+    pub fn remove_connection(&self, session_id: SessionId) -> Option<Vec<SubscriptionId>> {
+        if let Some((_, conn)) = self.connections.remove(&session_id) {
             for sub_id in &conn.subscriptions {
-                sub_sessions.remove(sub_id);
+                self.subscription_sessions.remove(sub_id);
             }
             Some(conn.subscriptions)
         } else {
@@ -198,13 +159,13 @@ impl SessionServer {
     }
 
     /// Add a subscription to a connection.
-    pub async fn add_subscription(
+    pub fn add_subscription(
         &self,
         session_id: SessionId,
         subscription_id: SubscriptionId,
     ) -> forge_core::Result<()> {
-        let mut connections = self.connections.write().await;
-        let conn = connections
+        let mut conn = self
+            .connections
             .get_mut(&session_id)
             .ok_or_else(|| forge_core::ForgeError::Validation("Session not found".to_string()))?;
 
@@ -215,41 +176,78 @@ impl SessionServer {
             )));
         }
 
-        conn.add_subscription(subscription_id);
+        conn.subscriptions.push(subscription_id);
+        drop(conn);
 
-        let mut sub_sessions = self.subscription_sessions.write().await;
-        sub_sessions.insert(subscription_id, session_id);
+        self.subscription_sessions
+            .insert(subscription_id, session_id);
 
         Ok(())
     }
 
     /// Remove a subscription from a connection.
-    pub async fn remove_subscription(&self, subscription_id: SubscriptionId) {
-        let session_id = {
-            let mut sub_sessions = self.subscription_sessions.write().await;
-            sub_sessions.remove(&subscription_id)
-        };
-
-        if let Some(session_id) = session_id {
-            let mut connections = self.connections.write().await;
-            if let Some(conn) = connections.get_mut(&session_id) {
-                conn.remove_subscription(subscription_id);
+    pub fn remove_subscription(&self, subscription_id: SubscriptionId) {
+        if let Some((_, session_id)) = self.subscription_sessions.remove(&subscription_id) {
+            if let Some(mut conn) = self.connections.get_mut(&session_id) {
+                conn.subscriptions.retain(|id| *id != subscription_id);
             }
         }
     }
 
-    /// Send a message to a specific session.
+    /// Non-blocking send with backpressure. Returns false if client was evicted.
+    pub fn try_send_to_session(
+        &self,
+        session_id: SessionId,
+        message: RealtimeMessage,
+    ) -> Result<(), SendError> {
+        let conn = self
+            .connections
+            .get(&session_id)
+            .ok_or(SendError::SessionNotFound)?;
+
+        match conn.sender.try_send(message) {
+            Ok(()) => {
+                conn.consecutive_drops.store(0, Ordering::Relaxed);
+                Ok(())
+            }
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                let drops = conn.consecutive_drops.fetch_add(1, Ordering::Relaxed);
+                if drops >= MAX_CONSECUTIVE_DROPS {
+                    // Try to send lagging notification before evicting
+                    let _ = conn.sender.try_send(RealtimeMessage::Lagging);
+                    drop(conn);
+                    self.evict_session(session_id);
+                    Err(SendError::Evicted)
+                } else {
+                    Err(SendError::Full)
+                }
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                drop(conn);
+                self.remove_connection(session_id);
+                Err(SendError::Closed)
+            }
+        }
+    }
+
+    /// Blocking send for initial data delivery where we need backpressure.
     pub async fn send_to_session(
         &self,
         session_id: SessionId,
         message: RealtimeMessage,
     ) -> forge_core::Result<()> {
-        let connections = self.connections.read().await;
-        let conn = connections
-            .get(&session_id)
-            .ok_or_else(|| forge_core::ForgeError::Validation("Session not found".to_string()))?;
+        let sender = {
+            let conn = self
+                .connections
+                .get(&session_id)
+                .ok_or_else(|| {
+                    forge_core::ForgeError::Validation("Session not found".to_string())
+                })?;
+            conn.sender.clone()
+        };
 
-        conn.send(message)
+        sender
+            .send(message)
             .await
             .map_err(|_| forge_core::ForgeError::Internal("Failed to send message".to_string()))
     }
@@ -260,10 +258,10 @@ impl SessionServer {
         subscription_id: SubscriptionId,
         delta: Delta<serde_json::Value>,
     ) -> forge_core::Result<()> {
-        let session_id = {
-            let sub_sessions = self.subscription_sessions.read().await;
-            sub_sessions.get(&subscription_id).copied()
-        };
+        let session_id = self
+            .subscription_sessions
+            .get(&subscription_id)
+            .map(|r| *r);
 
         if let Some(session_id) = session_id {
             let message = RealtimeMessage::DeltaUpdate {
@@ -276,56 +274,69 @@ impl SessionServer {
         Ok(())
     }
 
+    /// Evict a slow session.
+    fn evict_session(&self, session_id: SessionId) {
+        tracing::warn!(?session_id, "Evicting slow client");
+        self.remove_connection(session_id);
+    }
+
     /// Get connection count.
-    pub async fn connection_count(&self) -> usize {
-        self.connections.read().await.len()
+    pub fn connection_count(&self) -> usize {
+        self.connections.len()
     }
 
     /// Get subscription count.
-    pub async fn subscription_count(&self) -> usize {
-        self.subscription_sessions.read().await.len()
+    pub fn subscription_count(&self) -> usize {
+        self.subscription_sessions.len()
     }
 
     /// Get server statistics.
-    pub async fn stats(&self) -> SessionStats {
-        let connections = self.connections.read().await;
-        let total_subscriptions: usize = connections.values().map(|c| c.subscriptions.len()).sum();
+    pub fn stats(&self) -> SessionStats {
+        let total_subscriptions: usize = self
+            .connections
+            .iter()
+            .map(|c| c.subscriptions.len())
+            .sum();
 
         SessionStats {
-            connections: connections.len(),
+            connections: self.connections.len(),
             subscriptions: total_subscriptions,
             node_id: self.node_id,
         }
     }
 
     /// Cleanup stale connections.
-    pub async fn cleanup_stale(&self, max_idle: Duration) {
+    pub fn cleanup_stale(&self, max_idle: Duration) {
         let cutoff = chrono::Utc::now()
             - chrono::Duration::from_std(max_idle).unwrap_or(chrono::TimeDelta::MAX);
-        let mut connections = self.connections.write().await;
-        let mut sub_sessions = self.subscription_sessions.write().await;
 
-        connections.retain(|_, conn| {
-            if conn.last_active < cutoff {
-                for sub_id in &conn.subscriptions {
-                    sub_sessions.remove(sub_id);
-                }
-                false
-            } else {
-                true
-            }
-        });
+        let stale: Vec<SessionId> = self
+            .connections
+            .iter()
+            .filter(|entry| entry.last_active < cutoff)
+            .map(|entry| *entry.key())
+            .collect();
+
+        for session_id in stale {
+            self.remove_connection(session_id);
+        }
     }
+}
+
+/// Error type for try_send operations.
+#[derive(Debug)]
+pub enum SendError {
+    SessionNotFound,
+    Full,
+    Closed,
+    Evicted,
 }
 
 /// Session server statistics.
 #[derive(Debug, Clone)]
 pub struct SessionStats {
-    /// Number of active connections.
     pub connections: usize,
-    /// Total subscriptions across all connections.
     pub subscriptions: usize,
-    /// Node ID.
     pub node_id: NodeId,
 }
 
@@ -340,53 +351,52 @@ mod tests {
         assert_eq!(config.max_subscriptions_per_session, 50);
     }
 
-    #[tokio::test]
-    async fn test_session_server_creation() {
+    #[test]
+    fn test_session_server_creation() {
         let node_id = NodeId::new();
         let server = SessionServer::new(node_id, RealtimeConfig::default());
 
         assert_eq!(server.node_id(), node_id);
-        assert_eq!(server.connection_count().await, 0);
-        assert_eq!(server.subscription_count().await, 0);
+        assert_eq!(server.connection_count(), 0);
+        assert_eq!(server.subscription_count(), 0);
     }
 
-    #[tokio::test]
-    async fn test_session_connection() {
+    #[test]
+    fn test_session_connection() {
         let node_id = NodeId::new();
         let server = SessionServer::new(node_id, RealtimeConfig::default());
         let session_id = SessionId::new();
         let (tx, _rx) = mpsc::channel(100);
 
-        server.register_connection(session_id, tx).await;
-        assert_eq!(server.connection_count().await, 1);
+        server.register_connection(session_id, tx);
+        assert_eq!(server.connection_count(), 1);
 
-        let removed = server.remove_connection(session_id).await;
+        let removed = server.remove_connection(session_id);
         assert!(removed.is_some());
-        assert_eq!(server.connection_count().await, 0);
+        assert_eq!(server.connection_count(), 0);
     }
 
-    #[tokio::test]
-    async fn test_session_subscription() {
+    #[test]
+    fn test_session_subscription() {
         let node_id = NodeId::new();
         let server = SessionServer::new(node_id, RealtimeConfig::default());
         let session_id = SessionId::new();
         let subscription_id = SubscriptionId::new();
         let (tx, _rx) = mpsc::channel(100);
 
-        server.register_connection(session_id, tx).await;
+        server.register_connection(session_id, tx);
         server
             .add_subscription(session_id, subscription_id)
-            .await
             .unwrap();
 
-        assert_eq!(server.subscription_count().await, 1);
+        assert_eq!(server.subscription_count(), 1);
 
-        server.remove_subscription(subscription_id).await;
-        assert_eq!(server.subscription_count().await, 0);
+        server.remove_subscription(subscription_id);
+        assert_eq!(server.subscription_count(), 0);
     }
 
-    #[tokio::test]
-    async fn test_session_subscription_limit() {
+    #[test]
+    fn test_session_subscription_limit() {
         let node_id = NodeId::new();
         let config = RealtimeConfig {
             max_subscriptions_per_session: 2,
@@ -395,41 +405,54 @@ mod tests {
         let session_id = SessionId::new();
         let (tx, _rx) = mpsc::channel(100);
 
-        server.register_connection(session_id, tx).await;
+        server.register_connection(session_id, tx);
 
         server
             .add_subscription(session_id, SubscriptionId::new())
-            .await
             .unwrap();
         server
             .add_subscription(session_id, SubscriptionId::new())
-            .await
             .unwrap();
 
-        let result = server
-            .add_subscription(session_id, SubscriptionId::new())
-            .await;
+        let result = server.add_subscription(session_id, SubscriptionId::new());
         assert!(result.is_err());
     }
 
-    #[tokio::test]
-    async fn test_session_stats() {
+    #[test]
+    fn test_try_send_backpressure() {
+        let node_id = NodeId::new();
+        let server = SessionServer::new(node_id, RealtimeConfig::default());
+        let session_id = SessionId::new();
+        // Tiny buffer to trigger backpressure
+        let (tx, _rx) = mpsc::channel(1);
+
+        server.register_connection(session_id, tx);
+
+        // First send should succeed
+        let result = server.try_send_to_session(session_id, RealtimeMessage::Ping);
+        assert!(result.is_ok());
+
+        // Second send to full buffer should return Full
+        let result = server.try_send_to_session(session_id, RealtimeMessage::Ping);
+        assert!(matches!(result, Err(SendError::Full)));
+    }
+
+    #[test]
+    fn test_session_stats() {
         let node_id = NodeId::new();
         let server = SessionServer::new(node_id, RealtimeConfig::default());
         let session_id = SessionId::new();
         let (tx, _rx) = mpsc::channel(100);
 
-        server.register_connection(session_id, tx).await;
+        server.register_connection(session_id, tx);
         server
             .add_subscription(session_id, SubscriptionId::new())
-            .await
             .unwrap();
         server
             .add_subscription(session_id, SubscriptionId::new())
-            .await
             .unwrap();
 
-        let stats = server.stats().await;
+        let stats = server.stats();
         assert_eq!(stats.connections, 1);
         assert_eq!(stats.subscriptions, 2);
         assert_eq!(stats.node_id, node_id);

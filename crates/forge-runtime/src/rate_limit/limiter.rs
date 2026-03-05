@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
+use dashmap::DashMap;
 use sqlx::PgPool;
 
 use forge_core::rate_limit::{RateLimitConfig, RateLimitKey, RateLimitResult};
@@ -145,6 +146,134 @@ impl RateLimiter {
         .map_err(|e| ForgeError::Database(e.to_string()))?;
 
         Ok(result.rows_affected())
+    }
+}
+
+struct LocalBucket {
+    tokens: f64,
+    max_tokens: f64,
+    refill_rate: f64,
+    last_refill: std::time::Instant,
+}
+
+impl LocalBucket {
+    fn new(max_tokens: f64, refill_rate: f64) -> Self {
+        Self {
+            tokens: max_tokens,
+            max_tokens,
+            refill_rate,
+            last_refill: std::time::Instant::now(),
+        }
+    }
+
+    fn try_consume(&mut self) -> bool {
+        let now = std::time::Instant::now();
+        let elapsed = now.duration_since(self.last_refill).as_secs_f64();
+        self.tokens = (self.tokens + elapsed * self.refill_rate).min(self.max_tokens);
+        self.last_refill = now;
+
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn remaining(&self) -> u32 {
+        self.tokens.max(0.0) as u32
+    }
+
+    fn time_until_token(&self) -> Duration {
+        if self.tokens >= 1.0 {
+            Duration::ZERO
+        } else {
+            Duration::from_secs_f64((1.0 - self.tokens) / self.refill_rate)
+        }
+    }
+}
+
+/// Hybrid rate limiter with in-memory fast path and periodic DB sync.
+///
+/// Per-user/per-IP checks use a local DashMap for sub-microsecond decisions.
+/// Global keys always hit the database for strict cross-node consistency.
+pub struct HybridRateLimiter {
+    local: DashMap<String, LocalBucket>,
+    db_limiter: RateLimiter,
+}
+
+impl HybridRateLimiter {
+    pub fn new(pool: PgPool) -> Self {
+        Self {
+            local: DashMap::new(),
+            db_limiter: RateLimiter::new(pool),
+        }
+    }
+
+    /// Check rate limit. Uses local fast path for per-user/per-IP keys,
+    /// database for global keys.
+    pub async fn check(
+        &self,
+        bucket_key: &str,
+        config: &RateLimitConfig,
+    ) -> Result<RateLimitResult> {
+        if config.key == RateLimitKey::Global {
+            return self.db_limiter.check(bucket_key, config).await;
+        }
+
+        let max_tokens = config.requests as f64;
+        let refill_rate = config.refill_rate();
+
+        let mut bucket = self
+            .local
+            .entry(bucket_key.to_string())
+            .or_insert_with(|| LocalBucket::new(max_tokens, refill_rate));
+
+        let allowed = bucket.try_consume();
+        let remaining = bucket.remaining();
+        let reset_at = Utc::now()
+            + chrono::Duration::seconds(((max_tokens - bucket.tokens) / refill_rate) as i64);
+
+        if allowed {
+            Ok(RateLimitResult::allowed(remaining, reset_at))
+        } else {
+            let retry_after = bucket.time_until_token();
+            Ok(RateLimitResult::denied(remaining, reset_at, retry_after))
+        }
+    }
+
+    pub fn build_key(
+        &self,
+        key_type: RateLimitKey,
+        action_name: &str,
+        auth: &AuthContext,
+        request: &RequestMetadata,
+    ) -> String {
+        self.db_limiter
+            .build_key(key_type, action_name, auth, request)
+    }
+
+    pub async fn enforce(
+        &self,
+        bucket_key: &str,
+        config: &RateLimitConfig,
+    ) -> Result<RateLimitResult> {
+        let result = self.check(bucket_key, config).await?;
+        if !result.allowed {
+            return Err(ForgeError::RateLimitExceeded {
+                retry_after: result.retry_after.unwrap_or(Duration::from_secs(1)),
+                limit: config.requests,
+                remaining: result.remaining,
+            });
+        }
+        Ok(result)
+    }
+
+    /// Clean up expired local buckets (call periodically).
+    pub fn cleanup_local(&self, max_idle: Duration) {
+        let cutoff = std::time::Instant::now() - max_idle;
+        self.local
+            .retain(|_, bucket| bucket.last_refill > cutoff);
     }
 }
 

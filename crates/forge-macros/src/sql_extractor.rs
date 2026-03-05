@@ -174,6 +174,67 @@ impl<'ast> Visit<'ast> for SqlStringExtractor {
     }
 }
 
+/// Parse SQL strings and extract all selected column names.
+/// Returns bare column names (without table qualifiers).
+pub fn extract_columns_from_sql(sql_strings: &[String]) -> HashSet<String> {
+    let mut columns = HashSet::new();
+    let dialect = PostgreSqlDialect {};
+
+    for sql in sql_strings {
+        if let Ok(statements) = Parser::parse_sql(&dialect, sql) {
+            for stmt in &statements {
+                if let Statement::Query(query) = stmt {
+                    extract_columns_from_query(query, &mut columns);
+                }
+            }
+        }
+    }
+
+    columns
+}
+
+/// Extract column names from a query's SELECT list.
+fn extract_columns_from_query(query: &Query, columns: &mut HashSet<String>) {
+    extract_columns_from_set_expr(&query.body, columns);
+}
+
+fn extract_columns_from_set_expr(set_expr: &SetExpr, columns: &mut HashSet<String>) {
+    match set_expr {
+        SetExpr::Select(select) => {
+            for item in &select.projection {
+                match item {
+                    SelectItem::UnnamedExpr(Expr::Identifier(ident)) => {
+                        columns.insert(ident.value.clone());
+                    }
+                    SelectItem::UnnamedExpr(Expr::CompoundIdentifier(parts)) => {
+                        // table.column -> take the last part
+                        if let Some(last) = parts.last() {
+                            columns.insert(last.value.clone());
+                        }
+                    }
+                    SelectItem::ExprWithAlias { alias, .. } => {
+                        columns.insert(alias.value.clone());
+                    }
+                    SelectItem::Wildcard(_) | SelectItem::QualifiedWildcard(_, _) => {
+                        // SELECT * means all columns, can't narrow down
+                        columns.clear();
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        SetExpr::SetOperation { left, right, .. } => {
+            extract_columns_from_set_expr(left, columns);
+            extract_columns_from_set_expr(right, columns);
+        }
+        SetExpr::Query(query) => {
+            extract_columns_from_query(query, columns);
+        }
+        _ => {}
+    }
+}
+
 /// Parse SQL strings and extract all referenced tables.
 pub fn extract_tables_from_sql(sql_strings: &[String]) -> HashSet<String> {
     let mut tables = HashSet::new();

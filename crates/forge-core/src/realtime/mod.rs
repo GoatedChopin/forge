@@ -20,14 +20,17 @@
 //! # Key Types
 //!
 //! - [`ReadSet`] - Tables a subscription depends on
-//! - [`SessionInfo`] - WebSocket connection state
-//! - [`SubscriptionInfo`] - Active subscription with query parameters
+//! - [`QueryGroup`] - Coalesced subscriptions sharing query+args+auth_scope
+//! - [`Subscriber`] - Lightweight subscriber within a query group
 //! - [`Delta`] - Change payload sent to clients
 
 mod readset;
 mod session;
 mod subscription;
 
-pub use readset::{Change, ChangeOperation, ReadSet, TrackingMode};
+pub use readset::{BloomFilter, Change, ChangeOperation, ReadSet, TrackingMode};
 pub use session::{SessionId, SessionInfo, SessionStatus};
-pub use subscription::{Delta, SubscriptionId, SubscriptionInfo, SubscriptionState};
+pub use subscription::{
+    AuthScope, Delta, QueryGroup, QueryGroupId, Subscriber, SubscriberId, SubscriptionId,
+    SubscriptionInfo, SubscriptionState,
+};

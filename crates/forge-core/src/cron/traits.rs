@@ -23,6 +23,8 @@ pub struct CronInfo {
     pub schedule: CronSchedule,
     /// Timezone for the schedule.
     pub timezone: &'static str,
+    /// Leadership group for sharded leader election.
+    pub group: &'static str,
     /// Whether to catch up missed runs.
     pub catch_up: bool,
     /// Maximum number of missed runs to catch up.
@@ -37,6 +39,7 @@ impl Default for CronInfo {
             name: "",
             schedule: CronSchedule::default(),
             timezone: "UTC",
+            group: "default",
             catch_up: false,
             catch_up_limit: 10,
             timeout: std::time::Duration::from_secs(3600),

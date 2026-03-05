@@ -4,7 +4,7 @@ use quote::quote;
 use syn::visit::Visit;
 use syn::{FnArg, ItemFn, Pat, ReturnType, Type, parse_macro_input};
 
-use crate::sql_extractor::{SqlStringExtractor, extract_tables_from_sql};
+use crate::sql_extractor::{SqlStringExtractor, extract_columns_from_sql, extract_tables_from_sql};
 use crate::utils::{has_attr_flag, parse_duration_secs, to_pascal_case};
 
 /// Expand the #[forge::query] attribute.
@@ -229,7 +229,17 @@ fn expand_query_impl(input: ItemFn, attrs: QueryAttrs) -> syn::Result<TokenStrea
 
         let tables = extract_tables_from_sql(&extractor.sql_strings);
         let mut sorted: Vec<String> = tables.into_iter().collect();
-        sorted.sort(); // Sort for deterministic output
+        sorted.sort();
+        sorted
+    };
+
+    // Extract selected columns from SQL
+    let selected_columns: Vec<String> = {
+        let mut extractor = SqlStringExtractor::new();
+        extractor.visit_block(fn_block);
+        let cols = extract_columns_from_sql(&extractor.sql_strings);
+        let mut sorted: Vec<String> = cols.into_iter().collect();
+        sorted.sort();
         sorted
     };
 
@@ -339,6 +349,14 @@ fn expand_query_impl(input: ItemFn, attrs: QueryAttrs) -> syn::Result<TokenStrea
     } else {
         let table_strs: Vec<_> = table_dependencies.iter().map(|t| quote! { #t }).collect();
         quote! { &[#(#table_strs),*] }
+    };
+
+    // Generate selected_columns token
+    let selected_cols_tokens = if selected_columns.is_empty() {
+        quote! { &[] }
+    } else {
+        let col_strs: Vec<_> = selected_columns.iter().map(|c| quote! { #c }).collect();
+        quote! { &[#(#col_strs),*] }
     };
 
     // Check if we have a single custom args type (user-defined struct)
@@ -459,6 +477,7 @@ fn expand_query_impl(input: ItemFn, attrs: QueryAttrs) -> syn::Result<TokenStrea
                     rate_limit_key: #rate_limit_key,
                     log_level: #log_level,
                     table_dependencies: #table_deps_tokens,
+                    selected_columns: #selected_cols_tokens,
                     transactional: false,
                 }
             }

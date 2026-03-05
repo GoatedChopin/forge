@@ -34,6 +34,8 @@ impl Default for WorkflowSchedulerConfig {
 ///
 /// Polls the database for suspended workflows that are ready to resume
 /// (timer expired or event received) and triggers their execution.
+/// Also listens for NOTIFY events on the `forge_workflow_wakeup` channel
+/// for immediate wakeup when a workflow event is inserted.
 pub struct WorkflowScheduler {
     pool: PgPool,
     executor: Arc<WorkflowExecutor>,
@@ -59,12 +61,34 @@ impl WorkflowScheduler {
     }
 
     /// Run the scheduler until shutdown.
+    ///
+    /// Combines polling with NOTIFY-driven wakeup. When a workflow event is
+    /// inserted, the `forge_workflow_event_notify` trigger fires a NOTIFY on
+    /// the `forge_workflow_wakeup` channel, and we process immediately instead
+    /// of waiting for the next poll cycle. Polling remains as a fallback at a
+    /// longer interval (10x the base) to catch anything missed.
     pub async fn run(&self, shutdown: CancellationToken) {
-        let mut interval = tokio::time::interval(self.config.poll_interval);
+        let fallback_interval = self.config.poll_interval * 10;
+        let mut interval = tokio::time::interval(fallback_interval);
+
+        // Set up NOTIFY listener for immediate wakeup
+        let mut listener = match sqlx::postgres::PgListener::connect_with(&self.pool).await {
+            Ok(mut l) => {
+                if let Err(e) = l.listen("forge_workflow_wakeup").await {
+                    tracing::warn!(error = %e, "Failed to listen on workflow wakeup channel, using poll-only mode");
+                }
+                Some(l)
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to create workflow wakeup listener, using poll-only mode");
+                None
+            }
+        };
 
         tracing::debug!(
-            poll_interval = ?self.config.poll_interval,
+            poll_interval = ?fallback_interval,
             batch_size = self.config.batch_size,
+            notify_enabled = listener.is_some(),
             "Workflow scheduler started"
         );
 
@@ -73,6 +97,23 @@ impl WorkflowScheduler {
                 _ = interval.tick() => {
                     if let Err(e) = self.process_ready_workflows().await {
                         tracing::warn!(error = %e, "Failed to process ready workflows");
+                    }
+                }
+                notification = async {
+                    match listener.as_mut() {
+                        Some(l) => l.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    match notification {
+                        Ok(_) => {
+                            if let Err(e) = self.process_ready_workflows().await {
+                                tracing::warn!(error = %e, "Failed to process workflows after wakeup");
+                            }
+                        }
+                        Err(e) => {
+                            tracing::debug!(error = %e, "Workflow wakeup listener error, will retry on next poll");
+                        }
                     }
                 }
                 _ = shutdown.cancelled() => {

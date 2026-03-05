@@ -364,7 +364,7 @@ pub async fn sse_handler(
 
     // Create a bridge channel for the reactor's message format
     let (rt_tx, mut rt_rx) = mpsc::channel(buffer_size);
-    reactor.register_session(session_id, rt_tx).await;
+    reactor.register_session(session_id, rt_tx);
 
     // Store session data for subscription handlers
     {
@@ -547,7 +547,8 @@ fn convert_realtime_to_sse(msg: RealtimeMessage) -> Option<SseMessage> {
         | RealtimeMessage::Ping
         | RealtimeMessage::Pong
         | RealtimeMessage::AuthSuccess
-        | RealtimeMessage::AuthFailed { .. } => None,
+        | RealtimeMessage::AuthFailed { .. }
+        | RealtimeMessage::Lagging => None,
     }
 }
 
@@ -710,7 +711,7 @@ pub async fn sse_unsubscribe_handler(
     };
 
     // Unsubscribe via reactor
-    state.reactor.unsubscribe(subscription_id).await;
+    state.reactor.unsubscribe(subscription_id);
 
     // Remove from session tracking
     {

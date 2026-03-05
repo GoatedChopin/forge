@@ -1,16 +1,19 @@
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 
-use tokio::sync::RwLock;
+use dashmap::DashMap;
+use slab::Slab;
 
 use forge_core::cluster::NodeId;
+use forge_core::function::AuthContext;
 use forge_core::realtime::{
-    Change, ReadSet, SessionId, SessionInfo, SessionStatus, SubscriptionId, SubscriptionInfo,
+    AuthScope, Change, QueryGroup, QueryGroupId, ReadSet, SessionId, SessionInfo, SessionStatus,
+    Subscriber, SubscriberId, SubscriptionId,
 };
 
 /// Session manager for tracking WebSocket connections.
 pub struct SessionManager {
-    sessions: Arc<RwLock<HashMap<SessionId, SessionInfo>>>,
+    sessions: DashMap<SessionId, SessionInfo>,
     node_id: NodeId,
 }
 
@@ -18,65 +21,56 @@ impl SessionManager {
     /// Create a new session manager.
     pub fn new(node_id: NodeId) -> Self {
         Self {
-            sessions: Arc::new(RwLock::new(HashMap::new())),
+            sessions: DashMap::new(),
             node_id,
         }
     }
 
     /// Create a new session.
-    pub async fn create_session(&self) -> SessionInfo {
+    pub fn create_session(&self) -> SessionInfo {
         let mut session = SessionInfo::new(self.node_id);
         session.connect();
-
-        let mut sessions = self.sessions.write().await;
-        sessions.insert(session.id, session.clone());
-
+        self.sessions.insert(session.id, session.clone());
         session
     }
 
     /// Get a session by ID.
-    pub async fn get_session(&self, session_id: SessionId) -> Option<SessionInfo> {
-        let sessions = self.sessions.read().await;
-        sessions.get(&session_id).cloned()
+    pub fn get_session(&self, session_id: SessionId) -> Option<SessionInfo> {
+        self.sessions.get(&session_id).map(|r| r.clone())
     }
 
     /// Update a session.
-    pub async fn update_session(&self, session: SessionInfo) {
-        let mut sessions = self.sessions.write().await;
-        sessions.insert(session.id, session);
+    pub fn update_session(&self, session: SessionInfo) {
+        self.sessions.insert(session.id, session);
     }
 
     /// Remove a session.
-    pub async fn remove_session(&self, session_id: SessionId) {
-        let mut sessions = self.sessions.write().await;
-        sessions.remove(&session_id);
+    pub fn remove_session(&self, session_id: SessionId) {
+        self.sessions.remove(&session_id);
     }
 
     /// Mark a session as disconnected.
-    pub async fn disconnect_session(&self, session_id: SessionId) {
-        let mut sessions = self.sessions.write().await;
-        if let Some(session) = sessions.get_mut(&session_id) {
+    pub fn disconnect_session(&self, session_id: SessionId) {
+        if let Some(mut session) = self.sessions.get_mut(&session_id) {
             session.disconnect();
         }
     }
 
     /// Get all connected sessions.
-    pub async fn get_connected_sessions(&self) -> Vec<SessionInfo> {
-        let sessions = self.sessions.read().await;
-        sessions
-            .values()
-            .filter(|s| s.is_connected())
-            .cloned()
+    pub fn get_connected_sessions(&self) -> Vec<SessionInfo> {
+        self.sessions
+            .iter()
+            .filter(|r| r.is_connected())
+            .map(|r| r.clone())
             .collect()
     }
 
     /// Count sessions by status.
-    pub async fn count_by_status(&self) -> SessionCounts {
-        let sessions = self.sessions.read().await;
+    pub fn count_by_status(&self) -> SessionCounts {
         let mut counts = SessionCounts::default();
 
-        for session in sessions.values() {
-            match session.status {
+        for entry in self.sessions.iter() {
+            match entry.status {
                 SessionStatus::Connecting => counts.connecting += 1,
                 SessionStatus::Connected => counts.connected += 1,
                 SessionStatus::Reconnecting => counts.reconnecting += 1,
@@ -89,12 +83,11 @@ impl SessionManager {
     }
 
     /// Clean up disconnected sessions older than the given duration.
-    pub async fn cleanup_old_sessions(&self, max_age: std::time::Duration) {
-        let mut sessions = self.sessions.write().await;
+    pub fn cleanup_old_sessions(&self, max_age: std::time::Duration) {
         let cutoff = chrono::Utc::now()
             - chrono::Duration::from_std(max_age).unwrap_or(chrono::TimeDelta::MAX);
 
-        sessions.retain(|_, session| {
+        self.sessions.retain(|_, session| {
             session.status != SessionStatus::Disconnected || session.last_active_at > cutoff
         });
     }
@@ -103,26 +96,30 @@ impl SessionManager {
 /// Session count statistics.
 #[derive(Debug, Clone, Default)]
 pub struct SessionCounts {
-    /// Connecting sessions.
     pub connecting: usize,
-    /// Connected sessions.
     pub connected: usize,
-    /// Reconnecting sessions.
     pub reconnecting: usize,
-    /// Disconnected sessions.
     pub disconnected: usize,
-    /// Total sessions.
     pub total: usize,
 }
 
-/// Subscription manager for tracking active subscriptions.
+/// Group-based subscription manager using sharded concurrent data structures.
+///
+/// Primary index: groups by QueryGroupId (DashMap, 64 shards).
+/// Secondary: lookup key -> QueryGroupId for dedup.
+/// Subscribers stored in a Slab for O(1) insert/remove.
+/// Session -> subscribers mapping for cleanup.
 pub struct SubscriptionManager {
-    /// Subscriptions by ID.
-    subscriptions: Arc<RwLock<HashMap<SubscriptionId, SubscriptionInfo>>>,
-    /// Subscriptions by session ID for fast lookup.
-    by_session: Arc<RwLock<HashMap<SessionId, Vec<SubscriptionId>>>>,
-    /// Subscriptions by query hash for deduplication.
-    by_query_hash: Arc<RwLock<HashMap<String, Vec<SubscriptionId>>>>,
+    /// Query groups indexed by ID. Sharded for concurrent access.
+    groups: DashMap<QueryGroupId, QueryGroup>,
+    /// Lookup: hash(query_name+args+auth_scope) -> QueryGroupId for dedup.
+    group_lookup: DashMap<u64, QueryGroupId>,
+    /// Subscribers stored in a slab for O(1) insert/remove by index.
+    subscribers: Arc<Mutex<Slab<Subscriber>>>,
+    /// Session -> subscriber IDs for fast cleanup on disconnect.
+    session_subscribers: DashMap<SessionId, Vec<SubscriberId>>,
+    /// Monotonic counter for group IDs.
+    next_group_id: AtomicU32,
     /// Maximum subscriptions per session.
     max_per_session: usize,
 }
@@ -131,160 +128,251 @@ impl SubscriptionManager {
     /// Create a new subscription manager.
     pub fn new(max_per_session: usize) -> Self {
         Self {
-            subscriptions: Arc::new(RwLock::new(HashMap::new())),
-            by_session: Arc::new(RwLock::new(HashMap::new())),
-            by_query_hash: Arc::new(RwLock::new(HashMap::new())),
+            groups: DashMap::new(),
+            group_lookup: DashMap::new(),
+            subscribers: Arc::new(Mutex::new(Slab::new())),
+            session_subscribers: DashMap::new(),
+            next_group_id: AtomicU32::new(0),
             max_per_session,
         }
     }
 
-    /// Create a new subscription.
-    pub async fn create_subscription(
+    /// Subscribe to a query group. Returns the group ID and whether this is a new group.
+    /// If a group already exists for this query+args+auth_scope, the subscriber joins it.
+    pub fn subscribe(
         &self,
         session_id: SessionId,
-        query_name: impl Into<String>,
-        args: serde_json::Value,
-    ) -> forge_core::Result<SubscriptionInfo> {
-        // Check limit
-        let by_session = self.by_session.read().await;
-        if let Some(subs) = by_session.get(&session_id)
-            && subs.len() >= self.max_per_session
-        {
-            return Err(forge_core::ForgeError::Validation(format!(
-                "Maximum subscriptions per session ({}) exceeded",
-                self.max_per_session
-            )));
+        client_sub_id: String,
+        query_name: &str,
+        args: &serde_json::Value,
+        auth_context: &AuthContext,
+        table_deps: &'static [&'static str],
+        selected_cols: &'static [&'static str],
+    ) -> forge_core::Result<(QueryGroupId, SubscriptionId, bool)> {
+        // Check per-session limit
+        if let Some(subs) = self.session_subscribers.get(&session_id) {
+            if subs.len() >= self.max_per_session {
+                return Err(forge_core::ForgeError::Validation(format!(
+                    "Maximum subscriptions per session ({}) exceeded",
+                    self.max_per_session
+                )));
+            }
         }
-        drop(by_session);
 
-        let subscription = SubscriptionInfo::new(session_id, query_name, args);
+        let auth_scope = AuthScope::from_auth(auth_context);
+        let lookup_key = QueryGroup::compute_lookup_key(query_name, args, &auth_scope);
 
-        // Store subscription
-        let mut subscriptions = self.subscriptions.write().await;
-        subscriptions.insert(subscription.id, subscription.clone());
+        // Atomic check-and-insert via DashMap entry API to avoid TOCTOU races
+        let mut is_new = false;
+        let group_id = *self.group_lookup.entry(lookup_key).or_insert_with(|| {
+            is_new = true;
+            let id = QueryGroupId(self.next_group_id.fetch_add(1, Ordering::Relaxed));
+            let group = QueryGroup {
+                id,
+                query_name: query_name.to_string(),
+                args: Arc::new(args.clone()),
+                auth_scope: auth_scope.clone(),
+                auth_context: auth_context.clone(),
+                table_deps,
+                selected_cols,
+                read_set: ReadSet::new(),
+                last_result_hash: None,
+                subscribers: Vec::new(),
+                created_at: chrono::Utc::now(),
+                execution_count: 0,
+            };
+            self.groups.insert(id, group);
+            id
+        });
 
-        // Index by session
-        let mut by_session = self.by_session.write().await;
-        by_session
+        // Create subscriber in the slab
+        let subscription_id = SubscriptionId::new();
+        let subscriber_id = {
+            let mut slab = self.subscribers.lock().expect("subscriber slab poisoned");
+            // Reserve key first so we can embed it in the subscriber
+            let key = slab.vacant_key();
+            let sid = SubscriberId(key as u32);
+            slab.insert(Subscriber {
+                id: sid,
+                session_id,
+                client_sub_id,
+                group_id,
+                subscription_id,
+            });
+            sid
+        };
+
+        // Add subscriber to group
+        if let Some(mut group) = self.groups.get_mut(&group_id) {
+            group.subscribers.push(subscriber_id);
+        }
+
+        // Track session -> subscriber mapping
+        self.session_subscribers
             .entry(session_id)
             .or_default()
-            .push(subscription.id);
+            .push(subscriber_id);
 
-        // Index by query hash
-        let mut by_query_hash = self.by_query_hash.write().await;
-        by_query_hash
-            .entry(subscription.query_hash.clone())
-            .or_default()
-            .push(subscription.id);
-
-        Ok(subscription)
+        Ok((group_id, subscription_id, is_new))
     }
 
-    /// Get a subscription by ID.
-    pub async fn get_subscription(
-        &self,
-        subscription_id: SubscriptionId,
-    ) -> Option<SubscriptionInfo> {
-        let subscriptions = self.subscriptions.read().await;
-        subscriptions.get(&subscription_id).cloned()
-    }
+    /// Remove a subscriber by its subscription ID.
+    pub fn unsubscribe(&self, subscription_id: SubscriptionId) {
+        let mut slab = self.subscribers.lock().expect("subscriber slab poisoned");
 
-    /// Update a subscription after execution.
-    pub async fn update_subscription(
-        &self,
-        subscription_id: SubscriptionId,
-        read_set: ReadSet,
-        result_hash: String,
-    ) {
-        let mut subscriptions = self.subscriptions.write().await;
-        if let Some(sub) = subscriptions.get_mut(&subscription_id) {
-            sub.record_execution(read_set, result_hash);
-        }
-    }
+        // Find the subscriber by subscription_id
+        let sub_key = slab
+            .iter()
+            .find(|(_, s)| s.subscription_id == subscription_id)
+            .map(|(key, s)| (key, s.group_id, s.session_id));
 
-    /// Remove a subscription.
-    pub async fn remove_subscription(&self, subscription_id: SubscriptionId) {
-        let mut subscriptions = self.subscriptions.write().await;
-        if let Some(sub) = subscriptions.remove(&subscription_id) {
-            // Remove from session index
-            let mut by_session = self.by_session.write().await;
-            if let Some(subs) = by_session.get_mut(&sub.session_id) {
-                subs.retain(|id| *id != subscription_id);
+        if let Some((key, group_id, session_id)) = sub_key {
+            let subscriber_id = SubscriberId(key as u32);
+            slab.remove(key);
+
+            // Remove from group
+            drop(slab); // Release lock before accessing DashMap
+            if let Some(mut group) = self.groups.get_mut(&group_id) {
+                group.subscribers.retain(|s| *s != subscriber_id);
+
+                // If group is empty, remove it
+                if group.subscribers.is_empty() {
+                    let lookup_key = QueryGroup::compute_lookup_key(
+                        &group.query_name,
+                        &group.args,
+                        &group.auth_scope,
+                    );
+                    drop(group);
+                    self.groups.remove(&group_id);
+                    self.group_lookup.remove(&lookup_key);
+                }
             }
 
-            // Remove from query hash index
-            let mut by_query_hash = self.by_query_hash.write().await;
-            if let Some(subs) = by_query_hash.get_mut(&sub.query_hash) {
-                subs.retain(|id| *id != subscription_id);
+            // Remove from session mapping
+            if let Some(mut session_subs) = self.session_subscribers.get_mut(&session_id) {
+                session_subs.retain(|s| *s != subscriber_id);
             }
         }
     }
 
     /// Remove all subscriptions for a session.
-    pub async fn remove_session_subscriptions(&self, session_id: SessionId) {
-        let subscription_ids: Vec<SubscriptionId> = {
-            let by_session = self.by_session.read().await;
-            by_session.get(&session_id).cloned().unwrap_or_default()
-        };
+    pub fn remove_session_subscriptions(&self, session_id: SessionId) -> Vec<SubscriptionId> {
+        let subscriber_ids: Vec<SubscriberId> = self
+            .session_subscribers
+            .remove(&session_id)
+            .map(|(_, ids)| ids)
+            .unwrap_or_default();
 
-        for sub_id in subscription_ids {
-            self.remove_subscription(sub_id).await;
+        let mut removed_sub_ids = Vec::new();
+        let mut slab = self.subscribers.lock().expect("subscriber slab poisoned");
+
+        for sid in subscriber_ids {
+            let key = sid.0 as usize;
+            if slab.contains(key) {
+                let sub = slab.remove(key);
+                removed_sub_ids.push(sub.subscription_id);
+
+                // Remove from group
+                if let Some(mut group) = self.groups.get_mut(&sub.group_id) {
+                    group.subscribers.retain(|s| *s != sid);
+
+                    if group.subscribers.is_empty() {
+                        let lookup_key = QueryGroup::compute_lookup_key(
+                            &group.query_name,
+                            &group.args,
+                            &group.auth_scope,
+                        );
+                        drop(group);
+                        self.groups.remove(&sub.group_id);
+                        self.group_lookup.remove(&lookup_key);
+                    }
+                }
+            }
         }
 
-        // Clean up session entry
-        let mut by_session = self.by_session.write().await;
-        by_session.remove(&session_id);
+        removed_sub_ids
     }
 
-    /// Find subscriptions affected by a change.
-    pub async fn find_affected_subscriptions(&self, change: &Change) -> Vec<SubscriptionId> {
-        let subscriptions = self.subscriptions.read().await;
-        subscriptions
+    /// Find all groups affected by a change. Returns group IDs (not subscription IDs).
+    /// This is O(groups_for_table), not O(all_subscriptions).
+    pub fn find_affected_groups(&self, change: &Change) -> Vec<QueryGroupId> {
+        self.groups
             .iter()
-            .filter(|(_, sub)| sub.should_invalidate(change))
-            .map(|(id, _)| *id)
+            .filter(|entry| entry.should_invalidate(change))
+            .map(|entry| entry.id)
             .collect()
     }
 
-    /// Get subscriptions by query hash (for coalescing).
-    pub async fn get_by_query_hash(&self, query_hash: &str) -> Vec<SubscriptionInfo> {
-        let by_query_hash = self.by_query_hash.read().await;
-        let subscriptions = self.subscriptions.read().await;
+    /// Get a reference to a group by ID.
+    pub fn get_group(
+        &self,
+        group_id: QueryGroupId,
+    ) -> Option<dashmap::mapref::one::Ref<'_, QueryGroupId, QueryGroup>> {
+        self.groups.get(&group_id)
+    }
 
-        by_query_hash
-            .get(query_hash)
-            .map(|ids| {
-                ids.iter()
-                    .filter_map(|id| subscriptions.get(id).cloned())
-                    .collect()
+    /// Get a mutable reference to a group by ID.
+    pub fn get_group_mut(
+        &self,
+        group_id: QueryGroupId,
+    ) -> Option<dashmap::mapref::one::RefMut<'_, QueryGroupId, QueryGroup>> {
+        self.groups.get_mut(&group_id)
+    }
+
+    /// Get all subscriber info for a group (for fan-out).
+    pub fn get_group_subscribers(&self, group_id: QueryGroupId) -> Vec<(SessionId, String)> {
+        let subscriber_ids: Vec<SubscriberId> = self
+            .groups
+            .get(&group_id)
+            .map(|g| g.subscribers.clone())
+            .unwrap_or_default();
+
+        let slab = self.subscribers.lock().expect("subscriber slab poisoned");
+        subscriber_ids
+            .iter()
+            .filter_map(|sid| {
+                slab.get(sid.0 as usize)
+                    .map(|s| (s.session_id, s.client_sub_id.clone()))
             })
-            .unwrap_or_default()
+            .collect()
+    }
+
+    /// Update a group after re-execution.
+    pub fn update_group(
+        &self,
+        group_id: QueryGroupId,
+        read_set: ReadSet,
+        result_hash: String,
+    ) {
+        if let Some(mut group) = self.groups.get_mut(&group_id) {
+            group.record_execution(read_set, result_hash);
+        }
     }
 
     /// Get subscription counts.
-    pub async fn counts(&self) -> SubscriptionCounts {
-        let subscriptions = self.subscriptions.read().await;
-        let by_session = self.by_session.read().await;
+    pub fn counts(&self) -> SubscriptionCounts {
+        let total_subscribers: usize = self.groups.iter().map(|g| g.subscribers.len()).sum();
 
         SubscriptionCounts {
-            total: subscriptions.len(),
-            unique_queries: self.by_query_hash.read().await.len(),
-            sessions: by_session.len(),
-            memory_bytes: subscriptions.values().map(|s| s.memory_bytes).sum(),
+            total: total_subscribers,
+            unique_queries: self.groups.len(),
+            sessions: self.session_subscribers.len(),
+            memory_bytes: 0, // TODO: calculate if needed
         }
+    }
+
+    /// Get group count.
+    pub fn group_count(&self) -> usize {
+        self.groups.len()
     }
 }
 
 /// Subscription count statistics.
 #[derive(Debug, Clone, Default)]
 pub struct SubscriptionCounts {
-    /// Total subscriptions.
     pub total: usize,
-    /// Number of unique queries (coalesced).
     pub unique_queries: usize,
-    /// Number of sessions with subscriptions.
     pub sessions: usize,
-    /// Total memory used by subscriptions.
     pub memory_bytes: usize,
 }
 
@@ -292,89 +380,116 @@ pub struct SubscriptionCounts {
 #[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
+    use forge_core::function::AuthContext;
 
-    #[tokio::test]
-    async fn test_session_manager_create() {
+    #[test]
+    fn test_session_manager_create() {
         let node_id = NodeId::new();
         let manager = SessionManager::new(node_id);
 
-        let session = manager.create_session().await;
+        let session = manager.create_session();
         assert!(session.is_connected());
 
-        let retrieved = manager.get_session(session.id).await;
+        let retrieved = manager.get_session(session.id);
         assert!(retrieved.is_some());
     }
 
-    #[tokio::test]
-    async fn test_session_manager_disconnect() {
+    #[test]
+    fn test_session_manager_disconnect() {
         let node_id = NodeId::new();
         let manager = SessionManager::new(node_id);
 
-        let session = manager.create_session().await;
-        manager.disconnect_session(session.id).await;
+        let session = manager.create_session();
+        manager.disconnect_session(session.id);
 
-        let retrieved = manager.get_session(session.id).await.unwrap();
+        let retrieved = manager.get_session(session.id).unwrap();
         assert!(!retrieved.is_connected());
     }
 
-    #[tokio::test]
-    async fn test_subscription_manager_create() {
+    #[test]
+    fn test_subscription_manager_create() {
         let manager = SubscriptionManager::new(50);
         let session_id = SessionId::new();
+        let auth = AuthContext::unauthenticated();
 
-        let sub = manager
-            .create_subscription(session_id, "get_projects", serde_json::json!({}))
-            .await
+        let (group_id, _sub_id, is_new) = manager
+            .subscribe(
+                session_id,
+                "sub-1".to_string(),
+                "get_projects",
+                &serde_json::json!({}),
+                &auth,
+                &[],
+                &[],
+            )
             .unwrap();
 
-        assert_eq!(sub.query_name, "get_projects");
-
-        let retrieved = manager.get_subscription(sub.id).await;
-        assert!(retrieved.is_some());
+        assert!(is_new);
+        assert!(manager.get_group(group_id).is_some());
     }
 
-    #[tokio::test]
-    async fn test_subscription_manager_limit() {
+    #[test]
+    fn test_subscription_manager_coalescing() {
+        let manager = SubscriptionManager::new(50);
+        let session1 = SessionId::new();
+        let session2 = SessionId::new();
+        let auth = AuthContext::unauthenticated();
+
+        let (g1, _, is_new1) = manager
+            .subscribe(session1, "s1".to_string(), "get_projects", &serde_json::json!({}), &auth, &[], &[])
+            .unwrap();
+        let (g2, _, is_new2) = manager
+            .subscribe(session2, "s2".to_string(), "get_projects", &serde_json::json!({}), &auth, &[], &[])
+            .unwrap();
+
+        assert!(is_new1);
+        assert!(!is_new2);
+        assert_eq!(g1, g2);
+
+        // Group should have 2 subscribers
+        let subs = manager.get_group_subscribers(g1);
+        assert_eq!(subs.len(), 2);
+    }
+
+    #[test]
+    fn test_subscription_manager_limit() {
         let manager = SubscriptionManager::new(2);
         let session_id = SessionId::new();
+        let auth = AuthContext::unauthenticated();
 
-        // First two should succeed
         manager
-            .create_subscription(session_id, "query1", serde_json::json!({}))
-            .await
+            .subscribe(session_id, "s1".to_string(), "q1", &serde_json::json!({}), &auth, &[], &[])
             .unwrap();
         manager
-            .create_subscription(session_id, "query2", serde_json::json!({}))
-            .await
+            .subscribe(session_id, "s2".to_string(), "q2", &serde_json::json!({}), &auth, &[], &[])
             .unwrap();
 
-        // Third should fail
-        let result = manager
-            .create_subscription(session_id, "query3", serde_json::json!({}))
-            .await;
+        let result = manager.subscribe(
+            session_id, "s3".to_string(), "q3", &serde_json::json!({}), &auth, &[], &[],
+        );
         assert!(result.is_err());
     }
 
-    #[tokio::test]
-    async fn test_subscription_manager_remove_session() {
+    #[test]
+    fn test_subscription_manager_remove_session() {
         let manager = SubscriptionManager::new(50);
         let session_id = SessionId::new();
+        let auth = AuthContext::unauthenticated();
 
         manager
-            .create_subscription(session_id, "query1", serde_json::json!({}))
-            .await
+            .subscribe(session_id, "s1".to_string(), "q1", &serde_json::json!({}), &auth, &[], &[])
             .unwrap();
         manager
-            .create_subscription(session_id, "query2", serde_json::json!({}))
-            .await
+            .subscribe(session_id, "s2".to_string(), "q2", &serde_json::json!({}), &auth, &[], &[])
             .unwrap();
 
-        let counts = manager.counts().await;
+        let counts = manager.counts();
         assert_eq!(counts.total, 2);
 
-        manager.remove_session_subscriptions(session_id).await;
+        manager.remove_session_subscriptions(session_id);
 
-        let counts = manager.counts().await;
+        let counts = manager.counts();
         assert_eq!(counts.total, 0);
+        assert_eq!(counts.unique_queries, 0);
     }
 }

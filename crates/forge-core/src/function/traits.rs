@@ -35,6 +35,10 @@ pub struct FunctionInfo {
     /// Table dependencies extracted at compile time for reactive subscriptions.
     /// Empty slice means tables could not be determined (dynamic SQL).
     pub table_dependencies: &'static [&'static str],
+    /// Columns referenced in SELECT clauses, extracted at compile time.
+    /// Used for fine-grained invalidation: skip re-execution when changed columns
+    /// don't intersect with selected columns. Empty means unknown (invalidate always).
+    pub selected_columns: &'static [&'static str],
     /// Whether this mutation should be wrapped in a database transaction.
     /// Only applies to mutations. When true, jobs are buffered and inserted
     /// atomically with the mutation via the outbox pattern.
@@ -130,6 +134,7 @@ mod tests {
             rate_limit_key: Some("user"),
             log_level: Some("debug"),
             table_dependencies: &["users"],
+            selected_columns: &["id", "name", "email"],
             transactional: false,
         };
 

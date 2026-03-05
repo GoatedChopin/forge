@@ -8,6 +8,7 @@ use crate::utils::{has_attr_flag, parse_duration_tokens, to_pascal_case};
 struct CronAttrs {
     schedule: Option<String>,
     timezone: Option<String>,
+    group: Option<String>,
     catch_up: bool,
     catch_up_limit: Option<u32>,
     timeout: Option<String>,
@@ -32,6 +33,17 @@ fn parse_cron_attrs(attr: TokenStream) -> CronAttrs {
             && let Some(quote_end) = after_eq[quote_start + 1..].find('"')
         {
             result.timezone = Some(after_eq[quote_start + 1..][..quote_end].to_string());
+        }
+    }
+
+    if let Some(grp_start) = attr_str.find("group")
+        && let Some(eq_pos) = attr_str[grp_start..].find('=')
+    {
+        let after_eq = &attr_str[grp_start + eq_pos + 1..];
+        if let Some(quote_start) = after_eq.find('"')
+            && let Some(quote_end) = after_eq[quote_start + 1..].find('"')
+        {
+            result.group = Some(after_eq[quote_start + 1..][..quote_end].to_string());
         }
     }
 
@@ -82,6 +94,7 @@ pub fn cron_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let schedule = attrs.schedule.unwrap_or_else(|| "* * * * *".to_string());
     let timezone = attrs.timezone.unwrap_or_else(|| "UTC".to_string());
+    let group = attrs.group.unwrap_or_else(|| "default".to_string());
     let catch_up = attrs.catch_up;
     let catch_up_limit = attrs.catch_up_limit.unwrap_or(10);
 
@@ -104,6 +117,7 @@ pub fn cron_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                     schedule: forge::forge_core::cron::CronSchedule::new(#schedule)
                         .expect("Invalid cron schedule"),
                     timezone: #timezone,
+                    group: #group,
                     catch_up: #catch_up,
                     catch_up_limit: #catch_up_limit,
                     timeout: #timeout,

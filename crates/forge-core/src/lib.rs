@@ -44,7 +44,8 @@ pub use mcp::{
 };
 pub use rate_limit::{RateLimitConfig, RateLimitHeaders, RateLimitKey, RateLimitResult};
 pub use realtime::{
-    Change, ChangeOperation, Delta, ReadSet, SessionId, SessionInfo, SessionStatus, SubscriptionId,
+    AuthScope, BloomFilter, Change, ChangeOperation, Delta, QueryGroup, QueryGroupId, ReadSet,
+    SessionId, SessionInfo, SessionStatus, Subscriber, SubscriberId, SubscriptionId,
     SubscriptionInfo, SubscriptionState, TrackingMode,
 };
 pub use schema::{FieldDef, ModelMeta, SchemaRegistry, TableDef};

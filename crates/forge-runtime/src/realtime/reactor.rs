@@ -1,7 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use tokio::sync::{RwLock, broadcast, mpsc};
+use futures_util::stream::FuturesUnordered;
+use futures_util::StreamExt;
+use tokio::sync::{RwLock, Semaphore, broadcast, mpsc};
 use uuid::Uuid;
 
 use forge_core::cluster::NodeId;
@@ -23,6 +25,10 @@ pub struct ReactorConfig {
     pub max_listener_restarts: u32,
     /// Doubles with each attempt for exponential backoff
     pub listener_restart_delay_ms: u64,
+    /// Maximum concurrent re-executions during flush.
+    pub max_concurrent_reexecutions: usize,
+    /// Session cleanup interval in seconds.
+    pub session_cleanup_interval_secs: u64,
 }
 
 impl Default for ReactorConfig {
@@ -33,25 +39,10 @@ impl Default for ReactorConfig {
             realtime: RealtimeConfig::default(),
             max_listener_restarts: 5,
             listener_restart_delay_ms: 1000,
+            max_concurrent_reexecutions: 64,
+            session_cleanup_interval_secs: 60,
         }
     }
-}
-
-/// Active subscription with execution context.
-#[derive(Debug, Clone)]
-pub struct ActiveSubscription {
-    #[allow(dead_code)]
-    pub subscription_id: SubscriptionId,
-    pub session_id: SessionId,
-    #[allow(dead_code)]
-    pub client_sub_id: String,
-    pub query_name: String,
-    pub args: serde_json::Value,
-    pub last_result_hash: Option<String>,
-    #[allow(dead_code)]
-    pub read_set: ReadSet,
-    /// Auth context for re-executing the query on invalidation.
-    pub auth_context: forge_core::function::AuthContext,
 }
 
 /// Job subscription tracking.
@@ -62,7 +53,7 @@ pub struct JobSubscription {
     pub session_id: SessionId,
     pub client_sub_id: String,
     #[allow(dead_code)]
-    pub job_id: Uuid, // Validated UUID, not String
+    pub job_id: Uuid,
     pub auth_context: forge_core::function::AuthContext,
 }
 
@@ -74,11 +65,11 @@ pub struct WorkflowSubscription {
     pub session_id: SessionId,
     pub client_sub_id: String,
     #[allow(dead_code)]
-    pub workflow_id: Uuid, // Validated UUID, not String
+    pub workflow_id: Uuid,
     pub auth_context: forge_core::function::AuthContext,
 }
 
-/// ChangeListener -> InvalidationEngine -> Query Re-execution -> SSE Push
+/// ChangeListener -> InvalidationEngine -> Group Re-execution -> SSE Fan-out
 pub struct Reactor {
     node_id: NodeId,
     db_pool: sqlx::PgPool,
@@ -87,17 +78,15 @@ pub struct Reactor {
     session_server: Arc<SessionServer>,
     change_listener: Arc<ChangeListener>,
     invalidation_engine: Arc<InvalidationEngine>,
-    /// Active subscriptions with their execution context.
-    active_subscriptions: Arc<RwLock<HashMap<SubscriptionId, ActiveSubscription>>>,
     /// Job subscriptions: job_id -> list of subscribers.
     job_subscriptions: Arc<RwLock<HashMap<Uuid, Vec<JobSubscription>>>>,
     /// Workflow subscriptions: workflow_id -> list of subscribers.
     workflow_subscriptions: Arc<RwLock<HashMap<Uuid, Vec<WorkflowSubscription>>>>,
-    /// Shutdown signal.
     shutdown_tx: broadcast::Sender<()>,
-    /// Listener restart configuration
     max_listener_restarts: u32,
     listener_restart_delay_ms: u64,
+    max_concurrent_reexecutions: usize,
+    session_cleanup_interval_secs: u64,
 }
 
 impl Reactor {
@@ -127,81 +116,74 @@ impl Reactor {
             session_server,
             change_listener,
             invalidation_engine,
-            active_subscriptions: Arc::new(RwLock::new(HashMap::new())),
             job_subscriptions: Arc::new(RwLock::new(HashMap::new())),
             workflow_subscriptions: Arc::new(RwLock::new(HashMap::new())),
             shutdown_tx,
             max_listener_restarts: config.max_listener_restarts,
             listener_restart_delay_ms: config.listener_restart_delay_ms,
+            max_concurrent_reexecutions: config.max_concurrent_reexecutions,
+            session_cleanup_interval_secs: config.session_cleanup_interval_secs,
         }
     }
 
-    /// Get the node ID.
     pub fn node_id(&self) -> NodeId {
         self.node_id
     }
 
-    /// Get the session server reference.
     pub fn session_server(&self) -> Arc<SessionServer> {
         self.session_server.clone()
     }
 
-    /// Get the subscription manager reference.
     pub fn subscription_manager(&self) -> Arc<SubscriptionManager> {
         self.subscription_manager.clone()
     }
 
-    /// Get a shutdown receiver.
     pub fn shutdown_receiver(&self) -> broadcast::Receiver<()> {
         self.shutdown_tx.subscribe()
     }
 
     /// Register a new session.
-    pub async fn register_session(
+    pub fn register_session(
         &self,
         session_id: SessionId,
         sender: mpsc::Sender<RealtimeMessage>,
     ) {
         self.session_server
-            .register_connection(session_id, sender)
-            .await;
+            .register_connection(session_id, sender);
         tracing::trace!(?session_id, "Session registered");
     }
 
     /// Remove a session and all its subscriptions.
     pub async fn remove_session(&self, session_id: SessionId) {
-        if let Some(subscription_ids) = self.session_server.remove_connection(session_id).await {
-            // Clean up query subscriptions
-            for sub_id in subscription_ids {
-                self.subscription_manager.remove_subscription(sub_id).await;
-                self.active_subscriptions.write().await.remove(&sub_id);
-            }
-        }
+        // Clean up query subscriptions via the subscription manager
+        self.subscription_manager
+            .remove_session_subscriptions(session_id);
 
-        // Clean up job subscriptions for this session
+        // Clean up session server
+        self.session_server.remove_connection(session_id);
+
+        // Clean up job subscriptions
         {
             let mut job_subs = self.job_subscriptions.write().await;
             for subscribers in job_subs.values_mut() {
                 subscribers.retain(|s| s.session_id != session_id);
             }
-            // Remove empty entries
             job_subs.retain(|_, v| !v.is_empty());
         }
 
-        // Clean up workflow subscriptions for this session
+        // Clean up workflow subscriptions
         {
             let mut workflow_subs = self.workflow_subscriptions.write().await;
             for subscribers in workflow_subs.values_mut() {
                 subscribers.retain(|s| s.session_id != session_id);
             }
-            // Remove empty entries
             workflow_subs.retain(|_, v| !v.is_empty());
         }
 
         tracing::trace!(?session_id, "Session removed");
     }
 
-    /// Subscribe to a query.
+    /// Subscribe to a query. Uses query groups for coalescing.
     pub async fn subscribe(
         &self,
         session_id: SessionId,
@@ -210,78 +192,79 @@ impl Reactor {
         args: serde_json::Value,
         auth_context: forge_core::function::AuthContext,
     ) -> forge_core::Result<(SubscriptionId, serde_json::Value)> {
-        let sub_info = self
+        // Look up function info for compile-time metadata
+        let (table_deps, selected_cols) = match self.registry.get(&query_name) {
+            Some(FunctionEntry::Query { info, .. }) => {
+                (info.table_dependencies, info.selected_columns)
+            }
+            _ => (&[] as &[&str], &[] as &[&str]),
+        };
+
+        let (group_id, subscription_id, is_new_group) = self
             .subscription_manager
-            .create_subscription(session_id, &query_name, args.clone())
-            .await?;
+            .subscribe(
+                session_id,
+                client_sub_id,
+                &query_name,
+                &args,
+                &auth_context,
+                table_deps,
+                selected_cols,
+            )?;
 
-        let subscription_id = sub_info.id;
-
+        // Register subscription in session server for message routing
         if let Err(error) = self
             .session_server
             .add_subscription(session_id, subscription_id)
-            .await
         {
-            self.subscription_manager
-                .remove_subscription(subscription_id)
-                .await;
+            self.subscription_manager.unsubscribe(subscription_id);
             return Err(error);
         }
 
-        let (data, read_set) = match self.execute_query(&query_name, &args, &auth_context).await {
-            Ok(result) => result,
-            Err(error) => {
-                // Roll back optimistic subscription registration on auth/query failures.
-                self.unsubscribe(subscription_id).await;
-                return Err(error);
-            }
+        // Only execute the query if this is a new group (no cached result yet)
+        let data = if is_new_group {
+            let (data, read_set) =
+                match self.execute_query(&query_name, &args, &auth_context).await {
+                    Ok(result) => result,
+                    Err(error) => {
+                        self.unsubscribe(subscription_id);
+                        return Err(error);
+                    }
+                };
+
+            let result_hash = Self::compute_hash(&data);
+
+            tracing::trace!(
+                ?group_id,
+                query = %query_name,
+                "New query group created"
+            );
+
+            self.subscription_manager
+                .update_group(group_id, read_set, result_hash);
+
+            data
+        } else {
+            // Group exists, re-execute to get fresh data for this subscriber
+            // (they might have joined mid-cycle)
+            let (data, _) = match self.execute_query(&query_name, &args, &auth_context).await {
+                Ok(result) => result,
+                Err(error) => {
+                    self.unsubscribe(subscription_id);
+                    return Err(error);
+                }
+            };
+            data
         };
-
-        let result_hash = Self::compute_hash(&data);
-
-        tracing::trace!(
-            ?subscription_id,
-            query = %query_name,
-            tables = ?read_set.tables.iter().collect::<Vec<_>>(),
-            "Subscription read set"
-        );
-
-        self.subscription_manager
-            .update_subscription(subscription_id, read_set.clone(), result_hash.clone())
-            .await;
-
-        let active = ActiveSubscription {
-            subscription_id,
-            session_id,
-            client_sub_id,
-            query_name,
-            args,
-            last_result_hash: Some(result_hash),
-            read_set,
-            auth_context,
-        };
-        self.active_subscriptions
-            .write()
-            .await
-            .insert(subscription_id, active);
 
         tracing::trace!(?subscription_id, "Subscription created");
-
         Ok((subscription_id, data))
     }
 
     /// Unsubscribe from a query.
-    pub async fn unsubscribe(&self, subscription_id: SubscriptionId) {
-        self.session_server
-            .remove_subscription(subscription_id)
-            .await;
-        self.subscription_manager
-            .remove_subscription(subscription_id)
-            .await;
-        self.active_subscriptions
-            .write()
-            .await
-            .remove(&subscription_id);
+    pub fn unsubscribe(&self, subscription_id: SubscriptionId) {
+        self.session_server.remove_subscription(subscription_id);
+        self.subscription_manager.unsubscribe(subscription_id);
         tracing::trace!(?subscription_id, "Subscription removed");
     }
 
@@ -290,21 +273,17 @@ impl Reactor {
         &self,
         session_id: SessionId,
         client_sub_id: String,
-        job_id: Uuid, // Pre-validated UUID
+        job_id: Uuid,
         auth_context: &forge_core::function::AuthContext,
     ) -> forge_core::Result<JobData> {
         let subscription_id = SubscriptionId::new();
-
         Self::ensure_job_access(&self.db_pool, job_id, auth_context).await?;
-
-        // Fetch current job state from database
         let job_data = self.fetch_job_data(job_id).await?;
 
-        // Register subscription
         let subscription = JobSubscription {
             subscription_id,
             session_id,
-            client_sub_id: client_sub_id.clone(),
+            client_sub_id,
             job_id,
             auth_context: auth_context.clone(),
         };
@@ -312,29 +291,18 @@ impl Reactor {
         let mut subs = self.job_subscriptions.write().await;
         subs.entry(job_id).or_default().push(subscription);
 
-        tracing::trace!(
-            ?subscription_id,
-            %job_id,
-            "Job subscription created"
-        );
-
+        tracing::trace!(?subscription_id, %job_id, "Job subscription created");
         Ok(job_data)
     }
 
     /// Unsubscribe from job updates.
     pub async fn unsubscribe_job(&self, session_id: SessionId, client_sub_id: &str) {
         let mut subs = self.job_subscriptions.write().await;
-
-        // Find and remove the subscription
         for subscribers in subs.values_mut() {
             subscribers
                 .retain(|s| !(s.session_id == session_id && s.client_sub_id == client_sub_id));
         }
-
-        // Remove empty entries
         subs.retain(|_, v| !v.is_empty());
-
-        tracing::trace!(client_id = %client_sub_id, "Job subscription removed");
     }
 
     /// Subscribe to workflow progress updates.
@@ -342,21 +310,17 @@ impl Reactor {
         &self,
         session_id: SessionId,
         client_sub_id: String,
-        workflow_id: Uuid, // Pre-validated UUID
+        workflow_id: Uuid,
         auth_context: &forge_core::function::AuthContext,
     ) -> forge_core::Result<WorkflowData> {
         let subscription_id = SubscriptionId::new();
-
         Self::ensure_workflow_access(&self.db_pool, workflow_id, auth_context).await?;
-
-        // Fetch current workflow + steps from database
         let workflow_data = self.fetch_workflow_data(workflow_id).await?;
 
-        // Register subscription
         let subscription = WorkflowSubscription {
             subscription_id,
             session_id,
-            client_sub_id: client_sub_id.clone(),
+            client_sub_id,
             workflow_id,
             auth_context: auth_context.clone(),
         };
@@ -364,129 +328,27 @@ impl Reactor {
         let mut subs = self.workflow_subscriptions.write().await;
         subs.entry(workflow_id).or_default().push(subscription);
 
-        tracing::trace!(
-            ?subscription_id,
-            %workflow_id,
-            "Workflow subscription created"
-        );
-
+        tracing::trace!(?subscription_id, %workflow_id, "Workflow subscription created");
         Ok(workflow_data)
     }
 
     /// Unsubscribe from workflow updates.
     pub async fn unsubscribe_workflow(&self, session_id: SessionId, client_sub_id: &str) {
         let mut subs = self.workflow_subscriptions.write().await;
-
-        // Find and remove the subscription
         for subscribers in subs.values_mut() {
             subscribers
                 .retain(|s| !(s.session_id == session_id && s.client_sub_id == client_sub_id));
         }
-
-        // Remove empty entries
         subs.retain(|_, v| !v.is_empty());
-
-        tracing::trace!(client_id = %client_sub_id, "Workflow subscription removed");
     }
 
-    /// Fetch current job data from database.
     #[allow(clippy::type_complexity)]
     async fn fetch_job_data(&self, job_id: Uuid) -> forge_core::Result<JobData> {
-        let row: Option<(
-            String,
-            Option<i32>,
-            Option<String>,
-            Option<serde_json::Value>,
-            Option<String>,
-        )> = sqlx::query_as(
-            r#"
-                SELECT status, progress_percent, progress_message, output,
-                       COALESCE(cancel_reason, last_error) as error
-                FROM forge_jobs WHERE id = $1
-                "#,
-        )
-        .bind(job_id)
-        .fetch_optional(&self.db_pool)
-        .await
-        .map_err(forge_core::ForgeError::Sql)?;
-
-        match row {
-            Some((status, progress_percent, progress_message, output, error)) => Ok(JobData {
-                job_id: job_id.to_string(),
-                status,
-                progress_percent,
-                progress_message,
-                output,
-                error,
-            }),
-            None => Err(forge_core::ForgeError::NotFound(format!(
-                "Job {} not found",
-                job_id
-            ))),
-        }
+        Self::fetch_job_data_static(job_id, &self.db_pool).await
     }
 
-    /// Fetch current workflow + steps from database.
-    #[allow(clippy::type_complexity)]
     async fn fetch_workflow_data(&self, workflow_id: Uuid) -> forge_core::Result<WorkflowData> {
-        // Fetch workflow run
-        let row: Option<(
-            String,
-            Option<String>,
-            Option<serde_json::Value>,
-            Option<String>,
-        )> = sqlx::query_as(
-            r#"
-                SELECT status, current_step, output, error
-                FROM forge_workflow_runs WHERE id = $1
-                "#,
-        )
-        .bind(workflow_id)
-        .fetch_optional(&self.db_pool)
-        .await
-        .map_err(forge_core::ForgeError::Sql)?;
-
-        let (status, current_step, output, error) = match row {
-            Some(r) => r,
-            None => {
-                return Err(forge_core::ForgeError::NotFound(format!(
-                    "Workflow {} not found",
-                    workflow_id
-                )));
-            }
-        };
-
-        // Fetch workflow steps
-        let step_rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
-            r#"
-            SELECT step_name, status, error
-            FROM forge_workflow_steps
-            WHERE workflow_run_id = $1
-            ORDER BY started_at ASC NULLS LAST
-            "#,
-        )
-        .bind(workflow_id)
-        .fetch_all(&self.db_pool)
-        .await
-        .map_err(forge_core::ForgeError::Sql)?;
-
-        let steps = step_rows
-            .into_iter()
-            .map(|(name, status, error)| WorkflowStepData {
-                name,
-                status,
-                error,
-            })
-            .collect();
-
-        Ok(WorkflowData {
-            workflow_id: workflow_id.to_string(),
-            status,
-            current_step,
-            steps,
-            output,
-            error,
-        })
+        Self::fetch_workflow_data_static(workflow_id, &self.db_pool).await
     }
 
     /// Execute a query and return data with read set.
@@ -496,59 +358,10 @@ impl Reactor {
         args: &serde_json::Value,
         auth_context: &forge_core::function::AuthContext,
     ) -> forge_core::Result<(serde_json::Value, ReadSet)> {
-        match self.registry.get(query_name) {
-            Some(FunctionEntry::Query { info, handler }) => {
-                Self::check_query_auth(info, auth_context)?;
-                Self::check_identity_args(query_name, args, auth_context, !info.is_public)?;
-
-                let ctx = forge_core::function::QueryContext::new(
-                    self.db_pool.clone(),
-                    auth_context.clone(),
-                    forge_core::function::RequestMetadata::new(),
-                );
-
-                // Normalize args
-                let normalized_args = match args {
-                    v if v.as_object().is_some_and(|o| o.is_empty()) => serde_json::Value::Null,
-                    v => v.clone(),
-                };
-
-                let data = handler(&ctx, normalized_args).await?;
-
-                // Create read set from compile-time extracted table dependencies
-                let mut read_set = ReadSet::new();
-
-                if info.table_dependencies.is_empty() {
-                    // Fallback: no tables extracted (dynamic SQL)
-                    // Use naming convention as last resort
-                    let table_name = Self::extract_table_name(query_name);
-                    read_set.add_table(&table_name);
-                    tracing::trace!(
-                        query = %query_name,
-                        fallback_table = %table_name,
-                        "Using naming convention fallback for table dependency"
-                    );
-                } else {
-                    // Use compile-time extracted tables
-                    for table in info.table_dependencies {
-                        read_set.add_table(*table);
-                    }
-                }
-
-                Ok((data, read_set))
-            }
-            Some(_) => Err(forge_core::ForgeError::Validation(format!(
-                "'{}' is not a query",
-                query_name
-            ))),
-            None => Err(forge_core::ForgeError::Validation(format!(
-                "Query '{}' not found",
-                query_name
-            ))),
-        }
+        Self::execute_query_static(&self.registry, &self.db_pool, query_name, args, auth_context)
+            .await
     }
 
-    /// Compute a hash of the result for delta detection.
     fn compute_hash(data: &serde_json::Value) -> String {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
@@ -559,87 +372,106 @@ impl Reactor {
         format!("{:x}", hasher.finish())
     }
 
-    /// Check for debounced invalidations and re-execute affected queries.
+    /// Parallel group re-execution with bounded concurrency.
     async fn flush_invalidations(
         invalidation_engine: &Arc<InvalidationEngine>,
-        active_subscriptions: &Arc<RwLock<HashMap<SubscriptionId, ActiveSubscription>>>,
+        subscription_manager: &Arc<SubscriptionManager>,
         session_server: &Arc<SessionServer>,
         registry: &FunctionRegistry,
         db_pool: &sqlx::PgPool,
+        max_concurrent: usize,
     ) {
-        let invalidated = invalidation_engine.check_pending().await;
-        if invalidated.is_empty() {
+        let invalidated_groups = invalidation_engine.check_pending().await;
+        if invalidated_groups.is_empty() {
             return;
         }
 
-        tracing::trace!(count = invalidated.len(), "Invalidating subscriptions");
+        tracing::trace!(count = invalidated_groups.len(), "Invalidating query groups");
 
-        let subs_to_process: Vec<_> = {
-            let subscriptions = active_subscriptions.read().await;
-            invalidated
-                .iter()
-                .filter_map(|sub_id| {
-                    subscriptions.get(sub_id).map(|active| {
-                        (
-                            *sub_id,
-                            active.session_id,
-                            active.client_sub_id.clone(),
-                            active.query_name.clone(),
-                            active.args.clone(),
-                            active.last_result_hash.clone(),
-                            active.auth_context.clone(),
-                        )
-                    })
+        // Collect group data we need for re-execution
+        let groups_to_process: Vec<_> = invalidated_groups
+            .iter()
+            .filter_map(|gid| {
+                subscription_manager.get_group(*gid).map(|g| {
+                    (
+                        g.id,
+                        g.query_name.clone(),
+                        (*g.args).clone(),
+                        g.last_result_hash.clone(),
+                        g.auth_context.clone(),
+                    )
                 })
-                .collect()
-        };
+            })
+            .collect();
 
-        let mut updates: Vec<(SubscriptionId, String)> = Vec::new();
+        // Parallel re-execution bounded by semaphore
+        let semaphore = Arc::new(Semaphore::new(max_concurrent));
+        let mut futures = FuturesUnordered::new();
 
-        for (sub_id, session_id, client_sub_id, query_name, args, last_hash, auth_context) in
-            subs_to_process
-        {
-            match Self::execute_query_static(registry, db_pool, &query_name, &args, &auth_context)
-                .await
-            {
-                Ok((new_data, _read_set)) => {
+        for (group_id, query_name, args, last_hash, auth_context) in groups_to_process {
+            let permit = match semaphore.clone().acquire_owned().await {
+                Ok(p) => p,
+                Err(_) => break,
+            };
+            let registry = registry.clone();
+            let db_pool = db_pool.clone();
+
+            futures.push(async move {
+                let result = Self::execute_query_static(
+                    &registry,
+                    &db_pool,
+                    &query_name,
+                    &args,
+                    &auth_context,
+                )
+                .await;
+                drop(permit);
+                (group_id, last_hash, result)
+            });
+        }
+
+        // Process results and fan out to subscribers
+        while let Some((group_id, last_hash, result)) = futures.next().await {
+            match result {
+                Ok((new_data, read_set)) => {
                     let new_hash = Self::compute_hash(&new_data);
 
                     if last_hash.as_ref() != Some(&new_hash) {
-                        let message = RealtimeMessage::Data {
-                            subscription_id: client_sub_id.clone(),
-                            data: new_data,
-                        };
+                        // Update group state
+                        subscription_manager.update_group(group_id, read_set, new_hash);
 
-                        if let Err(e) = session_server.send_to_session(session_id, message).await {
-                            tracing::debug!(client_id = %client_sub_id, error = %e, "Failed to send update");
-                        } else {
-                            tracing::trace!(client_id = %client_sub_id, "Pushed update to client");
-                            updates.push((sub_id, new_hash));
+                        // Fan out to all subscribers in this group
+                        let subscribers = subscription_manager.get_group_subscribers(group_id);
+                        for (session_id, client_sub_id) in subscribers {
+                            let message = RealtimeMessage::Data {
+                                subscription_id: client_sub_id.clone(),
+                                data: new_data.clone(),
+                            };
+
+                            if let Err(e) =
+                                session_server.try_send_to_session(session_id, message)
+                            {
+                                tracing::trace!(
+                                    client_id = %client_sub_id,
+                                    error = ?e,
+                                    "Failed to send update to subscriber"
+                                );
+                            }
                         }
                     }
                 }
                 Err(e) => {
-                    tracing::warn!(client_id = %client_sub_id, error = %e, "Failed to re-execute query");
-                }
-            }
-        }
-
-        if !updates.is_empty() {
-            let mut subscriptions = active_subscriptions.write().await;
-            for (sub_id, new_hash) in updates {
-                if let Some(active) = subscriptions.get_mut(&sub_id) {
-                    active.last_result_hash = Some(new_hash);
+                    tracing::warn!(?group_id, error = %e, "Failed to re-execute query group");
                 }
             }
         }
     }
 
-    /// Start the reactor (runs the change listener and invalidation loop).
+    /// Start the reactor.
     pub async fn start(&self) -> forge_core::Result<()> {
         let listener = self.change_listener.clone();
         let invalidation_engine = self.invalidation_engine.clone();
-        let active_subscriptions = self.active_subscriptions.clone();
+        let subscription_manager = self.subscription_manager.clone();
         let job_subscriptions = self.job_subscriptions.clone();
         let workflow_subscriptions = self.workflow_subscriptions.clone();
         let session_server = self.session_server.clone();
@@ -648,11 +480,11 @@ impl Reactor {
         let mut shutdown_rx = self.shutdown_tx.subscribe();
         let max_restarts = self.max_listener_restarts;
         let base_delay_ms = self.listener_restart_delay_ms;
+        let max_concurrent = self.max_concurrent_reexecutions;
+        let cleanup_secs = self.session_cleanup_interval_secs;
 
-        // Subscribe to changes
         let mut change_rx = listener.subscribe();
 
-        // Main reactor loop
         tokio::spawn(async move {
             tracing::debug!("Reactor listening for changes");
 
@@ -668,9 +500,12 @@ impl Reactor {
                 }
             }));
 
-            // Periodic tick to flush debounced invalidations
             let mut flush_interval = tokio::time::interval(std::time::Duration::from_millis(25));
             flush_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+            let mut cleanup_interval =
+                tokio::time::interval(std::time::Duration::from_secs(cleanup_secs));
+            cleanup_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
             loop {
                 tokio::select! {
@@ -698,11 +533,15 @@ impl Reactor {
                     _ = flush_interval.tick() => {
                         Self::flush_invalidations(
                             &invalidation_engine,
-                            &active_subscriptions,
+                            &subscription_manager,
                             &session_server,
                             &registry,
                             &db_pool,
+                            max_concurrent,
                         ).await;
+                    }
+                    _ = cleanup_interval.tick() => {
+                        session_server.cleanup_stale(std::time::Duration::from_secs(300));
                     }
                     Some(error_msg) = listener_error_rx.recv() => {
                         if restart_count >= max_restarts {
@@ -726,7 +565,6 @@ impl Reactor {
 
                         tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
 
-                        // Restart listener
                         let listener_clone = listener.clone();
                         let error_tx = listener_error_tx.clone();
                         if let Some(handle) = listener_handle.take() {
@@ -766,14 +604,13 @@ impl Reactor {
     ) {
         tracing::trace!(table = %change.table, op = ?change.operation, row_id = ?change.row_id, "Processing change");
 
-        // Handle job/workflow table changes first
         match change.table.as_str() {
             "forge_jobs" => {
                 if let Some(job_id) = change.row_id {
                     Self::handle_job_change(job_id, job_subscriptions, session_server, db_pool)
                         .await;
                 }
-                return; // Don't process through query invalidation
+                return;
             }
             "forge_workflow_runs" => {
                 if let Some(workflow_id) = change.row_id {
@@ -785,10 +622,9 @@ impl Reactor {
                     )
                     .await;
                 }
-                return; // Don't process through query invalidation
+                return;
             }
             "forge_workflow_steps" => {
-                // For step changes, need to look up the parent workflow_id
                 if let Some(step_id) = change.row_id {
                     Self::handle_workflow_step_change(
                         step_id,
@@ -798,16 +634,15 @@ impl Reactor {
                     )
                     .await;
                 }
-                return; // Don't process through query invalidation
+                return;
             }
             _ => {}
         }
 
-        // Record the change for debounced invalidation (flushed by the periodic loop)
+        // Record change for debounced group invalidation
         invalidation_engine.process_change(change.clone()).await;
     }
 
-    /// Handle a job table change event.
     async fn handle_job_change(
         job_id: Uuid,
         job_subscriptions: &Arc<RwLock<HashMap<Uuid, Vec<JobSubscription>>>>,
@@ -817,11 +652,10 @@ impl Reactor {
         let subs = job_subscriptions.read().await;
         let subscribers = match subs.get(&job_id) {
             Some(s) if !s.is_empty() => s.clone(),
-            _ => return, // No subscribers for this job
+            _ => return,
         };
-        drop(subs); // Release lock before async operations
+        drop(subs);
 
-        // Fetch latest job state
         let job_data = match Self::fetch_job_data_static(job_id, db_pool).await {
             Ok(data) => data,
             Err(e) => {
@@ -838,12 +672,11 @@ impl Reactor {
             }
         };
 
-        let mut unauthorized_subscribers: HashSet<(SessionId, String)> = HashSet::new();
+        let mut unauthorized: HashSet<(SessionId, String)> = HashSet::new();
 
-        // Push to all subscribers
-        for sub in subscribers {
+        for sub in &subscribers {
             if Self::check_owner_access(owner_subject.clone(), &sub.auth_context).is_err() {
-                unauthorized_subscribers.insert((sub.session_id, sub.client_sub_id.clone()));
+                unauthorized.insert((sub.session_id, sub.client_sub_id.clone()));
                 continue;
             }
 
@@ -852,29 +685,22 @@ impl Reactor {
                 job: job_data.clone(),
             };
 
-            if let Err(e) = session_server
-                .send_to_session(sub.session_id, message)
-                .await
-            {
+            if let Err(e) = session_server.send_to_session(sub.session_id, message).await {
                 tracing::trace!(%job_id, error = %e, "Failed to send job update");
-            } else {
-                tracing::trace!(%job_id, "Job update sent");
             }
         }
 
-        if !unauthorized_subscribers.is_empty() {
+        if !unauthorized.is_empty() {
             let mut subs = job_subscriptions.write().await;
             if let Some(entries) = subs.get_mut(&job_id) {
-                entries.retain(|entry| {
-                    !unauthorized_subscribers
-                        .contains(&(entry.session_id, entry.client_sub_id.clone()))
+                entries.retain(|e| {
+                    !unauthorized.contains(&(e.session_id, e.client_sub_id.clone()))
                 });
             }
             subs.retain(|_, v| !v.is_empty());
         }
     }
 
-    /// Handle a workflow table change event.
     async fn handle_workflow_change(
         workflow_id: Uuid,
         workflow_subscriptions: &Arc<RwLock<HashMap<Uuid, Vec<WorkflowSubscription>>>>,
@@ -884,11 +710,10 @@ impl Reactor {
         let subs = workflow_subscriptions.read().await;
         let subscribers = match subs.get(&workflow_id) {
             Some(s) if !s.is_empty() => s.clone(),
-            _ => return, // No subscribers for this workflow
+            _ => return,
         };
-        drop(subs); // Release lock before async operations
+        drop(subs);
 
-        // Fetch latest workflow + steps state
         let workflow_data = match Self::fetch_workflow_data_static(workflow_id, db_pool).await {
             Ok(data) => data,
             Err(e) => {
@@ -906,12 +731,11 @@ impl Reactor {
                 }
             };
 
-        let mut unauthorized_subscribers: HashSet<(SessionId, String)> = HashSet::new();
+        let mut unauthorized: HashSet<(SessionId, String)> = HashSet::new();
 
-        // Push to all subscribers
-        for sub in subscribers {
+        for sub in &subscribers {
             if Self::check_owner_access(owner_subject.clone(), &sub.auth_context).is_err() {
-                unauthorized_subscribers.insert((sub.session_id, sub.client_sub_id.clone()));
+                unauthorized.insert((sub.session_id, sub.client_sub_id.clone()));
                 continue;
             }
 
@@ -920,36 +744,28 @@ impl Reactor {
                 workflow: workflow_data.clone(),
             };
 
-            if let Err(e) = session_server
-                .send_to_session(sub.session_id, message)
-                .await
-            {
+            if let Err(e) = session_server.send_to_session(sub.session_id, message).await {
                 tracing::trace!(%workflow_id, error = %e, "Failed to send workflow update");
-            } else {
-                tracing::trace!(%workflow_id, "Workflow update sent");
             }
         }
 
-        if !unauthorized_subscribers.is_empty() {
+        if !unauthorized.is_empty() {
             let mut subs = workflow_subscriptions.write().await;
             if let Some(entries) = subs.get_mut(&workflow_id) {
-                entries.retain(|entry| {
-                    !unauthorized_subscribers
-                        .contains(&(entry.session_id, entry.client_sub_id.clone()))
+                entries.retain(|e| {
+                    !unauthorized.contains(&(e.session_id, e.client_sub_id.clone()))
                 });
             }
             subs.retain(|_, v| !v.is_empty());
         }
     }
 
-    /// Handle a workflow step change event.
     async fn handle_workflow_step_change(
         step_id: Uuid,
         workflow_subscriptions: &Arc<RwLock<HashMap<Uuid, Vec<WorkflowSubscription>>>>,
         session_server: &Arc<SessionServer>,
         db_pool: &sqlx::PgPool,
     ) {
-        // Look up the workflow_run_id for this step
         let workflow_id: Option<Uuid> = match sqlx::query_scalar(
             "SELECT workflow_run_id FROM forge_workflow_steps WHERE id = $1",
         )
@@ -965,13 +781,11 @@ impl Reactor {
         };
 
         if let Some(wf_id) = workflow_id {
-            // Delegate to workflow change handler
             Self::handle_workflow_change(wf_id, workflow_subscriptions, session_server, db_pool)
                 .await;
         }
     }
 
-    /// Static version of fetch_job_data for use in handle_change.
     #[allow(clippy::type_complexity)]
     async fn fetch_job_data_static(
         job_id: Uuid,
@@ -1025,7 +839,6 @@ impl Reactor {
             .ok_or_else(|| forge_core::ForgeError::NotFound(format!("Job {} not found", job_id)))
     }
 
-    /// Static version of fetch_workflow_data for use in handle_change.
     #[allow(clippy::type_complexity)]
     async fn fetch_workflow_data_static(
         workflow_id: Uuid,
@@ -1105,7 +918,6 @@ impl Reactor {
         })
     }
 
-    /// Static version of execute_query for use in async context.
     async fn execute_query_static(
         registry: &FunctionRegistry,
         db_pool: &sqlx::PgPool,
@@ -1131,11 +943,9 @@ impl Reactor {
 
                 let data = handler(&ctx, normalized_args).await?;
 
-                // Create read set from compile-time extracted table dependencies
                 let mut read_set = ReadSet::new();
 
                 if info.table_dependencies.is_empty() {
-                    // Fallback for dynamic SQL
                     let table_name = Self::extract_table_name(query_name);
                     read_set.add_table(&table_name);
                     tracing::trace!(
@@ -1158,7 +968,6 @@ impl Reactor {
         }
     }
 
-    /// Extract table name from query name using common patterns.
     fn extract_table_name(query_name: &str) -> String {
         if let Some(rest) = query_name.strip_prefix("get_") {
             rest.to_string()
@@ -1315,11 +1124,7 @@ impl Reactor {
         auth: &forge_core::function::AuthContext,
     ) -> forge_core::Result<()> {
         let owner_subject_row: Option<(Option<String>,)> = sqlx::query_as(
-            r#"
-            SELECT owner_subject
-            FROM forge_jobs
-            WHERE id = $1
-            "#,
+            r#"SELECT owner_subject FROM forge_jobs WHERE id = $1"#,
         )
         .bind(job_id)
         .fetch_optional(db_pool)
@@ -1339,11 +1144,7 @@ impl Reactor {
         auth: &forge_core::function::AuthContext,
     ) -> forge_core::Result<()> {
         let owner_subject_row: Option<(Option<String>,)> = sqlx::query_as(
-            r#"
-            SELECT owner_subject
-            FROM forge_workflow_runs
-            WHERE id = $1
-            "#,
+            r#"SELECT owner_subject FROM forge_workflow_runs WHERE id = $1"#,
         )
         .bind(workflow_id)
         .fetch_optional(db_pool)
@@ -1382,21 +1183,20 @@ impl Reactor {
         }
     }
 
-    /// Stop the reactor.
     pub fn stop(&self) {
         let _ = self.shutdown_tx.send(());
         self.change_listener.stop();
     }
 
-    /// Get reactor statistics.
     pub async fn stats(&self) -> ReactorStats {
-        let session_stats = self.session_server.stats().await;
+        let session_stats = self.session_server.stats();
         let inv_stats = self.invalidation_engine.stats().await;
 
         ReactorStats {
             connections: session_stats.connections,
             subscriptions: session_stats.subscriptions,
-            pending_invalidations: inv_stats.pending_subscriptions,
+            query_groups: self.subscription_manager.group_count(),
+            pending_invalidations: inv_stats.pending_groups,
             listener_running: self.change_listener.is_running(),
         }
     }
@@ -1407,6 +1207,7 @@ impl Reactor {
 pub struct ReactorStats {
     pub connections: usize,
     pub subscriptions: usize,
+    pub query_groups: usize,
     pub pending_invalidations: usize,
     pub listener_running: bool,
 }
@@ -1423,6 +1224,8 @@ mod tests {
         assert_eq!(config.invalidation.debounce_ms, 50);
         assert_eq!(config.max_listener_restarts, 5);
         assert_eq!(config.listener_restart_delay_ms, 1000);
+        assert_eq!(config.max_concurrent_reexecutions, 64);
+        assert_eq!(config.session_cleanup_interval_secs, 60);
     }
 
     #[test]

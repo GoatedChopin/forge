@@ -16,7 +16,7 @@ use serde_json::Value;
 use super::cache::QueryCache;
 use super::registry::{BoxedMutationFn, FunctionEntry, FunctionRegistry};
 use crate::db::Database;
-use crate::rate_limit::RateLimiter;
+use crate::rate_limit::HybridRateLimiter;
 
 /// Result of routing a function call.
 pub enum RouteResult {
@@ -37,14 +37,14 @@ pub struct FunctionRouter {
     http_client: CircuitBreakerClient,
     job_dispatcher: Option<Arc<dyn JobDispatch>>,
     workflow_dispatcher: Option<Arc<dyn WorkflowDispatch>>,
-    rate_limiter: RateLimiter,
+    rate_limiter: HybridRateLimiter,
     query_cache: QueryCache,
 }
 
 impl FunctionRouter {
     /// Create a new function router.
     pub fn new(registry: Arc<FunctionRegistry>, db: Database) -> Self {
-        let rate_limiter = RateLimiter::new(db.primary().clone());
+        let rate_limiter = HybridRateLimiter::new(db.primary().clone());
         Self {
             registry,
             db,
@@ -62,7 +62,7 @@ impl FunctionRouter {
         db: Database,
         http_client: CircuitBreakerClient,
     ) -> Self {
-        let rate_limiter = RateLimiter::new(db.primary().clone());
+        let rate_limiter = HybridRateLimiter::new(db.primary().clone());
         Self {
             registry,
             db,
@@ -601,6 +601,7 @@ mod tests {
             rate_limit_key: None,
             log_level: None,
             table_dependencies: &[],
+            selected_columns: &[],
             transactional: false,
         };
 
