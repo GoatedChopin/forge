@@ -68,10 +68,18 @@ For non-backend-only requests:
 ## 10) Testing depth decision
 
 Minimum always:
-- one success test
-- one critical failure test
+- happy-path tests for main success scenarios
+- failure-path tests for each distinct error condition (validation, authz, not found)
+- boundary value tests when inputs have limits or special values
+
+Add pure unit tests when:
+- handler contains non-trivial business logic (extract to utils, test there)
+- validation has boundary conditions (empty, max length, negative values)
+- calculations or state transitions have edge cases
 
 Add integration tests when:
 - SQL ownership/joins/CTEs are complex
 - transaction/outbox behavior matters
 - read consistency behavior changed
+
+The test suite should make regressions structurally difficult. If someone can break behavior without a test failing, coverage is insufficient.

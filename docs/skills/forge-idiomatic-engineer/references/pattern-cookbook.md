@@ -45,10 +45,14 @@ fn normalized_title(raw: &str) -> Result<String> {
 ## 3) Scope-safe query
 
 ```rust
+// src/schema/order.rs — type definitions live here
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct ListOrdersInput {
     pub user_id: uuid::Uuid,
 }
+
+// src/functions/orders.rs — handler imports from schema
+use crate::schema::order::ListOrdersInput;
 
 #[forge::query(tables = ["orders"])]
 pub async fn list_orders(ctx: &QueryContext, input: ListOrdersInput) -> Result<Vec<Order>> {
@@ -68,11 +72,15 @@ pub async fn list_orders(ctx: &QueryContext, input: ListOrdersInput) -> Result<V
 ## 4) Transactional mutation + outbox side effects
 
 ```rust
+// src/schema/invoice.rs
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct CreateInvoiceInput {
     pub user_id: uuid::Uuid,
     pub total_cents: i64,
 }
+
+// src/functions/invoices.rs
+use crate::schema::invoice::CreateInvoiceInput;
 
 #[forge::mutation(transactional)]
 pub async fn create_invoice(ctx: &MutationContext, input: CreateInvoiceInput) -> Result<Invoice> {

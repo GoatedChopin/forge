@@ -17,9 +17,10 @@ Use this for review tasks. Findings first, summary second.
 4. Read consistency (primary vs replica assumptions)
 5. Retry/timeouts/idempotency for async surfaces
 6. Observability and trace correlation quality
-7. Test coverage for changed behavior
-8. Readability and future change cost
-9. Frontend a11y/reactivity quality when UI changes are in scope
+7. Test coverage: wide case variety, boundary values, pure logic extracted and unit tested
+8. Type placement: input/output structs in `schema/`, not inline in function files
+9. Readability and future change cost
+10. Frontend a11y/reactivity quality when UI changes are in scope
 
 ## Required checks by primitive
 

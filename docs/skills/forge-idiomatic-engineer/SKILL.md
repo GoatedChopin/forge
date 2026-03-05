@@ -1,6 +1,6 @@
 ---
 name: forge-idiomatic-engineer
-description: Use this only for Forge (forgex) work. Trigger when the user explicitly asks for Forge-related changes, or when the codebase shows Forge references (for example: `forge.toml`, `forgex`/`forge` crate usage, Forge macros like `#[forge::query]`, or Forge CLI workflow).
+description: "Use this only for Forge (forgex) work. Trigger when the user explicitly asks for Forge-related changes, or when the codebase shows Forge references (for example: `forge.toml`, `forgex`/`forge` crate usage, Forge macros like `#[forge::query]`, or Forge CLI workflow)."
 ---
 
 # Forge Idiomatic Engineer
@@ -24,10 +24,12 @@ This skill is tailored for Forge conventions in this repo:
 ## Non-Negotiable Principles
 
 ### 1) Testability First
+- Extract pure business logic into standalone functions that can be unit tested without DB or context.
 - Inject dependencies or pass interfaces where business logic grows.
 - Keep I/O at edges: `ctx.db()`, `ctx.http()`, dispatch methods.
 - Put reusable data logic into helpers that accept `DbConn<'_>`.
-- Add tests with every behavior change.
+- Add tests with every behavior change. Aim for wide case coverage: happy path, failure paths, boundary values, and edge cases.
+- Unit tests are the primary safety net. Cover enough variety that regressions require deliberate effort to introduce.
 
 ### 2) Eliminate Edge Cases Through Design
 - Prefer data-shape redesign over branch pile-ups.
@@ -72,9 +74,14 @@ For app code, prefer this structure:
 - `src/schema/` for domain structs, enums, and data contracts
 - `src/utils/` for pure helper logic
 
+Type placement rule:
+- All input/output structs, domain models, and enums belong in `src/schema/`, not inline in function files.
+- Handlers in `src/functions/` import types from `schema`. This keeps function files focused on behavior and makes types discoverable in one place.
+- This improves readability: readers see handler logic without scrolling past struct definitions.
+
 Function locality rule:
-- Inside `src/functions/`, keep everything needed for that function nearby (validation, orchestration, function-specific helpers).
-- Only move code to `src/schema/` (contracts) or `src/utils/` (truly shared helpers) when reuse is real.
+- Inside `src/functions/`, keep validation, orchestration, and function-specific helper *logic* nearby.
+- Only move *logic* to `src/utils/` when reuse is real.
 - Avoid premature abstraction.
 
 ## UI Policy
@@ -229,6 +236,7 @@ Map errors precisely:
 - trusting client `user_id` without principal check
 - dispatch side effects from non-transactional mutation where atomicity is required
 - starting frontend implementation before backend behavior/tests are correct
+- defining input/output types inline in function files instead of `src/schema/`
 - extracting abstractions before repeated use proves they are needed
 - editing generated Forge client files directly
 - adding manual refetch loops after reactive mutations
@@ -274,7 +282,9 @@ Map errors precisely:
 
 - Correct behavior with explicit scope/auth guarantees.
 - Clean, composable code in preferred structure.
-- Tests cover success + critical failure and side effects.
+- Tests cover success, failure paths, boundary values, and side effects with enough variety that regressions require deliberate test changes.
+- Input/output types live in `src/schema/`, not inline in function files.
+- Pure business logic is extracted and unit tested independently.
 - Function-local behavior is preserved; shared abstractions are introduced only when justified.
 - Read replica and durability choices are deliberate and documented.
 - Logs/telemetry include enough context for production debugging.

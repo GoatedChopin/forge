@@ -33,9 +33,11 @@ src/
   - extract only when genuinely shared
 
 ## `src/schema/`
-- domain structs/enums and data contracts
+- **all** input/output structs, domain models, enums, and data contracts live here
 - `#[forge::model]` and `#[forge::forge_enum]` definitions
-- input/output DTOs used across handlers
+- input/output DTOs for handlers (even if used by only one handler)
+- this is the single source of truth for type shapes; handlers import from here
+- keeps function files focused on behavior, not data definitions
 
 ## `src/utils/`
 - pure helper functions
@@ -76,9 +78,34 @@ If existing code does not match this layout:
 - migrate intentionally in one refactor with module wiring updates + tests
 - avoid partial folder moves that leave mixed conventions
 
+## Test placement
+
+Tests live with the code they test using inline `#[cfg(test)] mod tests` blocks at the bottom of each file. No separate `tests/` directory for unit tests.
+
+```rust
+// src/functions/orders.rs
+use crate::schema::order::CreateOrderInput;
+
+#[forge::mutation(transactional)]
+pub async fn create_order(ctx: &MutationContext, input: CreateOrderInput) -> Result<Order> {
+    // ...
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn create_order_dispatches_receipt_job() {
+        // ...
+    }
+}
+```
+
 ## Rule of thumb
 
 - If code talks to context and performs side effects, it belongs in `functions/`.
 - If code models business entities/contracts, it belongs in `schema/`.
 - If code is reusable, mostly pure logic, it belongs in `utils/`.
+- Tests go in the same file as the code they cover.
 - Do not prematurely abstract one-off function logic into `utils/`.

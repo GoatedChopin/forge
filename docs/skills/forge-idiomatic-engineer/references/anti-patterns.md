@@ -204,7 +204,44 @@ Good:
 Complete backend behavior + tests first, then build frontend integration.
 ```
 
-## 15) Overusing `$effect`
+## 15) Defining input/output types inline in function files
+
+Bad:
+```rust
+// src/functions/orders.rs
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct CreateOrderInput {
+    pub user_id: uuid::Uuid,
+    pub total_cents: i64,
+}
+
+#[forge::mutation(transactional)]
+pub async fn create_order(ctx: &MutationContext, input: CreateOrderInput) -> Result<Order> {
+    // ...
+}
+```
+
+Good:
+```rust
+// src/schema/order.rs
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct CreateOrderInput {
+    pub user_id: uuid::Uuid,
+    pub total_cents: i64,
+}
+
+// src/functions/orders.rs
+use crate::schema::order::CreateOrderInput;
+
+#[forge::mutation(transactional)]
+pub async fn create_order(ctx: &MutationContext, input: CreateOrderInput) -> Result<Order> {
+    // ...
+}
+```
+
+Keep all type definitions in `src/schema/` so handlers stay focused on behavior.
+
+## 16) Overusing `$effect`
 
 Bad:
 ```svelte
@@ -219,7 +256,7 @@ Prefer `$derived` for computed state and explicit event handlers for user action
 Use `$effect` only for unavoidable imperative side effects.
 ```
 
-## 15) Skipping frontend quality gates
+## 17) Skipping frontend quality gates
 
 Bad:
 ```text
@@ -231,7 +268,7 @@ Good:
 Run CLI checks (`eslint`, `svelte-check`, prefer `bun` when available) and verify SEO + accessibility baseline.
 ```
 
-## 16) Generic AI-sounding UI copy
+## 18) Generic AI-sounding UI copy
 
 Bad:
 ```text
