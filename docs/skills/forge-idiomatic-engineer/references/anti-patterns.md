@@ -118,6 +118,42 @@ Good:
 Change Rust schema/functions, then run forge generate
 ```
 
+## 9.5) Backend changed but generation skipped
+
+Bad:
+```text
+Add/update backend contracts, then forget to regenerate frontend/runtime bindings
+```
+
+Good:
+```text
+After backend schema/function changes, run forge generate before frontend integration or delivery
+```
+
+## 9.6) Shipping without root-level forge check
+
+Bad:
+```text
+Assume code is fine and skip forge check
+```
+
+Good:
+```text
+Run forge check from the app root (forge.toml directory), fix findings, rerun until clean
+```
+
+## 9.7) UI changed without Playwright integration execution
+
+Bad:
+```text
+Only run lint/type checks after UI changes
+```
+
+Good:
+```text
+Add or update a basic Playwright integration path and execute it before delivery
+```
+
 ## 10) Manual refetch loops in reactive UI
 
 Bad:

@@ -20,7 +20,10 @@ use tower_http::cors::{Any, CorsLayer};
 use forge_core::cluster::NodeId;
 use forge_core::config::McpConfig;
 use forge_core::function::{JobDispatch, WorkflowDispatch};
+use opentelemetry::global;
+use opentelemetry::propagation::Extractor;
 use tracing::Instrument;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use super::auth::{AuthConfig, AuthMiddleware, auth_middleware};
 use super::mcp::{McpState, mcp_get_handler, mcp_post_handler};
@@ -368,7 +371,22 @@ fn set_tracing_headers(response: &mut axum::response::Response, trace_id: &str, 
     }
 }
 
-/// Wraps each request in a span with HTTP semantics.
+/// Extracts W3C traceparent context from HTTP headers.
+struct HeaderExtractor<'a>(&'a axum::http::HeaderMap);
+
+impl<'a> Extractor for HeaderExtractor<'a> {
+    fn get(&self, key: &str) -> Option<&str> {
+        self.0.get(key).and_then(|v| v.to_str().ok())
+    }
+
+    fn keys(&self) -> Vec<&str> {
+        self.0.keys().map(|k| k.as_str()).collect()
+    }
+}
+
+/// Wraps each request in a span with HTTP semantics and OpenTelemetry
+/// context propagation. Incoming `traceparent` headers are extracted so
+/// that spans join the caller's distributed trace.
 /// Quiet routes skip spans, logs, and metrics to avoid noise from
 /// probes or high-frequency internal endpoints.
 async fn tracing_middleware(
@@ -377,6 +395,11 @@ async fn tracing_middleware(
     next: axum::middleware::Next,
 ) -> axum::response::Response {
     let headers = req.headers();
+
+    // Extract W3C traceparent from incoming headers for distributed tracing
+    let parent_cx = global::get_text_map_propagator(|propagator| {
+        propagator.extract(&HeaderExtractor(headers))
+    });
 
     let trace_id = headers
         .get(TRACE_ID_HEADER)
@@ -428,6 +451,10 @@ async fn tracing_middleware(
         trace_id = %trace_id,
         request_id = %tracing_state.request_id,
     );
+
+    // Link this span to the incoming distributed trace context so
+    // fn.execute and all downstream spans share the caller's trace ID
+    span.set_parent(parent_cx);
 
     let mut response = next.run(req).instrument(span.clone()).await;
 

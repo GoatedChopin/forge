@@ -34,6 +34,7 @@ opentelemetry = { workspace = true }
 opentelemetry_sdk = { workspace = true }
 opentelemetry-otlp = { workspace = true }
 opentelemetry-semantic-conventions = { workspace = true }
+opentelemetry-appender-tracing = { workspace = true }
 dashmap = { workspace = true }
 jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto", "use_pem"] }
 futures-util = "0.3"

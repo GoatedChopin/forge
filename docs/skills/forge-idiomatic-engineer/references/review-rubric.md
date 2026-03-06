@@ -18,9 +18,12 @@ Use this for review tasks. Findings first, summary second.
 5. Retry/timeouts/idempotency for async surfaces
 6. Observability and trace correlation quality
 7. Test coverage: wide case variety, boundary values, pure logic extracted and unit tested
-8. Type placement: input/output structs in `schema/`, not inline in function files
-9. Readability and future change cost
-10. Frontend a11y/reactivity quality when UI changes are in scope
+8. `forge check` executed from app root and findings resolved
+9. Coverage measurement evidence with 100% line coverage for changed modules (or explicit blocker)
+10. Type placement: input/output structs in `schema/`, not inline in function files
+11. Readability and future change cost
+12. Frontend a11y/reactivity quality when UI changes are in scope
+13. Playwright integration coverage exists and was executed when UI changed
 
 ## Required checks by primitive
 

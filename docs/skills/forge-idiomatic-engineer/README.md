@@ -12,7 +12,7 @@ Forge-specific engineering skill for maintainable, secure, observable, testable,
 - `references/security-and-scale.md`: security and performance checklists
 - `references/read-replicas-observability-tracing.md`: production operations guidance
 - `references/config-context-error-reference.md`: config options, contexts, and error conditions
-- `references/cli-and-generated-code.md`: CLI-first workflow and generated-code boundaries
+- `references/cli-and-generated-code.md`: `forge generate`-first workflow and generated-code boundaries
 - `references/project-structure.md`: preferred `functions/schema/utils` layout
 - `references/frontend-svelte5-playbook.md`: reactive, accessible, polished frontend guidance
 - `references/context7-live-docs.md`: live documentation lookup workflow
@@ -28,4 +28,7 @@ Forge-specific engineering skill for maintainable, secure, observable, testable,
 - Strict auth/scope and transactional correctness
 - Read replica and observability awareness
 - Trace-friendly operational behavior
-- CLI-first and generated-code-safe implementation
+- `forge generate`-first backend/frontend generation workflow
+- Generated-code-safe implementation
+- Mandatory app-root `forge check` gate before completion
+- Mandatory changed-scope tests, coverage proof, and Playwright integration coverage for UI work

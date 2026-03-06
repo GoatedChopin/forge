@@ -105,6 +105,8 @@ Choose a clear design direction before coding and execute it intentionally.
 
 Never edit generated:
 - `frontend/src/lib/forge/*`
+- `frontend/.forge/svelte/*`
+- `frontend/.forge/version`
 
 Instead:
 - edit app code in `frontend/src/routes/*` and non-generated `frontend/src/lib/*`

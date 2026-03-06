@@ -9,18 +9,30 @@ User: "Add project status feature."
 Expected:
 - implement backend behavior and tests first
 - verify backend edge cases against requirements
+- run `forge check` from app root and clear findings
 - run `forge generate` after backend verification
 - then implement frontend integration with generated Forge reactivity
 - run frontend CLI checks (`eslint`, `svelte-check`, prefer `bun` when available)
+- if UI exists/changed, add and run at least one Playwright integration path
 
 ## 1) Owner-scoped query
 
 User: "Add list query for my projects."
 
 Expected:
+- implement query in `src/functions/` and matching contracts in `src/schema/` if needed
 - compare input scope with authenticated principal
 - deterministic ordering
 - tests for success and scope mismatch
+
+## 1.5) Scaffold a new model or handler
+
+User: "Add an invoice model and a create_invoice mutation."
+
+Expected:
+- create/update `src/schema/invoice.rs` and `src/functions/invoice.rs`
+- update module wiring intentionally
+- implement fields, behavior, tests, and rerun `forge generate`
 
 ## 2) Mutation with async side effect
 
@@ -36,6 +48,7 @@ Expected:
 User: "Add Stripe webhook with retry-safe behavior."
 
 Expected:
+- hand-author webhook in `src/functions/` and wire it into registry
 - signature verification + idempotency
 - minimal sync work, dispatch job
 
@@ -104,3 +117,14 @@ User: "Use latest Svelte/SDK API behavior."
 Expected:
 - run Context7 lookup flow
 - record what changed due to live docs
+
+## 11) Mandatory quality gate execution
+
+User: "Before merging, verify quality gates."
+
+Expected:
+- run `forge check` from app root (`forge.toml` location)
+- fix findings and rerun until clean
+- run changed-scope tests
+- produce 100% line coverage for changed modules (or report explicit blocker)
+- if UI exists or changed, run Playwright integration tests

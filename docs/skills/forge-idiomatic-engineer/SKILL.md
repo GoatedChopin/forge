@@ -53,18 +53,41 @@ This skill is tailored for Forge conventions in this repo:
 
 ## Mandatory Repository and Generation Rules
 
-### CLI-First
-Use Forge CLI as default path to create or update project artifacts:
-- `forge new`
-- `forge add query|mutation|job|workflow|cron`
-- `forge generate`
-- `forge check`
+### `forge generate`-First Workflow
+Use Forge CLI generation as the required sync step for backend-driven changes.
+
+Required commands by task:
+- new project: `forge new`
+- after backend model/function/macro changes: `forge generate`
+- validate repo health before completion: `forge check`
+- inspect/apply/rollback migrations when migration work is involved: `forge migrate status|up|down`
+
+Backend authoring rule:
+- Define and evolve backend behavior directly in `src/functions/` and `src/schema/`.
+- Do not rely on `forge add`; this workflow is intentionally removed.
+- Treat backend source as the contract authority, then run `forge generate` to sync frontend/runtime bindings.
+
+### Root Quality Gate (Mandatory)
+Before delivery, run quality checks from the project root that contains `forge.toml`.
+
+Execution order is mandatory:
+1. Run `forge check` from that root.
+2. Fix all reported issues (errors and actionable warnings), then rerun `forge check` until clean.
+3. Run test suites for changed backend/frontend code.
+4. Enforce coverage expectations.
+5. If UI exists or UI code changed, add/update Playwright integration tests and run them.
+
+If `forge.toml` is missing at the current root:
+- do not pretend checks passed
+- locate the correct app root and run checks there
+- if no Forge app root exists, report this as a blocker
 
 ### Generated Code Is Read-Only
 Never hand-edit generated Forge client/runtime glue, including:
 - `frontend/src/lib/forge/*`
-- `src/lib/forge/*`
-- `frontend/.forge/*`
+- `frontend/.forge/svelte/*`
+- `frontend/.forge/version`
+- legacy `src/lib/forge/runtime/*` when encountered during migration
 
 After backend schema/function changes, run `forge generate`.
 
@@ -150,6 +173,7 @@ Plan:
 
 ### Step 3: Implement and Verify in Order
 3.1 Backend implementation first:
+- author or update backend contracts/handlers in `src/schema/` and `src/functions/`
 - implement backend behavior to match requirements exactly
 - preserve trace context and structured identifiers in logs
 - keep function-local behavior together in `src/functions/` unless reuse is proven
@@ -166,8 +190,11 @@ Plan:
 3.4 Frontend implementation after client generation:
 - implement or update frontend integration only after backend is validated
 
-### Step 4: Full-Stack Quality Checks
-- for frontend work, run lint/type checks and verify accessibility + reactive states.
+### Step 4: Tests and Coverage
+- run backend/frontend tests for touched areas
+- enforce 100% line coverage for changed modules (or fail explicitly with blocker details)
+- for frontend work, run lint/type checks and verify accessibility + reactive states
+- if UI exists or changed, add at least one basic Playwright integration path (happy path + one failure/empty/loading branch) and run Playwright
 
 ### Step 5: Security + Scale + Observability Gate
 - scope safety, authz, and least privilege
@@ -181,13 +208,23 @@ Plan:
 - Remove clarity anti-patterns without changing behavior.
 - Ensure simplification improves maintainability, not just line count.
 
-### Step 6: Explain Delivery
+### Step 6: Final `forge check` Gate (last step, non-negotiable)
+This is the absolute last step before delivery. Nothing else runs after this.
+
+1. Run `forge check` from the app root (`forge.toml` directory).
+2. Read the output. Fix every error and actionable warning.
+3. Run `forge check` again.
+4. Repeat until the output is fully clean. Do not proceed with any findings remaining.
+5. If a finding cannot be resolved, report it as an explicit blocker in the delivery output.
+
+### Step 7: Explain Delivery
 Output:
 1. Contract summary
 2. Changes made
 3. Test coverage
 4. Security/scale/observability checks
-5. Remaining risks
+5. `forge check` result (must be clean, or blocker explanation)
+6. Remaining risks
 
 For review tasks, findings first by severity.
 
@@ -239,6 +276,10 @@ Map errors precisely:
 - defining input/output types inline in function files instead of `src/schema/`
 - extracting abstractions before repeated use proves they are needed
 - editing generated Forge client files directly
+- skipping `forge generate` after backend contract changes
+- skipping `forge check` at app root before final delivery
+- claiming coverage is complete without measurement evidence
+- changing UI without adding/running basic Playwright integration coverage
 - adding manual refetch loops after reactive mutations
 - overusing `$effect` where `$derived` or event handlers are sufficient
 - shipping weak SEO structure or generic AI-sounding copy
@@ -283,6 +324,7 @@ Map errors precisely:
 - Correct behavior with explicit scope/auth guarantees.
 - Clean, composable code in preferred structure.
 - Tests cover success, failure paths, boundary values, and side effects with enough variety that regressions require deliberate test changes.
+- 100% line coverage for changed modules is verified and reported (or blocked with explicit reason).
 - Input/output types live in `src/schema/`, not inline in function files.
 - Pure business logic is extracted and unit tested independently.
 - Function-local behavior is preserved; shared abstractions are introduced only when justified.
@@ -291,3 +333,5 @@ Map errors precisely:
 - Generated code boundaries respected.
 - Frontend is delivered unless backend-only was explicitly requested.
 - Frontend passes lint/type checks and includes accessibility + SEO + high-quality copy standards.
+- If UI exists or changed, Playwright integration tests were added/updated and executed.
+- `forge check` is the final executable step. Run from app root, fix all findings, iterate until fully clean. No delivery with unresolved findings.

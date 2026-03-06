@@ -6,6 +6,8 @@ Use this when changing Forge handlers.
 
 Unit tests are the primary defense against regressions. The goal is wide case coverage that makes accidental breakage structurally difficult.
 
+`forge check` runs as the absolute final step (after all tests, coverage, and refinement). See the required execution sequence at the bottom of this file.
+
 For every behavior change, add:
 - happy-path tests covering the main success scenarios
 - failure-path tests (validation/authz/not found/conflict)
@@ -198,6 +200,7 @@ Minimum checks:
 - keyboard navigation and focus behavior
 - accessible names/labels for controls
 - no manual refetch anti-pattern where reactivity exists
+- add at least one basic Playwright integration test path and run it
 
 ## 9) Assertion helpers to prefer
 
@@ -214,7 +217,11 @@ Bug fix => add a regression test that fails before the fix and passes after.
 
 ## 11) Coverage philosophy
 
-The goal isn't a coverage percentage. The goal is that breaking existing behavior requires changing a test, not just changing code. To get there:
+The delivery requirement is strict for changed modules:
+- measure coverage with an actual tool (`cargo llvm-cov` preferred)
+- require 100% line coverage for changed modules, or explicitly report blocker if measurement/tooling is unavailable
+
+Coverage quality still matters beyond raw percentage. To get there:
 
 - **Boundary values**: test the edges (zero, one, max, max+1, empty, whitespace-only).
 - **State transitions**: if an entity moves through states, test each valid transition and at least one invalid one.
@@ -224,3 +231,10 @@ The goal isn't a coverage percentage. The goal is that breaking existing behavio
 - **Handler tests cover integration**: auth, scope, dispatch, DB interaction. These are more expensive so focus on the critical paths.
 
 A well-tested module should make a reviewer think "I can't change this behavior without a test failing."
+
+## 12) Required execution sequence
+
+1. Run backend/frontend tests for changed areas.
+2. Generate and review coverage results; enforce 100% line coverage on changed modules.
+3. If UI exists or changed, write/update Playwright integration tests and run them.
+4. As the absolute final step, run `forge check` from the app root. Fix all findings and rerun until fully clean. Nothing ships with unresolved findings.

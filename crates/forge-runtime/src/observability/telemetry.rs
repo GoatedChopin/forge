@@ -1,4 +1,5 @@
 use opentelemetry::{KeyValue, global, trace::TracerProvider as _};
+use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_otlp::{LogExporter, MetricExporter, SpanExporter, WithExportConfig};
 use opentelemetry_sdk::{
     Resource,
@@ -234,9 +235,14 @@ pub fn init_telemetry(
 
     let env_filter = build_env_filter(project_name, log_level);
 
-    let registry = Registry::default().with(env_filter);
+    let fmt_layer = tracing_subscriber::fmt::layer()
+        .with_target(true)
+        .with_thread_ids(false)
+        .with_file(false)
+        .with_line_number(false);
 
-    if config.enable_traces {
+    // Build optional trace layer
+    let otel_trace_layer = if config.enable_traces {
         let tracer_provider = init_tracer(config)?;
         let tracer = tracer_provider.tracer(config.service_name.clone());
 
@@ -246,31 +252,36 @@ pub fn init_telemetry(
 
         global::set_tracer_provider(tracer_provider);
 
-        let otel_layer = OpenTelemetryLayer::new(tracer);
-        let fmt_layer = tracing_subscriber::fmt::layer()
-            .with_target(true)
-            .with_thread_ids(false)
-            .with_file(false)
-            .with_line_number(false);
-
-        if registry
-            .with(otel_layer)
-            .with(fmt_layer)
-            .try_init()
-            .is_err()
-        {
-            return Ok(false);
-        }
+        Some(OpenTelemetryLayer::new(tracer))
     } else {
-        let fmt_layer = tracing_subscriber::fmt::layer()
-            .with_target(true)
-            .with_thread_ids(false)
-            .with_file(false)
-            .with_line_number(false);
+        None
+    };
 
-        if registry.with(fmt_layer).try_init().is_err() {
-            return Ok(false);
-        }
+    // Build optional log bridge layer
+    let otel_log_layer = if config.enable_logs {
+        let logger_provider = init_logger(config)?;
+
+        let log_layer = OpenTelemetryTracingBridge::new(&logger_provider);
+
+        LOGGER_PROVIDER
+            .set(logger_provider)
+            .map_err(|_| TelemetryError::AlreadyInitialized)?;
+
+        Some(log_layer)
+    } else {
+        None
+    };
+
+    // Option<Layer> implements Layer, so all branches produce the same type
+    if Registry::default()
+        .with(env_filter)
+        .with(fmt_layer)
+        .with(otel_trace_layer)
+        .with(otel_log_layer)
+        .try_init()
+        .is_err()
+    {
+        return Ok(false);
     }
 
     if config.enable_metrics {
@@ -281,14 +292,6 @@ pub fn init_telemetry(
             .map_err(|_| TelemetryError::AlreadyInitialized)?;
 
         global::set_meter_provider(meter_provider);
-    }
-
-    if config.enable_logs {
-        let logger_provider = init_logger(config)?;
-
-        LOGGER_PROVIDER
-            .set(logger_provider)
-            .map_err(|_| TelemetryError::AlreadyInitialized)?;
     }
 
     tracing::info!(
