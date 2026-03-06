@@ -305,12 +305,7 @@ forge dev
 `--demo` scaffolds a working app with queries, mutations, jobs, crons, and workflows. `--minimal` gives you a clean slate.
 
 ```bash
-forge add query list_orders      # new query function
-forge add mutation create_order  # new mutation
-forge add job send_receipt       # background job
-forge add workflow onboarding    # durable workflow
-forge add cron daily_report      # scheduled task
-forge generate                   # regenerate TypeScript types from Rust models
+forge generate                   # generate frontend/runtime bindings from backend code
 forge check                      # validate config, migrations, project health
 forge migrate status             # check which migrations have run
 forge migrate up                 # apply pending migrations

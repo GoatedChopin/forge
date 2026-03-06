@@ -1,4 +1,3 @@
-mod add;
 mod check;
 mod dev;
 mod generate;
@@ -8,7 +7,6 @@ mod runtime_generator;
 mod template;
 mod ui;
 
-pub use add::AddCommand;
 pub use check::CheckCommand;
 pub use dev::DevCommand;
 pub use generate::GenerateCommand;
@@ -36,8 +34,7 @@ const AFTER_HELP: &str = r#"Examples:
   forge dev down                 Stop the development environment
   forge dev down --clear         Stop and remove volumes + target/
   forge check                    Validate project configuration
-  forge add query get_users      Add a new query function
-  forge generate                 Regenerate TypeScript types
+  forge generate                 Generate frontend/runtime bindings from backend code
   forge migrate status           Check migration status
 "#;
 
@@ -63,10 +60,7 @@ pub enum Commands {
     /// Start development environment with Docker Compose
     Dev(DevCommand),
 
-    /// Add a new component (model, query, mutation, etc.)
-    Add(AddCommand),
-
-    /// Generate TypeScript client code
+    /// Generate frontend/runtime bindings from backend source
     Generate(GenerateCommand),
 
     /// Manage database migrations
@@ -80,7 +74,6 @@ impl Cli {
             Commands::New(cmd) => cmd.execute().await,
             Commands::Check(cmd) => cmd.execute().await,
             Commands::Dev(cmd) => cmd.execute().await,
-            Commands::Add(cmd) => cmd.execute().await,
             Commands::Generate(cmd) => cmd.execute().await,
             Commands::Migrate(cmd) => cmd.execute().await,
         }
@@ -111,8 +104,8 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_add() {
-        let cli = Cli::try_parse_from(["forge", "add", "query", "get_users"]);
+    fn test_cli_parse_generate() {
+        let cli = Cli::try_parse_from(["forge", "generate"]);
         assert!(cli.is_ok());
     }
 }

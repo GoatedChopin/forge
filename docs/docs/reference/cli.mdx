@@ -127,52 +127,9 @@ forge check --config ./config/forge.toml
 
 ---
 
-## forge add
-
-Add a new component to the project.
-
-```bash
-forge add [component] [name]
-```
-
-### Components
-
-| Component | Description | Output File |
-|-----------|-------------|-------------|
-| `model` | Database model with `#[forge::model]` | `src/schema/[name].rs` |
-| `query` | Read-only query function | `src/functions/[name].rs` |
-| `mutation` | Write operation function | `src/functions/[name].rs` |
-| `job` | Background job with retry logic | `src/functions/[name]_job.rs` |
-| `cron` | Scheduled task | `src/functions/[name]_cron.rs` |
-| `workflow` | Multi-step durable workflow | `src/functions/[name]_workflow.rs` |
-
-Names are normalized: `UserProfile` becomes `user_profile` (snake_case for files/functions) and `UserProfile` (PascalCase for structs).
-
-```bash
-# Add a model
-forge add model User
-
-# Add a query
-forge add query get_active_users
-
-# Add a mutation
-forge add mutation create_order
-
-# Add a background job
-forge add job send_email
-
-# Add a scheduled task
-forge add cron cleanup_expired
-
-# Add a workflow
-forge add workflow user_onboarding
-```
-
----
-
 ## forge generate
 
-Generate TypeScript client code from Rust schema.
+Generate frontend/runtime bindings from backend source code.
 
 ```bash
 forge generate [options]
@@ -196,6 +153,8 @@ forge generate [options]
 | runes.svelte.ts | Svelte 5 runes helpers |
 | index.ts | Re-exports all modules |
 | .forge/svelte/ | Runtime package (@forge/svelte) |
+
+Backend handler/model files are authored in `src/functions/` and `src/schema/`. `forge generate` then syncs generated frontend/runtime artifacts from that backend source of truth.
 
 ```bash
 # Generate all TypeScript code

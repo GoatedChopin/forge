@@ -425,7 +425,7 @@ impl CheckCommand {
         if function_count == 0 {
             result.warn(
                 "No function files found",
-                "Add functions with forge add query/mutation/action",
+                "Create handlers in src/functions/ with #[forge::*] macros, then run forge generate",
             );
         } else if macro_count == function_count {
             result.pass(&format!(
@@ -483,7 +483,10 @@ impl CheckCommand {
         }
 
         if model_count == 0 {
-            result.warn("No schema files found", "Add models with forge add model");
+            result.warn(
+                "No schema files found",
+                "Create models in src/schema/ with #[forge::model], then run forge generate",
+            );
         } else if macro_count == model_count {
             result.pass(&format!(
                 "{} model file(s) with #[forge::model]",
