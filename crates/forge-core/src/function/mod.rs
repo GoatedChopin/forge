@@ -4,7 +4,7 @@ pub mod traits;
 
 pub use context::{
     AuthContext, DbConn, JobInfoLookup, MutationContext, OutboxBuffer, PendingJob, PendingWorkflow,
-    QueryContext, RequestMetadata,
+    QueryContext, RequestMetadata, TokenIssuer,
 };
 pub use dispatch::{JobDispatch, WorkflowDispatch};
 pub use traits::{ForgeMutation, ForgeQuery, FunctionInfo, FunctionKind};

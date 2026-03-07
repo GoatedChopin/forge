@@ -2,11 +2,13 @@
 
 Frontend is the default deliverable for this skill.
 
-Only skip frontend when the user explicitly requests backend-only output.
+Only skip frontend when the user explicitly requests backend-only output. In normal tasks, deliver both backend and frontend integration. Maintain strict boundary between handwritten app UI and generated Forge client code.
 
 Always sequence work as:
 1. Backend correctness and tests
 2. Frontend integration and UX polish
+
+Do not start frontend implementation before backend behavior/tests are correct.
 
 ## 1) Delivery and Tooling Order
 

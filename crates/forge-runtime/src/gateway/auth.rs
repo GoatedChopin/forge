@@ -10,7 +10,7 @@ use axum::{
 use forge_core::auth::Claims;
 use forge_core::config::JwtAlgorithm as CoreJwtAlgorithm;
 use forge_core::function::AuthContext;
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, dangerous, decode};
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, dangerous, decode, encode};
 use tracing::debug;
 
 use super::jwks::JwksClient;
@@ -141,6 +141,45 @@ impl From<CoreJwtAlgorithm> for JwtAlgorithm {
             CoreJwtAlgorithm::RS384 => JwtAlgorithm::RS384,
             CoreJwtAlgorithm::RS512 => JwtAlgorithm::RS512,
         }
+    }
+}
+
+/// Token issuer for HMAC-based JWT signing.
+///
+/// Created from the auth config when an HMAC algorithm is configured.
+/// Passed into MutationContext so handlers can call `ctx.issue_token()`.
+#[derive(Clone)]
+pub struct HmacTokenIssuer {
+    secret: String,
+    algorithm: Algorithm,
+}
+
+impl HmacTokenIssuer {
+    /// Create a token issuer from auth config, if HMAC auth is configured.
+    pub fn from_config(config: &AuthConfig) -> Option<Self> {
+        if !config.is_hmac() {
+            return None;
+        }
+        let secret = config.jwt_secret.as_ref()?.clone();
+        if secret.is_empty() {
+            return None;
+        }
+        Some(Self {
+            secret,
+            algorithm: config.algorithm.into(),
+        })
+    }
+}
+
+impl forge_core::TokenIssuer for HmacTokenIssuer {
+    fn sign(&self, claims: &Claims) -> forge_core::Result<String> {
+        let header = jsonwebtoken::Header::new(self.algorithm);
+        encode(
+            &header,
+            claims,
+            &jsonwebtoken::EncodingKey::from_secret(self.secret.as_bytes()),
+        )
+        .map_err(|e| forge_core::ForgeError::Internal(format!("token signing error: {e}")))
     }
 }
 

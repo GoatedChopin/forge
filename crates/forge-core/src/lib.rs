@@ -31,7 +31,7 @@ pub use error::{ForgeError, Result};
 pub use function::{
     AuthContext, DbConn, ForgeMutation, ForgeQuery, FunctionInfo, FunctionKind, JobDispatch,
     JobInfoLookup, MutationContext, OutboxBuffer, PendingJob, PendingWorkflow, QueryContext,
-    RequestMetadata, WorkflowDispatch,
+    RequestMetadata, TokenIssuer, WorkflowDispatch,
 };
 pub use http::{
     CircuitBreakerClient, CircuitBreakerConfig, CircuitBreakerError, CircuitBreakerOpen,

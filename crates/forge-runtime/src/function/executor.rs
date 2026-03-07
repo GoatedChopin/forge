@@ -47,12 +47,26 @@ impl FunctionExecutor {
         job_dispatcher: Option<Arc<dyn JobDispatch>>,
         workflow_dispatcher: Option<Arc<dyn WorkflowDispatch>>,
     ) -> Self {
+        Self::with_dispatch_and_issuer(registry, db, job_dispatcher, workflow_dispatcher, None)
+    }
+
+    /// Create a function executor with dispatch and token issuer.
+    pub fn with_dispatch_and_issuer(
+        registry: Arc<FunctionRegistry>,
+        db: Database,
+        job_dispatcher: Option<Arc<dyn JobDispatch>>,
+        workflow_dispatcher: Option<Arc<dyn WorkflowDispatch>>,
+        token_issuer: Option<Arc<dyn forge_core::TokenIssuer>>,
+    ) -> Self {
         let mut router = FunctionRouter::new(Arc::clone(&registry), db);
         if let Some(jd) = job_dispatcher {
             router = router.with_job_dispatcher(jd);
         }
         if let Some(wd) = workflow_dispatcher {
             router = router.with_workflow_dispatcher(wd);
+        }
+        if let Some(issuer) = token_issuer {
+            router = router.with_token_issuer(issuer);
         }
         Self {
             router,

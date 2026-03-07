@@ -40,6 +40,7 @@ pub struct FunctionRouter {
     workflow_dispatcher: Option<Arc<dyn WorkflowDispatch>>,
     rate_limiter: HybridRateLimiter,
     query_cache: QueryCache,
+    token_issuer: Option<Arc<dyn forge_core::TokenIssuer>>,
 }
 
 impl FunctionRouter {
@@ -54,6 +55,7 @@ impl FunctionRouter {
             workflow_dispatcher: None,
             rate_limiter,
             query_cache: QueryCache::new(),
+            token_issuer: None,
         }
     }
 
@@ -72,7 +74,14 @@ impl FunctionRouter {
             workflow_dispatcher: None,
             rate_limiter,
             query_cache: QueryCache::new(),
+            token_issuer: None,
         }
+    }
+
+    /// Set the token issuer for this router (enables `ctx.issue_token()` in mutations).
+    pub fn with_token_issuer(mut self, issuer: Arc<dyn forge_core::TokenIssuer>) -> Self {
+        self.token_issuer = Some(issuer);
+        self
     }
 
     /// Set the job dispatcher for this router.
@@ -141,7 +150,7 @@ impl FunctionRouter {
                             .await
                     } else {
                         // Use primary for mutations
-                        let ctx = MutationContext::with_dispatch(
+                        let mut ctx = MutationContext::with_dispatch(
                             self.db.primary().clone(),
                             auth,
                             request,
@@ -149,6 +158,9 @@ impl FunctionRouter {
                             self.job_dispatcher.clone(),
                             self.workflow_dispatcher.clone(),
                         );
+                        if let Some(ref issuer) = self.token_issuer {
+                            ctx.set_token_issuer(issuer.clone());
+                        }
                         let result = handler(&ctx, args).await?;
                         Ok(RouteResult::Mutation(result))
                     }
@@ -472,7 +484,7 @@ impl FunctionRouter {
             let job_lookup: forge_core::JobInfoLookup =
                 Arc::new(move |name: &str| job_dispatcher.as_ref().and_then(|d| d.get_info(name)));
 
-            let (ctx, tx_handle, outbox) = MutationContext::with_transaction(
+            let (mut ctx, tx_handle, outbox) = MutationContext::with_transaction(
                 primary.clone(),
                 tx,
                 auth,
@@ -480,6 +492,9 @@ impl FunctionRouter {
                 self.http_client.clone(),
                 job_lookup,
             );
+            if let Some(ref issuer) = self.token_issuer {
+                ctx.set_token_issuer(issuer.clone());
+            }
 
             match handler(&ctx, args).await {
                 Ok(value) => {

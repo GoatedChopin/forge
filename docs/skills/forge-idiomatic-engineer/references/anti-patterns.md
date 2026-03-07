@@ -1,25 +1,27 @@
 # Anti-Patterns and Corrections
 
-## 1) Trusting user_id from input
+## 1) Redundant manual identity comparison
+
+The router's `check_identity_args()` validates identity scope args (e.g. `user_id`) match the JWT subject before the handler runs. Manual comparison is dead code.
 
 Bad:
 ```rust
-#[forge::query]
-pub async fn my_orders(ctx: &QueryContext, input: ListOrdersInput) -> Result<Vec<Order>> {
-    sqlx::query_as("SELECT * FROM orders WHERE user_id = $1")
-        .bind(input.user_id)
-        .fetch_all(ctx.db())
-        .await
-        .map_err(Into::into)
+let uid = ctx.require_user_id()?;
+if input.user_id != uid {
+    return Err(ForgeError::Forbidden("Access denied".into()));
 }
 ```
 
 Good:
 ```rust
-let me = ctx.require_user_id()?;
-if input.user_id != me {
-    return Err(ForgeError::Forbidden("User scope mismatch".into()));
-}
+// Router already verified input.user_id == JWT sub
+let uid = ctx.require_user_id()?;
+// use uid directly in queries
+sqlx::query_as("SELECT * FROM orders WHERE user_id = $1")
+    .bind(uid)
+    .fetch_all(ctx.db())
+    .await
+    .map_err(Into::into)
 ```
 
 ## 2) Dispatch side effect in non-transactional mutation
@@ -314,4 +316,60 @@ Bad:
 Good:
 ```text
 Use concise, domain-specific copy that helps users complete tasks quickly.
+```
+
+## 19) Dummy input on no-arg handlers
+
+The macro auto-generates a unit type when the handler takes no input. Do not force a second parameter.
+
+Bad:
+```rust
+#[forge::query(public)]
+pub async fn list_todos(ctx: &QueryContext, _input: Option<()>) -> Result<Vec<Todo>> {
+    // ...
+}
+```
+
+Good:
+```rust
+#[forge::query(public)]
+pub async fn list_todos(ctx: &QueryContext) -> Result<Vec<Todo>> {
+    // ...
+}
+```
+
+## 20) Defaulting to public endpoints
+
+Bad:
+```text
+Skip [auth] config or make endpoints public when the user didn't explicitly ask for no auth
+```
+
+Good:
+```text
+Configure auth by default. Only make endpoints public when explicitly justified.
+```
+
+## 21) Claiming coverage without evidence
+
+Bad:
+```text
+"Tests cover all cases" with no measurement or coverage report
+```
+
+Good:
+```text
+Run coverage tool (cargo llvm-cov), report numbers, enforce 100% line coverage on changed modules.
+```
+
+## 22) Reporting completion with failing tests
+
+Bad:
+```text
+"Task complete. Note: two Playwright tests are failing."
+```
+
+Good:
+```text
+Fix the failing tests first. Only report completion when everything passes.
 ```

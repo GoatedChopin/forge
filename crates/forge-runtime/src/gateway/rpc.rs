@@ -36,11 +36,23 @@ impl RpcHandler {
         job_dispatcher: Option<Arc<dyn JobDispatch>>,
         workflow_dispatcher: Option<Arc<dyn WorkflowDispatch>>,
     ) -> Self {
-        let executor = FunctionExecutor::with_dispatch(
+        Self::with_dispatch_and_issuer(registry, db, job_dispatcher, workflow_dispatcher, None)
+    }
+
+    /// Create a new RPC handler with dispatch and token issuer.
+    pub fn with_dispatch_and_issuer(
+        registry: FunctionRegistry,
+        db: Database,
+        job_dispatcher: Option<Arc<dyn JobDispatch>>,
+        workflow_dispatcher: Option<Arc<dyn WorkflowDispatch>>,
+        token_issuer: Option<Arc<dyn forge_core::TokenIssuer>>,
+    ) -> Self {
+        let executor = FunctionExecutor::with_dispatch_and_issuer(
             Arc::new(registry),
             db,
             job_dispatcher,
             workflow_dispatcher,
+            token_issuer,
         );
         Self {
             executor: Arc::new(executor),

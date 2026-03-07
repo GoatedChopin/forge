@@ -94,6 +94,19 @@ Roles:
 - `sampling_ratio`
 - `log_level`
 
+### Config value types and env var interpolation
+
+Environment variable interpolation (`${VAR}` or `${VAR-default}`) only works for **string** values in `forge.toml`. Boolean and integer fields must use literal TOML values. Using `${VAR}` syntax for a boolean field causes a TOML parse error.
+
+```toml
+# correct
+enabled = false
+otlp_endpoint = "${OTEL_EXPORTER_OTLP_ENDPOINT-http://localhost:4318}"
+
+# wrong - boolean fields cannot use env var interpolation
+enabled = ${FORGE_OTEL_ENABLED-false}
+```
+
 ## 2) Context Quick Reference
 
 ### QueryContext

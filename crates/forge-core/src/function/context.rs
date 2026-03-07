@@ -43,9 +43,19 @@ use uuid::Uuid;
 use tracing::Instrument;
 
 use super::dispatch::{JobDispatch, WorkflowDispatch};
+use crate::auth::Claims;
 use crate::env::{EnvAccess, EnvProvider, RealEnvProvider};
 use crate::http::CircuitBreakerClient;
 use crate::job::JobInfo;
+
+/// Token issuer for signing JWTs.
+///
+/// Implemented by the runtime when HMAC auth is configured.
+/// Available via `ctx.issue_token()` in mutation handlers.
+pub trait TokenIssuer: Send + Sync {
+    /// Sign the given claims into a JWT string.
+    fn sign(&self, claims: &Claims) -> crate::error::Result<String>;
+}
 
 /// Abstracts over pool and transaction connections so handlers can work with either.
 pub enum DbConn<'a> {
@@ -439,6 +449,8 @@ pub struct MutationContext {
     outbox: Option<Arc<Mutex<OutboxBuffer>>>,
     /// Job info lookup for transactional dispatch.
     job_info_lookup: Option<JobInfoLookup>,
+    /// Optional token issuer for signing JWTs (available when HMAC auth is configured).
+    token_issuer: Option<Arc<dyn TokenIssuer>>,
 }
 
 impl MutationContext {
@@ -455,6 +467,7 @@ impl MutationContext {
             tx: None,
             outbox: None,
             job_info_lookup: None,
+            token_issuer: None,
         }
     }
 
@@ -478,6 +491,7 @@ impl MutationContext {
             tx: None,
             outbox: None,
             job_info_lookup: None,
+            token_issuer: None,
         }
     }
 
@@ -502,6 +516,7 @@ impl MutationContext {
             tx: None,
             outbox: None,
             job_info_lookup: None,
+            token_issuer: None,
         }
     }
 
@@ -533,6 +548,7 @@ impl MutationContext {
             tx: Some(tx_handle.clone()),
             outbox: Some(outbox.clone()),
             job_info_lookup: Some(job_info_lookup),
+            token_issuer: None,
         };
 
         (ctx, tx_handle, outbox)
@@ -574,6 +590,35 @@ impl MutationContext {
 
     pub fn require_subject(&self) -> crate::error::Result<&str> {
         self.auth.require_subject()
+    }
+
+    /// Set the token issuer for this context.
+    pub fn set_token_issuer(&mut self, issuer: Arc<dyn TokenIssuer>) {
+        self.token_issuer = Some(issuer);
+    }
+
+    /// Issue a signed JWT from the given claims.
+    ///
+    /// Only available when HMAC auth is configured in `forge.toml`.
+    /// Returns an error if auth is not configured or uses an external provider (RSA/JWKS).
+    ///
+    /// ```ignore
+    /// let claims = Claims::builder()
+    ///     .user_id(user.id)
+    ///     .duration_secs(7 * 24 * 3600)
+    ///     .build()
+    ///     .map_err(|e| ForgeError::Internal(e))?;
+    ///
+    /// let token = ctx.issue_token(&claims)?;
+    /// ```
+    pub fn issue_token(&self, claims: &Claims) -> crate::error::Result<String> {
+        let issuer = self.token_issuer.as_ref().ok_or_else(|| {
+            crate::error::ForgeError::Internal(
+                "Token issuer not available. Configure [auth] with an HMAC algorithm in forge.toml"
+                    .into(),
+            )
+        })?;
+        issuer.sign(claims)
     }
 
     /// In transactional mode, buffers for atomic commit; otherwise dispatches immediately.

@@ -25,7 +25,7 @@ use opentelemetry::propagation::Extractor;
 use tracing::Instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-use super::auth::{AuthConfig, AuthMiddleware, auth_middleware};
+use super::auth::{AuthConfig, AuthMiddleware, HmacTokenIssuer, auth_middleware};
 use super::mcp::{McpState, mcp_get_handler, mcp_post_handler};
 use super::multipart::rpc_multipart_handler;
 use super::response::{RpcError, RpcResponse};
@@ -161,11 +161,15 @@ impl GatewayServer {
 
     /// Build the Axum router.
     pub fn router(&self) -> Router {
-        let rpc_handler_state = Arc::new(RpcHandler::with_dispatch(
+        let token_issuer = HmacTokenIssuer::from_config(&self.config.auth)
+            .map(|issuer| Arc::new(issuer) as Arc<dyn forge_core::TokenIssuer>);
+
+        let rpc_handler_state = Arc::new(RpcHandler::with_dispatch_and_issuer(
             self.registry.clone(),
             self.db.clone(),
             self.job_dispatcher.clone(),
             self.workflow_dispatcher.clone(),
+            token_issuer,
         ));
 
         let auth_middleware_state = Arc::new(AuthMiddleware::new(self.config.auth.clone()));

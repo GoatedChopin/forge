@@ -63,6 +63,27 @@ When change is needed, modify Rust source or Forge config, then regenerate.
 - `frontend/src/routes/*`
 - `frontend/src/lib/*` excluding generated Forge paths
 
+## Migration Cleanup
+
+When creating real migration files for a project, check `migrations/` for any scaffolded files from `forge new`:
+- `--minimal` creates `0001_initial.sql.example` (a commented placeholder). Delete it before creating your real migration.
+- `--demo` creates `0001_initial.sql` (a real migration with tables). This will run and create tables that conflict with your own migration. Delete it and, if the database already ran it, drop those tables and remove the row from `forge_migrations` before running your own migration.
+
+Do not use `CREATE TABLE IF NOT EXISTS` in migrations. It silently skips creation if a conflicting table from the scaffold migration already exists, leading to schema mismatches that are hard to debug.
+
+## Project Layout Standard
+
+Prefer this structure for app code:
+- `src/functions/` for Forge handlers
+- `src/schema/` for domain structs, enums, and data contracts
+- `src/utils/` for pure helper logic
+
+Type placement: all input/output structs, domain models, and enums belong in `src/schema/`, not inline in function files. Handlers import from `schema`.
+
+Function locality: inside `src/functions/`, keep validation, orchestration, and function-specific helper logic nearby. Only move logic to `src/utils/` when reuse is real.
+
+See `references/project-structure.md` for full layout details.
+
 ## Common Mistakes
 
 - Mistake: patch generated TS client manually

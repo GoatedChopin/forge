@@ -28,26 +28,30 @@ fn append_cargo_patch(cargo_toml_path: &Path) -> Result<()> {
     let workspace_dir = get_forge_workspace_dir()
         .ok_or_else(|| anyhow::anyhow!("Could not determine forge workspace directory"))?;
 
-    // Paths point to /forge because docker-compose mounts the workspace there
-    let _ = workspace_dir;
-    let patch_section = r#"
+    let patch_section = format!(
+        r#"
 # Local dev patches (debug build) - remove before publishing
 [patch.crates-io]
-forgex = { path = "/forge/crates/forge" }
-forge-core = { path = "/forge/crates/forge-core" }
-forge-macros = { path = "/forge/crates/forge-macros" }
-forge-runtime = { path = "/forge/crates/forge-runtime" }
-forge-codegen = { path = "/forge/crates/forge-codegen" }
-"#;
+forgex = {{ path = "{ws}/crates/forge" }}
+forge-core = {{ path = "{ws}/crates/forge-core" }}
+forge-macros = {{ path = "{ws}/crates/forge-macros" }}
+forge-runtime = {{ path = "{ws}/crates/forge-runtime" }}
+forge-codegen = {{ path = "{ws}/crates/forge-codegen" }}
+"#,
+        ws = workspace_dir
+    );
 
     let mut content = fs::read_to_string(cargo_toml_path)?;
-    content.push_str(patch_section);
+    content.push_str(&patch_section);
     fs::write(cargo_toml_path, content)?;
 
     Ok(())
 }
 
 /// Add forge workspace volume to docker-compose.yml (only in debug builds).
+///
+/// Mounts the host workspace at the same absolute path inside the container
+/// so cargo patch paths resolve identically in both environments.
 #[cfg(debug_assertions)]
 fn patch_docker_compose(docker_compose_path: &Path) -> Result<()> {
     let workspace_dir = get_forge_workspace_dir()
@@ -57,8 +61,8 @@ fn patch_docker_compose(docker_compose_path: &Path) -> Result<()> {
     let patched = content.replace(
         "      - target_cache:/app/target\n",
         &format!(
-            "      - target_cache:/app/target\n      - {workspace}:/forge\n",
-            workspace = workspace_dir
+            "      - target_cache:/app/target\n      - {ws}:{ws}\n",
+            ws = workspace_dir
         ),
     );
     fs::write(docker_compose_path, patched)?;

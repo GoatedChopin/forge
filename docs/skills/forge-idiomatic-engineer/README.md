@@ -4,7 +4,9 @@ Forge-specific engineering skill for maintainable, secure, observable, testable,
 
 ## Package Contents
 
-- `SKILL.md`: Core workflow, rules, and quality gates
+- `SKILL.md`: Non-negotiable rules and reference loading map (kept lean)
+- `references/forge-defaults.md`: auth, scope, error, observability, and frontend defaults
+- `references/implementation-workflow.md`: step-by-step implementation and delivery process
 - `references/decision-tree.md`: primitive and implementation choices
 - `references/feature-differentiation.md`: function-type comparison matrix
 - `references/pattern-cookbook.md`: idiomatic Forge code patterns
@@ -12,7 +14,7 @@ Forge-specific engineering skill for maintainable, secure, observable, testable,
 - `references/security-and-scale.md`: security and performance checklists
 - `references/read-replicas-observability-tracing.md`: production operations guidance
 - `references/config-context-error-reference.md`: config options, contexts, and error conditions
-- `references/cli-and-generated-code.md`: `forge generate`-first workflow and generated-code boundaries
+- `references/cli-and-generated-code.md`: CLI workflow, generated-code boundaries, project layout, migration cleanup
 - `references/project-structure.md`: preferred `functions/schema/utils` layout
 - `references/frontend-svelte5-playbook.md`: reactive, accessible, polished frontend guidance
 - `references/context7-live-docs.md`: live documentation lookup workflow

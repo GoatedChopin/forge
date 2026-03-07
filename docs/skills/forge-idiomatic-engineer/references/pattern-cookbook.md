@@ -27,7 +27,73 @@ pub async fn order_for_update(ctx: &MutationContext, id: uuid::Uuid) -> Result<O
 }
 ```
 
-## 2) Boundary validation function
+### DbConn calling conventions
+
+`MutationContext::db()` returns `DbConn<'_>` (transaction-aware), not `&PgPool`. The calling pattern differs from `QueryContext`:
+
+```rust
+// QueryContext: sqlx query builder chained directly, ctx.db() acts like &PgPool
+sqlx::query_as::<_, Todo>("SELECT * FROM todos WHERE user_id = $1")
+    .bind(uid)
+    .fetch_all(ctx.db())
+    .await?;
+
+// MutationContext: DbConn has its own fetch methods, pass sqlx query as argument
+ctx.db()
+    .fetch_one(
+        sqlx::query_as::<_, Todo>("INSERT INTO todos ... RETURNING *")
+            .bind(uid)
+            .bind(&title),
+    )
+    .await?;
+```
+
+`DbConn` methods: `fetch_one`, `fetch_optional`, `fetch_all`, `execute`. Use these when working with `MutationContext::db()`. For `QueryContext`, you can chain `.fetch_all(ctx.db())` directly on the sqlx query builder.
+
+## 2) Self-issued auth (register + login)
+
+Use `ctx.issue_token()` with `Claims::builder()` for HMAC-based auth. No extra JWT dependencies needed.
+
+```rust
+use forge::forge_core::Claims;
+
+#[forge::mutation(public)]
+pub async fn register(ctx: &MutationContext, input: AuthInput) -> Result<AuthResponse> {
+    let hash = bcrypt::hash(&input.password, 12)
+        .map_err(|e| ForgeError::Internal(format!("hash error: {e}")))?;
+
+    let user: User = ctx.db()
+        .fetch_one(
+            sqlx::query_as::<_, User>(
+                "INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING *"
+            )
+            .bind(&input.username)
+            .bind(&hash),
+        )
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("unique") {
+                ForgeError::Validation("Username already taken".into())
+            } else {
+                ForgeError::Internal(format!("database error: {e}"))
+            }
+        })?;
+
+    let claims = Claims::builder()
+        .user_id(user.id)
+        .duration_secs(7 * 24 * 3600)
+        .build()
+        .map_err(|e| ForgeError::Internal(e))?;
+
+    Ok(AuthResponse {
+        token: ctx.issue_token(&claims)?,
+        user_id: user.id,
+        username: user.username,
+    })
+}
+```
+
+## 3) Boundary validation function
 
 ```rust
 fn normalized_title(raw: &str) -> Result<String> {
@@ -44,22 +110,21 @@ fn normalized_title(raw: &str) -> Result<String> {
 
 ## 3) Scope-safe query
 
+The router validates `input.user_id` matches the JWT subject before the handler runs. No manual comparison needed — just use `ctx.require_user_id()?` for the verified ID.
+
 ```rust
 // src/schema/order.rs — type definitions live here
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct ListOrdersInput {
-    pub user_id: uuid::Uuid,
+    pub user_id: uuid::Uuid,  // router validates this matches JWT sub
 }
 
 // src/functions/orders.rs — handler imports from schema
 use crate::schema::order::ListOrdersInput;
 
 #[forge::query(tables = ["orders"])]
-pub async fn list_orders(ctx: &QueryContext, input: ListOrdersInput) -> Result<Vec<Order>> {
+pub async fn list_orders(ctx: &QueryContext, _input: ListOrdersInput) -> Result<Vec<Order>> {
     let me = ctx.require_user_id()?;
-    if input.user_id != me {
-        return Err(ForgeError::Forbidden("User scope mismatch".into()));
-    }
 
     sqlx::query_as("SELECT * FROM orders WHERE user_id = $1 ORDER BY created_at DESC")
         .bind(me)
@@ -85,9 +150,6 @@ use crate::schema::invoice::CreateInvoiceInput;
 #[forge::mutation(transactional)]
 pub async fn create_invoice(ctx: &MutationContext, input: CreateInvoiceInput) -> Result<Invoice> {
     let me = ctx.require_user_id()?;
-    if input.user_id != me {
-        return Err(ForgeError::Forbidden("User scope mismatch".into()));
-    }
 
     let invoice: Invoice = ctx
         .db()
