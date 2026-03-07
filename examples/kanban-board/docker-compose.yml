@@ -10,6 +10,7 @@ services:
       - .env
     environment:
       - DATABASE_URL=postgres://postgres:forge@db:5432/kanban_board
+      - FORGE_OTEL_ENABLED=true
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel:4318
     working_dir: /app/examples/kanban-board
     command: cargo watch --poll -w src -w migrations -w Cargo.toml -w ../../crates/ -x "run --no-default-features"

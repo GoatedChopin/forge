@@ -13,5 +13,5 @@ jwt_algorithm = "HS256"
 jwt_secret = "${JWT_SECRET}"
 
 [observability]
-enabled = true
-otlp_endpoint = "http://otel:4318"
+enabled = ${FORGE_OTEL_ENABLED-false}
+otlp_endpoint = "${OTEL_EXPORTER_OTLP_ENDPOINT-http://localhost:4318}"

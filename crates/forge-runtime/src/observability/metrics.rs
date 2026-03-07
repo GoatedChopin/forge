@@ -7,6 +7,7 @@ use std::sync::OnceLock;
 const METER_NAME: &str = "forge-runtime";
 
 static HTTP_METRICS: OnceLock<HttpMetrics> = OnceLock::new();
+static FN_METRICS: OnceLock<FnMetrics> = OnceLock::new();
 static JOB_METRICS: OnceLock<JobMetrics> = OnceLock::new();
 static CONNECTIONS_GAUGE: OnceLock<ActiveConnectionsGauge> = OnceLock::new();
 
@@ -46,6 +47,46 @@ impl HttpMetrics {
 
         self.requests_total.add(1, &attributes);
         self.request_duration.record(duration_secs, &attributes);
+    }
+}
+
+pub struct FnMetrics {
+    executions_total: Counter<u64>,
+    duration: Histogram<f64>,
+}
+
+impl FnMetrics {
+    fn new() -> Self {
+        let meter = global::meter(METER_NAME);
+
+        let executions_total = meter
+            .u64_counter("fn.executions_total")
+            .with_description("Total function executions")
+            .with_unit("executions")
+            .build();
+
+        let duration = meter
+            .f64_histogram("fn.duration_seconds")
+            .with_description("Function execution duration")
+            .with_unit("s")
+            .build();
+
+        Self {
+            executions_total,
+            duration,
+        }
+    }
+
+    pub fn record(&self, function: &str, kind: &str, success: bool, duration_secs: f64) {
+        let status = if success { "ok" } else { "error" };
+        let attributes = [
+            KeyValue::new("function", function.to_string()),
+            KeyValue::new("kind", kind.to_string()),
+            KeyValue::new("status", status),
+        ];
+
+        self.executions_total.add(1, &attributes);
+        self.duration.record(duration_secs, &attributes);
     }
 }
 
@@ -124,6 +165,10 @@ fn http_metrics() -> &'static HttpMetrics {
     HTTP_METRICS.get_or_init(HttpMetrics::new)
 }
 
+fn fn_metrics() -> &'static FnMetrics {
+    FN_METRICS.get_or_init(FnMetrics::new)
+}
+
 fn job_metrics() -> &'static JobMetrics {
     JOB_METRICS.get_or_init(JobMetrics::new)
 }
@@ -134,6 +179,10 @@ fn connections_gauge() -> &'static ActiveConnectionsGauge {
 
 pub fn record_http_request(method: &str, path: &str, status: u16, duration_secs: f64) {
     http_metrics().record(method, path, status, duration_secs);
+}
+
+pub fn record_fn_execution(function: &str, kind: &str, success: bool, duration_secs: f64) {
+    fn_metrics().record(function, kind, success, duration_secs);
 }
 
 pub fn record_job_execution(job_type: &str, status: &str, duration_secs: f64) {

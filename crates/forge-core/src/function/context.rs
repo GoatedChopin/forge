@@ -40,6 +40,8 @@ use sqlx::{FromRow, Postgres, Transaction};
 use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
 
+use tracing::Instrument;
+
 use super::dispatch::{JobDispatch, WorkflowDispatch};
 use crate::env::{EnvAccess, EnvProvider, RealEnvProvider};
 use crate::http::CircuitBreakerClient;
@@ -59,10 +61,19 @@ impl DbConn<'_> {
     where
         O: Send + Unpin + for<'r> FromRow<'r, PgRow>,
     {
-        match self {
-            DbConn::Pool(pool) => query.fetch_one(*pool).await,
-            DbConn::Transaction(tx) => query.fetch_one(&mut **tx.lock().await).await,
+        let span = tracing::info_span!(
+            "db.query",
+            db.system = "postgresql",
+            db.operation.name = "fetch_one",
+        );
+        async {
+            match self {
+                DbConn::Pool(pool) => query.fetch_one(*pool).await,
+                DbConn::Transaction(tx) => query.fetch_one(&mut **tx.lock().await).await,
+            }
         }
+        .instrument(span)
+        .await
     }
 
     pub async fn fetch_optional<'q, O>(
@@ -72,10 +83,19 @@ impl DbConn<'_> {
     where
         O: Send + Unpin + for<'r> FromRow<'r, PgRow>,
     {
-        match self {
-            DbConn::Pool(pool) => query.fetch_optional(*pool).await,
-            DbConn::Transaction(tx) => query.fetch_optional(&mut **tx.lock().await).await,
+        let span = tracing::info_span!(
+            "db.query",
+            db.system = "postgresql",
+            db.operation.name = "fetch_optional",
+        );
+        async {
+            match self {
+                DbConn::Pool(pool) => query.fetch_optional(*pool).await,
+                DbConn::Transaction(tx) => query.fetch_optional(&mut **tx.lock().await).await,
+            }
         }
+        .instrument(span)
+        .await
     }
 
     pub async fn fetch_all<'q, O>(
@@ -85,20 +105,38 @@ impl DbConn<'_> {
     where
         O: Send + Unpin + for<'r> FromRow<'r, PgRow>,
     {
-        match self {
-            DbConn::Pool(pool) => query.fetch_all(*pool).await,
-            DbConn::Transaction(tx) => query.fetch_all(&mut **tx.lock().await).await,
+        let span = tracing::info_span!(
+            "db.query",
+            db.system = "postgresql",
+            db.operation.name = "fetch_all",
+        );
+        async {
+            match self {
+                DbConn::Pool(pool) => query.fetch_all(*pool).await,
+                DbConn::Transaction(tx) => query.fetch_all(&mut **tx.lock().await).await,
+            }
         }
+        .instrument(span)
+        .await
     }
 
     pub async fn execute<'q>(
         &self,
         query: sqlx::query::Query<'q, Postgres, PgArguments>,
     ) -> sqlx::Result<PgQueryResult> {
-        match self {
-            DbConn::Pool(pool) => query.execute(*pool).await,
-            DbConn::Transaction(tx) => query.execute(&mut **tx.lock().await).await,
+        let span = tracing::info_span!(
+            "db.query",
+            db.system = "postgresql",
+            db.operation.name = "execute",
+        );
+        async {
+            match self {
+                DbConn::Pool(pool) => query.execute(*pool).await,
+                DbConn::Transaction(tx) => query.execute(&mut **tx.lock().await).await,
+            }
         }
+        .instrument(span)
+        .await
     }
 }
 

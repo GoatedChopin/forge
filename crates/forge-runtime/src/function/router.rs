@@ -12,6 +12,7 @@ use forge_core::{
     workflow::WorkflowStatus,
 };
 use serde_json::Value;
+use tracing::Instrument;
 
 use super::cache::QueryCache;
 use super::registry::{BoxedMutationFn, FunctionEntry, FunctionRegistry};
@@ -458,67 +459,75 @@ impl FunctionRouter {
         auth: AuthContext,
         request: RequestMetadata,
     ) -> Result<RouteResult> {
-        // Use primary for transactional mutations
-        let primary = self.db.primary();
-        let tx = primary
-            .begin()
-            .await
-            .map_err(|e| ForgeError::Database(e.to_string()))?;
-
-        let job_dispatcher = self.job_dispatcher.clone();
-        let job_lookup: forge_core::JobInfoLookup =
-            Arc::new(move |name: &str| job_dispatcher.as_ref().and_then(|d| d.get_info(name)));
-
-        let (ctx, tx_handle, outbox) = MutationContext::with_transaction(
-            primary.clone(),
-            tx,
-            auth,
-            request,
-            self.http_client.clone(),
-            job_lookup,
+        let span = tracing::info_span!(
+            "db.transaction",
+            db.system = "postgresql",
         );
 
-        match handler(&ctx, args).await {
-            Ok(value) => {
-                let buffer = {
-                    let guard = outbox.lock().expect("outbox mutex poisoned");
-                    OutboxBuffer {
-                        jobs: guard.jobs.clone(),
-                        workflows: guard.workflows.clone(),
+        async {
+            let primary = self.db.primary();
+            let tx = primary
+                .begin()
+                .await
+                .map_err(|e| ForgeError::Database(e.to_string()))?;
+
+            let job_dispatcher = self.job_dispatcher.clone();
+            let job_lookup: forge_core::JobInfoLookup =
+                Arc::new(move |name: &str| job_dispatcher.as_ref().and_then(|d| d.get_info(name)));
+
+            let (ctx, tx_handle, outbox) = MutationContext::with_transaction(
+                primary.clone(),
+                tx,
+                auth,
+                request,
+                self.http_client.clone(),
+                job_lookup,
+            );
+
+            match handler(&ctx, args).await {
+                Ok(value) => {
+                    let buffer = {
+                        let guard = outbox.lock().expect("outbox mutex poisoned");
+                        OutboxBuffer {
+                            jobs: guard.jobs.clone(),
+                            workflows: guard.workflows.clone(),
+                        }
+                    };
+
+                    let mut tx = Arc::try_unwrap(tx_handle)
+                        .map_err(|_| ForgeError::Internal("Transaction still in use".into()))?
+                        .into_inner();
+
+                    for job in &buffer.jobs {
+                        Self::insert_job(&mut tx, job).await?;
                     }
-                };
 
-                let mut tx = Arc::try_unwrap(tx_handle)
-                    .map_err(|_| ForgeError::Internal("Transaction still in use".into()))?
-                    .into_inner();
+                    for workflow in &buffer.workflows {
+                        let version = self
+                            .workflow_dispatcher
+                            .as_ref()
+                            .and_then(|d| d.get_info(&workflow.workflow_name))
+                            .map(|info| info.version)
+                            .ok_or_else(|| {
+                                ForgeError::NotFound(format!(
+                                    "Workflow '{}' not found",
+                                    workflow.workflow_name
+                                ))
+                            })?;
+                        Self::insert_workflow(&mut tx, workflow, version).await?;
+                    }
 
-                for job in &buffer.jobs {
-                    Self::insert_job(&mut tx, job).await?;
+                    tx.commit()
+                        .await
+                        .map_err(|e| ForgeError::Database(e.to_string()))?;
+
+                    Ok(RouteResult::Mutation(value))
                 }
-
-                for workflow in &buffer.workflows {
-                    let version = self
-                        .workflow_dispatcher
-                        .as_ref()
-                        .and_then(|d| d.get_info(&workflow.workflow_name))
-                        .map(|info| info.version)
-                        .ok_or_else(|| {
-                            ForgeError::NotFound(format!(
-                                "Workflow '{}' not found",
-                                workflow.workflow_name
-                            ))
-                        })?;
-                    Self::insert_workflow(&mut tx, workflow, version).await?;
-                }
-
-                tx.commit()
-                    .await
-                    .map_err(|e| ForgeError::Database(e.to_string()))?;
-
-                Ok(RouteResult::Mutation(value))
+                Err(e) => Err(e),
             }
-            Err(e) => Err(e),
         }
+        .instrument(span)
+        .await
     }
 
     async fn insert_job(

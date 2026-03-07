@@ -105,6 +105,12 @@ impl FunctionExecutor {
                     false,
                     Some(&format!("Timeout after {:?}", fn_timeout)),
                 );
+                crate::observability::record_fn_execution(
+                    function_name,
+                    &kind,
+                    false,
+                    duration.as_secs_f64(),
+                );
                 return Err(ForgeError::Timeout(format!(
                     "Function '{}' timed out after {:?}",
                     function_name, fn_timeout
@@ -132,6 +138,12 @@ impl FunctionExecutor {
                     true,
                     None,
                 );
+                crate::observability::record_fn_execution(
+                    function_name,
+                    result_kind,
+                    true,
+                    duration.as_secs_f64(),
+                );
 
                 Ok(ExecutionResult {
                     function_name: function_name.to_string(),
@@ -151,6 +163,12 @@ impl FunctionExecutor {
                     duration,
                     false,
                     Some(&e.to_string()),
+                );
+                crate::observability::record_fn_execution(
+                    function_name,
+                    &kind,
+                    false,
+                    duration.as_secs_f64(),
                 );
 
                 Err(e)
@@ -176,20 +194,26 @@ impl FunctionExecutor {
                     $level!(
                         function = function_name,
                         kind = kind,
-                        input = %input,
                         duration_ms = duration.as_millis() as u64,
-                        success = success,
                         "Function executed"
+                    );
+                    debug!(
+                        function = function_name,
+                        input = %input,
+                        "Function input"
                     );
                 } else {
                     $level!(
                         function = function_name,
                         kind = kind,
-                        input = %input,
                         duration_ms = duration.as_millis() as u64,
-                        success = success,
                         error = error,
                         "Function failed"
+                    );
+                    debug!(
+                        function = function_name,
+                        input = %input,
+                        "Function input"
                     );
                 }
             };

@@ -188,6 +188,7 @@ impl Drop for SessionCleanupGuard {
 
         // Spawn cleanup task since we can't await in drop
         // Use spawn to handle cleanup even if the runtime is shutting down
+        crate::observability::set_active_connections("sse", -1);
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(async move {
                 reactor.remove_session(session_id).await;
@@ -399,6 +400,7 @@ pub async fn sse_handler(
 
     // Create cleanup guard - will clean up on drop if stream ends unexpectedly
     let cleanup_guard = SessionCleanupGuard::new(session_id, reactor.clone(), sessions.clone());
+    crate::observability::set_active_connections("sse", 1);
 
     // Bridge reactor messages to SSE messages
     let bridge_cancel = cancel_token.clone();

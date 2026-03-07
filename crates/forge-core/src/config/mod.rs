@@ -521,6 +521,12 @@ impl Default for ObservabilityConfig {
     }
 }
 
+impl ObservabilityConfig {
+    pub fn otlp_active(&self) -> bool {
+        self.enabled && (self.enable_traces || self.enable_metrics || self.enable_logs)
+    }
+}
+
 fn default_otlp_endpoint() -> String {
     "http://localhost:4318".to_string()
 }
@@ -602,7 +608,12 @@ fn default_mcp_session_ttl_secs() -> u64 {
     60 * 60
 }
 
-/// Substitute environment variables in the format ${VAR_NAME}.
+/// Substitute environment variables in the format `${VAR_NAME}`.
+///
+/// Supports default values with `${VAR-default}` or `${VAR:-default}`.
+/// When the env var is unset, the default is used. Without a default,
+/// the literal `${VAR}` is preserved (so TOML parsing can still fail
+/// loudly if a required variable is missing).
 #[allow(clippy::indexing_slicing)]
 fn substitute_env_vars(content: &str) -> String {
     let mut result = String::with_capacity(content.len());
@@ -616,10 +627,16 @@ fn substitute_env_vars(content: &str) -> String {
             && bytes[i + 1] == b'{'
             && let Some(end) = content[i + 2..].find('}')
         {
-            let var_name = &content[i + 2..i + 2 + end];
+            let inner = &content[i + 2..i + 2 + end];
+
+            // Split on first `-` or `:-` for default value support
+            let (var_name, default_value) = parse_var_with_default(inner);
+
             if is_valid_env_var_name(var_name) {
                 if let Ok(value) = std::env::var(var_name) {
                     result.push_str(&value);
+                } else if let Some(default) = default_value {
+                    result.push_str(default);
                 } else {
                     result.push_str(&content[i..i + 2 + end + 1]);
                 }
@@ -632,6 +649,19 @@ fn substitute_env_vars(content: &str) -> String {
     }
 
     result
+}
+
+/// Parse `VAR-default` or `VAR:-default` into (name, optional default).
+/// Both forms behave identically (fallback when unset). `:-` is checked
+/// first so its `-` doesn't get matched by the plain `-` branch.
+fn parse_var_with_default(inner: &str) -> (&str, Option<&str>) {
+    if let Some(pos) = inner.find(":-") {
+        return (&inner[..pos], Some(&inner[pos + 2..]));
+    }
+    if let Some(pos) = inner.find('-') {
+        return (&inner[..pos], Some(&inner[pos + 1..]));
+    }
+    (inner, None)
 }
 
 fn is_valid_env_var_name(name: &str) -> bool {
@@ -799,6 +829,97 @@ mod tests {
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("jwks_url is required"));
+    }
+
+    #[test]
+    fn test_env_var_default_used_when_unset() {
+        // Ensure the var is definitely not set
+        unsafe {
+            std::env::remove_var("TEST_FORGE_OTEL_UNSET");
+        }
+
+        let input = r#"enabled = ${TEST_FORGE_OTEL_UNSET-false}"#;
+        let result = substitute_env_vars(input);
+        assert_eq!(result, "enabled = false");
+    }
+
+    #[test]
+    fn test_env_var_default_overridden_when_set() {
+        unsafe {
+            std::env::set_var("TEST_FORGE_OTEL_SET", "true");
+        }
+
+        let input = r#"enabled = ${TEST_FORGE_OTEL_SET-false}"#;
+        let result = substitute_env_vars(input);
+        assert_eq!(result, "enabled = true");
+
+        unsafe {
+            std::env::remove_var("TEST_FORGE_OTEL_SET");
+        }
+    }
+
+    #[test]
+    fn test_env_var_colon_dash_default() {
+        unsafe {
+            std::env::remove_var("TEST_FORGE_ENDPOINT_UNSET");
+        }
+
+        let input = r#"endpoint = "${TEST_FORGE_ENDPOINT_UNSET:-http://localhost:4318}""#;
+        let result = substitute_env_vars(input);
+        assert_eq!(result, r#"endpoint = "http://localhost:4318""#);
+    }
+
+    #[test]
+    fn test_env_var_no_default_preserves_literal() {
+        unsafe {
+            std::env::remove_var("TEST_FORGE_MISSING");
+        }
+
+        let input = r#"url = "${TEST_FORGE_MISSING}""#;
+        let result = substitute_env_vars(input);
+        assert_eq!(result, r#"url = "${TEST_FORGE_MISSING}""#);
+    }
+
+    #[test]
+    fn test_env_var_default_empty_string() {
+        unsafe {
+            std::env::remove_var("TEST_FORGE_EMPTY_DEFAULT");
+        }
+
+        let input = r#"val = "${TEST_FORGE_EMPTY_DEFAULT-}""#;
+        let result = substitute_env_vars(input);
+        assert_eq!(result, r#"val = """#);
+    }
+
+    #[test]
+    fn test_observability_config_default_disabled() {
+        let toml = r#"
+            [database]
+            url = "postgres://localhost/test"
+        "#;
+
+        let config = ForgeConfig::parse_toml(toml).unwrap();
+        assert!(!config.observability.enabled);
+        assert!(!config.observability.otlp_active());
+    }
+
+    #[test]
+    fn test_observability_config_with_env_default() {
+        // Simulates what the template produces when no env vars are set
+        unsafe {
+            std::env::remove_var("TEST_OTEL_ENABLED");
+        }
+
+        let toml = r#"
+            [database]
+            url = "postgres://localhost/test"
+
+            [observability]
+            enabled = ${TEST_OTEL_ENABLED-false}
+        "#;
+
+        let config = ForgeConfig::parse_toml(toml).unwrap();
+        assert!(!config.observability.enabled);
     }
 
     #[test]

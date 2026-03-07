@@ -462,7 +462,12 @@ async fn tracing_middleware(
     let elapsed = tracing_state.elapsed();
 
     span.record("http.status_code", status);
-    tracing::info!(parent: &span, duration_ms = elapsed.as_millis() as u64, "Request completed");
+    // RPC calls already log at info via fn.execute with richer context
+    if path.starts_with("/rpc") {
+        tracing::debug!(parent: &span, duration_ms = elapsed.as_millis() as u64, "Request completed");
+    } else {
+        tracing::info!(parent: &span, duration_ms = elapsed.as_millis() as u64, "Request completed");
+    }
     crate::observability::record_http_request(&method, &path, status, elapsed.as_secs_f64());
 
     set_tracing_headers(&mut response, &trace_id, &tracing_state.request_id);
