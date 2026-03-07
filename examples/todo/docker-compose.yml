@@ -10,6 +10,7 @@ services:
       - .env
     environment:
       - DATABASE_URL=postgres://postgres:forge@db:5432/todo
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel:4318
     working_dir: /app/examples/todo
     command: cargo watch --poll -w src -w migrations -w Cargo.toml -w ../../crates/ -x "run --no-default-features"
     volumes:
@@ -45,8 +46,6 @@ services:
     image: postgres:18
     env_file:
       - .env
-    ports:
-      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql
     healthcheck:
@@ -54,6 +53,11 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  otel:
+    image: ghcr.io/isala404/forge/otel-lgtm:0.20.0
+    ports:
+      - "3000:3000"
 
 volumes:
   postgres_data:

@@ -25,7 +25,7 @@ enabled = true
 # enable_metrics = true
 # enable_logging = true
 # enable_tracing = true
-# otlp_endpoint = "http://localhost:4318"  # OpenTelemetry collector (HTTP)
+otlp_endpoint = "http://otel:4318"
 
 # [function]
 # default_timeout = 30  # seconds

@@ -1,0 +1,288 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Request Rate",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [{ "color": "#73BF69", "value": null }] }
+        }
+      },
+      "targets": [{
+        "expr": "sum(rate(http_requests_total{service_name=~\"$service_name\"}[$__rate_interval]))",
+        "legendFormat": "req/s"
+      }]
+    },
+    {
+      "type": "stat",
+      "title": "Avg Latency",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [
+            { "color": "#73BF69", "value": null },
+            { "color": "#FF9830", "value": 0.5 },
+            { "color": "#F2495C", "value": 1 }
+          ]}
+        }
+      },
+      "targets": [{
+        "expr": "sum(rate(http_request_duration_seconds_sum{service_name=~\"$service_name\"}[$__rate_interval])) / sum(rate(http_request_duration_seconds_count{service_name=~\"$service_name\"}[$__rate_interval]))"
+      }]
+    },
+    {
+      "type": "stat",
+      "title": "Error Rate",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [
+            { "color": "#73BF69", "value": null },
+            { "color": "#FF9830", "value": 0.01 },
+            { "color": "#F2495C", "value": 0.05 }
+          ]}
+        }
+      },
+      "targets": [{
+        "expr": "sum(rate(http_requests_total{service_name=~\"$service_name\",http_response_status_code=~\"5..\"}[$__rate_interval])) / sum(rate(http_requests_total{service_name=~\"$service_name\"}[$__rate_interval]))"
+      }]
+    },
+    {
+      "type": "stat",
+      "title": "DB Connections",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [
+            { "color": "#73BF69", "value": null },
+            { "color": "#FF9830", "value": 40 }
+          ]}
+        }
+      },
+      "targets": [{
+        "expr": "db_client_connection_count{service_name=~\"$service_name\"}",
+        "legendFormat": "active"
+      }]
+    },
+    {
+      "type": "stat",
+      "title": "DB Idle",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [{ "color": "#8AB8FF", "value": null }] }
+        }
+      },
+      "targets": [{
+        "expr": "db_client_connection_idle_count{service_name=~\"$service_name\"}"
+      }]
+    },
+    {
+      "type": "stat",
+      "title": "DB Max",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "steps": [{ "color": "#B877D9", "value": null }] }
+        }
+      },
+      "targets": [{
+        "expr": "db_client_connection_max{service_name=~\"$service_name\"}"
+      }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Request Rate by Route",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }
+      },
+      "targets": [{
+        "expr": "sum by (http_route) (rate(http_requests_total{service_name=~\"$service_name\"}[$__rate_interval]))",
+        "legendFormat": "{{http_route}}"
+      }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Latency by Route (p50 / p95 / p99)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le, http_route) (rate(http_request_duration_seconds_bucket{service_name=~\"$service_name\"}[$__rate_interval])))",
+          "legendFormat": "p50 {{http_route}}"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, http_route) (rate(http_request_duration_seconds_bucket{service_name=~\"$service_name\"}[$__rate_interval])))",
+          "legendFormat": "p95 {{http_route}}"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, http_route) (rate(http_request_duration_seconds_bucket{service_name=~\"$service_name\"}[$__rate_interval])))",
+          "legendFormat": "p99 {{http_route}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests by Status Code",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "stacking": { "mode": "normal" },
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          { "matcher": { "id": "byRegexp", "options": "2.." }, "properties": [{ "id": "color", "value": { "fixedColor": "#73BF69", "mode": "fixed" } }] },
+          { "matcher": { "id": "byRegexp", "options": "4.." }, "properties": [{ "id": "color", "value": { "fixedColor": "#FF9830", "mode": "fixed" } }] },
+          { "matcher": { "id": "byRegexp", "options": "5.." }, "properties": [{ "id": "color", "value": { "fixedColor": "#F2495C", "mode": "fixed" } }] }
+        ]
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "targets": [{
+        "expr": "sum by (http_response_status_code) (rate(http_requests_total{service_name=~\"$service_name\"}[$__rate_interval]))",
+        "legendFormat": "{{http_response_status_code}}"
+      }]
+    },
+    {
+      "type": "timeseries",
+      "title": "DB Connection Pool",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "datasource": { "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "targets": [
+        { "expr": "db_client_connection_count{service_name=~\"$service_name\"}", "legendFormat": "Active" },
+        { "expr": "db_client_connection_idle_count{service_name=~\"$service_name\"}", "legendFormat": "Idle" },
+        { "expr": "db_client_connection_max{service_name=~\"$service_name\"}", "legendFormat": "Max" }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Recent Traces",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 20 },
+      "datasource": { "uid": "tempo" },
+      "targets": [{
+        "queryType": "traceql",
+        "query": "{rootServiceName =~ \"$service_name\" && name =~ \"http.*\"}",
+        "limit": 20
+      }]
+    },
+    {
+      "type": "logs",
+      "title": "Application Logs",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 28 },
+      "datasource": { "uid": "loki" },
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": "none"
+      },
+      "targets": [{
+        "expr": "{exporter=\"OTLP\"} |= ``",
+        "refId": "A"
+      }]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["forge"],
+  "templating": {
+    "list": [
+      {
+        "name": "service_name",
+        "type": "query",
+        "datasource": { "uid": "prometheus" },
+        "definition": "label_values(http_requests_total, service_name)",
+        "query": "label_values(http_requests_total, service_name)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": false,
+        "current": { "selected": true, "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "time": { "from": "now-30m", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Forge Overview",
+  "uid": "forge-overview"
+}

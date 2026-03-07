@@ -14,3 +14,4 @@ jwt_secret = "${JWT_SECRET}"
 
 [observability]
 enabled = true
+otlp_endpoint = "http://otel:4318"

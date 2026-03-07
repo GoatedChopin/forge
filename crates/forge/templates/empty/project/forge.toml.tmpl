@@ -20,12 +20,11 @@ cors_origins = ["http://localhost:5173"]
 
 [observability]
 enabled = true
+otlp_endpoint = "http://otel:4318"
 # log_level = "info"  # debug, info, warn, error
-# metrics_flush_interval = "10s"
 # enable_metrics = true
-# enable_logging = true
-# enable_tracing = true
-# otlp_endpoint = "http://localhost:4318"  # OpenTelemetry collector (HTTP)
+# enable_logs = true
+# enable_traces = true
 
 # [function]
 # default_timeout = 30  # seconds
