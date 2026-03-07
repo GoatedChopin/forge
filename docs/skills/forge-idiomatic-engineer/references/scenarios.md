@@ -7,11 +7,13 @@ Use these realistic scenarios as execution anchors.
 User: "Add project status feature."
 
 Expected:
+- if no `[auth]` config exists and user didn't ask for public-only, set up HS256 auth with register/login mutations and a sample user
 - implement backend behavior and tests first
 - verify backend edge cases against requirements
 - run `forge check` from app root and clear findings
 - run `forge generate` after backend verification
 - then implement frontend integration with generated Forge reactivity
+- wire up auth store on frontend if auth was added
 - run frontend CLI checks (`eslint`, `svelte-check`, prefer `bun` when available)
 - if UI exists/changed, add and run at least one Playwright integration path
 

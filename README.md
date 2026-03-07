@@ -284,25 +284,9 @@ forge              → Public API, Forge::builder(), prelude, CLI
 
 ---
 
-## Getting Started
+## CLI
 
-```bash
-# Install
-curl -fsSL https://tryforge.dev/install.sh | sh
-# Or: cargo install forgex
-
-# Create and run
-forge new my-app --demo
-cd my-app
-forge dev
-# Frontend at http://localhost:5173
-# Backend at http://localhost:8080
-# PostgreSQL at localhost:5432
-```
-
-`forge dev` starts PostgreSQL, a cargo-watch backend, and a Vite frontend. All three come up together and stop with Ctrl+C.
-
-`--demo` scaffolds a working app with queries, mutations, jobs, crons, and workflows. `--minimal` gives you a clean slate.
+`forge dev` starts PostgreSQL, a cargo-watch backend, and a Vite frontend. All three come up together and stop with Ctrl+C. `--demo` scaffolds a working app with queries, mutations, jobs, crons, and workflows. `--minimal` gives you a clean slate.
 
 ```bash
 forge generate                   # generate frontend/runtime bindings from backend code
@@ -319,9 +303,7 @@ cargo build --release
 ./target/release/my-app
 ```
 
-One binary. Embeds the frontend build and the entire runtime. Point it at PostgreSQL and it runs.
-
-[**Read the docs**](https://tryforge.dev/docs)
+One binary. Embeds the frontend build and the entire runtime. Point it at PostgreSQL and it runs. [Read the docs](https://tryforge.dev/docs) for more.
 
 ---
 

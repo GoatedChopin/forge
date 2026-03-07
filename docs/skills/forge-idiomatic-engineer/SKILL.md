@@ -61,6 +61,7 @@ Required commands by task:
 - after backend model/function/macro changes: `forge generate`
 - validate repo health before completion: `forge check`
 - inspect/apply/rollback migrations when migration work is involved: `forge migrate status|up|down`
+- access the database in dev: `docker compose exec db psql -U postgres -d <project_name>`
 
 Backend authoring rule:
 - Define and evolve backend behavior directly in `src/functions/` and `src/schema/`.
@@ -81,6 +82,9 @@ If `forge.toml` is missing at the current root:
 - do not pretend checks passed
 - locate the correct app root and run checks there
 - if no Forge app root exists, report this as a blocker
+
+### Migration Cleanup
+When creating real migration files for a project, delete the scaffolded sample migration (`0001_initial.sql.example`) if it exists. This file is a placeholder from `forge new` and should not coexist with actual migrations. Check the `migrations/` directory and remove it before or alongside creating the real migration.
 
 ### Generated Code Is Read-Only
 Never hand-edit generated Forge client/runtime glue, including:
@@ -195,6 +199,7 @@ Plan:
 - enforce 100% line coverage for changed modules (or fail explicitly with blocker details)
 - for frontend work, run lint/type checks and verify accessibility + reactive states
 - if UI exists or changed, add at least one basic Playwright integration path (happy path + one failure/empty/loading branch) and run Playwright
+- **Playwright and test failures are blockers.** If any test fails, diagnose the root cause, fix the code or test, and rerun until all tests pass. Do not proceed to the next step or report the task as complete while tests are failing. A passing test suite is a hard prerequisite for delivery.
 
 ### Step 5: Security + Scale + Observability Gate
 - scope safety, authz, and least privilege
@@ -217,6 +222,8 @@ This is the absolute last step before delivery. Nothing else runs after this.
 4. Repeat until the output is fully clean. Do not proceed with any findings remaining.
 5. If a finding cannot be resolved, report it as an explicit blocker in the delivery output.
 
+**The task is not complete until `forge check` and all tests (including Playwright) pass cleanly.** Do not summarize, report delivery, or tell the user the work is done while any check or test is still failing. Fix first, then report.
+
 ### Step 7: Explain Delivery
 Output:
 1. Contract summary
@@ -231,9 +238,12 @@ For review tasks, findings first by severity.
 ## Forge-Specific Defaults to Apply Automatically
 
 ### Auth and Scope
-- Default authenticated unless `public` is intentionally justified.
+- **Default to secure mode.** Unless the user explicitly asks for no auth or a public-only app, always configure `[auth]` in `forge.toml` with HS256 self-signed JWT and set up login/register mutations.
+- When setting up auth, create a seed migration or a public `register` + `login` mutation pair so the user has a working auth flow out of the box. Include a sample user in the seed data or document how to create one (e.g., via the register endpoint with example credentials).
+- All queries and mutations default to authenticated (`ctx.require_user_id()?`) unless `public` is intentionally justified and the user explicitly requests it.
 - Prefer `ctx.require_user_id()?` / `ctx.require_subject()?`.
 - For user-scoped args, compare to authenticated principal and fail with `Forbidden` on mismatch.
+- On the frontend, wire up the generated auth store with localStorage persistence and SSE reconnection on auth state change.
 
 ### Mutation Atomicity
 - If mutation dispatches jobs/workflows or has multi-write consistency needs, require `transactional`.
@@ -270,6 +280,7 @@ Map errors precisely:
 
 ## Anti-Patterns to Reject Immediately
 
+- defaulting to `public` endpoints or skipping `[auth]` config when the user didn't explicitly ask for no auth
 - trusting client `user_id` without principal check
 - dispatch side effects from non-transactional mutation where atomicity is required
 - starting frontend implementation before backend behavior/tests are correct
@@ -283,6 +294,8 @@ Map errors precisely:
 - adding manual refetch loops after reactive mutations
 - overusing `$effect` where `$derived` or event handlers are sufficient
 - shipping weak SEO structure or generic AI-sounding copy
+- reporting task completion while Playwright or backend tests are still failing
+- leaving the sample `0001_initial.sql.example` alongside real migration files
 - unbounded query endpoints for high-cardinality data
 - logs without identifiers for async or distributed flows
 - `unwrap`/`expect` in production paths
@@ -321,7 +334,7 @@ Map errors precisely:
 
 ## Final Quality Gate (must pass before completion)
 
-- Correct behavior with explicit scope/auth guarantees.
+- Correct behavior with explicit scope/auth guarantees. Auth is configured in `forge.toml` and endpoints are authenticated by default unless the user explicitly requested otherwise.
 - Clean, composable code in preferred structure.
 - Tests cover success, failure paths, boundary values, and side effects with enough variety that regressions require deliberate test changes.
 - 100% line coverage for changed modules is verified and reported (or blocked with explicit reason).
@@ -333,5 +346,6 @@ Map errors precisely:
 - Generated code boundaries respected.
 - Frontend is delivered unless backend-only was explicitly requested.
 - Frontend passes lint/type checks and includes accessibility + SEO + high-quality copy standards.
-- If UI exists or changed, Playwright integration tests were added/updated and executed.
+- If UI exists or changed, Playwright integration tests were added/updated, executed, and **passing**. Failures are fixed before delivery, not reported as known issues.
 - `forge check` is the final executable step. Run from app root, fix all findings, iterate until fully clean. No delivery with unresolved findings.
+- Sample migration file (`0001_initial.sql.example`) is deleted if real migrations were created.

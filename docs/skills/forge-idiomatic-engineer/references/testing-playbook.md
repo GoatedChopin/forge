@@ -201,6 +201,7 @@ Minimum checks:
 - accessible names/labels for controls
 - no manual refetch anti-pattern where reactivity exists
 - add at least one basic Playwright integration test path and run it
+- **all Playwright tests must pass before the task is considered complete** — if a test fails, fix the underlying issue and rerun until green. Do not report completion with failing tests.
 
 ## 9) Assertion helpers to prefer
 
@@ -236,5 +237,5 @@ A well-tested module should make a reviewer think "I can't change this behavior 
 
 1. Run backend/frontend tests for changed areas.
 2. Generate and review coverage results; enforce 100% line coverage on changed modules.
-3. If UI exists or changed, write/update Playwright integration tests and run them.
-4. As the absolute final step, run `forge check` from the app root. Fix all findings and rerun until fully clean. Nothing ships with unresolved findings.
+3. If UI exists or changed, write/update Playwright integration tests and run them. **Fix any failures before proceeding** — loop until all tests pass.
+4. As the absolute final step, run `forge check` from the app root. Fix all findings and rerun until fully clean. Nothing ships with unresolved findings or failing tests.
