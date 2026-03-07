@@ -378,8 +378,6 @@ const FRONTEND_PLAYWRIGHT_GLOBAL_SETUP: &str =
 const FRONTEND_PLAYWRIGHT_FIXTURES: &str =
     include_str!("../../templates/populated/frontend/tests/fixtures.ts.tmpl");
 
-
-
 // Empty project templates (for --empty flag)
 const EMPTY_CARGO_TOML: &str = include_str!("../../templates/empty/project/Cargo.toml.tmpl");
 const EMPTY_FORGE_TOML: &str = include_str!("../../templates/empty/project/forge.toml.tmpl");

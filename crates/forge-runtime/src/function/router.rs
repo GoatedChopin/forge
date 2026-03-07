@@ -459,10 +459,7 @@ impl FunctionRouter {
         auth: AuthContext,
         request: RequestMetadata,
     ) -> Result<RouteResult> {
-        let span = tracing::info_span!(
-            "db.transaction",
-            db.system = "postgresql",
-        );
+        let span = tracing::info_span!("db.transaction", db.system = "postgresql",);
 
         async {
             let primary = self.db.primary();

@@ -397,9 +397,8 @@ async fn tracing_middleware(
     let headers = req.headers();
 
     // Extract W3C traceparent from incoming headers for distributed tracing
-    let parent_cx = global::get_text_map_propagator(|propagator| {
-        propagator.extract(&HeaderExtractor(headers))
-    });
+    let parent_cx =
+        global::get_text_map_propagator(|propagator| propagator.extract(&HeaderExtractor(headers)));
 
     let trace_id = headers
         .get(TRACE_ID_HEADER)
