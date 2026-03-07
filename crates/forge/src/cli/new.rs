@@ -28,18 +28,17 @@ fn append_cargo_patch(cargo_toml_path: &Path) -> Result<()> {
     let workspace_dir = get_forge_workspace_dir()
         .ok_or_else(|| anyhow::anyhow!("Could not determine forge workspace directory"))?;
 
-    let patch_section = format!(
-        r#"
+    // Paths point to /forge because docker-compose mounts the workspace there
+    let _ = workspace_dir;
+    let patch_section = r#"
 # Local dev patches (debug build) - remove before publishing
 [patch.crates-io]
-forgex = {{ path = "{workspace}/crates/forge" }}
-forge-core = {{ path = "{workspace}/crates/forge-core" }}
-forge-macros = {{ path = "{workspace}/crates/forge-macros" }}
-forge-runtime = {{ path = "{workspace}/crates/forge-runtime" }}
-forge-codegen = {{ path = "{workspace}/crates/forge-codegen" }}
-"#,
-        workspace = workspace_dir
-    );
+forgex = { path = "/forge/crates/forge" }
+forge-core = { path = "/forge/crates/forge-core" }
+forge-macros = { path = "/forge/crates/forge-macros" }
+forge-runtime = { path = "/forge/crates/forge-runtime" }
+forge-codegen = { path = "/forge/crates/forge-codegen" }
+"#;
 
     let mut content = fs::read_to_string(cargo_toml_path)?;
     content.push_str(&patch_section);
@@ -372,12 +371,14 @@ const FRONTEND_PRETTIERIGNORE: &str =
     include_str!("../../templates/populated/frontend/.prettierignore.tmpl");
 const FRONTEND_PLAYWRIGHT_HOME_SPEC: &str =
     include_str!("../../templates/populated/frontend/tests/home.spec.ts.tmpl");
-
-// Shared frontend templates (used by both demo and minimal)
 const FRONTEND_PLAYWRIGHT_CONFIG: &str =
-    include_str!("../../templates/shared/frontend/playwright.config.ts.tmpl");
+    include_str!("../../templates/populated/frontend/playwright.config.ts.tmpl");
 const FRONTEND_PLAYWRIGHT_GLOBAL_SETUP: &str =
-    include_str!("../../templates/shared/frontend/tests/global-setup.ts.tmpl");
+    include_str!("../../templates/populated/frontend/tests/global-setup.ts.tmpl");
+const FRONTEND_PLAYWRIGHT_FIXTURES: &str =
+    include_str!("../../templates/populated/frontend/tests/fixtures.ts.tmpl");
+
+
 
 // Empty project templates (for --empty flag)
 const EMPTY_CARGO_TOML: &str = include_str!("../../templates/empty/project/Cargo.toml.tmpl");
@@ -420,6 +421,12 @@ const EMPTY_FRONTEND_PRETTIERIGNORE: &str =
     include_str!("../../templates/empty/frontend/.prettierignore.tmpl");
 const EMPTY_FRONTEND_PLAYWRIGHT_HOME_SPEC: &str =
     include_str!("../../templates/empty/frontend/tests/home.spec.ts.tmpl");
+const EMPTY_FRONTEND_PLAYWRIGHT_CONFIG: &str =
+    include_str!("../../templates/empty/frontend/playwright.config.ts.tmpl");
+const EMPTY_FRONTEND_PLAYWRIGHT_GLOBAL_SETUP: &str =
+    include_str!("../../templates/empty/frontend/tests/global-setup.ts.tmpl");
+const EMPTY_FRONTEND_PLAYWRIGHT_FIXTURES: &str =
+    include_str!("../../templates/empty/frontend/tests/fixtures.ts.tmpl");
 
 /// Create a new FORGE project.
 #[derive(Parser)]
@@ -577,6 +584,7 @@ impl NewCommand {
         ui::section("Default Service URLs");
         ui::kv("Frontend", "http://localhost:5173");
         ui::kv("Backend", "http://localhost:8080");
+        ui::kv("Grafana", "http://localhost:3000");
 
         ui::section("Docs");
         println!("  {} https://tryforge.dev/docs", ui::info());
@@ -693,18 +701,20 @@ fn create_frontend(dir: &Path, name: &str, demo: bool) -> Result<()> {
     // Create tests directory
     fs::create_dir_all(frontend_dir.join("tests"))?;
 
-    // Playwright config and global setup (shared)
-    fs::write(
-        frontend_dir.join("playwright.config.ts"),
-        FRONTEND_PLAYWRIGHT_CONFIG,
-    )?;
-    fs::write(
-        frontend_dir.join("tests/global-setup.ts"),
-        FRONTEND_PLAYWRIGHT_GLOBAL_SETUP,
-    )?;
-
     if demo {
         // Demo templates - full frontend with complete UI
+        fs::write(
+            frontend_dir.join("playwright.config.ts"),
+            FRONTEND_PLAYWRIGHT_CONFIG,
+        )?;
+        fs::write(
+            frontend_dir.join("tests/global-setup.ts"),
+            FRONTEND_PLAYWRIGHT_GLOBAL_SETUP,
+        )?;
+        fs::write(
+            frontend_dir.join("tests/fixtures.ts"),
+            FRONTEND_PLAYWRIGHT_FIXTURES,
+        )?;
         fs::write(
             frontend_dir.join("package.json"),
             render(FRONTEND_PACKAGE_JSON, &vars),
@@ -745,6 +755,18 @@ fn create_frontend(dir: &Path, name: &str, demo: bool) -> Result<()> {
         )?;
     } else {
         // Minimal templates - starter frontend
+        fs::write(
+            frontend_dir.join("playwright.config.ts"),
+            EMPTY_FRONTEND_PLAYWRIGHT_CONFIG,
+        )?;
+        fs::write(
+            frontend_dir.join("tests/global-setup.ts"),
+            EMPTY_FRONTEND_PLAYWRIGHT_GLOBAL_SETUP,
+        )?;
+        fs::write(
+            frontend_dir.join("tests/fixtures.ts"),
+            EMPTY_FRONTEND_PLAYWRIGHT_FIXTURES,
+        )?;
         fs::write(
             frontend_dir.join("package.json"),
             render(EMPTY_FRONTEND_PACKAGE_JSON, &vars),
@@ -852,7 +874,10 @@ mod tests {
         // Playwright test files
         assert!(path.join("frontend/playwright.config.ts").exists());
         assert!(path.join("frontend/tests/global-setup.ts").exists());
+        assert!(path.join("frontend/tests/fixtures.ts").exists());
         assert!(path.join("frontend/tests/home.spec.ts").exists());
+        // Observability baked into Docker image, not scaffolded
+        assert!(!path.join("grafana").exists());
     }
 
     #[test]
@@ -886,6 +911,9 @@ mod tests {
         // Playwright test files
         assert!(path.join("frontend/playwright.config.ts").exists());
         assert!(path.join("frontend/tests/global-setup.ts").exists());
+        assert!(path.join("frontend/tests/fixtures.ts").exists());
         assert!(path.join("frontend/tests/home.spec.ts").exists());
+        // Observability baked into Docker image, not scaffolded
+        assert!(!path.join("grafana").exists());
     }
 }

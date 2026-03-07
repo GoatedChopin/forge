@@ -2,8 +2,8 @@
 -- This migration creates all system tables required by the FORGE runtime.
 -- It is applied automatically before any user migrations.
 
--- Cluster: Node registry
-CREATE TABLE IF NOT EXISTS forge_nodes (
+-- Cluster: Node registry (UNLOGGED: transient state rebuilt on startup)
+CREATE UNLOGGED TABLE IF NOT EXISTS forge_nodes (
     id UUID PRIMARY KEY,
     hostname VARCHAR(255) NOT NULL,
     ip_address VARCHAR(64) NOT NULL,
@@ -17,8 +17,12 @@ CREATE TABLE IF NOT EXISTS forge_nodes (
     last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Cluster: Leader election
-CREATE TABLE IF NOT EXISTS forge_leaders (
+CREATE INDEX IF NOT EXISTS idx_forge_nodes_status_heartbeat
+    ON forge_nodes(status, last_heartbeat)
+    WHERE status = 'active';
+
+-- Cluster: Leader election (UNLOGGED: transient state rebuilt on startup)
+CREATE UNLOGGED TABLE IF NOT EXISTS forge_leaders (
     role VARCHAR(64) PRIMARY KEY,
     node_id UUID NOT NULL,
     acquired_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -155,8 +159,8 @@ CREATE TABLE IF NOT EXISTS forge_workflow_steps (
     UNIQUE(workflow_run_id, step_name)
 );
 
--- Rate Limiting: Token bucket storage
-CREATE TABLE IF NOT EXISTS forge_rate_limits (
+-- Rate Limiting: Token bucket storage (UNLOGGED: transient state rebuilt on startup)
+CREATE UNLOGGED TABLE IF NOT EXISTS forge_rate_limits (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     bucket_key TEXT NOT NULL,
     tokens DOUBLE PRECISION NOT NULL,
@@ -199,27 +203,38 @@ CREATE INDEX IF NOT EXISTS idx_forge_subscriptions_query_hash
     ON forge_subscriptions(query_hash);
 
 -- Realtime: Change notification function
--- This function sends a NOTIFY on the forge_changes channel when data changes.
--- Format: table_name:operation:row_id
+-- Sends NOTIFY on forge_changes channel when data changes.
+-- Format: table:OP:row_id or table:OP:row_id:col1,col2,... (UPDATE only)
 CREATE OR REPLACE FUNCTION forge_notify_change() RETURNS TRIGGER AS $$
 DECLARE
     row_id TEXT;
     payload TEXT;
+    old_json JSONB;
+    new_json JSONB;
+    changed_cols TEXT[];
 BEGIN
-    -- Get the row ID (assumes 'id' column exists, falls back to empty)
     IF TG_OP = 'DELETE' THEN
         row_id := COALESCE(OLD.id::TEXT, '');
     ELSE
         row_id := COALESCE(NEW.id::TEXT, '');
     END IF;
 
-    -- Build payload: table:operation:row_id
     payload := TG_TABLE_NAME || ':' || TG_OP || ':' || row_id;
 
-    -- Send notification
+    IF TG_OP = 'UPDATE' THEN
+        old_json := to_jsonb(OLD);
+        new_json := to_jsonb(NEW);
+        changed_cols := ARRAY(
+            SELECT key FROM jsonb_each(new_json)
+            WHERE new_json -> key IS DISTINCT FROM old_json -> key
+        );
+        IF array_length(changed_cols, 1) > 0 THEN
+            payload := payload || ':' || array_to_string(changed_cols, ',');
+        END IF;
+    END IF;
+
     PERFORM pg_notify('forge_changes', payload);
 
-    -- Return appropriate row
     IF TG_OP = 'DELETE' THEN
         RETURN OLD;
     ELSE
@@ -331,6 +346,20 @@ CREATE INDEX IF NOT EXISTS idx_forge_webhook_events_expires
 
 CREATE INDEX IF NOT EXISTS idx_forge_webhook_events_webhook
     ON forge_webhook_events(webhook_name);
+
+-- Workflow event-driven wakeup via NOTIFY.
+-- When a workflow event is inserted, notify the scheduler immediately
+-- instead of waiting for the next poll cycle.
+CREATE OR REPLACE FUNCTION forge_workflow_event_notify() RETURNS TRIGGER AS $$
+BEGIN
+    PERFORM pg_notify('forge_workflow_wakeup', NEW.correlation_id);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER forge_workflow_event_notify_trigger
+    AFTER INSERT ON forge_workflow_events
+    FOR EACH ROW EXECUTE FUNCTION forge_workflow_event_notify();
 
 -- Periodic cleanup function for expired webhook idempotency records
 -- This can be called from a cron job: SELECT forge_cleanup_webhook_events();

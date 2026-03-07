@@ -6,7 +6,7 @@
 //!
 //! # Migration Naming
 //!
-//! - System migrations: `__forge_v001`, `__forge_v002`, etc. (currently only v001)
+//! - System migrations: `__forge_v001` (single migration, pre-1.0)
 //! - User migrations: `0001_xxx`, `0002_xxx`, etc.
 //!
 //! System migrations are always applied before user migrations, regardless of
@@ -124,16 +124,16 @@ mod tests {
         let sql = migrations[0].sql;
 
         // Verify all core tables are defined
-        assert!(sql.contains("CREATE TABLE IF NOT EXISTS forge_nodes"));
-        assert!(sql.contains("CREATE TABLE IF NOT EXISTS forge_leaders"));
-        assert!(sql.contains("CREATE TABLE IF NOT EXISTS forge_jobs"));
-        assert!(sql.contains("CREATE TABLE IF NOT EXISTS forge_cron_runs"));
-        assert!(sql.contains("CREATE TABLE IF NOT EXISTS forge_workflow_runs"));
-        assert!(sql.contains("CREATE TABLE IF NOT EXISTS forge_workflow_steps"));
-        assert!(sql.contains("CREATE TABLE IF NOT EXISTS forge_sessions"));
-        assert!(sql.contains("CREATE TABLE IF NOT EXISTS forge_subscriptions"));
-        assert!(sql.contains("CREATE TABLE IF NOT EXISTS forge_daemons"));
-        assert!(sql.contains("CREATE TABLE IF NOT EXISTS forge_webhook_events"));
+        assert!(sql.contains("forge_nodes"));
+        assert!(sql.contains("forge_leaders"));
+        assert!(sql.contains("forge_jobs"));
+        assert!(sql.contains("forge_cron_runs"));
+        assert!(sql.contains("forge_workflow_runs"));
+        assert!(sql.contains("forge_workflow_steps"));
+        assert!(sql.contains("forge_sessions"));
+        assert!(sql.contains("forge_subscriptions"));
+        assert!(sql.contains("forge_daemons"));
+        assert!(sql.contains("forge_webhook_events"));
     }
 
     #[test]

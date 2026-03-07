@@ -1,0 +1,33 @@
+import { test, expect } from "@playwright/test";
+import type { Page } from "@playwright/test";
+
+export { test, expect };
+
+export const API_URL = process.env.VITE_API_URL || "http://localhost:8080";
+
+/**
+ * Wait for the SSE EventSource connection to establish.
+ * Call this before any mutation that relies on real-time updates.
+ */
+export async function waitForSSE(page: Page, timeout = 10000): Promise<void> {
+  await page.waitForRequest((req) => req.url().includes("/_api/events"), { timeout });
+  // Settle time for the subscription to fully register server-side
+  await page.waitForTimeout(2000);
+}
+
+/**
+ * Collect console errors during a page session, filtering out
+ * known benign noise (favicon 404, network errors during SSE reconnect).
+ */
+export function trackConsoleErrors(page: Page): string[] {
+  const errors: string[] = [];
+  page.on("console", (msg) => {
+    if (msg.type() === "error") {
+      const text = msg.text();
+      if (!text.includes("net::ERR") && !text.includes("favicon") && !text.includes("EventSource")) {
+        errors.push(text);
+      }
+    }
+  });
+  return errors;
+}
