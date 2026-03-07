@@ -1,4 +1,4 @@
-# Auth Scaffolding Reference
+# Auth Scaffolding
 
 Complete end-to-end auth setup for Forge apps with HS256 self-issued JWT. This is the single source of truth for auth configuration, backend implementation, and frontend wiring.
 
@@ -62,7 +62,7 @@ pub struct AuthResponse {
 }
 ```
 
-Remember to re-export from `src/schema/mod.rs`:
+Re-export from `src/schema/mod.rs`:
 
 ```rust
 pub mod user;
@@ -170,6 +170,46 @@ builder
     .register_mutation::<functions::LoginMutation>();
 ```
 
+## Token Issuance
+
+When HMAC auth is configured (`jwt_algorithm = "HS256"`), mutations can issue tokens via `ctx.issue_token()`. Use `Claims::builder()`:
+
+```rust
+use forge::forge_core::Claims;
+
+let claims = Claims::builder()
+    .user_id(uuid)              // sets sub claim as UUID
+    .subject("custom-sub")     // sets sub as arbitrary string
+    .role("admin")             // add single role
+    .roles(vec!["admin", "editor"]) // set multiple roles
+    .claim("org_id", json!("org-123")) // custom claim
+    .tenant_id(tenant_uuid)   // sets tenant_id claim
+    .duration_secs(3600)       // token expiry
+    .build()?;
+```
+
+No extra dependencies needed. Forge uses the same secret from `[auth].jwt_secret` for both validation and issuance. For RSA/JWKS auth (external providers), token issuance is not available since Forge doesn't hold the private key.
+
+## Identity Scope Enforcement
+
+Authenticated (non-public) functions with an input parameter must include at least one identity or tenant scope argument. Without it, Forge returns a runtime error: `"Function '...' must include identity or tenant scope arguments"`.
+
+Functions with no input args are exempt. These still require authentication and can access the verified user via `ctx.require_user_id()`.
+
+Recognized identity keys: `user_id`, `userId`, `owner_id`, `ownerId`, `owner_subject`, `ownerSubject`, `subject`, `sub`, `principal_id`, `principalId`.
+Recognized tenant keys: `tenant_id`, `tenantId`.
+
+Forge validates that the provided value matches the authenticated JWT subject at the router level. Do not add manual identity comparison checks in handlers.
+
+**Anti-pattern:**
+```rust
+// WRONG: redundant check, the router already enforces this
+let uid = ctx.require_user_id()?;
+if input.user_id != uid {
+    return Err(ForgeError::Forbidden("Access denied".into()));
+}
+```
+
 ## Frontend Auth Store (src/lib/auth.svelte.ts)
 
 ```typescript
@@ -184,7 +224,6 @@ export class AuthStore {
 
   isAuthenticated = $derived(this.token !== null)
 
-  // called by ForgeProvider to get current token
   getToken(): string | null {
     return this.token
   }
@@ -211,7 +250,6 @@ export class AuthStore {
     localStorage.removeItem("auth_user_id")
     localStorage.removeItem("auth_username")
 
-    // reconnect SSE without credentials
     window.dispatchEvent(new Event("forge:reconnect"))
   }
 
@@ -382,7 +420,7 @@ export function getAuthStore(): AuthStore {
 </main>
 ```
 
-## Redirect Pattern (authenticated main page)
+## Redirect Pattern (authenticated pages)
 
 ```svelte
 <script lang="ts">

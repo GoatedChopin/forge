@@ -1,8 +1,20 @@
-# Read Replicas, Observability, and Trace Context
+# Operations
 
-## 1) Read Replicas: Proper Usage
+Read replicas, observability, and production hardening.
 
-## Enablement
+## Contents
+
+1. [Read replicas](#1-read-replicas)
+2. [Observability configuration](#2-observability-configuration)
+3. [Trace context and request correlation](#3-trace-context-and-request-correlation)
+4. [Structured logging guidelines](#4-structured-logging-guidelines)
+5. [Operational checklist](#5-operational-checklist)
+
+---
+
+## 1) Read replicas
+
+### Enablement
 
 ```toml
 [database]
@@ -11,13 +23,13 @@ replica_urls = ["${DATABASE_REPLICA_1}", "${DATABASE_REPLICA_2}"]
 read_from_replica = true
 ```
 
-## Routing behavior
+### Routing behavior
 - Queries route to healthy replicas via round-robin when `read_from_replica = true`.
 - Mutations always target primary.
 - Health monitor pings each replica every 15s with `SELECT 1`. Unhealthy replicas are skipped automatically.
 - If all replicas fail, reads fall back to primary with no config changes needed.
 
-## Consistent reads
+### Consistent reads
 
 Use `#[forge::query(consistent)]` to force reads from primary, bypassing replicas:
 
@@ -42,7 +54,7 @@ Replica-safe cases (no `consistent` needed):
 - non-critical listing screens
 - background reporting
 
-## Pool isolation (bulkhead)
+### Pool isolation (bulkhead)
 
 Separate connection pools prevent workload starvation:
 
@@ -68,7 +80,7 @@ timeout_secs = 5
 
 Unconfigured pools fall back to primary. Configure them when workloads risk starving each other.
 
-## Column-aware invalidation
+### Column-aware invalidation
 
 Forge extracts selected columns at compile time. When an UPDATE notification arrives with changed columns, queries whose selected columns don't overlap skip re-execution entirely.
 
@@ -83,14 +95,14 @@ pub async fn list_todos(ctx: &QueryContext) -> Result<Vec<Todo>> {
 }
 ```
 
-For `SELECT *` queries, all UPDATEs trigger re-execution. Prefer explicit column lists in hot-path queries for best performance.
+For `SELECT *` queries, all UPDATEs trigger re-execution. Prefer explicit column lists in hot-path queries.
 
-## Design pattern
+### Design pattern
 - Use `consistent` on strict read-after-write paths; leave it off for eventual-consistency-tolerant reads.
 - Size pool isolation to match actual workload ratios.
 - Use explicit column lists in performance-critical queries to benefit from column-aware invalidation.
 
-## 2) Observability Configuration
+## 2) Observability configuration
 
 ```toml
 [observability]
@@ -104,18 +116,18 @@ sampling_ratio = 0.5
 log_level = "info"
 ```
 
-## What should be observable
+### What should be observable
 - HTTP request lifecycle
 - function execution durations
 - job execution outcomes and retries
 - cron and workflow lifecycle events
 - DB pool pressure and slow queries
 
-## Gateway noise control
+### Gateway noise control
 - `quiet_routes` suppresses telemetry for selected paths.
 - Keep health checks quiet by default unless you need full probe telemetry.
 
-## 3) Trace Context and Request Correlation
+## 3) Trace context and request correlation
 
 Use request metadata for correlation:
 - `ctx.request.request_id`
@@ -141,7 +153,7 @@ For jobs/workflows/crons where request metadata may not exist the same way, alwa
 - `run_id`
 - workflow ID + current step
 
-## 4) Structured Logging Guidelines
+## 4) Structured logging guidelines
 
 Prefer fields over interpolated strings:
 
@@ -161,10 +173,17 @@ For retries/failures include:
 - external endpoint or dependency name
 - error class/message
 
-## 5) Operational Checklist
+## 5) Operational checklist
 
+Before completion, validate:
 - replica routing enabled only when intended
 - strict-consistency endpoints do not rely on replica freshness
 - OTLP endpoint reachable and sampled properly
 - identifiers present across logs for every async boundary
 - slow-path operations emit enough detail to debug production incidents
+- read replica checklist:
+  - `read_from_replica` enabled only when consistency expectations are explicit
+  - `consistent` on strict read-after-write paths
+  - dashboard/reporting paths left on default replica routing
+  - health monitoring is automatic, no manual failover needed
+  - fallback-to-primary behavior understood operationally

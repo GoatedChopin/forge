@@ -1,28 +1,23 @@
 # forge-idiomatic-engineer
 
-Forge-specific engineering skill for maintainable, secure, observable, testable, and scalable Rust backends with frontend-inclusive Svelte 5 delivery by default (backend-only only when explicitly requested).
+Forge-specific engineering skill for maintainable, secure, observable, testable, and scalable Rust backends with frontend-inclusive Svelte 5 delivery by default.
 
 ## Package Contents
 
-- `SKILL.md`: Non-negotiable rules and reference loading map (kept lean)
-- `references/forge-defaults.md`: auth, scope, error, observability, and frontend defaults
-- `references/implementation-workflow.md`: step-by-step implementation and delivery process
-- `references/decision-tree.md`: primitive and implementation choices
-- `references/feature-differentiation.md`: function-type comparison matrix
-- `references/pattern-cookbook.md`: idiomatic Forge code patterns
-- `references/testing-playbook.md`: test strategy and examples
-- `references/security-and-scale.md`: security and performance checklists
-- `references/read-replicas-observability-tracing.md`: production operations guidance
-- `references/config-context-error-reference.md`: config options, contexts, and error conditions
-- `references/cli-and-generated-code.md`: CLI workflow, generated-code boundaries, project layout, migration cleanup
-- `references/project-structure.md`: preferred `functions/schema/utils` layout
-- `references/frontend-svelte5-playbook.md`: reactive, accessible, polished frontend guidance
-- `references/context7-live-docs.md`: live documentation lookup workflow
-- `references/anti-patterns.md`: failure patterns and corrections
-- `references/clarity-refinement-gate.md`: second-pass simplification and anti-pattern review
-- `references/review-rubric.md`: structured review criteria
-- `references/scenarios.md`: realistic task examples
+- `SKILL.md`: Non-negotiable rules, inline quick reference for common tasks, signal-based reference routing
+- `references/auth.md`: complete auth setup (config, backend, frontend, verification)
+- `references/patterns.md`: backend patterns (jobs, crons, workflows, DbConn, validation, consistency, logging)
+- `references/integrations.md`: webhooks, HTTP handlers, daemons, MCP tools, file uploads, external services
+- `references/frontend.md`: Svelte 5 playbook (reactivity, components, accessibility, design quality)
+- `references/testing.md`: test strategy, examples, Playwright patterns
+- `references/quality.md`: review rubric, anti-patterns, security/scale checklists, clarity gate
+- `references/config.md`: forge.toml schema, context API, error types, CLI workflow, project structure
+- `references/operations.md`: read replicas, observability, tracing, production hardening
 - `evals/evals.json`: starter eval prompts
+
+## Progressive Discovery
+
+SKILL.md is self-contained for common tasks (adding queries, mutations, small refactors). References load only when the task requires specialized depth. See the "Reference Loading" section in SKILL.md for the signal-based routing table.
 
 ## Core Guarantees
 
@@ -32,5 +27,6 @@ Forge-specific engineering skill for maintainable, secure, observable, testable,
 - Trace-friendly operational behavior
 - `forge generate`-first backend/frontend generation workflow
 - Generated-code-safe implementation
-- Mandatory app-root `forge check` gate before completion
-- Mandatory changed-scope tests, coverage proof, and Playwright integration coverage for UI work
+- Mandatory `forge check` gate before completion
+- Mandatory Playwright integration coverage for UI work
+- Intentional, non-generic design at every layer

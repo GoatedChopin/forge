@@ -242,13 +242,13 @@ Use `+layout.svelte` at route group boundaries for shared chrome (nav, sidebar, 
 
 ### Copy requirements
 - domain-specific, human, concise copy
-- avoid generic “AI-sounding” filler and vague marketing clichés
+- avoid generic "AI-sounding" filler and vague marketing cliches
 - write for the target audience and task context
 - error/help text must be actionable and precise
 
-## 6) Visual and UX Quality (Top frontend-design advice)
+## 6) Visual and UX Quality
 
-Choose a clear design direction before coding and execute it intentionally.
+Choose a clear design direction before coding and execute it intentionally. The goal is to produce interfaces that feel crafted, not generated.
 
 ### Design thinking before implementation
 - define purpose: what user outcome this UI must enable
