@@ -933,7 +933,8 @@ impl Reactor {
         match registry.get(query_name) {
             Some(FunctionEntry::Query { info, handler }) => {
                 Self::check_query_auth(info, auth_context)?;
-                Self::check_identity_args(query_name, args, auth_context, !info.is_public)?;
+                let enforce = !info.is_public && info.has_input_args;
+                Self::check_identity_args(query_name, args, auth_context, enforce)?;
 
                 let ctx = forge_core::function::QueryContext::new(
                     db_pool.clone(),

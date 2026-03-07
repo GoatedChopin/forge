@@ -43,7 +43,9 @@ For RSA/JWKS auth (external providers), token issuance is not available since Fo
 
 ### Identity scope enforcement (hard requirement)
 
-Authenticated (non-public) functions **must** include at least one identity or tenant scope argument in their input struct. Without it, Forge returns a runtime error: `"Function '...' must include identity or tenant scope arguments"`.
+Authenticated (non-public) functions with an input parameter **must** include at least one identity or tenant scope argument in their input struct. Without it, Forge returns a runtime error: `"Function '...' must include identity or tenant scope arguments"`.
+
+Identity scope arguments are only required when the function signature includes an input parameter. Functions with no input args are exempt because there are no args to carry scope fields. These functions still require authentication and can access the verified user via `ctx.require_user_id()`.
 
 Recognized identity keys: `user_id`, `userId`, `owner_id`, `ownerId`, `owner_subject`, `ownerSubject`, `subject`, `sub`, `principal_id`, `principalId`.
 Recognized tenant keys: `tenant_id`, `tenantId`.
@@ -85,9 +87,141 @@ All input/arg structs for queries and mutations must derive both `Serialize` and
 
 ## No-Input Handlers
 
-- When a query or mutation takes no input, omit the args parameter entirely.
+- When a query or mutation takes no input args, omit the args parameter entirely.
 - The macro auto-generates a unit type when there is no second argument.
 - Never use `Option<()>`, `()`, or dummy input structs as a workaround.
+- For authenticated functions that only need user identity (no other input), use the no-input form. Identity scope enforcement is skipped automatically when there is no input parameter. The JWT still carries identity, accessible via `ctx.require_user_id()`.
+
+```rust
+// Before (unnecessary boilerplate):
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ListTodosInput {
+    pub user_id: Uuid,  // only exists for scope enforcement
+}
+
+#[forge::query(tables = ["todos"])]
+pub async fn list_todos(ctx: &QueryContext, _input: ListTodosInput) -> Result<Vec<Todo>> {
+    let uid = ctx.require_user_id()?;
+    // ...
+}
+
+// After (clean):
+#[forge::query(tables = ["todos"])]
+pub async fn list_todos(ctx: &QueryContext) -> Result<Vec<Todo>> {
+    let uid = ctx.require_user_id()?;
+    // ...
+}
+```
+
+Only add `user_id` to input structs when the function actually needs user-provided arguments beyond identity.
+
+## Macro Attribute Reference
+
+### Query attributes
+
+```rust
+#[forge::query(
+    public,                          // no auth required
+    require_role("admin"),           // role-based access
+    tables = ["orders", "items"],    // table deps for reactive invalidation
+    cache = "30s",                   // response cache TTL
+    consistent,                      // force primary read (bypass replicas)
+    timeout = 10,                    // query timeout in seconds
+    rate_limit(requests = 100, per = "1m", key = "user"), // per-user rate limit
+    log,                             // enable request logging
+)]
+```
+
+### Mutation attributes
+
+```rust
+#[forge::mutation(
+    public,
+    require_role("admin"),
+    transactional,                   // wrap in DB transaction (default: false)
+    timeout = 30,
+    rate_limit(requests = 10, per = "1m", key = "ip"),
+    log,
+)]
+```
+
+### Job attributes
+
+```rust
+#[forge::job(
+    name = "custom_job_name",        // override default name
+    priority = "high",               // background | low | normal | high | critical
+    timeout = "30m",                 // max execution time
+    ttl = "24h",                     // discard if not started within TTL
+    retry(max_attempts = 5, backoff = "exponential", max_backoff = "10m"),
+    idempotent(key = "order_id"),    // deduplicate by input field
+    worker_capability = "gpu",       // route to specific workers
+    public,
+    require_role("admin"),
+)]
+```
+
+### Cron attributes
+
+```rust
+#[forge::cron(
+    "0 9 * * *",                     // cron schedule (required)
+    timezone = "America/New_York",
+    catch_up,                        // run missed executions
+    catch_up_limit = 3,              // max catch-up runs
+    timeout = "5m",
+    group = "reports",               // logical grouping
+)]
+```
+
+### Daemon attributes
+
+```rust
+#[forge::daemon(
+    leader_elected = true,           // single instance across cluster
+    restart_on_panic = true,
+    restart_delay = "5s",
+    startup_delay = "2s",
+    max_restarts = 10,
+)]
+```
+
+### Webhook attributes
+
+```rust
+#[forge::webhook(
+    path = "/webhooks/stripe",
+    signature = WebhookSignature::hmac_sha256("Stripe-Signature", "STRIPE_WEBHOOK_SECRET"),
+    // also: hmac_sha1, hmac_sha512
+    idempotency = "body:$.id",
+    timeout = "30s",
+    allow_unsigned,                  // skip signature validation (dev only)
+)]
+```
+
+### MCP Tool attributes
+
+```rust
+#[forge::mcp_tool(
+    name = "tickets.list",
+    title = "List Tickets",
+    description = "Read-only ticket listing",
+    require_role("support"),
+    read_only,                       // behavioral hint: no side effects
+    destructive,                     // behavioral hint: irreversible
+    idempotent,                      // behavioral hint: safe to retry
+    open_world,                      // behavioral hint: accesses external resources
+    timeout = 30,
+    rate_limit(requests = 60, per = "1m", key = "user"),
+)]
+```
+
+### Rate limit key options
+
+- `"user"`: per authenticated user
+- `"ip"`: per client IP
+- `"tenant"`: per tenant_id claim
+- `"global"`: shared across all callers
 
 ## Mutation Atomicity
 

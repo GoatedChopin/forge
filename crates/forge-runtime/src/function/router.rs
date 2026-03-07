@@ -107,7 +107,10 @@ impl FunctionRouter {
             self.check_auth(entry.info(), &auth)?;
             self.check_rate_limit(entry.info(), function_name, &auth, &request)
                 .await?;
-            Self::check_identity_args(function_name, &args, &auth, !entry.info().is_public)?;
+            // Skip scope enforcement for functions with no input args.
+            // The JWT still carries identity, accessible via ctx.require_user_id().
+            let enforce = !entry.info().is_public && entry.info().has_input_args;
+            Self::check_identity_args(function_name, &args, &auth, enforce)?;
 
             return match entry {
                 FunctionEntry::Query { handler, info, .. } => {
@@ -629,6 +632,7 @@ mod tests {
             selected_columns: &[],
             transactional: false,
             consistent: false,
+            has_input_args: false,
         };
 
         let _auth = AuthContext::unauthenticated();
@@ -701,6 +705,28 @@ mod tests {
         let result =
             FunctionRouter::check_identity_args("list_orders", &serde_json::json!({}), &auth, true);
         assert!(matches!(result, Err(ForgeError::Forbidden(_))));
+    }
+
+    #[test]
+    fn test_identity_args_skip_scope_for_no_input_functions() {
+        let user_id = uuid::Uuid::new_v4();
+        let auth = AuthContext::authenticated(
+            user_id,
+            vec!["user".to_string()],
+            HashMap::from([(
+                "sub".to_string(),
+                serde_json::Value::String(user_id.to_string()),
+            )]),
+        );
+
+        // enforce_scope=false simulates has_input_args=false
+        let result = FunctionRouter::check_identity_args(
+            "list_todos",
+            &serde_json::Value::Null,
+            &auth,
+            false,
+        );
+        assert!(result.is_ok());
     }
 
     #[test]

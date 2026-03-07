@@ -63,13 +63,16 @@ pub async fn list_todos(ctx: &QueryContext, _input: Option<()>) -> Result<Vec<To
 
 Classify the task first, then load only the references you need.
 
-- Handler implementation/refactor:
+- Handler implementation/refactor (includes custom HTTP handlers, daemons):
   - `references/decision-tree.md`
   - `references/pattern-cookbook.md`
   - `references/testing-playbook.md`
   - `references/clarity-refinement-gate.md`
 - Auth, defaults, error handling, observability:
   - `references/forge-defaults.md`
+  - `references/auth-scaffolding.md`
+- File uploads, external services (S3, OAuth, push notifications):
+  - `references/external-services-and-uploads.md`
 - Security/scale/operations:
   - `references/security-and-scale.md`
   - `references/read-replicas-observability-tracing.md`

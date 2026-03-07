@@ -457,9 +457,10 @@ impl CheckCommand {
             return Ok(());
         }
 
-        // Count model files and check for forge::model macro
+        // Count model files and check for forge::model or standard derive patterns
         let mut model_count = 0;
-        let mut macro_count = 0;
+        let mut forge_model_count = 0;
+        let mut derive_count = 0;
 
         for entry in std::fs::read_dir(schema_dir)? {
             let entry = entry?;
@@ -477,25 +478,40 @@ impl CheckCommand {
                 let content = std::fs::read_to_string(&path)?;
 
                 if content.contains("#[forge::model") {
-                    macro_count += 1;
+                    forge_model_count += 1;
+                } else if content.contains("Serialize") || content.contains("FromRow") {
+                    derive_count += 1;
                 }
             }
         }
 
+        let recognized = forge_model_count + derive_count;
+
         if model_count == 0 {
             result.warn(
                 "No schema files found",
-                "Create models in src/schema/ with #[forge::model], then run forge generate",
+                "Create models in src/schema/, then run forge generate",
             );
-        } else if macro_count == model_count {
-            result.pass(&format!(
-                "{} model file(s) with #[forge::model]",
-                macro_count
-            ));
+        } else if recognized == model_count {
+            if forge_model_count > 0 {
+                result.pass(&format!(
+                    "{} model file(s) with #[forge::model]",
+                    forge_model_count
+                ));
+            }
+            if derive_count > 0 {
+                result.pass(&format!(
+                    "{} model file(s) with standard derives (Serialize, FromRow)",
+                    derive_count
+                ));
+            }
         } else {
             result.warn(
-                &format!("{}/{} files have #[forge::model]", macro_count, model_count),
-                "Ensure all model files use #[forge::model] macro",
+                &format!(
+                    "{}/{} schema files have model definitions",
+                    recognized, model_count
+                ),
+                "Add #[forge::model] or #[derive(Serialize, Deserialize, sqlx::FromRow)] to model structs",
             );
         }
 
@@ -673,8 +689,11 @@ impl CheckCommand {
         }
 
         // Check cargo clippy
+        // Disable incremental compilation to avoid stale artifact warnings
+        // that cause flaky first-run failures.
         let clippy_result = Command::new("cargo")
             .args(["clippy", "--", "-D", "warnings"])
+            .env("CARGO_INCREMENTAL", "0")
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .status()

@@ -42,7 +42,186 @@ Guideline:
 
 Do not add manual refetch loops after mutations when Forge reactivity can invalidate for you.
 
-## 3) Accessibility Baseline (Non-Negotiable)
+## SvelteKit Navigation
+
+The default ESLint config enforces `svelte/no-navigation-without-resolve`. All navigation must use `resolve()` from `$app/paths` to handle base path correctly.
+
+### goto() calls
+
+```typescript
+import { goto } from "$app/navigation"
+import { resolve } from "$app/paths"
+
+// correct
+goto(resolve("/login"))
+
+// wrong - lint error
+goto("/login")
+```
+
+### Link hrefs
+
+```svelte
+<script>
+  import { resolve } from "$app/paths"
+</script>
+
+<!-- correct -->
+<a href={resolve("/register")}>Register</a>
+
+<!-- wrong - lint error -->
+<a href="/register">Register</a>
+```
+
+Note: `resolve` is the function name, not `resolveRoute` or `base`. The ESLint rule specifically checks for references to the `resolve` export from `$app/paths`.
+
+## 3) Page and Component Structure
+
+Forge apps use SvelteKit file-based routing. Split pages by feature so URLs are shareable and components stay maintainable.
+
+### Route layout
+
+Each distinct view gets its own `+page.svelte`. Group related pages under a shared layout.
+
+```
+frontend/src/
+├── lib/
+│   ├── forge/                    # Generated (DO NOT EDIT)
+│   ├── components/
+│   │   ├── TodoForm.svelte       # Create/edit form
+│   │   ├── TodoItem.svelte       # Single item display + actions
+│   │   └── EmptyState.svelte     # Reusable empty state
+│   ├── auth.svelte.ts            # Auth store (handwritten)
+│   └── utils/
+│       └── format.ts             # Pure helpers
+├── routes/
+│   ├── +layout.svelte            # ForgeProvider + nav shell
+│   ├── +layout.ts                # export const ssr = false
+│   ├── +page.svelte              # Landing / dashboard
+│   ├── login/
+│   │   └── +page.svelte          # Login form
+│   ├── register/
+│   │   └── +page.svelte          # Registration form
+│   ├── todos/
+│   │   ├── +page.svelte          # Todo list (shareable URL)
+│   │   └── [id]/
+│   │       └── +page.svelte      # Single todo detail
+│   └── settings/
+│       └── +page.svelte          # User settings
+└── tests/
+    └── app.spec.ts               # Playwright E2E
+```
+
+### Why this matters
+
+- Each page has a stable URL users can bookmark and share
+- Components under `$lib/components/` are reusable across pages
+- Page files stay small because logic is pushed into components
+- Layout wraps everything with ForgeProvider and shared navigation
+
+### Page file guidelines
+
+Keep `+page.svelte` files thin. They wire up data subscriptions and compose components.
+
+```svelte
+<!-- routes/todos/+page.svelte -->
+<script lang="ts">
+  import { listTodos$ } from "$lib/forge"
+  import { getAuthStore } from "$lib/auth.svelte"
+  import TodoForm from "$lib/components/TodoForm.svelte"
+  import TodoItem from "$lib/components/TodoItem.svelte"
+  import EmptyState from "$lib/components/EmptyState.svelte"
+
+  const auth = getAuthStore()
+  const todos = listTodos$()
+</script>
+
+<main>
+  <h1>My Todos</h1>
+  <TodoForm />
+
+  {#if todos.data?.length}
+    {#each todos.data as todo (todo.id)}
+      <TodoItem {todo} />
+    {/each}
+  {:else if !todos.loading}
+    <EmptyState message="No todos yet" />
+  {/if}
+</main>
+```
+
+### Component guidelines
+
+- One responsibility per component. If you need "and" to describe it, split it.
+- Keep components under 150 lines. Extract subcomponents when they grow.
+- Colocate related components in feature folders when the app grows large.
+- Components subscribe to Forge stores independently when they need their own data.
+- Pass data down via `$props()`, emit events up via callback props.
+
+```svelte
+<!-- $lib/components/TodoItem.svelte -->
+<script lang="ts">
+  import { deleteTodo } from "$lib/forge"
+  import type { Todo } from "$lib/forge"
+
+  let { todo }: { todo: Todo } = $props()
+  let deleting = $state(false)
+
+  async function handleDelete() {
+    deleting = true
+    await deleteTodo({ todo_id: todo.id, user_id: todo.user_id })
+    deleting = false
+  }
+</script>
+
+<div>
+  <span>{todo.title}</span>
+  <button onclick={handleDelete} disabled={deleting}>Delete</button>
+</div>
+```
+
+### Shared layouts
+
+Use `+layout.svelte` at route group boundaries for shared chrome (nav, sidebar, auth guards).
+
+```svelte
+<!-- routes/+layout.svelte -->
+<script lang="ts">
+  import { ForgeProvider } from "$lib/forge"
+  import { PUBLIC_API_URL } from "$env/static/public"
+  import { createAuthStore } from "$lib/auth.svelte"
+  import { resolve } from "$app/paths"
+
+  let { children } = $props()
+  const auth = createAuthStore()
+  auth.hydrate()
+</script>
+
+<ForgeProvider url={PUBLIC_API_URL} getToken={() => auth.getToken()}>
+  <nav>
+    <a href={resolve("/")}>Home</a>
+    <a href={resolve("/todos")}>Todos</a>
+    {#if auth.isAuthenticated}
+      <button onclick={() => auth.logout()}>Logout</button>
+    {:else}
+      <a href={resolve("/login")}>Login</a>
+    {/if}
+  </nav>
+
+  {@render children()}
+</ForgeProvider>
+```
+
+### When to split vs. inline
+
+| Signal | Action |
+|---|---|
+| Two pages need the same UI block | Extract to `$lib/components/` |
+| Page file exceeds 150 lines | Extract the largest section into a component |
+| A section has its own state + handlers | It's a component |
+| Pure display, no state, under 30 lines | Inline is fine |
+
+## 4) Accessibility Baseline (Non-Negotiable)
 
 - semantic landmarks (`header`, `main`, `nav`, `footer`)
 - correct heading hierarchy
@@ -52,7 +231,7 @@ Do not add manual refetch loops after mutations when Forge reactivity can invali
 - reduced-motion support for users preferring less animation
 - `aria-live` announcements for async loading/errors/progress
 
-## 4) SEO and Content Quality (Mandatory)
+## 5) SEO and Content Quality (Mandatory)
 
 ### SEO requirements
 - descriptive page titles and meta descriptions
@@ -67,7 +246,7 @@ Do not add manual refetch loops after mutations when Forge reactivity can invali
 - write for the target audience and task context
 - error/help text must be actionable and precise
 
-## 5) Visual and UX Quality (Top frontend-design advice)
+## 6) Visual and UX Quality (Top frontend-design advice)
 
 Choose a clear design direction before coding and execute it intentionally.
 
@@ -103,7 +282,7 @@ Choose a clear design direction before coding and execute it intentionally.
 - when working in an existing app/design system, preserve established visual language and component patterns
 - otherwise, avoid generic AI-slop patterns and interchangeable layouts
 
-## 6) Generated Client Boundary
+## 7) Generated Client Boundary
 
 Never edit generated:
 - `frontend/src/lib/forge/*`
@@ -114,7 +293,7 @@ Instead:
 - edit app code in `frontend/src/routes/*` and non-generated `frontend/src/lib/*`
 - re-run `forge generate` after backend changes
 
-## 7) Svelte + Forge Integration Patterns
+## 8) Svelte + Forge Integration Patterns
 
 - use generated runes/stores from Forge client
 - keep subscription args stable to reduce unnecessary resubscribe churn
@@ -122,7 +301,7 @@ Instead:
 - validate on client for UX, rely on backend validation for correctness
 - explicitly render loading/error/stale/empty states
 
-## 8) Frontend Acceptance Checklist
+## 9) Frontend Acceptance Checklist
 
 - backend completed and tested first
 - frontend lint and `svelte-check` pass

@@ -329,6 +329,8 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
         None
     };
 
+    let has_input_args = !args_fields.is_empty();
+
     // Generate the args struct (use unit type if no args, user type if single custom args)
     let (args_struct, args_type, execute_call) = if args_fields.is_empty() {
         (
@@ -419,6 +421,7 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
                     selected_columns: &[],
                     transactional: #transactional,
                     consistent: false,
+                    has_input_args: #has_input_args,
                 }
             }
 

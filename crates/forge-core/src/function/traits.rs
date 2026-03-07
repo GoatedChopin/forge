@@ -47,6 +47,10 @@ pub struct FunctionInfo {
     /// Use for read-after-write consistency (e.g., post-mutation confirmation,
     /// permission checks depending on just-written state).
     pub consistent: bool,
+    /// Whether the function signature has input arguments beyond the context.
+    /// When false, identity scope enforcement is skipped since there are no
+    /// args to carry scope fields. Auth is still enforced via the JWT.
+    pub has_input_args: bool,
 }
 
 /// The kind of function.
@@ -141,6 +145,7 @@ mod tests {
             selected_columns: &["id", "name", "email"],
             transactional: false,
             consistent: false,
+            has_input_args: true,
         };
 
         assert_eq!(info.name, "get_user");

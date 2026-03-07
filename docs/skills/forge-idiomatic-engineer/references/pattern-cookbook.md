@@ -351,3 +351,252 @@ pub async fn send_receipt(ctx: &JobContext, input: ReceiptInput) -> Result<()> {
     Ok(())
 }
 ```
+
+## 14) Custom HTTP handlers
+
+For endpoints that don't fit the query/mutation model (OAuth callbacks, file serving, custom health checks), mount Axum routes directly via `builder.custom_routes()`.
+
+### Basic handler
+
+```rust
+use forge::prelude::*;
+use forge::prelude::axum::{Router, routing::{get, post}, response::IntoResponse, extract::State, Json};
+use std::sync::Arc;
+
+struct AppState {
+    pool: sqlx::PgPool,
+}
+
+async fn custom_health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let row: (i64,) = sqlx::query_as("SELECT 1")
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or((0,));
+
+    Json(serde_json::json!({ "db": row.0 == 1 }))
+}
+
+// In main.rs, after building the pool:
+let state = Arc::new(AppState { pool: pool.clone() });
+let custom = Router::new()
+    .route("/healthz", get(custom_health))
+    .with_state(state);
+
+builder.custom_routes(custom);
+```
+
+### Where custom routes mount
+
+```
+/_api/                    # Reserved for Forge internals
+  ├── /rpc                # RPC endpoint
+  ├── /rpc/{fn}/upload    # Multipart uploads
+  ├── /subscribe, /events # SSE
+  └── /webhooks/*         # Webhook handlers
+{custom_routes}           # YOUR ROUTES (merged here)
+{frontend_fallback}       # SPA catch-all (last)
+```
+
+Custom routes sit outside `/_api`, after webhooks but before the frontend fallback. They take precedence over the SPA catch-all.
+
+### What custom routes bypass
+
+Custom routes do not get Forge's standard middleware stack. You handle these yourself if needed:
+
+- Authentication (no JWT validation)
+- Rate limiting
+- CORS
+- Request tracing/logging
+- Timeouts
+
+### OAuth callback example
+
+```rust
+use axum::{extract::Query, response::Redirect};
+
+#[derive(Deserialize)]
+struct OAuthCallback {
+    code: String,
+    state: String,
+}
+
+async fn google_callback(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<OAuthCallback>,
+) -> Result<Redirect, StatusCode> {
+    // Exchange code for tokens with Google
+    let token_resp = reqwest::Client::new()
+        .post("https://oauth2.googleapis.com/token")
+        .form(&[
+            ("code", params.code.as_str()),
+            ("client_id", &std::env::var("GOOGLE_CLIENT_ID").unwrap()),
+            ("client_secret", &std::env::var("GOOGLE_CLIENT_SECRET").unwrap()),
+            ("redirect_uri", "http://localhost:3000/auth/google/callback"),
+            ("grant_type", "authorization_code"),
+        ])
+        .send()
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+
+    // Verify and extract identity, upsert user, issue Forge JWT...
+    // Redirect to frontend with token
+    Ok(Redirect::to(&format!("/login?token={}", forge_token)))
+}
+
+let custom = Router::new()
+    .route("/auth/google/callback", get(google_callback))
+    .with_state(state);
+
+builder.custom_routes(custom);
+```
+
+### File serving example
+
+```rust
+use axum::{extract::Path, body::Body, http::header};
+
+async fn serve_file(
+    State(state): State<Arc<AppState>>,
+    Path(key): Path<String>,
+) -> Result<impl IntoResponse, StatusCode> {
+    // Fetch from S3/R2/GCS using the key
+    let bytes = fetch_from_storage(&key)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+
+    Ok((
+        [(header::CONTENT_TYPE, "application/octet-stream")],
+        Body::from(bytes),
+    ))
+}
+
+let custom = Router::new()
+    .route("/files/{key}", get(serve_file))
+    .with_state(state);
+```
+
+## 15) Daemon with leader election
+
+Long-running background processes that stay alive for the lifetime of the node. Use for connection pools to external systems, queue consumers, or continuous sync loops.
+
+```rust
+#[forge::daemon(leader_elected = true)]
+pub async fn sync_external_feed(ctx: &DaemonContext) -> Result<()> {
+    loop {
+        if ctx.is_shutdown_requested() {
+            break;
+        }
+
+        match fetch_and_process_feed(ctx.db()).await {
+            Ok(count) => {
+                tracing::info!(processed = count, "Feed sync complete");
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "Feed sync failed");
+            }
+        }
+
+        // Wait before next iteration, but respect shutdown
+        tokio::select! {
+            _ = tokio::time::sleep(std::time::Duration::from_secs(60)) => {}
+            _ = ctx.shutdown_signal() => break,
+        }
+    }
+
+    Ok(())
+}
+```
+
+Key attributes:
+- `leader_elected = true`: only one instance runs across the cluster (via PG advisory locks)
+- `restart_on_panic = true`: auto-restart if the daemon panics
+- `restart_delay = "5s"`: delay between restarts
+- `max_restarts = 10`: stop restarting after this many failures
+
+Always check `ctx.is_shutdown_requested()` or `ctx.shutdown_signal()` in loops to allow graceful shutdown.
+
+## 16) Frontend auth store with SSE reconnection
+
+Every Forge app with auth needs a reactive store that persists credentials to localStorage and reconnects SSE when auth state changes. This uses Svelte 5 runes in a class-based pattern.
+
+```typescript
+// src/lib/auth.svelte.ts
+import { getContext, setContext } from "svelte"
+
+const AUTH_KEY = Symbol("auth")
+
+export class AuthStore {
+  token = $state<string | null>(null)
+  userId = $state<string | null>(null)
+  username = $state<string | null>(null)
+
+  isAuthenticated = $derived(this.token !== null)
+
+  getToken(): string | null {
+    return this.token
+  }
+
+  setAuth(data: { token: string; user_id: string; username: string }) {
+    this.token = data.token
+    this.userId = data.user_id
+    this.username = data.username
+
+    localStorage.setItem("auth_token", data.token)
+    localStorage.setItem("auth_user_id", data.user_id)
+    localStorage.setItem("auth_username", data.username)
+
+    // reconnect SSE so subscriptions pick up the new identity
+    window.dispatchEvent(new Event("forge:reconnect"))
+  }
+
+  logout() {
+    this.token = null
+    this.userId = null
+    this.username = null
+
+    localStorage.removeItem("auth_token")
+    localStorage.removeItem("auth_user_id")
+    localStorage.removeItem("auth_username")
+
+    window.dispatchEvent(new Event("forge:reconnect"))
+  }
+
+  hydrate() {
+    this.token = localStorage.getItem("auth_token")
+    this.userId = localStorage.getItem("auth_user_id")
+    this.username = localStorage.getItem("auth_username")
+  }
+}
+
+export function createAuthStore(): AuthStore {
+  const store = new AuthStore()
+  setContext(AUTH_KEY, store)
+  return store
+}
+
+export function getAuthStore(): AuthStore {
+  return getContext<AuthStore>(AUTH_KEY)
+}
+```
+
+Wire it into the root layout so every page can access it via context:
+
+```svelte
+<!-- +layout.svelte -->
+<script lang="ts">
+  import { ForgeProvider } from "$lib/forge"
+  import { PUBLIC_API_URL } from "$env/static/public"
+  import { createAuthStore } from "$lib/auth.svelte"
+
+  let { children } = $props()
+
+  const auth = createAuthStore()
+  auth.hydrate()
+</script>
+
+<ForgeProvider url={PUBLIC_API_URL} getToken={() => auth.getToken()}>
+  {@render children()}
+</ForgeProvider>
+```
+
+Pages access the store with `getAuthStore()` and call `setAuth()` after login/register or `logout()` to clear credentials. The `forge:reconnect` event tells ForgeProvider to tear down and re-establish the SSE connection with updated (or cleared) auth headers.

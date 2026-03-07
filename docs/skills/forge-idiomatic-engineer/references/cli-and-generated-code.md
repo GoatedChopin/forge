@@ -97,3 +97,26 @@ See `references/project-structure.md` for full layout details.
 
 - Mistake: add handwritten types that drift from Rust source of truth
   - Fix: keep Rust as type source and regenerate frontend types
+
+## Common `forge check` Issues
+
+### Prettier finding test artifacts
+
+Playwright generates HTML reports and test result files that Prettier will try to format, causing `forge check` to fail. Add these to `.prettierignore`:
+
+```
+test-results/
+playwright-report/
+```
+
+### `#[forge::model]` info warning
+
+When using standard derives on model structs, `forge check` may show an informational message about `#[forge::model]`. This is not an error. The macro provides additional functionality, but standard derives work fine if you don't need it.
+
+### `[database].mode not set`
+
+This warning is fine for local development. Forge defaults to a sensible mode when not explicitly configured. Set it in `forge.toml` when deploying to production.
+
+### Clippy flakiness on first run
+
+If clippy produces inconsistent results on the first run, it's typically a stale incremental cache issue. Forge sets `CARGO_INCREMENTAL=0` internally to avoid this. If you still see it, run `cargo clean` and retry.

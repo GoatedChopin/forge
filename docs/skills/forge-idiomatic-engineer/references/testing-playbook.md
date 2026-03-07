@@ -233,7 +233,42 @@ Coverage quality still matters beyond raw percentage. To get there:
 
 A well-tested module should make a reviewer think "I can't change this behavior without a test failing."
 
-## 12) Required execution sequence
+## 12) Playwright patterns for Forge apps
+
+### Fresh user per test
+
+Register a unique user in each test for full isolation. Use a timestamp or random suffix in the username so tests never collide, even when running in parallel.
+
+```typescript
+const username = `testuser-${Date.now()}`
+await page.fill('input[autocomplete="username"]', username)
+await page.fill('input[autocomplete="new-password"]', "password123")
+await page.click('button[type="submit"]')
+```
+
+### Local frontend for Playwright
+
+`forge dev` runs the frontend inside Docker, but Playwright needs a locally accessible dev server. Stop the Docker frontend container, then run `bun run dev` locally in the `frontend/` directory. The backend can stay in Docker.
+
+### SSE connection timing
+
+Don't add `waitForSSE` in `beforeEach` if the SSE connection was already established during the registration/login step. Instead, wait for a UI element that depends on server data to appear. This is more reliable and avoids flaky timeouts.
+
+```typescript
+// wait for actual data, not the SSE connection event
+await page.waitForSelector('[data-testid="todo-list"]')
+```
+
+### Ignoring test artifacts
+
+Add `test-results/` and `playwright-report/` to `.prettierignore` to prevent `forge check` from trying to format generated HTML/JSON in those directories.
+
+```
+test-results/
+playwright-report/
+```
+
+## 13) Required execution sequence
 
 1. Run backend/frontend tests for changed areas.
 2. Generate and review coverage results; enforce 100% line coverage on changed modules.
