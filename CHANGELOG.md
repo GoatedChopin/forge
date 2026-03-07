@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-03-07
+
+### Added
+
+- `${VAR-default}` and `${VAR:-default}` syntax in config env var substitution for fallback values when variables are unset
+- Per-function metrics: `fn.executions_total` counter and `fn.duration_seconds` histogram with function name, kind, and status labels
+- `db.query` tracing spans on `DbConn` methods (`fetch_one`, `fetch_all`, `fetch_optional`, `execute`) so database calls appear in traces
+- `db.transaction` tracing span around transactional mutation lifecycle (BEGIN, handler, COMMIT)
+- SSE connection tracking via `active_connections` gauge (increment on connect, decrement on disconnect)
+- Per-signal env var control for observability: `FORGE_OTEL_TRACES`, `FORGE_OTEL_METRICS`, `FORGE_OTEL_LOGS`
+
+### Changed
+
+- OTLP telemetry export disabled by default; enabled via `FORGE_OTEL_ENABLED=true` env var (docker compose sets this automatically)
+- RPC request log demoted to debug level since `fn.execute` already logs at info with richer context
+- Function input args demoted from info to debug level to reduce log noise and avoid PII exposure
+- Removed redundant `success` field from function execution logs (message already distinguishes executed vs failed)
+- Config templates use env var defaults (`${FORGE_OTEL_ENABLED-false}`) instead of hardcoded `enabled = true`
+
 ## [0.5.0] - 2026-03-06
 
 ### Added
@@ -289,7 +308,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust 2024 edition unsafe block compatibility
 - Release workflow cargo-edit installation
 
-[unreleased]: https://github.com/isala404/forge/compare/v0.5.0...HEAD
+[unreleased]: https://github.com/isala404/forge/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/isala404/forge/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/isala404/forge/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/isala404/forge/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/isala404/forge/compare/v0.3.0...v0.4.0
