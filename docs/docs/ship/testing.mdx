@@ -24,7 +24,7 @@ async fn test_admin_can_delete_user() {
 
 ## What Happens
 
-Each test context builder creates an isolated environment with mocked authentication, configurable environment variables, HTTP interception, and dispatch recording. Tests run against real PostgreSQL when needed via testcontainers, embedded, or isolated databases. This avoids global state pollution between tests.
+Each test context builder creates an isolated environment with mocked authentication, configurable environment variables, HTTP interception, and dispatch recording. Tests run against real PostgreSQL when needed via testcontainers or an explicit `TEST_DATABASE_URL`. This avoids global state pollution between tests.
 
 ## Test Contexts
 
@@ -42,7 +42,7 @@ Every Forge function type has a corresponding test context:
 
 ## Builder Pattern
 
-All test contexts follow the same builder pattern with shared methods for authentication, environment, HTTP mocking, and database access.
+All test contexts follow the same builder pattern with shared methods for authentication, environment, and database access. HTTP mocking is available on all contexts except `TestQueryContext`.
 
 ### Authentication
 
@@ -255,12 +255,11 @@ async fn test_github_webhook_dispatches_job() {
 
 ## Database Testing
 
-Three ways to get a PostgreSQL connection in tests:
+Two ways to get a PostgreSQL connection in tests:
 
 | Method | Feature flag | Env var needed | What happens |
 |--------|-------------|----------------|--------------|
 | Testcontainers | `testcontainers` | No | Starts a Docker container per `TestDatabase` |
-| Embedded PG | `embedded-db` | No | Downloads and runs PG as a child process |
 | Explicit URL | None | `TEST_DATABASE_URL` | Connects to whatever you point it at |
 
 All three go through `TestDatabase::from_env()`. If `TEST_DATABASE_URL` is set it always wins, regardless of features.
@@ -296,30 +295,6 @@ To use an external PG instead, set `TEST_DATABASE_URL` and the container is skip
 
 ```bash
 TEST_DATABASE_URL=postgres://localhost/test_db cargo test --features testcontainers
-```
-
-### Embedded PostgreSQL
-
-Downloads and starts a real PostgreSQL binary. Cached after first run.
-
-```toml
-# Cargo.toml
-[dev-dependencies]
-forge = { version = "0.5.1", features = ["embedded-db"] }
-```
-
-```rust
-#[tokio::test]
-async fn test_with_embedded_db() {
-    let db = TestDatabase::embedded().await.unwrap();
-
-    let ctx = TestQueryContext::builder()
-        .as_user(Uuid::new_v4())
-        .with_pool(db.pool().clone())
-        .build();
-
-    let users = list_users(&ctx).await.unwrap();
-}
 ```
 
 ### Explicit Database URL
@@ -820,7 +795,7 @@ Test contexts provide deterministic alternatives to non-deterministic operations
 
 ### Real PostgreSQL
 
-All database test modes (testcontainers, embedded, explicit URL) run against real PostgreSQL. Tests exercise real SQL with real constraints, indexes, and behavior.
+All database test modes (testcontainers, explicit URL) run against real PostgreSQL. Tests exercise real SQL with real constraints, indexes, and behavior.
 
 ### Transactional Rollback
 

@@ -121,7 +121,7 @@ Node A: acquires lock → running → [crash]
 Node B: waiting → acquires lock → running
 ```
 
-Failover happens within the poll interval (5 seconds) without manual intervention.
+Failover happens within the leader check interval (default 5 seconds for a stable cluster). The heartbeat interval adapts when the cluster is stable, scaling up to 60 seconds between heartbeats, so the effective dead threshold adjusts accordingly.
 
 ## Work Distribution
 
@@ -133,13 +133,14 @@ WITH claimable AS (
     FROM forge_jobs
     WHERE status = 'pending'
       AND scheduled_at <= NOW()
-      AND (worker_capability = ANY($1) OR worker_capability IS NULL)
+      AND (worker_capability = ANY($2) OR worker_capability IS NULL)
     ORDER BY priority DESC, scheduled_at ASC
-    LIMIT $2
+    LIMIT $3
     FOR UPDATE SKIP LOCKED
 )
 UPDATE forge_jobs
-SET status = 'claimed', worker_id = $3, claimed_at = NOW()
+SET status = 'claimed', worker_id = $1, claimed_at = NOW(),
+    attempts = attempts + 1
 WHERE id IN (SELECT id FROM claimable)
 RETURNING *
 ```
@@ -158,7 +159,7 @@ SET last_heartbeat = NOW()
 WHERE id = $1
 ```
 
-Nodes missing 3 consecutive heartbeats (15 seconds) are marked dead:
+Nodes missing heartbeats past the dead threshold are marked dead. The effective threshold is the greater of the configured `dead_threshold_secs` (default 15s) and 3x the current adaptive heartbeat interval:
 
 ```sql
 UPDATE forge_nodes
@@ -362,13 +363,17 @@ New nodes handle traffic before old nodes finish draining to support rolling upd
 
 ## Health Check
 
-`/health` returns 200 if node is active, 503 if draining or dead.
+`/_api/health` is a liveness probe that always returns 200 with the current version. `/_api/ready` is the readiness probe that checks database connectivity and reactor status, returning 503 when the node is not ready.
 
 ```bash
-# Kubernetes readiness probe
+# Kubernetes probes
+livenessProbe:
+  httpGet:
+    path: /_api/health
+    port: 8080
 readinessProbe:
   httpGet:
-    path: /health
+    path: /_api/ready
     port: 8080
 ```
 
@@ -390,7 +395,7 @@ Test clustering behavior with multiple context instances:
 ```rust
 #[tokio::test]
 async fn test_job_claimed_once() {
-    let pool = TestDatabase::embedded().await;
+    let pool = TestDatabase::from_env().await.unwrap();
 
     // Simulate two workers
     let worker1 = Uuid::new_v4();
@@ -415,7 +420,7 @@ async fn test_job_claimed_once() {
 ```rust
 #[tokio::test]
 async fn test_single_leader() {
-    let pool = TestDatabase::embedded().await;
+    let pool = TestDatabase::from_env().await.unwrap();
 
     let election1 = LeaderElection::new(
         pool.clone(),

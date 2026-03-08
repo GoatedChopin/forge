@@ -283,6 +283,7 @@ Scheduled tasks with exactly-once execution.
 | `timeout` | `"duration"` | `"1h"` | Execution timeout |
 | `catch_up` | flag | `false` | Run missed executions after downtime |
 | `catch_up_limit` | `u32` | `10` | Maximum catch-up runs |
+| `group` | `"string"` | `"default"` | Sharded leader election group |
 
 ### Cron Expression
 
@@ -365,7 +366,8 @@ pub async fn order_fulfillment(ctx: &WorkflowContext, order: Order) -> Result<Fu
         refund(&result.charge_id).await
     })
     .run()
-    .await?;
+    .await?
+    .expect("charge_card is non-optional");
 
     ctx.sleep(Duration::from_days(3)).await?; // Durable sleep
 
@@ -438,6 +440,7 @@ HTTP endpoints for external events with signature verification.
 | `timeout` | `"duration"` | `"30s"` | Request timeout |
 | `signature` | `WebhookSignature::...` | none | Signature verification config |
 | `idempotency` | `"source:key"` | none | Idempotency key source |
+| `allow_unsigned` | flag | `false` | Accept requests without valid signature |
 
 ### Signature Verification
 

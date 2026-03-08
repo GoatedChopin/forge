@@ -21,7 +21,7 @@ pub async fn trial_expiration(ctx: &WorkflowContext, input: TrialInput) -> Resul
         send_email(&input.email, "Welcome to your trial!").await
     })
     .run()
-    .await?;
+    .await?;  // Result<Option<T>> — ? unwraps the Result, returns Option
 
     // Step 2: Sleep for 14 days (survives restarts)
     ctx.sleep(Duration::from_secs(14 * 24 * 60 * 60)).await?;
@@ -41,7 +41,8 @@ pub async fn trial_expiration(ctx: &WorkflowContext, input: TrialInput) -> Resul
         is_subscribed(input.user_id).await
     })
     .run()
-    .await?;
+    .await?
+    .expect("non-optional step always returns Some");
 
     Ok(converted)
 }
@@ -103,7 +104,8 @@ pub async fn process_order(ctx: &WorkflowContext, order: Order) -> Result<OrderR
     })
     .timeout(Duration::from_secs(30))
     .run()
-    .await?;
+    .await?
+    .expect("charge_card is non-optional");
 
     ctx.step("fulfill", || async {
         ship_order(order.id).await
@@ -153,7 +155,8 @@ pub async fn book_trip(ctx: &WorkflowContext, trip: TripRequest) -> Result<Booki
         cancel_flight(&flight.confirmation_id).await
     })
     .run()
-    .await?;
+    .await?
+    .expect("book_flight is non-optional");
 
     let hotel = ctx.step("book_hotel", || async {
         book_hotel(&trip).await
@@ -162,7 +165,8 @@ pub async fn book_trip(ctx: &WorkflowContext, trip: TripRequest) -> Result<Booki
         cancel_hotel(&hotel.reservation_id).await
     })
     .run()
-    .await?;
+    .await?
+    .expect("book_hotel is non-optional");
 
     let car = ctx.step("book_car", || async {
         book_car(&trip).await  // If this fails...
@@ -171,7 +175,8 @@ pub async fn book_trip(ctx: &WorkflowContext, trip: TripRequest) -> Result<Booki
         cancel_car(&car.rental_id).await
     })
     .run()
-    .await?;  // ...compensation runs in reverse: hotel, then flight
+    .await?  // ...compensation runs in reverse: hotel, then flight
+    .expect("book_car is non-optional");
 
     Ok(Booking { flight, hotel, car })
 }
@@ -272,7 +277,8 @@ pub async fn create_invoice(ctx: &WorkflowContext, order: Order) -> Result<Invoi
         Invoice::create(order.id, invoice_date).await
     })
     .run()
-    .await
+    .await?
+    .expect("generate_invoice is non-optional")
 }
 ```
 
@@ -338,10 +344,16 @@ The version is recorded when a workflow is started. On resume, the runtime loads
 | `ctx.get_step_result(name)` | `Option<T>` | Get cached step result |
 | `ctx.record_step_start(name)` | `()` | Mark step as started |
 | `ctx.record_step_complete(name, value)` | `()` | Mark step as completed |
+| `ctx.elapsed()` | `Duration` | Time since workflow started |
 | `ctx.db()` | `&PgPool` | Database connection pool |
 | `ctx.db_conn()` | `DbConn<'_>` | Database connection as `DbConn` for shared helpers |
 | `ctx.http()` | `&Client` | HTTP client |
 | `ctx.env(key)` | `Option<String>` | Environment variable |
+| `ctx.env_or(key, default)` | `String` | Environment variable with default |
+| `ctx.env_require(key)` | `Result<String>` | Required environment variable |
+| `ctx.env_parse::<T>(key)` | `Result<T>` | Parse environment variable |
+| `ctx.env_parse_or(key, default)` | `T` | Parse environment variable with default |
+| `ctx.env_contains(key)` | `bool` | Check if environment variable is set |
 
 ## Step Configuration
 

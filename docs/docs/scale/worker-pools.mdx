@@ -209,20 +209,31 @@ A critical GPU job preempts a background GPU job. Priority operates within capab
 
 ### Scaling by Capability
 
-Add workers to specific pools as demand grows:
+Add workers to specific pools as demand grows. Configure capabilities in each node's `forge.toml`:
 
-```bash
-# Scale GPU pool
-FORGE_NODE_CAPABILITIES=gpu ./my-app
+```toml
+# gpu-worker.toml
+[node]
+roles = ["worker"]
+worker_capabilities = ["gpu"]
 
-# Scale media pool
-FORGE_NODE_CAPABILITIES=media ./my-app
+# media-worker.toml
+[node]
+roles = ["worker"]
+worker_capabilities = ["media"]
 
-# Scale general pool
-FORGE_NODE_CAPABILITIES=general ./my-app
+# general-worker.toml
+[node]
+roles = ["worker"]
+worker_capabilities = ["general"]
 ```
 
-Environment variables override `forge.toml` for container orchestration. Kubernetes can scale deployments per capability using separate node pools or taints/tolerations.
+```bash
+# Start with specific config
+./my-app --config gpu-worker.toml
+```
+
+Kubernetes can scale deployments per capability using separate node pools or taints/tolerations with different `forge.toml` configs mounted via ConfigMaps.
 
 ## Testing
 

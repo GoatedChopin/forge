@@ -17,13 +17,12 @@ pub struct CreateOrderInput {
 pub async fn create_order(ctx: &MutationContext, input: CreateOrderInput) -> Result<Order> {
     let user_id = ctx.require_user_id()?;
 
-    sqlx::query_as(
-        "INSERT INTO orders (user_id, product_id, quantity) VALUES ($1, $2, $3) RETURNING *"
+    ctx.db().fetch_one(
+        sqlx::query_as("INSERT INTO orders (user_id, product_id, quantity) VALUES ($1, $2, $3) RETURNING *")
+            .bind(user_id)
+            .bind(input.product_id)
+            .bind(input.quantity)
     )
-    .bind(user_id)
-    .bind(input.product_id)
-    .bind(input.quantity)
-    .fetch_one(ctx.db())
     .await
     .map_err(Into::into)
 }
@@ -59,11 +58,12 @@ pub async fn create_todo(ctx: &MutationContext, title: String) -> Result<Todo> {
         return Err(ForgeError::Validation("Title cannot be empty".into()));
     }
 
-    sqlx::query_as("INSERT INTO todos (title) VALUES ($1) RETURNING *")
-        .bind(title.trim())
-        .fetch_one(ctx.db())
-        .await
-        .map_err(Into::into)
+    ctx.db().fetch_one(
+        sqlx::query_as("INSERT INTO todos (title) VALUES ($1) RETURNING *")
+            .bind(title.trim())
+    )
+    .await
+    .map_err(Into::into)
 }
 ```
 
@@ -79,17 +79,18 @@ pub struct UpdateUserInput {
 
 #[forge::mutation]
 pub async fn update_user(ctx: &MutationContext, input: UpdateUserInput) -> Result<User> {
-    sqlx::query_as(
-        "UPDATE users SET
-         email = COALESCE($2, email),
-         name = COALESCE($3, name),
-         updated_at = NOW()
-         WHERE id = $1 RETURNING *"
+    ctx.db().fetch_one(
+        sqlx::query_as(
+            "UPDATE users SET
+             email = COALESCE($2, email),
+             name = COALESCE($3, name),
+             updated_at = NOW()
+             WHERE id = $1 RETURNING *"
+        )
+        .bind(input.id)
+        .bind(input.email)
+        .bind(input.name)
     )
-    .bind(input.id)
-    .bind(input.email)
-    .bind(input.name)
-    .fetch_one(ctx.db())
     .await
     .map_err(Into::into)
 }
@@ -102,9 +103,9 @@ When a mutation needs to trigger background work, use `transactional` to ensure 
 ```rust
 #[forge::mutation(transactional)]
 pub async fn create_order(ctx: &MutationContext, input: CreateOrderInput) -> Result<Order> {
-    let order = sqlx::query_as("INSERT INTO orders (...) VALUES (...) RETURNING *")
-        .fetch_one(ctx.db())
-        .await?;
+    let order = ctx.db().fetch_one(
+        sqlx::query_as("INSERT INTO orders (...) VALUES (...) RETURNING *")
+    ).await?;
 
     ctx.dispatch_job("process_order", json!({ "order_id": order.id })).await?;
     ctx.dispatch_job("send_confirmation", json!({ "email": order.email })).await?;
@@ -128,10 +129,10 @@ error: Mutations that call `dispatch_job()` or `start_workflow()` must use
 ```rust
 #[forge::mutation(transactional)]
 pub async fn start_trial(ctx: &MutationContext, user_id: Uuid) -> Result<Uuid> {
-    sqlx::query("UPDATE users SET trial_started = NOW() WHERE id = $1")
-        .bind(user_id)
-        .execute(ctx.db())
-        .await?;
+    ctx.db().execute(
+        sqlx::query("UPDATE users SET trial_started = NOW() WHERE id = $1")
+            .bind(user_id)
+    ).await?;
 
     let workflow_id = ctx.start_workflow("trial_flow", json!({ "user_id": user_id })).await?;
 
@@ -157,11 +158,12 @@ pub async fn charge_card(ctx: &MutationContext, input: ChargeInput) -> Result<Pa
 
     let charge: StripeCharge = response.json().await?;
 
-    sqlx::query_as("INSERT INTO payments (...) VALUES (...) RETURNING *")
-        .bind(charge.id)
-        .fetch_one(ctx.db())
-        .await
-        .map_err(Into::into)
+    ctx.db().fetch_one(
+        sqlx::query_as("INSERT INTO payments (...) VALUES (...) RETURNING *")
+            .bind(charge.id)
+    )
+    .await
+    .map_err(Into::into)
 }
 ```
 
@@ -170,10 +172,10 @@ pub async fn charge_card(ctx: &MutationContext, input: ChargeInput) -> Result<Pa
 ```rust
 #[forge::mutation(require_role("admin"))]
 pub async fn delete_user(ctx: &MutationContext, user_id: Uuid) -> Result<bool> {
-    let result = sqlx::query("DELETE FROM users WHERE id = $1")
-        .bind(user_id)
-        .execute(ctx.db())
-        .await?;
+    let result = ctx.db().execute(
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(user_id)
+    ).await?;
 
     Ok(result.rows_affected() > 0)
 }
@@ -186,12 +188,13 @@ pub async fn delete_user(ctx: &MutationContext, user_id: Uuid) -> Result<bool> {
 pub async fn submit_comment(ctx: &MutationContext, input: CommentInput) -> Result<Comment> {
     let user_id = ctx.require_user_id()?;
 
-    sqlx::query_as("INSERT INTO comments (user_id, content) VALUES ($1, $2) RETURNING *")
-        .bind(user_id)
-        .bind(input.content)
-        .fetch_one(ctx.db())
-        .await
-        .map_err(Into::into)
+    ctx.db().fetch_one(
+        sqlx::query_as("INSERT INTO comments (user_id, content) VALUES ($1, $2) RETURNING *")
+            .bind(user_id)
+            .bind(input.content)
+    )
+    .await
+    .map_err(Into::into)
 }
 ```
 
@@ -207,10 +210,17 @@ Rate limit keys: `user` (per authenticated user), `ip` (per client IP), `tenant`
 | `ctx.require_user_id()` | `Result<Uuid>` | Authenticated user ID or error |
 | `ctx.require_subject()` | `Result<&str>` | Raw subject claim (Firebase, Clerk) |
 | `ctx.dispatch_job(name, args)` | `Result<Uuid>` | Dispatch background job |
-| `ctx.cancel_job(job_id, reason)` | `Result<bool>` | Request cancellation for a job |
+| `ctx.cancel_job(job_id, reason)` | `Result<bool>` | Request cancellation for a job (`reason` is `Option<String>`) |
+| `ctx.issue_token(claims)` | `Result<String>` | Issue HMAC-signed JWT token (requires HMAC auth config) |
 | `ctx.start_workflow(name, input)` | `Result<Uuid>` | Start workflow |
+| `ctx.dispatch_job_with_context(name, args, context)` | `Result<Uuid>` | Dispatch job with additional JSON context |
+| `ctx.http_with_circuit_breaker()` | `&CircuitBreakerClient` | HTTP client with circuit breaker |
 | `ctx.env(key)` | `Option<String>` | Environment variable |
+| `ctx.env_or(key, default)` | `String` | Environment variable with default |
 | `ctx.env_require(key)` | `Result<String>` | Required environment variable |
+| `ctx.env_parse::<T>(key)` | `Result<T>` | Parse environment variable |
+| `ctx.env_parse_or(key, default)` | `T` | Parse environment variable with default |
+| `ctx.env_contains(key)` | `bool` | Check if environment variable is set |
 
 ## Context Fields
 

@@ -306,15 +306,15 @@ Updates only reach the client when the hash differs from the last push, which pr
 
 ### Adaptive Tracking
 
-Forge tracks changes at different granularities based on subscription count:
+Forge tracks changes at different granularities based on tracked row count per table:
 
-| Subscriptions | Tracking Mode | Behavior |
-|---------------|---------------|----------|
-| 0 | None | No tracking |
-| 1-50 | Row-level | Only tracked row IDs trigger re-execution |
-| 50+ | Table-level | Any table change triggers re-execution |
+| Tracked Rows | Tracking Mode | Behavior |
+|--------------|---------------|----------|
+| 0 | None | No tracking (no subscriptions) |
+| 1-100 | Row-level | Only tracked row IDs trigger re-execution |
+| 101+ | Table-level | Any table change triggers re-execution |
 
-Hysteresis prevents oscillation: threshold up (100 rows) differs from threshold down (50 rows).
+Hysteresis prevents oscillation: switches to table-level above 100 tracked rows (`> 100`), back to row-level below 50 (`< 50`). Rows in the 50-100 range stay in their current mode.
 
 Row-level tracking is more efficient for few subscriptions. Table-level avoids memory overhead when many clients subscribe. Forge re-evaluates every 60 seconds with a maximum of 10,000 tracked rows per table.
 

@@ -46,6 +46,7 @@ jwt_audience = "your-app"
 ## Error Policy
 
 - Protocol errors (`-32600`, `-32601`, `-32602`, `-32603`) for malformed requests and server-side internal failures.
+- Rate limiting returns error code `-32029` with a retry-after hint.
 - Tool validation/business failures should return MCP tool results with `isError: true`.
 
 This separation helps MCP clients and models recover from tool input errors while still treating protocol faults as transport-level failures.

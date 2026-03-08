@@ -9,7 +9,6 @@ Configure database connections, authentication, workers, clustering, and node ro
 name = "my-app"
 
 [database]
-mode = "remote"
 url = "${DATABASE_URL}"
 pool_size = 50
 replica_urls = ["${DATABASE_REPLICA_URL}"]
@@ -35,7 +34,7 @@ worker_capabilities = ["general", "media"]
 
 Forge reads `forge.toml` at startup and substitutes environment variables. Each section configures a different subsystem. Sections you omit use sensible defaults.
 
-Environment variables use `${VAR_NAME}` syntax (uppercase letters, numbers, underscores). Unset variables remain as literal strings.
+Environment variables use `${VAR_NAME}` syntax (uppercase letters, numbers, underscores). Default values are supported with `${VAR-default}` or `${VAR:-default}` syntax. Unset variables without defaults remain as literal strings.
 
 ## Sections
 
@@ -50,7 +49,6 @@ Environment variables use `${VAR_NAME}` syntax (uppercase letters, numbers, unde
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `mode` | string | `"remote"` | Database mode |
 | `url` | string | - | PostgreSQL connection URL |
 | `pool_size` | u32 | `50` | Connection pool size |
 | `pool_timeout_secs` | u64 | `30` | Pool checkout timeout |
@@ -60,7 +58,6 @@ Environment variables use `${VAR_NAME}` syntax (uppercase letters, numbers, unde
 
 ```toml
 [database]
-mode = "remote"
 url = "${DATABASE_URL}"
 ```
 
@@ -70,7 +67,6 @@ During development, `forge dev` runs PostgreSQL via Docker Compose. For producti
 
 ```toml
 [database]
-mode = "remote"
 url = "${DATABASE_URL}"
 replica_urls = [
     "${DATABASE_REPLICA_1}",
@@ -89,7 +85,6 @@ Separate connection pools prevent runaway workloads from starving others:
 
 ```toml
 [database]
-mode = "remote"
 url = "${DATABASE_URL}"
 pool_size = 50
 
@@ -257,12 +252,15 @@ Workers maintain a semaphore sized to `max_concurrent_jobs`. They only poll when
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `name` | string | `"default"` | Cluster identifier |
+| `discovery` | string | `"postgres"` | Discovery method: `postgres`, `dns`, `kubernetes`, `static` |
 | `heartbeat_interval_secs` | u64 | `5` | Heartbeat frequency |
 | `dead_threshold_secs` | u64 | `15` | Missing heartbeats before dead |
+| `seed_nodes` | string[] | `[]` | Static seed node addresses (for `static` discovery) |
+| `dns_name` | string | - | DNS name for service discovery (for `dns` discovery) |
 
 #### Discovery
 
-Nodes register in the `forge_nodes` database table, so an external service is not required.
+Nodes register in the `forge_nodes` database table by default, so an external service is not required. Alternative discovery methods are available for DNS-based, Kubernetes, or static configurations.
 
 ```toml
 [cluster]
@@ -384,7 +382,6 @@ Development uses `forge dev` which runs Docker Compose. The `forge.toml` in gene
 name = "my-app"
 
 [database]
-mode = "remote"
 url = "${DATABASE_URL}"
 
 [gateway]
@@ -398,7 +395,6 @@ port = 8080
 name = "my-app"
 
 [database]
-mode = "remote"
 url = "${DATABASE_URL}"
 pool_size = 100
 
@@ -421,7 +417,6 @@ API nodes:
 
 ```toml
 [database]
-mode = "remote"
 url = "${DATABASE_URL}"
 replica_urls = ["${DATABASE_REPLICA_URL}"]
 read_from_replica = true
@@ -440,7 +435,6 @@ Worker nodes:
 
 ```toml
 [database]
-mode = "remote"
 url = "${DATABASE_URL}"
 
 [database.pools.jobs]

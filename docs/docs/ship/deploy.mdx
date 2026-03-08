@@ -120,7 +120,7 @@ Multiple nodes can start simultaneously. First node runs migrations. Others wait
 | Endpoint | Purpose | Response |
 |----------|---------|----------|
 | `/_api/health` | Liveness probe | `200 { status: "healthy", version: "0.1.0" }` |
-| `/_api/ready` | Readiness probe | `200/503 { ready: bool, database: bool, version: "0.1.0" }` |
+| `/_api/ready` | Readiness probe | `200/503 { ready: bool, database: bool, reactor: bool, version: "0.1.0" }` |
 
 The readiness probe queries the database:
 
@@ -278,7 +278,10 @@ In-flight requests tracked with atomic counter. RAII guard ensures accurate coun
 
 ```rust
 // Each request increments on entry, decrements on exit
-let _guard = InFlightGuard::try_new(shutdown.clone())?;
+// Returns None if the node is draining (rejects new work)
+if let Some(_guard) = InFlightGuard::try_new(shutdown.clone()) {
+    // Process request; guard decrements on drop
+}
 ```
 
 ## Rolling Updates
@@ -400,7 +403,7 @@ Additional variables can be accessed in handlers via `ctx.env("VAR_NAME")`.
 
 - [ ] `cargo build --release` with optimizations
 - [ ] Frontend built and embedded (or served separately)
-- [ ] `DATABASE_URL` points to production PostgreSQL 18+
+- [ ] `DATABASE_URL` points to production PostgreSQL 15+
 - [ ] Connection pool sized for workload (`pool_size` in forge.toml)
 - [ ] Health checks configured in orchestrator
 - [ ] `terminationGracePeriodSeconds` exceeds drain timeout

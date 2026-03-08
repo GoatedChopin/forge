@@ -5,9 +5,9 @@ Track job and workflow progress in the UI with reactive stores that subscribe to
 ## The Code
 
 ```typescript
-import { trackExportUsers$ } from "$lib/forge/api";
+import { trackExportUsers } from "$lib/forge/api";
 
-const job = trackExportUsers$({ userId: "abc-123" });
+const job = trackExportUsers({ userId: "abc-123" });
 
 // Reactive state
 $: if ($job.status === "completed") {
@@ -19,7 +19,7 @@ The store starts the job, subscribes to status updates, and unsubscribes when th
 
 ## What Happens
 
-Calling `trackExportUsers$()` does three things:
+Calling `trackExportUsers()` does three things:
 
 1. **Starts the job** by calling the backend function
 2. **Registers for SSE updates** with the gateway
@@ -99,9 +99,9 @@ type WorkflowStatus =
 
 ```svelte
 <script>
-  import { trackExportUsers$ } from "$lib/forge/api";
+  import { trackExportUsers } from "$lib/forge/api";
 
-  const job = trackExportUsers$({ format: "csv" });
+  const job = trackExportUsers({ format: "csv" });
 </script>
 
 {#if $job.status === "running"}
@@ -120,9 +120,9 @@ type WorkflowStatus =
 
 ```svelte
 <script>
-  import { trackAccountVerification$ } from "$lib/forge/api";
+  import { trackAccountVerification } from "$lib/forge/api";
 
-  const workflow = trackAccountVerification$({ userId });
+  const workflow = trackAccountVerification({ userId });
 </script>
 
 <ol class="steps">
@@ -141,12 +141,12 @@ type WorkflowStatus =
 
 ```svelte
 <script>
-  import { trackSendReport$ } from "$lib/forge/api";
+  import { trackSendReport } from "$lib/forge/api";
 
   let job = null;
 
   function startExport() {
-    job = trackSendReport$({ reportId: "q4-2024" });
+    job = trackSendReport({ reportId: "q4-2024" });
   }
 </script>
 
@@ -180,7 +180,7 @@ type WorkflowStatus =
 For stores created outside component lifecycle:
 
 ```typescript
-const job = trackExportUsers$({ userId });
+const job = trackExportUsers({ userId });
 
 // Later, clean up manually
 job.unsubscribe();
@@ -222,7 +222,7 @@ pub async fn export_users(ctx: &JobContext, format: String) -> Result<ExportResu
 Forge generates:
 
 ```typescript
-export const trackExportUsers$ = (args: { format: string }) =>
+export const trackExportUsers = (args: { format: string }) =>
   createJobStore<{ format: string }, ExportResult>("export_users", args);
 ```
 
@@ -238,13 +238,13 @@ pub async fn account_verification(ctx: &WorkflowContext, user_id: Uuid) -> Resul
 Generates:
 
 ```typescript
-export const trackAccountVerification$ = (args: { userId: string }) =>
+export const trackAccountVerification = (args: { userId: string }) =>
   createWorkflowStore<{ userId: string }, void>("account_verification", args);
 ```
 
 ## Under the Hood
 
-**SSE transport**: Job updates arrive over the same SSE connection used for query subscriptions. The client registers for job-specific updates via `/subscribe-job`:
+**SSE transport**: Job updates arrive over the same SSE connection used for query subscriptions. The client registers for job-specific updates via `/_api/subscribe-job`:
 
 ```typescript
 await client._registerJob(clientSubId, jobId);

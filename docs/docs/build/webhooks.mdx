@@ -224,7 +224,11 @@ pub async fn events_webhook(ctx: &WebhookContext, payload: Value) -> Result<Webh
 | `ctx.dispatch_job(name, args)` | `Result<Uuid>` | Dispatch background job |
 | `ctx.cancel_job(job_id, reason)` | `Result<bool>` | Cancel a dispatched job |
 | `ctx.env(key)` | `Option<String>` | Environment variable |
+| `ctx.env_or(key, default)` | `String` | Environment variable with default |
 | `ctx.env_require(key)` | `Result<String>` | Required environment variable |
+| `ctx.env_parse::<T>(key)` | `Result<T>` | Parse environment variable |
+| `ctx.env_parse_or(key, default)` | `T` | Parse environment variable with default |
+| `ctx.env_contains(key)` | `bool` | Check if environment variable is set |
 
 ## Context Fields
 

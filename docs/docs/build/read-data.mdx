@@ -182,6 +182,8 @@ pub async fn expensive_report(ctx: &QueryContext) -> Result<Report> {
 | `ctx.env_or(key, default)` | `String` | Get env var with default |
 | `ctx.env_require(key)` | `Result<String>` | Get required env var |
 | `ctx.env_parse::<T>(key)` | `Result<T>` | Parse env var to type |
+| `ctx.env_parse_or(key, default)` | `T` | Parse env var with default |
+| `ctx.env_contains(key)` | `bool` | Check if env var is set |
 
 ### AuthContext Methods
 

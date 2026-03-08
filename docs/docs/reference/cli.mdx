@@ -98,7 +98,6 @@ forge check [options]
 | Option | Description |
 |--------|-------------|
 | `--config, -c <path>` | Path to forge.toml (default: ./forge.toml) |
-| `--no-db` | Skip database connectivity check |
 
 ### Checks Performed
 
@@ -106,20 +105,17 @@ forge check [options]
 - Cargo.toml and forge dependency
 - Directory structure (src/, src/schema/, src/functions/, migrations/)
 - Migration file naming and `-- @up` markers
-- Function files with forge macros
-- Schema files with `#[forge::model]`
+- Function files with forge macros (query, mutation, job, cron, workflow, daemon, webhook, mcp_tool)
+- Schema files with `#[forge::model]` or standard derives (`Serialize`, `FromRow`)
+- Generated file checksums (`.forge/` directory)
 - Rust linting (cargo fmt, clippy)
-- Environment variables and DATABASE_URL
-- Database connectivity
+- Environment variables and DATABASE_URL presence
 - Frontend configuration (if present)
 - Frontend linting (ESLint, Prettier)
 
 ```bash
 # Full project check
 forge check
-
-# Skip database check (offline validation)
-forge check --no-db
 
 # Custom config location
 forge check --config ./config/forge.toml

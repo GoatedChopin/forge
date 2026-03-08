@@ -215,9 +215,16 @@ pub async fn depends_on_other_services(ctx: &DaemonContext) -> Result<()> {
 | `ctx.dispatch_job(name, args)` | `Result<Uuid>` | Dispatch a background job |
 | `ctx.start_workflow(name, input)` | `Result<Uuid>` | Start a workflow |
 | `ctx.shutdown_signal()` | `Future<()>` | Resolves when shutdown requested |
+| `ctx.is_shutdown_requested()` | `bool` | Check if shutdown has been requested |
 | `ctx.heartbeat()` | `Result<()>` | Update last heartbeat timestamp |
 | `ctx.env(key)` | `Option<String>` | Environment variable |
+| `ctx.env_or(key, default)` | `String` | Environment variable with default |
 | `ctx.env_require(key)` | `Result<String>` | Required environment variable |
+| `ctx.env_parse::<T>(key)` | `Result<T>` | Parse environment variable |
+| `ctx.env_parse_or(key, default)` | `T` | Parse environment variable with default |
+| `ctx.env_contains(key)` | `bool` | Check if environment variable is set |
+| `ctx.trace_id()` | `String` | Current trace identifier |
+| `ctx.span()` | `&Span` | Current tracing span |
 
 ## Context Fields
 

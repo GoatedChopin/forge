@@ -87,13 +87,20 @@ idempotency, and enqueue background work.
 ```rust
 #[forge::workflow]
 pub async fn onboarding(ctx: &WorkflowContext, user_id: Uuid) -> Result<()> {
-    ctx.step("welcome_email", || send_welcome(user_id)).await?;
+    ctx.step("welcome_email", || async {
+        send_welcome(user_id).await
+    })
+    .run()
+    .await?;
 
-    ctx.sleep(Duration::from_days(3)).await?;
+    ctx.sleep(Duration::from_secs(3 * 24 * 60 * 60)).await?;
 
-    ctx.step("check_activation", || check_user_active(user_id))
-        .compensate(|_| send_reminder(user_id))
-        .await?;
+    ctx.step("check_activation", || async {
+        check_user_active(user_id).await
+    })
+    .compensate(|_| async move { send_reminder(user_id).await })
+    .run()
+    .await?;
 
     Ok(())
 }
@@ -123,6 +130,6 @@ using the `embedded-frontend` feature.
 
 ## Requirements
 
-Forge requires PostgreSQL 18+ and is released under the MIT License.
+Forge requires PostgreSQL 15+ and is released under the MIT License.
 
 Next: [First App](/docs/start/first-app)

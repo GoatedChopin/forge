@@ -28,7 +28,7 @@ Err(ForgeError::NotFound("User not found".to_string()))
 | `Config(String)` | 500 | `INTERNAL_ERROR` | Configuration error |
 | `Function(String)` | 500 | `INTERNAL_ERROR` | Function execution failed |
 | `Job(String)` | 500 | `INTERNAL_ERROR` | Job execution failed |
-| `JobCancelled(String)` | 500 | `JOB_CANCELLED` | Job was explicitly cancelled |
+| `JobCancelled(String)` | 409 | `JOB_CANCELLED` | Job was explicitly cancelled |
 | `Cluster(String)` | 500 | `INTERNAL_ERROR` | Cluster communication failed |
 | `Serialization(String)` | 500 | `INTERNAL_ERROR` | Serialization failed |
 | `Deserialization(String)` | 500 | `INTERNAL_ERROR` | Deserialization failed |
@@ -46,6 +46,8 @@ Err(ForgeError::NotFound("User not found".to_string()))
 | `limit` | `u32` | Configured request limit |
 | `remaining` | `u32` | Tokens remaining (0 when exceeded) |
 
+The HTTP response serializes only `retry_after_secs` in the `details` object. The `limit` and `remaining` fields are available in Rust but not included in the JSON response.
+
 ## HTTP Response Format
 
 All errors serialize to the same JSON shape:
@@ -53,26 +55,27 @@ All errors serialize to the same JSON shape:
 ```json
 {
   "success": false,
-  "data": null,
   "error": {
     "code": "NOT_FOUND",
     "message": "User not found",
     "details": null
   },
-  "requestId": "abc123"
+  "request_id": "abc123"
 }
 ```
+
+The `data` field is omitted from error responses (not set to `null`). Similarly, the `error` field is omitted from success responses. The `request_id` field is also omitted when not set.
 
 ### Response Fields
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `success` | `boolean` | Always `false` for errors |
-| `data` | `null` | Always `null` for errors |
+| `data` | - | Omitted for errors |
 | `error.code` | `string` | Machine-readable error code |
 | `error.message` | `string` | Human-readable description |
 | `error.details` | `object \| null` | Additional context (optional) |
-| `requestId` | `string` | Request identifier for tracing |
+| `request_id` | `string` | Request identifier for tracing |
 
 ## TypeScript Error Types
 
@@ -117,7 +120,7 @@ try {
 | `TIMEOUT` | 504 | Request exceeded configured timeout |
 | `RATE_LIMITED` | 429 | Too many requests |
 | `INTERNAL_ERROR` | 500 | Server-side error |
-| `UNKNOWN` | 500 | Unclassified error |
+| `JOB_CANCELLED` | 409 | Job was explicitly cancelled |
 
 ## Creating Custom Errors
 
@@ -172,17 +175,19 @@ pub async fn get_audit_logs(ctx: &QueryContext) -> Result<Vec<AuditLog>> {
 ```rust
 #[forge::mutation]
 pub async fn create_user(ctx: &MutationContext, email: String) -> Result<User> {
-    sqlx::query_as("INSERT INTO users (email) VALUES ($1) RETURNING *")
-        .bind(&email)
-        .fetch_one(ctx.db())
-        .await
-        .map_err(|e| {
-            if e.to_string().contains("unique constraint") {
-                ForgeError::Validation(format!("Email {} already exists", email))
-            } else {
-                ForgeError::Database(e.to_string())
-            }
-        })
+    ctx.db().fetch_one(
+        sqlx::query_as("INSERT INTO users (email) VALUES ($1) RETURNING *")
+            .bind(&email)
+    )
+    .await
+    .map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("unique constraint") {
+            ForgeError::Validation(format!("Email {} already exists", email))
+        } else {
+            e
+        }
+    })
 }
 ```
 
@@ -307,7 +312,7 @@ try {
   await expensiveQuery();
 } catch (e) {
   if (e instanceof ForgeClientError && e.code === 'RATE_LIMITED') {
-    const retryAfter = e.details?.retry_after ?? 60;
+    const retryAfter = e.details?.retry_after_secs ?? 60;
     showMessage(`Rate limited. Try again in ${retryAfter} seconds`);
   }
 }
@@ -411,7 +416,7 @@ onAuthError: (error) => {
 
 ```typescript
 if (error.code === 'RATE_LIMITED') {
-  await sleep(error.details.retry_after * 1000);
+  await sleep(error.details.retry_after_secs * 1000);
   return retry();
 }
 ```

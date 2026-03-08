@@ -41,6 +41,7 @@ pub struct Todo {
     pub id: Uuid,
     pub title: String,
     pub completed: bool,
+    pub created_at: DateTime<Utc>,
 }
 ```
 
@@ -61,7 +62,7 @@ use crate::schema::Todo;
 
 #[forge::query(public)]
 pub async fn list_todos(ctx: &QueryContext) -> Result<Vec<Todo>> {
-    sqlx::query_as("SELECT id, title, completed FROM todos ORDER BY id")
+    sqlx::query_as("SELECT * FROM todos ORDER BY created_at DESC")
         .fetch_all(ctx.db())
         .await
         .map_err(Into::into)
@@ -78,9 +79,9 @@ pub use todos::*;
 Register it in `src/main.rs`:
 
 ```rust
-builder
-    .function_registry_mut()
-    .register_query::<functions::ListTodosQuery>();
+Forge::builder()
+    .register_query::<functions::ListTodosQuery>()
+    // ... other registrations
 ```
 
 ## Add the Table
@@ -92,7 +93,8 @@ Create `migrations/0001_todos.sql`:
 CREATE TABLE todos (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     title TEXT NOT NULL,
-    completed BOOLEAN NOT NULL DEFAULT false
+    completed BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- @down
@@ -119,20 +121,24 @@ pub struct CreateTodoInput {
 
 #[forge::mutation(public)]
 pub async fn create_todo(ctx: &MutationContext, input: CreateTodoInput) -> Result<Todo> {
-    sqlx::query_as("INSERT INTO todos (title) VALUES ($1) RETURNING *")
-        .bind(input.title)
-        .fetch_one(ctx.db())
-        .await
-        .map_err(Into::into)
+    ctx.db().fetch_one(
+        sqlx::query_as("INSERT INTO todos (title) VALUES ($1) RETURNING *")
+            .bind(input.title)
+    )
+    .await
+    .map_err(Into::into)
 }
 ```
 
 Register it in `src/main.rs`:
 
+Add to the builder chain in `src/main.rs`:
+
 ```rust
-builder
-    .function_registry_mut()
-    .register_mutation::<functions::CreateTodoMutation>();
+Forge::builder()
+    .register_query::<functions::ListTodosQuery>()
+    .register_mutation::<functions::CreateTodoMutation>()
+    // ...
 ```
 
 Test it:

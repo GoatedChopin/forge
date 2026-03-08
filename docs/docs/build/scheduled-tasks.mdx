@@ -35,8 +35,8 @@ pub async fn daily_report(ctx: &CronContext) -> Result<()> {
 
 The scheduler runs every second, checking for due cron executions. When your cron's scheduled time arrives:
 
-1. One node claims the run via `INSERT ... ON CONFLICT DO NOTHING`
-2. The database's unique constraint ensures only one node wins
+1. One node claims the run via `INSERT ... ON CONFLICT DO UPDATE` (reclaiming stale runs if the previous executor timed out)
+2. The database's unique constraint on `(cron_name, scheduled_time)` ensures only one node wins
 3. The cron executes with full context: database, HTTP, logging
 4. Status updates to `completed` or `failed`
 
@@ -51,6 +51,7 @@ Coordination relies on PostgreSQL advisory locks and unique constraints rather t
 | `timeout` | `"duration"` | `"1h"` | Maximum execution time (`"30s"`, `"5m"`, `"1h"`) |
 | `catch_up` | flag | `false` | Run missed executions after downtime |
 | `catch_up_limit` | `u32` | `10` | Maximum catch-up runs per tick |
+| `group` | `"string"` | `"default"` | Sharded leader election group for scheduling |
 
 ### Cron Expression Format
 
@@ -203,11 +204,16 @@ pub async fn poll_iss_location(ctx: &CronContext) -> Result<()> {
 | `ctx.db()` | `&PgPool` | Database connection pool |
 | `ctx.db_conn()` | `DbConn<'_>` | Database connection as `DbConn` for shared helpers |
 | `ctx.http()` | `&reqwest::Client` | HTTP client |
-| `ctx.delay()` | `Duration` | Time between scheduled and actual execution |
+| `ctx.delay()` | `chrono::Duration` | Time between scheduled and actual execution |
 | `ctx.is_late()` | `bool` | `true` if delay exceeds 1 minute |
 | `ctx.env(key)` | `Option<String>` | Environment variable |
+| `ctx.env_or(key, default)` | `String` | Environment variable with default |
 | `ctx.env_require(key)` | `Result<String>` | Required environment variable |
-| `ctx.with_auth(auth)` | `Self` | Set authentication context |
+| `ctx.env_parse::<T>(key)` | `Result<T>` | Parse environment variable |
+| `ctx.env_parse_or(key, default)` | `T` | Parse environment variable with default |
+| `ctx.env_contains(key)` | `bool` | Check if environment variable is set |
+| `ctx.trace_id()` | `String` | Current trace identifier |
+| `ctx.span()` | `&Span` | Current tracing span |
 
 ### Logging
 
@@ -360,15 +366,12 @@ mod tests {
     async fn test_logging() {
         let ctx = TestCronContext::builder("my_cron").build();
 
-        ctx.log.info("Started");
-        ctx.log.warn("Warning");
-        ctx.log.error("Failed");
+        ctx.log.info("Started", json!({}));
+        ctx.log.warn("Warning", json!({"count": 42}));
+        ctx.log.error("Failed", json!({"reason": "timeout"}));
 
-        let entries = ctx.log.entries();
-        assert_eq!(entries.len(), 3);
-        assert_eq!(entries[0].level, "info");
-        assert_eq!(entries[1].level, "warn");
-        assert_eq!(entries[2].level, "error");
+        // CronLog writes to tracing; use tracing-test or tracing-subscriber
+        // to capture and assert log output in tests
     }
 }
 ```

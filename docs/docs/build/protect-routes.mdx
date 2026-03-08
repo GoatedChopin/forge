@@ -247,10 +247,11 @@ Token validation runs this pipeline:
 
 1. **Extract** - Token from `Authorization: Bearer <token>` header
 2. **Decode** - Parse JWT header and payload
-3. **Validate expiry** - Check `exp` claim against current time (60s leeway for clock skew)
-4. **Validate issuer** - If configured, check `iss` claim matches
-5. **Validate audience** - If configured, check `aud` claim matches
-6. **Verify signature** - HMAC secret or RSA public key from JWKS
+3. **Validate required claims** - Both `exp` and `sub` claims must be present
+4. **Validate expiry** - Check `exp` claim against current time (60s leeway for clock skew)
+5. **Validate issuer** - If configured, check `iss` claim matches
+6. **Validate audience** - If configured, check `aud` claim matches
+7. **Verify signature** - HMAC secret or RSA public key from JWKS
 
 For RSA algorithms, public keys are fetched from the JWKS endpoint and cached. Cache TTL defaults to 1 hour. Keys are matched by the `kid` (key ID) header in the token.
 

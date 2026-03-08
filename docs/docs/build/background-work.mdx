@@ -11,7 +11,7 @@ Define background jobs with retries, priority queues, and worker routing.
     worker_capability = "media"
 )]
 pub async fn transcode_video(ctx: &JobContext, args: TranscodeArgs) -> Result<Video> {
-    ctx.progress(0, "Starting transcription")?;
+    ctx.progress(0, "Starting transcode")?;
 
     for (i, chunk) in args.chunks.iter().enumerate() {
         process_chunk(chunk).await?;
@@ -45,6 +45,7 @@ Jobs that exceed `max_attempts` move to the dead letter queue for manual inspect
 | `idempotent(key = "field")` | config | none | Custom idempotency key |
 | `public` | flag | `false` | Allow unauthenticated dispatch |
 | `require_role("name")` | `string` | none | Require role to dispatch |
+| `compensate` | `"handler"` | none | Cancellation compensation handler function name |
 | `ttl` | `"duration"` | none | Auto-cleanup after completion (e.g., `"7d"`) |
 
 ### Priority Levels
@@ -120,10 +121,10 @@ Jobs are dispatched within the mutation's transaction. If the mutation fails, th
 ```rust
 #[forge::mutation(transactional)]
 pub async fn create_order(ctx: &MutationContext, order: NewOrder) -> Result<Order> {
-    let order = sqlx::query_as("INSERT INTO orders ... RETURNING *")
-        .bind(&order)
-        .fetch_one(ctx.db())
-        .await?;
+    let order = ctx.db().fetch_one(
+        sqlx::query_as("INSERT INTO orders ... RETURNING *")
+            .bind(&order)
+    ).await?;
 
     ctx.dispatch_job("send_order_confirmation", json!({
         "order_id": order.id,
@@ -313,7 +314,11 @@ pub async fn send_notification(ctx: &JobContext, args: NotifyArgs) -> Result<()>
 | `ctx.is_retry()` | `bool` | Check if this is a retry attempt |
 | `ctx.is_last_attempt()` | `bool` | Check if this is the final attempt |
 | `ctx.env(key)` | `Option<String>` | Get environment variable |
+| `ctx.env_or(key, default)` | `String` | Environment variable with default |
 | `ctx.env_require(key)` | `Result<String>` | Get required env var |
+| `ctx.env_parse::<T>(key)` | `Result<T>` | Parse environment variable |
+| `ctx.env_parse_or(key, default)` | `T` | Parse environment variable with default |
+| `ctx.env_contains(key)` | `bool` | Check if environment variable is set |
 
 ### Context Fields
 
@@ -337,13 +342,14 @@ WITH claimable AS (
     FROM forge_jobs
     WHERE status = 'pending'
       AND scheduled_at <= NOW()
-      AND (worker_capability = ANY($1) OR worker_capability IS NULL)
+      AND (worker_capability = ANY($2) OR worker_capability IS NULL)
     ORDER BY priority DESC, scheduled_at ASC
-    LIMIT $2
+    LIMIT $3
     FOR UPDATE SKIP LOCKED
 )
 UPDATE forge_jobs
-SET status = 'claimed', worker_id = $3, claimed_at = NOW()
+SET status = 'claimed', worker_id = $1, claimed_at = NOW(),
+    attempts = attempts + 1
 WHERE id IN (SELECT id FROM claimable)
 RETURNING *
 ```
@@ -395,7 +401,7 @@ WHERE id = $1
 
 Dead letter jobs remain in the database for inspection. They can be manually retried or deleted by querying the `forge_jobs` table.
 
-### Idempotency via Unique Constraint
+### Idempotency Check
 
 Idempotent jobs check for existing records before insertion:
 
@@ -405,7 +411,7 @@ WHERE idempotency_key = $1
   AND status NOT IN ('completed', 'failed', 'dead_letter', 'cancelled')
 ```
 
-If found, the existing job ID returns without creating a duplicate. The unique constraint `(job_type, idempotency_key)` prevents race conditions.
+If found, the existing job ID returns without creating a duplicate. The `idempotency_key` column is indexed for fast lookups.
 
 ### Priority Queue
 

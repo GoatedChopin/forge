@@ -196,8 +196,13 @@ Validation errors return as tool results so LLM clients can read and correct the
 | `ctx.dispatch_job(name, args)` | Enqueue a background job |
 | `ctx.start_workflow(name, input)` | Start a workflow |
 | `ctx.env("KEY")` | Read environment variable |
+| `ctx.env_or(key, default)` | Environment variable with default |
 | `ctx.env_require("KEY")?` | Require environment variable |
+| `ctx.env_parse::<T>(key)` | Parse environment variable |
+| `ctx.env_parse_or(key, default)` | Parse environment variable with default |
+| `ctx.env_contains(key)` | Check if environment variable is set |
 | `ctx.auth` | Auth context (roles, claims) |
+| `ctx.request` | Request metadata (request_id, trace_id, client_ip) |
 
 ## Protocol
 

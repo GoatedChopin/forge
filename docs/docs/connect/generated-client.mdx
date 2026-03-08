@@ -53,8 +53,8 @@ Output goes to `frontend/src/lib/forge/` by default.
 | `Uuid` | `string` |
 | `i32`, `i64`, `f32`, `f64` | `number` |
 | `bool` | `boolean` |
-| `DateTime<Utc>`, `Instant` | `string` |
-| `LocalDate`, `LocalTime` | `string` |
+| `DateTime<Utc>` | `string` |
+| `NaiveDate`, `NaiveTime` | `string` |
 | `Option<T>` | `T \| null` |
 | `Vec<T>` | `T[]` |
 | `HashMap<K, V>` | `Record<string, V>` |
@@ -330,9 +330,9 @@ forge generate [OPTIONS]
 ### SSE Transport
 
 Subscriptions use Server-Sent Events with a dedicated connection. The client:
-1. Opens an EventSource to `/events` with the auth token
-2. Receives a session ID on connection
-3. Registers each subscription via POST to `/subscribe`
+1. Opens an EventSource to `/_api/events` with the auth token
+2. Receives a session ID and session secret on connection
+3. Registers each subscription via POST to `/_api/subscribe`
 4. Receives updates via the SSE channel with `target` routing
 
 SSE was chosen over WebSocket for:
