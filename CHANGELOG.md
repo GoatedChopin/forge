@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-03-09
+
+### Added
+
+- `ctx.issue_token()` on all context types for generating HMAC-signed JWTs without external auth providers
+- Generated file checksums (`.forge/checksums.json`) to detect manual modifications to forge-managed frontend files
+- Per-layer trace filtering for fine-grained observability control per tracing target
+- PostgreSQL `application_name` connection parameter for identifying forge connections in database monitoring tools
+- `has_input_args` flag on `FunctionInfo` to distinguish functions that accept user input from context-only functions
+
+### Changed
+
+- Identity scope enforcement skipped for functions with no input parameters (only `ctx`), removing the need for dummy input structs
+- `forge check` recognizes standard `#[derive(Serialize, FromRow)]` patterns alongside `#[forge::model]`
+- Observability log levels upgraded: RPC request logs demoted to debug, function args demoted to debug, removed redundant success field
+- Forge-idiomatic-engineer skill reference docs consolidated from 12 files into 8 topic-focused references
+- Fluent builder registration methods (`register_query()`, etc.) now used in scaffolded `main.rs` templates
+
+### Fixed
+
+- 53 documentation discrepancies found via comprehensive code-to-docs audit across all doc pages
+
 ## [0.5.1] - 2026-03-07
 
 ### Added
@@ -308,7 +330,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust 2024 edition unsafe block compatibility
 - Release workflow cargo-edit installation
 
-[unreleased]: https://github.com/isala404/forge/compare/v0.5.1...HEAD
+[unreleased]: https://github.com/isala404/forge/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/isala404/forge/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/isala404/forge/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/isala404/forge/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/isala404/forge/compare/v0.4.0...v0.4.1

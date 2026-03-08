@@ -64,12 +64,9 @@ impl Database {
             .map(|p| p.timeout_secs)
             .unwrap_or(config.pool_timeout_secs);
 
-        let primary =
-            Self::create_pool(&config.url, primary_size, primary_timeout, service_name)
-                .await
-                .map_err(|e| {
-                    ForgeError::Database(format!("Failed to connect to primary: {}", e))
-                })?;
+        let primary = Self::create_pool(&config.url, primary_size, primary_timeout, service_name)
+            .await
+            .map_err(|e| ForgeError::Database(format!("Failed to connect to primary: {}", e)))?;
 
         let mut replicas = Vec::new();
         for replica_url in &config.replica_urls {
@@ -96,12 +93,9 @@ impl Database {
             service_name,
         )
         .await?;
-        let analytics_pool = Self::create_isolated_pool(
-            &config.url,
-            config.pools.analytics.as_ref(),
-            service_name,
-        )
-        .await?;
+        let analytics_pool =
+            Self::create_isolated_pool(&config.url, config.pools.analytics.as_ref(), service_name)
+                .await?;
 
         Ok(Self {
             primary: Arc::new(primary),

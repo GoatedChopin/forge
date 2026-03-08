@@ -207,11 +207,9 @@ impl Forge {
         tracing::debug!("Connecting to database");
 
         // Connect to database
-        let db = Database::from_config_with_service(
-            &self.config.database,
-            &self.config.project.name,
-        )
-        .await?;
+        let db =
+            Database::from_config_with_service(&self.config.database, &self.config.project.name)
+                .await?;
         let pool = db.primary().clone();
         let jobs_pool = db.jobs_pool().clone();
         let observability_pool = db.observability_pool().clone();

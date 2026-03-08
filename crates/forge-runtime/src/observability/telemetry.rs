@@ -234,7 +234,6 @@ fn build_console_filter(project_name: &str, log_level: &str) -> EnvFilter {
     }
 }
 
-
 /// Set up tracing so logs work without any user boilerplate.
 /// Returns `Ok(false)` if a subscriber already exists (user configured their own).
 pub fn init_telemetry(
@@ -280,8 +279,8 @@ pub fn init_telemetry(
         let logger_provider = init_logger(config)?;
 
         let env_filter = build_console_filter(project_name, log_level);
-        let log_layer = OpenTelemetryTracingBridge::new(&logger_provider)
-            .with_filter(env_filter.and(FilterFn::new(|metadata| {
+        let log_layer = OpenTelemetryTracingBridge::new(&logger_provider).with_filter(
+            env_filter.and(FilterFn::new(|metadata| {
                 let target = metadata.target();
                 !target.starts_with("hyper")
                     && !target.starts_with("reqwest")
@@ -289,7 +288,8 @@ pub fn init_telemetry(
                     && !target.starts_with("tonic")
                     && !target.starts_with("tower")
                     && !target.starts_with("opentelemetry")
-            })));
+            })),
+        );
 
         LOGGER_PROVIDER
             .set(logger_provider)
