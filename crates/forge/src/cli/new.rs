@@ -122,6 +122,16 @@ fn run_forge_generate(dir: &Path) -> Result<()> {
     }
 
     println!("  {} Frontend types generated", ui::ok());
+
+    // Pre-generate .svelte-kit/ so vite doesn't warn about missing tsconfig
+    let frontend_dir = dir.join("frontend");
+    if frontend_dir.exists() {
+        let _ = Command::new("bunx")
+            .args(["svelte-kit", "sync"])
+            .current_dir(&frontend_dir)
+            .output();
+    }
+
     Ok(())
 }
 

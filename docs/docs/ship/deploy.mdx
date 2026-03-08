@@ -62,10 +62,10 @@ mod embedded {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut builder = Forge::builder();
+    let builder = Forge::builder();
 
     #[cfg(feature = "embedded-frontend")]
-    builder.frontend_handler(embedded::serve_frontend);
+    let builder = builder.frontend_handler(embedded::serve_frontend);
 
     builder.config(config).build()?.run().await
 }

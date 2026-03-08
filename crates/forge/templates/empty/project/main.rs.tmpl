@@ -48,18 +48,11 @@ mod embedded {
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     let config = ForgeConfig::from_file("forge.toml")?;
-    let mut builder = Forge::builder();
 
-    // Register your functions:
-    // builder
-    //     .register_query::<functions::GetUsersQuery>()
-    //     .register_mutation::<functions::CreateUserMutation>()
-    //     .register_job::<functions::MyJob>()
-    //     .register_cron::<functions::MyCron>()
-    //     .register_workflow::<functions::MyWorkflow>();
+    let builder = Forge::builder();
 
     #[cfg(feature = "embedded-frontend")]
-    builder.frontend_handler(embedded::serve_frontend);
+    let builder = builder.frontend_handler(embedded::serve_frontend);
 
     builder.config(config).build()?.run().await
 }

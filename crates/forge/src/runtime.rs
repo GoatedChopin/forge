@@ -722,8 +722,9 @@ impl ForgeBuilder {
     ///
     /// Use with the `embedded-frontend` feature to build a single binary
     /// that includes both backend and frontend.
-    pub fn frontend_handler(&mut self, handler: FrontendHandler) {
+    pub fn frontend_handler(mut self, handler: FrontendHandler) -> Self {
         self.frontend_handler = Some(handler);
+        self
     }
 
     /// Add custom axum routes to the server.
@@ -740,8 +741,9 @@ impl ForgeBuilder {
     ///
     /// builder.custom_routes(routes);
     /// ```
-    pub fn custom_routes(&mut self, router: Router) {
+    pub fn custom_routes(mut self, router: Router) -> Self {
         self.custom_routes = Some(router);
+        self
     }
 
     /// Set the configuration.
@@ -766,7 +768,7 @@ impl ForgeBuilder {
     }
 
     /// Register an MCP tool without manually accessing the registry.
-    pub fn register_mcp_tool<T: ForgeMcpTool>(&mut self) -> &mut Self {
+    pub fn register_mcp_tool<T: ForgeMcpTool>(mut self) -> Self {
         self.mcp_registry.register::<T>();
         self
     }
@@ -792,7 +794,7 @@ impl ForgeBuilder {
     }
 
     /// Register a query function.
-    pub fn register_query<Q: ForgeQuery>(&mut self) -> &mut Self
+    pub fn register_query<Q: ForgeQuery>(mut self) -> Self
     where
         Q::Args: serde::de::DeserializeOwned + Send + 'static,
         Q::Output: serde::Serialize + Send + 'static,
@@ -802,7 +804,7 @@ impl ForgeBuilder {
     }
 
     /// Register a mutation function.
-    pub fn register_mutation<M: ForgeMutation>(&mut self) -> &mut Self
+    pub fn register_mutation<M: ForgeMutation>(mut self) -> Self
     where
         M::Args: serde::de::DeserializeOwned + Send + 'static,
         M::Output: serde::Serialize + Send + 'static,
@@ -812,7 +814,7 @@ impl ForgeBuilder {
     }
 
     /// Register a background job.
-    pub fn register_job<J: forge_core::ForgeJob>(&mut self) -> &mut Self
+    pub fn register_job<J: forge_core::ForgeJob>(mut self) -> Self
     where
         J::Args: serde::de::DeserializeOwned + Send + 'static,
         J::Output: serde::Serialize + Send + 'static,
@@ -822,13 +824,13 @@ impl ForgeBuilder {
     }
 
     /// Register a cron handler.
-    pub fn register_cron<C: forge_core::ForgeCron>(&mut self) -> &mut Self {
+    pub fn register_cron<C: forge_core::ForgeCron>(mut self) -> Self {
         self.cron_registry.register::<C>();
         self
     }
 
     /// Register a workflow.
-    pub fn register_workflow<W: forge_core::ForgeWorkflow>(&mut self) -> &mut Self
+    pub fn register_workflow<W: forge_core::ForgeWorkflow>(mut self) -> Self
     where
         W::Input: serde::de::DeserializeOwned,
         W::Output: serde::Serialize,
@@ -838,13 +840,13 @@ impl ForgeBuilder {
     }
 
     /// Register a daemon.
-    pub fn register_daemon<D: forge_core::ForgeDaemon>(&mut self) -> &mut Self {
+    pub fn register_daemon<D: forge_core::ForgeDaemon>(mut self) -> Self {
         self.daemon_registry.register::<D>();
         self
     }
 
     /// Register a webhook.
-    pub fn register_webhook<W: forge_core::ForgeWebhook>(&mut self) -> &mut Self {
+    pub fn register_webhook<W: forge_core::ForgeWebhook>(mut self) -> Self {
         self.webhook_registry.register::<W>();
         self
     }
@@ -968,8 +970,7 @@ mod tests {
 
     #[test]
     fn test_forge_builder_register_mcp_tool() {
-        let mut builder = ForgeBuilder::new();
-        builder.register_mcp_tool::<TestMcpTool>();
+        let builder = ForgeBuilder::new().register_mcp_tool::<TestMcpTool>();
         assert_eq!(builder.mcp_registry.len(), 1);
     }
 

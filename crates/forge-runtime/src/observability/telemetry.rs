@@ -15,7 +15,9 @@ const DEPLOYMENT_ENVIRONMENT_NAME: &str = "deployment.environment.name";
 use std::sync::OnceLock;
 use thiserror::Error;
 use tracing_opentelemetry::OpenTelemetryLayer;
-use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{
+    EnvFilter, Layer, Registry, filter::FilterFn, layer::SubscriberExt, util::SubscriberInitExt,
+};
 
 static TRACER_PROVIDER: OnceLock<TracerProvider> = OnceLock::new();
 static METER_PROVIDER: OnceLock<SdkMeterProvider> = OnceLock::new();
@@ -257,11 +259,23 @@ pub fn init_telemetry(
         None
     };
 
-    // Build optional log bridge layer
+    // Build optional log bridge layer.
+    // The OTel log bridge must filter out events from the OTLP transport stack
+    // (hyper, reqwest, h2, tonic) to prevent infinite recursion: the HTTP
+    // exporter emits tracing events that would feed back into the bridge.
     let otel_log_layer = if config.enable_logs {
         let logger_provider = init_logger(config)?;
 
-        let log_layer = OpenTelemetryTracingBridge::new(&logger_provider);
+        let log_layer = OpenTelemetryTracingBridge::new(&logger_provider)
+            .with_filter(FilterFn::new(|metadata| {
+                let target = metadata.target();
+                !target.starts_with("hyper")
+                    && !target.starts_with("reqwest")
+                    && !target.starts_with("h2")
+                    && !target.starts_with("tonic")
+                    && !target.starts_with("tower")
+                    && !target.starts_with("opentelemetry")
+            }));
 
         LOGGER_PROVIDER
             .set(logger_provider)

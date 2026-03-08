@@ -1,0 +1,10 @@
+{
+  "svelte/ForgeProvider.svelte": "1c08c70cd1616a4a8db7fb4249779e73334d36c7e2cc3fc8ca2035ee96665394",
+  "svelte/client.ts": "bbef991a894650608bce86d5ed84bff2c5343de0524db26fe856199a3911841d",
+  "svelte/context.ts": "3dbae42d83efb43cbbe76b1161869d5c183a26ee5c46e8531d525a6c91ddd327",
+  "svelte/datetime.ts": "f99aded183414168ab436ac45942518bd7f4335e0e25348bc9e8a04758752dac",
+  "svelte/index.ts": "e3d629251dc758cefc036cb05a46b13dcc0efa5105c81d1ae950c7fb3abaa6bf",
+  "svelte/package.json": "d18565e8911ecc1fb6b8ad2004838687a75f8a0cb917439a3fa069af4f0823b7",
+  "svelte/stores.ts": "d7749ad028db661eedc6d53dcb86d41b1645ab869c00bec16499b8238c60ba5d",
+  "svelte/types.ts": "af3ce492c76518b7108390cf975786630985643e0b873c4ff0c96b4b47fb1787"
+}

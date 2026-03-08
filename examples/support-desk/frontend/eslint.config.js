@@ -39,6 +39,14 @@ export default [
     },
   },
   {
-    ignores: ["build/", ".svelte-kit/", "dist/", ".forge/", "src/lib/forge/"],
+    ignores: [
+      "build/",
+      ".svelte-kit/",
+      "dist/",
+      ".forge/",
+      "src/lib/forge/",
+      "playwright-report/",
+      "test-results/",
+    ],
   },
 ];

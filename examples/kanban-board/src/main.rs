@@ -43,9 +43,7 @@ mod embedded {
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     let config = ForgeConfig::from_file("forge.toml")?;
-    let mut builder = Forge::builder();
-
-    builder
+    let builder = Forge::builder()
         .register_mutation::<functions::RegisterMutation>()
         .register_mutation::<functions::LoginMutation>()
         .register_query::<functions::ListProjectsQuery>()
@@ -63,7 +61,7 @@ async fn main() -> Result<()> {
         .register_workflow::<functions::ScheduleProjectArchiveWorkflow>();
 
     #[cfg(feature = "embedded-frontend")]
-    builder.frontend_handler(embedded::serve_frontend);
+    let builder = builder.frontend_handler(embedded::serve_frontend);
 
     builder.config(config).build()?.run().await
 }

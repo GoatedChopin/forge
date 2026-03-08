@@ -28,7 +28,7 @@ export default defineConfig({
     command: `docker compose up --build`,
     url: `http://localhost:${FRONTEND_PORT}`,
     cwd: "..",
-    reuseExistingServer: !!process.env.CI,
+    reuseExistingServer: true,
     timeout: 10 * 60 * 1000,
   },
 });

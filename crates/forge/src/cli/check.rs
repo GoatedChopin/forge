@@ -1,12 +1,11 @@
 use anyhow::Result;
 use clap::Parser;
 use console::style;
-use sqlx::Row;
-use sqlx::postgres::PgPoolOptions;
 use std::path::Path;
 use std::process::Stdio;
 use tokio::process::Command;
 
+use super::runtime_generator::{MismatchKind, verify_checksums};
 use super::ui;
 
 /// Validate project configuration and dependencies.
@@ -18,10 +17,6 @@ pub struct CheckCommand {
     /// Path to forge.toml (default: ./forge.toml)
     #[arg(short, long, default_value = "forge.toml")]
     pub config: String,
-
-    /// Skip database connectivity check
-    #[arg(long)]
-    pub no_db: bool,
 }
 
 struct CheckResult {
@@ -95,17 +90,13 @@ impl CheckCommand {
         self.check_rust_linting(&mut result).await;
 
         result.section("Environment");
-        let database_url = self.check_environment(&mut result);
-
-        if !self.no_db
-            && let Some(url) = database_url
-        {
-            result.section("Database Connectivity");
-            self.check_database(&mut result, &url).await;
-        }
+        self.check_environment(&mut result);
 
         result.section("Frontend");
         self.check_frontend(&mut result)?;
+
+        result.section("Generated Files");
+        self.check_generated_files(&mut result)?;
 
         result.section("Frontend Tooling");
         self.check_frontend_linting(&mut result).await;
@@ -158,6 +149,7 @@ impl CheckCommand {
         }
 
         let content = std::fs::read_to_string(config_path)?;
+        let content = forge_core::config::substitute_env_vars(&content);
         let config: toml::Value = match toml::from_str(&content) {
             Ok(c) => {
                 result.pass("forge.toml is valid TOML");
@@ -518,7 +510,7 @@ impl CheckCommand {
         Ok(())
     }
 
-    fn check_environment(&self, result: &mut CheckResult) -> Option<String> {
+    fn check_environment(&self, result: &mut CheckResult) {
         // Check .env file
         let env_path = Path::new(".env");
         if !env_path.exists() {
@@ -526,7 +518,7 @@ impl CheckCommand {
                 ".env file not found",
                 "Create .env with DATABASE_URL (forge dev provides this via Docker Compose)",
             );
-            return None;
+            return;
         }
 
         result.pass(".env file found");
@@ -554,7 +546,6 @@ impl CheckCommand {
             let masked = mask_database_url(url);
             result.info(&masked);
 
-            // Warn about localhost in production-like settings
             if url.contains("localhost") || url.contains("127.0.0.1") {
                 result.info("Using localhost - fine for development");
             }
@@ -564,26 +555,56 @@ impl CheckCommand {
                 "Set DATABASE_URL in .env or use forge dev (Docker Compose provides PostgreSQL)",
             );
         }
-
-        database_url
     }
 
-    async fn check_database(&self, result: &mut CheckResult, url: &str) {
-        println!();
-        println!("  {} Checking database connection...", ui::step());
+    fn check_generated_files(&self, result: &mut CheckResult) -> Result<()> {
+        let frontend_dir = Path::new("frontend");
+        if !frontend_dir.exists() {
+            return Ok(());
+        }
 
-        match check_database_connection(url).await {
-            Ok(version) => {
-                result.pass("Database connection successful");
-                result.info(&format!("PostgreSQL {}", version));
+        let forge_dir = frontend_dir.join(".forge");
+        if !forge_dir.exists() {
+            result.warn(
+                "No .forge/ directory found",
+                "Run 'forge generate' to create runtime files",
+            );
+            return Ok(());
+        }
+
+        println!();
+
+        match verify_checksums(frontend_dir) {
+            Ok(mismatches) if mismatches.is_empty() => {
+                result.pass("Generated files integrity verified");
             }
-            Err(e) => {
-                result.fail(
-                    &format!("Database connection failed: {}", e),
-                    "Check DATABASE_URL and ensure PostgreSQL is running",
+            Ok(mismatches) => {
+                for m in &mismatches {
+                    match m.kind {
+                        MismatchKind::Modified => {
+                            result.fail(
+                                &format!(".forge/{} has been modified", m.file),
+                                "Run 'forge generate' to restore generated files",
+                            );
+                        }
+                        MismatchKind::Missing => {
+                            result.fail(
+                                &format!(".forge/{} is missing", m.file),
+                                "Run 'forge generate' to restore generated files",
+                            );
+                        }
+                    }
+                }
+            }
+            Err(_) => {
+                result.warn(
+                    "Could not verify generated file integrity",
+                    "Run 'forge generate' to regenerate checksums",
                 );
             }
         }
+
+        Ok(())
     }
 
     fn check_frontend(&self, result: &mut CheckResult) -> Result<()> {
@@ -666,7 +687,7 @@ impl CheckCommand {
         let fmt_result = Command::new("cargo")
             .args(["fmt", "--check"])
             .stdout(Stdio::null())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::null())
             .status()
             .await;
 
@@ -689,13 +710,10 @@ impl CheckCommand {
         }
 
         // Check cargo clippy
-        // Disable incremental compilation to avoid stale artifact warnings
-        // that cause flaky first-run failures.
         let clippy_result = Command::new("cargo")
             .args(["clippy", "--", "-D", "warnings"])
-            .env("CARGO_INCREMENTAL", "0")
             .stdout(Stdio::null())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::null())
             .status()
             .await;
 
@@ -732,11 +750,11 @@ impl CheckCommand {
         println!();
 
         // Check ESLint
-        let eslint_result = Command::new("bun")
-            .args(["run", "lint"])
+        let eslint_result = Command::new("bunx")
+            .args(["eslint", "."])
             .current_dir(frontend_dir)
             .stdout(Stdio::null())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::null())
             .status()
             .await;
 
@@ -747,23 +765,23 @@ impl CheckCommand {
             Ok(_) => {
                 result.fail(
                     "ESLint errors found",
-                    "Run 'cd frontend && bun run lint' to see errors",
+                    "Run 'cd frontend && bunx eslint .' to see errors",
                 );
             }
             Err(_) => {
                 result.warn(
                     "Could not run ESLint",
-                    "Check frontend/package.json has 'lint' script",
+                    "Ensure eslint is installed in frontend/",
                 );
             }
         }
 
         // Check Prettier
-        let prettier_result = Command::new("bun")
-            .args(["run", "format:check"])
+        let prettier_result = Command::new("bunx")
+            .args(["prettier", "--check", "."])
             .current_dir(frontend_dir)
             .stdout(Stdio::null())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::null())
             .status()
             .await;
 
@@ -780,7 +798,7 @@ impl CheckCommand {
             Err(_) => {
                 result.warn(
                     "Could not run Prettier check",
-                    "Check frontend/package.json has 'format:check' script",
+                    "Ensure prettier is installed in frontend/",
                 );
             }
         }
@@ -799,26 +817,6 @@ fn mask_database_url(url: &str) -> String {
         }
     }
     url.to_string()
-}
-
-async fn check_database_connection(url: &str) -> Result<String> {
-    let pool = PgPoolOptions::new()
-        .max_connections(1)
-        .acquire_timeout(std::time::Duration::from_secs(5))
-        .connect(url)
-        .await?;
-
-    let row = sqlx::query("SELECT version()").fetch_one(&pool).await?;
-    let version_str: String = row.get(0);
-
-    let version = version_str
-        .split_whitespace()
-        .nth(1)
-        .unwrap_or(&version_str)
-        .to_string();
-
-    pool.close().await;
-    Ok(version)
 }
 
 #[cfg(test)]

@@ -615,7 +615,7 @@ fn default_mcp_session_ttl_secs() -> u64 {
 /// the literal `${VAR}` is preserved (so TOML parsing can still fail
 /// loudly if a required variable is missing).
 #[allow(clippy::indexing_slicing)]
-fn substitute_env_vars(content: &str) -> String {
+pub fn substitute_env_vars(content: &str) -> String {
     let mut result = String::with_capacity(content.len());
     let bytes = content.as_bytes();
     let len = bytes.len();

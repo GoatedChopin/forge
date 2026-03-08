@@ -120,45 +120,50 @@ impl GenerateCommand {
             if forge_dir_exists && needs_update(frontend_dir) {
                 let installed =
                     get_installed_version(frontend_dir).unwrap_or_else(|| "unknown".to_string());
+                let version_changed = installed != FORGE_VERSION;
 
-                println!();
-                println!("{} Version mismatch detected:", ui::warn());
-                println!("    - Project runtime: v{}", style(&installed).cyan());
-                println!("    - Forge CLI: v{}", style(FORGE_VERSION).cyan());
-                println!();
+                if version_changed {
+                    println!();
+                    println!("{} Version mismatch detected:", ui::warn());
+                    println!("    - Project runtime: v{}", style(&installed).cyan());
+                    println!("    - Forge CLI: v{}", style(FORGE_VERSION).cyan());
+                    println!();
 
-                if !self.yes {
-                    print!(
-                        "  This will update the @forge/svelte runtime to v{}. Continue? [Y/n] ",
-                        FORGE_VERSION
-                    );
-                    io::stdout().flush()?;
-
-                    let mut input = String::new();
-                    io::stdin().read_line(&mut input)?;
-                    let input = input.trim().to_lowercase();
-
-                    if input == "n" || input == "no" {
-                        println!();
-                        println!(
-                            "{} Update declined. Use --skip-runtime to only regenerate types.",
-                            ui::info()
+                    if !self.yes {
+                        print!(
+                            "  This will update the @forge/svelte runtime to v{}. Continue? [Y/n] ",
+                            FORGE_VERSION
                         );
-                        return Ok(());
+                        io::stdout().flush()?;
+
+                        let mut input = String::new();
+                        io::stdin().read_line(&mut input)?;
+                        let input = input.trim().to_lowercase();
+
+                        if input == "n" || input == "no" {
+                            println!();
+                            println!(
+                                "{} Update declined. Use --skip-runtime to only regenerate types.",
+                                ui::info()
+                            );
+                            return Ok(());
+                        }
                     }
                 }
 
-                eprint!("  Updating @forge/svelte runtime...");
+                eprint!("  Regenerating @forge/svelte runtime...");
                 generate_runtime(frontend_dir)?;
                 eprintln!(" done");
 
-                println!();
-                println!(
-                    "  {} Updated @forge/svelte runtime (v{} → v{})",
-                    ui::ok(),
-                    installed,
-                    FORGE_VERSION
-                );
+                if version_changed {
+                    println!();
+                    println!(
+                        "  {} Updated @forge/svelte runtime (v{} → v{})",
+                        ui::ok(),
+                        installed,
+                        FORGE_VERSION
+                    );
+                }
             } else if !forge_dir_exists {
                 // First time generation
                 eprint!("  Generating @forge/svelte runtime...");
