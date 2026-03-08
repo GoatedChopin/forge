@@ -164,7 +164,7 @@ impl JobExecutor {
                         .run_compensation(&entry, &ctx, &job.input, &reason)
                         .await
                     {
-                        tracing::warn!(job_id = %job.id, error = %e, "Job compensation failed");
+                        tracing::error!(job_id = %job.id, error = %e, "Job compensation failed");
                     }
                     return ExecutionResult::Cancelled { reason };
                 }
@@ -181,7 +181,7 @@ impl JobExecutor {
                 });
 
                 if let Err(e) = self.queue.fail(job.id, &error_msg, chrono_delay, ttl).await {
-                    tracing::debug!(job_id = %job.id, error = %e, "Failed to record job failure");
+                    tracing::error!(job_id = %job.id, error = %e, "Failed to record job failure");
                 }
 
                 ExecutionResult::Failed {
@@ -201,7 +201,7 @@ impl JobExecutor {
                 };
 
                 if let Err(e) = self.queue.fail(job.id, &error_msg, retry_delay, ttl).await {
-                    tracing::debug!(job_id = %job.id, error = %e, "Failed to record job timeout");
+                    tracing::error!(job_id = %job.id, error = %e, "Failed to record job timeout");
                 }
 
                 ExecutionResult::TimedOut {

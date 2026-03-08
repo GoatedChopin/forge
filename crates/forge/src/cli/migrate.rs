@@ -57,7 +57,7 @@ impl MigrateCommand {
         let config = ForgeConfig::from_file(&self.config)?;
 
         // Connect to database
-        let db = Database::from_config(&config.database).await?;
+        let db = Database::from_config_with_service(&config.database, &config.project.name).await?;
         let pool = db.primary().clone();
         let runner = MigrationRunner::new(pool);
 

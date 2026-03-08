@@ -17,11 +17,33 @@ For every behavior change, add:
 For dispatching flows, assert side effects.
 For SQL-heavy logic, prefer real DB tests with `IsolatedTestDb`.
 
+`forge check`, lint, type checks, and manual browser verification are not substitutes for tests. A clean check with no new tests is still an incomplete implementation.
+For UI work, a task is still incomplete until Playwright has run successfully or is clearly reported as blocked.
+
 Think of tests as a specification: someone reading only the tests should understand what the function accepts, rejects, and guarantees.
 
 ## Test location
 
 Tests live alongside the code they test using `#[cfg(test)] mod tests` at the bottom of the same file. This applies to handlers in `src/functions/`, helpers in `src/utils/`, and types in `src/schema/`. No separate `tests/` directory for unit tests.
+
+Do not delete scaffolded test examples without replacing them with real tests for the behavior you added.
+
+## Minimum bar for new CRUD work
+
+For a new CRUD feature, add at least:
+- one happy-path backend test per handler
+- one failure-path backend test for validation, authz, not found, or conflict as applicable
+- one boundary-value test for each validated input field
+- one Playwright path covering the primary user flow if the UI changed
+
+Validation-unit tests are useful, but they do not replace handler coverage when handlers changed.
+
+For a todo-style feature, that usually means:
+- create succeeds
+- create rejects blank or invalid title
+- list returns expected ordering/filtering
+- update/toggle changes only the targeted record
+- delete removes the targeted record
 
 ## 0) Pure logic unit tests (preferred starting point)
 
@@ -270,7 +292,9 @@ playwright-report/
 
 ## 13) Required execution sequence
 
-1. Run backend/frontend tests for changed areas.
-2. Generate and review coverage results; enforce 100% line coverage on changed modules.
-3. If UI exists or changed, write/update Playwright integration tests and run them. Fix any failures before proceeding.
-4. As the absolute final step, run `forge check` from the app root. Fix all findings and rerun until fully clean. Nothing ships with unresolved findings or failing tests.
+1. Write backend tests for changed behavior before calling the work done.
+2. Run backend tests for changed areas.
+3. Generate and review coverage results; enforce 100% line coverage on changed modules.
+4. If UI exists or changed, write or update Playwright integration tests and run them. Fix any failures before proceeding.
+5. If the task is meant to work out of the box, boot the real app flow and verify the primary path before delivery.
+6. As the absolute final step, run `forge check` from the app root. Fix all findings and rerun until fully clean. Nothing ships with unresolved findings, failing tests, missing test coverage, or unverified app boot.

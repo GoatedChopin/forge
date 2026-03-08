@@ -175,15 +175,15 @@ impl Worker {
                                 }
                                 super::executor::ExecutionResult::Failed { error, retryable } => {
                                     if *retryable {
-                                        tracing::info!(job_id = %job_id, job_type = %job_type, error = %error, "Job failed, will retry");
+                                        tracing::warn!(job_id = %job_id, job_type = %job_type, error = %error, "Job failed, will retry");
                                         crate::observability::record_job_execution(&job_type, "retrying", duration_secs);
                                     } else {
-                                        tracing::warn!(job_id = %job_id, job_type = %job_type, error = %error, "Job failed permanently");
+                                        tracing::error!(job_id = %job_id, job_type = %job_type, error = %error, "Job failed permanently");
                                         crate::observability::record_job_execution(&job_type, "failed", duration_secs);
                                     }
                                 }
                                 super::executor::ExecutionResult::TimedOut { retryable } => {
-                                    tracing::warn!(job_id = %job_id, job_type = %job_type, will_retry = %retryable, "Job timed out");
+                                    tracing::error!(job_id = %job_id, job_type = %job_type, will_retry = %retryable, "Job timed out");
                                     crate::observability::record_job_execution(&job_type, "timeout", duration_secs);
                                 }
                                 super::executor::ExecutionResult::Cancelled { reason } => {

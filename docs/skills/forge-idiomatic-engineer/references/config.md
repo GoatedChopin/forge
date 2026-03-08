@@ -237,7 +237,19 @@ Do not collapse domain-specific conditions into `Internal`. Preserve root cause 
 
 Generate first, edit second. Backend source (`src/schema`, `src/functions`) is the source of truth. `forge generate` syncs backend contracts into frontend/runtime artifacts.
 
-### Go-to commands
+### Discovery before commands
+
+Resolve the actual CLI entrypoints before you run anything:
+
+- app root: directory containing `forge.toml`
+- Forge CLI command: `forge`, project wrapper, documented local binary, or checked-in build output
+- frontend package manager: inspect `frontend/package.json`, lockfiles, or project scripts
+- database workflow: inspect project docs and available tooling
+
+Do not assume the app binary itself supports Forge CLI subcommands.
+If `forge` is not on `PATH`, search the repo and adjacent toolchain locations before treating it as unavailable.
+
+### Go-to commands once the toolchain is confirmed
 
 ```bash
 forge new my-app --demo
@@ -249,17 +261,22 @@ forge check
 ### Required behavior
 
 - Use `forge new` for new projects. Do not hand-scaffold the initial layout.
+- Run Forge commands from the app root, not a guessed subdirectory.
 - Author backend handlers/contracts directly in `src/functions/*` and `src/schema/*`.
 - After changing schema/functions/macros, run `forge generate`.
+- If `forge generate` is required but the CLI command is unresolved, solve that tooling problem first instead of faking generated output or deferring the step to the user.
 - When migrations change, use `forge migrate status` and `forge migrate up`.
+- After adding handlers, verify `src/main.rs` registration before frontend work or delivery.
 - Run `forge check` from app root before completion. Fix all findings, rerun until clean.
-- For frontend, run CLI quality gates (`eslint`, `svelte-check`), preferring `bun`.
+- For frontend, run the project's actual quality gates (`lint`, `svelte-check`, types, formatting`) using the detected package manager.
+- For tasks that should work out of the box, boot the project through its real dev entrypoint (`forge dev` or equivalent) before delivery.
 
 ### Backend generation policy
 
 - `forge add` is intentionally not part of this workflow.
 - Backend primitives are authored directly in Rust source.
 - `forge generate` keeps client/runtime artifacts aligned with backend code.
+- If generation lands in an unexpected nested path such as `frontend/frontend/...`, stop and fix the cwd or config issue instead of patching the duplicate output.
 
 ### Never edit generated files
 
@@ -268,6 +285,7 @@ forge check
 - `frontend/.forge/version`
 
 When change is needed, modify Rust source or Forge config, then regenerate.
+Do not hand-create files in these locations as a substitute for generation.
 
 ### Safe edit zones
 
@@ -281,7 +299,11 @@ When creating real migration files, check `migrations/` for scaffolded files fro
 - `--minimal` creates `0001_initial.sql.example` (commented placeholder). Delete it before creating your real migration.
 - `--demo` creates `0001_initial.sql` (real migration with tables). Delete it and drop those tables if already run.
 
+Before writing a migration, inspect an existing project/template migration and preserve its expected format. Some projects require markers such as `-- @up` and `-- @down`.
+
 Do not use `CREATE TABLE IF NOT EXISTS` in migrations. It silently skips creation if a conflicting table from the scaffold migration already exists.
+Do not insert rows directly into `forge_migrations`. If migration state is wrong, fix the migration workflow instead of mutating Forge's bookkeeping table by hand.
+Do not raw-apply Forge-formatted migration files with `psql < ...` unless you know the file is compatible with that runner; markers and Forge helper functions can make this path misleading.
 
 ### Common `forge check` issues
 
@@ -327,6 +349,10 @@ mod functions;
 mod schema;
 mod utils;
 
+let builder = forge::ForgeRuntime::builder()
+    .register_query::<functions::ListOrdersQuery>()
+    .register_mutation::<functions::CreateOrderMutation>();
+
 // src/functions/mod.rs
 pub mod orders;
 pub mod users;
@@ -335,6 +361,8 @@ pub mod users;
 pub mod order;
 pub mod user;
 ```
+
+Macros do not auto-register handlers. Adding a module and re-exporting it from `mod.rs` is not enough; `src/main.rs` must register each query, mutation, job, and workflow on the runtime builder.
 
 ### Test placement
 

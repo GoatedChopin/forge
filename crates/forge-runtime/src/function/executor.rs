@@ -202,35 +202,38 @@ impl FunctionExecutor {
         success: bool,
         error: Option<&str>,
     ) {
+        // Failures are always logged at error regardless of the function's
+        // configured log level. Successes use the configured level.
+        if !success {
+            error!(
+                function = function_name,
+                kind = kind,
+                duration_ms = duration.as_millis() as u64,
+                error = error,
+                "Function failed"
+            );
+            debug!(
+                function = function_name,
+                input = %input,
+                "Function input"
+            );
+            return;
+        }
+
         macro_rules! log_fn {
-            ($level:ident) => {
-                if success {
-                    $level!(
-                        function = function_name,
-                        kind = kind,
-                        duration_ms = duration.as_millis() as u64,
-                        "Function executed"
-                    );
-                    debug!(
-                        function = function_name,
-                        input = %input,
-                        "Function input"
-                    );
-                } else {
-                    $level!(
-                        function = function_name,
-                        kind = kind,
-                        duration_ms = duration.as_millis() as u64,
-                        error = error,
-                        "Function failed"
-                    );
-                    debug!(
-                        function = function_name,
-                        input = %input,
-                        "Function input"
-                    );
-                }
-            };
+            ($level:ident) => {{
+                $level!(
+                    function = function_name,
+                    kind = kind,
+                    duration_ms = duration.as_millis() as u64,
+                    "Function executed"
+                );
+                debug!(
+                    function = function_name,
+                    input = %input,
+                    "Function input"
+                );
+            }};
         }
 
         match log_level {

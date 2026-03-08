@@ -88,6 +88,8 @@ sqlx::query_as("SELECT * FROM orders WHERE user_id = $1")
     .map_err(Into::into)
 ```
 
+Do not take this to mean frontend data is trusted. The backend must still derive the acting user from auth context and validate every other client-supplied field.
+
 ### AP-2: Dispatch side effect in non-transactional mutation
 
 ```rust
@@ -156,9 +158,19 @@ tracing::warn!(job_id=%ctx.job_id, attempt=ctx.attempt, "job failed");
 
 Change Rust schema/functions, then run `forge generate`. Never hand-edit `frontend/src/lib/forge/*`.
 
+Do not hand-create fake generated bindings in those directories either.
+
 ### AP-10: Backend changed but generation skipped
 
 After backend schema/function changes, run `forge generate` before frontend integration or delivery.
+
+### AP-10b: Deferring required tooling steps to the user
+
+If the task depends on `forge generate`, migrations, or the project dev flow, resolve and execute those steps during the task when feasible. "You can run this later" is not a complete implementation when the deliverable is supposed to work out of the box.
+
+### AP-10c: Handlers added but not registered in `main.rs`
+
+Forge handler macros do not make endpoints reachable on their own. If new queries or mutations are added but `src/main.rs` is not updated to register them, the code can compile while the runtime returns "Function '...' not found".
 
 ### AP-11: Shipping without root-level `forge check`
 
@@ -167,6 +179,14 @@ Run `forge check` from the app root (`forge.toml` directory), fix findings, reru
 ### AP-12: UI changed without Playwright execution
 
 Add or update a basic Playwright integration path and execute it before delivery.
+
+### AP-12b: Behavior changed without new tests
+
+`forge check`, lint, and type checks are not tests. If handlers, validation rules, migrations, or UI behavior changed, add or update tests instead of treating clean tooling output as sufficient evidence.
+
+### AP-12c: Declaring success before end-to-end boot verification
+
+For app tasks that are supposed to work immediately, do not claim the work is clean, complete, or ready until the real dev flow boots and the primary user path has been exercised. Static checks and unit tests alone do not prove the app actually works.
 
 ### AP-13: Manual refetch loops in reactive UI
 

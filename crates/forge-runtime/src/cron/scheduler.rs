@@ -395,7 +395,7 @@ impl CronRunner {
                 }
                 Ok(Err(e)) => {
                     Span::current().record("cron.status", "failed");
-                    tracing::warn!(
+                    tracing::error!(
                         cron.duration_ms = duration_ms,
                         error = %e,
                         "Cron failed"
@@ -404,7 +404,7 @@ impl CronRunner {
                 }
                 Err(_) => {
                     Span::current().record("cron.status", "timeout");
-                    tracing::warn!(
+                    tracing::error!(
                         cron.duration_ms = duration_ms,
                         cron.timeout_ms = info.timeout.as_millis() as u64,
                         "Cron timed out"

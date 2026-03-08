@@ -112,7 +112,7 @@ pub async fn register(ctx: &MutationContext, input: AuthInput) -> Result<AuthRes
         .user_id(user.id)
         .duration_secs(7 * 24 * 3600)
         .build()
-        .map_err(|e| ForgeError::Internal(e))?;
+        .map_err(ForgeError::Internal)?;
 
     Ok(AuthResponse {
         token: ctx.issue_token(&claims)?,
@@ -125,14 +125,15 @@ pub async fn register(ctx: &MutationContext, input: AuthInput) -> Result<AuthRes
 pub async fn login(ctx: &MutationContext, input: AuthInput) -> Result<AuthResponse> {
     let username = input.username.trim().to_string();
 
-    let user: User = sqlx::query_as::<_, User>(
-        "SELECT * FROM users WHERE username = $1",
-    )
-    .bind(&username)
-    .fetch_optional(ctx.db_pool())
-    .await
-    .map_err(|e| ForgeError::Internal(format!("database error: {e}")))?
-    .ok_or_else(|| ForgeError::Unauthorized("Invalid username or password".into()))?;
+    let user: User = ctx
+        .db()
+        .fetch_optional(
+            sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = $1")
+                .bind(&username),
+        )
+        .await
+        .map_err(|e| ForgeError::Internal(format!("database error: {e}")))?
+        .ok_or_else(|| ForgeError::Unauthorized("Invalid username or password".into()))?;
 
     let valid = bcrypt::verify(&input.password, &user.password_hash)
         .map_err(|e| ForgeError::Internal(format!("verify error: {e}")))?;
@@ -145,7 +146,7 @@ pub async fn login(ctx: &MutationContext, input: AuthInput) -> Result<AuthRespon
         .user_id(user.id)
         .duration_secs(7 * 24 * 3600)
         .build()
-        .map_err(|e| ForgeError::Internal(e))?;
+        .map_err(ForgeError::Internal)?;
 
     Ok(AuthResponse {
         token: ctx.issue_token(&claims)?,
@@ -201,6 +202,12 @@ Recognized tenant keys: `tenant_id`, `tenantId`.
 
 Forge validates that the provided value matches the authenticated JWT subject at the router level. Do not add manual identity comparison checks in handlers.
 
+If a handler has any other business input, keep the scope field in the Rust input type. The no-input exemption only applies when there is no input parameter at all.
+
+Generated TypeScript bindings may omit the scope field from client-facing call signatures because the Forge client can inject it automatically. Treat the generated frontend API as authoritative for the browser call shape.
+
+Do not confuse scope enforcement with trusting frontend data. The backend must still derive the acting user from `ctx.require_user_id()?` and validate any other payload fields before using them.
+
 **Anti-pattern:**
 ```rust
 // WRONG: redundant check, the router already enforces this
@@ -213,6 +220,7 @@ if input.user_id != uid {
 ## Frontend Auth Store (src/lib/auth.svelte.ts)
 
 ```typescript
+import { getForgeClient } from "@forge/svelte"
 import { getContext, setContext } from "svelte"
 
 const AUTH_KEY = Symbol("auth")
@@ -233,12 +241,12 @@ export class AuthStore {
     this.userId = data.user_id
     this.username = data.username
 
+    if (typeof localStorage === "undefined") return
     localStorage.setItem("auth_token", data.token)
     localStorage.setItem("auth_user_id", data.user_id)
     localStorage.setItem("auth_username", data.username)
 
-    // reconnect SSE with new credentials
-    window.dispatchEvent(new Event("forge:reconnect"))
+    getForgeClient()?.reconnect()
   }
 
   logout() {
@@ -246,14 +254,16 @@ export class AuthStore {
     this.userId = null
     this.username = null
 
+    if (typeof localStorage === "undefined") return
     localStorage.removeItem("auth_token")
     localStorage.removeItem("auth_user_id")
     localStorage.removeItem("auth_username")
 
-    window.dispatchEvent(new Event("forge:reconnect"))
+    getForgeClient()?.reconnect()
   }
 
   hydrate() {
+    if (typeof localStorage === "undefined") return
     this.token = localStorage.getItem("auth_token")
     this.userId = localStorage.getItem("auth_user_id")
     this.username = localStorage.getItem("auth_username")
@@ -271,10 +281,19 @@ export function getAuthStore(): AuthStore {
 }
 ```
 
-## Frontend Layout Wiring (+layout.svelte)
+## Frontend Layout Wiring
+
+If the auth store touches `localStorage`, disable SSR for the route tree:
+
+```typescript
+// +layout.ts
+export const ssr = false
+```
 
 ```svelte
+<!-- +layout.svelte -->
 <script lang="ts">
+  import { resolve } from "$app/paths"
   import { ForgeProvider } from "$lib/forge"
   import { PUBLIC_API_URL } from "$env/static/public"
   import { createAuthStore } from "$lib/auth.svelte"
@@ -286,6 +305,16 @@ export function getAuthStore(): AuthStore {
 </script>
 
 <ForgeProvider url={PUBLIC_API_URL} getToken={() => auth.getToken()}>
+  <nav>
+    <a href={resolve("/")}>Home</a>
+    {#if auth.isAuthenticated}
+      <button type="button" onclick={() => auth.logout()}>Log out</button>
+    {:else}
+      <a href={resolve("/login")}>Log in</a>
+      <a href={resolve("/register")}>Register</a>
+    {/if}
+  </nav>
+
   {@render children()}
 </ForgeProvider>
 ```
@@ -297,10 +326,9 @@ export function getAuthStore(): AuthStore {
   import { goto } from "$app/navigation"
   import { resolve } from "$app/paths"
   import { getAuthStore } from "$lib/auth.svelte"
-  import { useForge, ForgeClientError } from "$lib/forge"
+  import { ForgeClientError, login } from "$lib/forge"
 
   const auth = getAuthStore()
-  const { rpc } = useForge()
 
   let username = $state("")
   let password = $state("")
@@ -313,7 +341,7 @@ export function getAuthStore(): AuthStore {
     loading = true
 
     try {
-      const result = await rpc.login({ username, password })
+      const result = await login({ username, password })
       auth.setAuth(result)
       goto(resolve("/"))
     } catch (err) {
@@ -362,10 +390,9 @@ export function getAuthStore(): AuthStore {
   import { goto } from "$app/navigation"
   import { resolve } from "$app/paths"
   import { getAuthStore } from "$lib/auth.svelte"
-  import { useForge, ForgeClientError } from "$lib/forge"
+  import { ForgeClientError, register } from "$lib/forge"
 
   const auth = getAuthStore()
-  const { rpc } = useForge()
 
   let username = $state("")
   let password = $state("")
@@ -378,7 +405,7 @@ export function getAuthStore(): AuthStore {
     loading = true
 
     try {
-      const result = await rpc.register({ username, password })
+      const result = await register({ username, password })
       auth.setAuth(result)
       goto(resolve("/"))
     } catch (err) {

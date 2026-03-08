@@ -2,8 +2,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
-use sqlx::postgres::{PgPool, PgPoolOptions};
+use sqlx::ConnectOptions;
+use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use tokio::task::JoinHandle;
+use tracing::log::LevelFilter;
 
 use forge_core::config::{DatabaseConfig, PoolConfig};
 use forge_core::error::{ForgeError, Result};
@@ -31,6 +33,17 @@ pub struct Database {
 impl Database {
     /// Create a new database connection from configuration.
     pub async fn from_config(config: &DatabaseConfig) -> Result<Self> {
+        Self::from_config_with_service(config, "forge").await
+    }
+
+    /// Create a new database connection with a service name for tracing.
+    ///
+    /// The service name is set as PostgreSQL's `application_name`, visible in
+    /// `pg_stat_activity` for correlating queries to the originating service.
+    pub async fn from_config_with_service(
+        config: &DatabaseConfig,
+        service_name: &str,
+    ) -> Result<Self> {
         if config.url.is_empty() {
             return Err(ForgeError::Database(
                 "database.url cannot be empty. Provide a PostgreSQL connection URL.".into(),
@@ -51,29 +64,44 @@ impl Database {
             .map(|p| p.timeout_secs)
             .unwrap_or(config.pool_timeout_secs);
 
-        let primary = Self::create_pool(&config.url, primary_size, primary_timeout)
-            .await
-            .map_err(|e| ForgeError::Database(format!("Failed to connect to primary: {}", e)))?;
+        let primary =
+            Self::create_pool(&config.url, primary_size, primary_timeout, service_name)
+                .await
+                .map_err(|e| {
+                    ForgeError::Database(format!("Failed to connect to primary: {}", e))
+                })?;
 
         let mut replicas = Vec::new();
         for replica_url in &config.replica_urls {
-            let pool =
-                Self::create_pool(replica_url, config.pool_size / 2, config.pool_timeout_secs)
-                    .await
-                    .map_err(|e| {
-                        ForgeError::Database(format!("Failed to connect to replica: {}", e))
-                    })?;
+            let pool = Self::create_pool(
+                replica_url,
+                config.pool_size / 2,
+                config.pool_timeout_secs,
+                service_name,
+            )
+            .await
+            .map_err(|e| ForgeError::Database(format!("Failed to connect to replica: {}", e)))?;
             replicas.push(ReplicaEntry {
                 pool: Arc::new(pool),
                 healthy: Arc::new(AtomicBool::new(true)),
             });
         }
 
-        let jobs_pool = Self::create_isolated_pool(&config.url, config.pools.jobs.as_ref()).await?;
-        let observability_pool =
-            Self::create_isolated_pool(&config.url, config.pools.observability.as_ref()).await?;
-        let analytics_pool =
-            Self::create_isolated_pool(&config.url, config.pools.analytics.as_ref()).await?;
+        let jobs_pool =
+            Self::create_isolated_pool(&config.url, config.pools.jobs.as_ref(), service_name)
+                .await?;
+        let observability_pool = Self::create_isolated_pool(
+            &config.url,
+            config.pools.observability.as_ref(),
+            service_name,
+        )
+        .await?;
+        let analytics_pool = Self::create_isolated_pool(
+            &config.url,
+            config.pools.analytics.as_ref(),
+            service_name,
+        )
+        .await?;
 
         Ok(Self {
             primary: Arc::new(primary),
@@ -86,22 +114,37 @@ impl Database {
         })
     }
 
-    async fn create_pool(url: &str, size: u32, timeout_secs: u64) -> sqlx::Result<PgPool> {
+    fn connect_options(url: &str, service_name: &str) -> sqlx::Result<PgConnectOptions> {
+        let options: PgConnectOptions = url.parse()?;
+        Ok(options
+            .application_name(service_name)
+            .log_statements(LevelFilter::Debug)
+            .log_slow_statements(LevelFilter::Warn, Duration::from_millis(500)))
+    }
+
+    async fn create_pool(
+        url: &str,
+        size: u32,
+        timeout_secs: u64,
+        service_name: &str,
+    ) -> sqlx::Result<PgPool> {
+        let options = Self::connect_options(url, service_name)?;
         PgPoolOptions::new()
             .max_connections(size)
             .acquire_timeout(Duration::from_secs(timeout_secs))
-            .connect(url)
+            .connect_with(options)
             .await
     }
 
     async fn create_isolated_pool(
         url: &str,
         config: Option<&PoolConfig>,
+        service_name: &str,
     ) -> Result<Option<Arc<PgPool>>> {
         let Some(cfg) = config else {
             return Ok(None);
         };
-        let pool = Self::create_pool(url, cfg.size, cfg.timeout_secs)
+        let pool = Self::create_pool(url, cfg.size, cfg.timeout_secs, service_name)
             .await
             .map_err(|e| ForgeError::Database(format!("Failed to create isolated pool: {}", e)))?;
         Ok(Some(Arc::new(pool)))

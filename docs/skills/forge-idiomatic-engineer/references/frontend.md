@@ -1,12 +1,13 @@
 # Frontend Svelte 5 Playbook
 
-Frontend is the default deliverable for this skill.
+Frontend is the default deliverable for full-stack or user-facing Forge work.
 
-Only skip frontend when the user explicitly requests backend-only output. In normal tasks, deliver both backend and frontend integration. Maintain strict boundary between handwritten app UI and generated Forge client code.
+Only skip frontend when the user explicitly requests backend-only output or the existing task is clearly backend-scoped. Maintain a strict boundary between handwritten app UI and generated Forge client code.
 
 Always sequence work as:
 1. Backend correctness and tests
-2. Frontend integration and UX polish
+2. Thin frontend integration
+3. UX polish after the vertical slice works
 
 Do not start frontend implementation before backend behavior/tests are correct.
 
@@ -14,6 +15,15 @@ Do not start frontend implementation before backend behavior/tests are correct.
 
 ### Backend-first gate
 Do not start frontend implementation until backend behavior is stable and tests are added.
+
+### Greenfield vertical-slice gate
+For a new app, ship the smallest usable path first:
+- auth or entry flow
+- one core read path
+- one core write path
+- one Playwright path proving the app works end to end
+
+Do not jump straight into a large one-file UI with every feature and all styling decisions at once.
 
 ### Frontend CLI-first gate
 Use CLI tooling for frontend quality checks.
@@ -39,6 +49,7 @@ Guideline:
 - If logic can be expressed as state derivation, use `$derived`.
 - If logic is event-driven, use explicit handlers.
 - Use `$effect` only for unavoidable imperative side effects.
+- Prefer consuming generated Forge stores directly in components over copying them into extra local state unless adaptation is necessary.
 
 Do not add manual refetch loops after mutations when Forge reactivity can invalidate for you.
 
@@ -292,6 +303,8 @@ Never edit generated:
 Instead:
 - edit app code in `frontend/src/routes/*` and non-generated `frontend/src/lib/*`
 - re-run `forge generate` after backend changes
+
+If the generated client is missing, resolve `forge generate` instead of authoring fake generated bindings by hand in those paths.
 
 ## 8) Svelte + Forge Integration Patterns
 

@@ -16,7 +16,10 @@ use std::sync::OnceLock;
 use thiserror::Error;
 use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::{
-    EnvFilter, Layer, Registry, filter::FilterFn, layer::SubscriberExt, util::SubscriberInitExt,
+    EnvFilter, Layer, Registry,
+    filter::{FilterExt, FilterFn},
+    layer::SubscriberExt,
+    util::SubscriberInitExt,
 };
 
 static TRACER_PROVIDER: OnceLock<TracerProvider> = OnceLock::new();
@@ -207,9 +210,15 @@ fn init_logger(config: &TelemetryConfig) -> Result<LoggerProvider, TelemetryErro
     Ok(provider)
 }
 
-/// `forge dev` sets RUST_LOG=warn,forge=info which silences user crate logs.
-/// This ensures the user's crate is always visible at the configured level.
+/// Build an `EnvFilter` for console output.
+///
+/// Ensures the user's crate is visible at the configured level even when
+/// `RUST_LOG` is set to something restrictive (e.g. `warn`).
 pub fn build_env_filter(project_name: &str, log_level: &str) -> EnvFilter {
+    build_console_filter(project_name, log_level)
+}
+
+fn build_console_filter(project_name: &str, log_level: &str) -> EnvFilter {
     let crate_name = project_name.replace('-', "_");
 
     let base = if let Ok(filter) = EnvFilter::try_from_default_env() {
@@ -218,13 +227,13 @@ pub fn build_env_filter(project_name: &str, log_level: &str) -> EnvFilter {
         EnvFilter::new(log_level)
     };
 
-    // Always ensure the user crate is visible at the configured level
     let directive = format!("{}={}", crate_name, log_level);
     match directive.parse() {
         Ok(d) => base.add_directive(d),
         Err(_) => base,
     }
 }
+
 
 /// Set up tracing so logs work without any user boilerplate.
 /// Returns `Ok(false)` if a subscriber already exists (user configured their own).
@@ -235,15 +244,16 @@ pub fn init_telemetry(
 ) -> Result<bool, TelemetryError> {
     global::set_text_map_propagator(TraceContextPropagator::new());
 
-    let env_filter = build_env_filter(project_name, log_level);
-
+    // Per-layer filters avoid the global EnvFilter + per-layer filter conflict
+    // that causes the OTel log bridge to silently drop events.
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_target(true)
         .with_thread_ids(false)
         .with_file(false)
-        .with_line_number(false);
+        .with_line_number(false)
+        .with_filter(build_console_filter(project_name, log_level));
 
-    // Build optional trace layer
+    // Build optional trace layer (includes sqlx debug for DB-level spans)
     let otel_trace_layer = if config.enable_traces {
         let tracer_provider = init_tracer(config)?;
         let tracer = tracer_provider.tracer(config.service_name.clone());
@@ -254,20 +264,24 @@ pub fn init_telemetry(
 
         global::set_tracer_provider(tracer_provider);
 
-        Some(OpenTelemetryLayer::new(tracer))
+        Some(
+            OpenTelemetryLayer::new(tracer)
+                .with_filter(build_console_filter(project_name, log_level)),
+        )
     } else {
         None
     };
 
     // Build optional log bridge layer.
-    // The OTel log bridge must filter out events from the OTLP transport stack
-    // (hyper, reqwest, h2, tonic) to prevent infinite recursion: the HTTP
-    // exporter emits tracing events that would feed back into the bridge.
+    // Uses the OTel filter (includes sqlx debug) plus an anti-recursion guard
+    // that blocks events from the OTLP transport stack (hyper, reqwest, h2,
+    // etc.) to prevent infinite feedback through the HTTP exporter.
     let otel_log_layer = if config.enable_logs {
         let logger_provider = init_logger(config)?;
 
+        let env_filter = build_console_filter(project_name, log_level);
         let log_layer = OpenTelemetryTracingBridge::new(&logger_provider)
-            .with_filter(FilterFn::new(|metadata| {
+            .with_filter(env_filter.and(FilterFn::new(|metadata| {
                 let target = metadata.target();
                 !target.starts_with("hyper")
                     && !target.starts_with("reqwest")
@@ -275,7 +289,7 @@ pub fn init_telemetry(
                     && !target.starts_with("tonic")
                     && !target.starts_with("tower")
                     && !target.starts_with("opentelemetry")
-            }));
+            })));
 
         LOGGER_PROVIDER
             .set(logger_provider)
@@ -286,9 +300,8 @@ pub fn init_telemetry(
         None
     };
 
-    // Option<Layer> implements Layer, so all branches produce the same type
+    // No global filter: each layer carries its own per-layer filter.
     if Registry::default()
-        .with(env_filter)
         .with(fmt_layer)
         .with(otel_trace_layer)
         .with(otel_log_layer)

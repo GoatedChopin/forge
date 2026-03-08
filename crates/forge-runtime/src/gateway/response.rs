@@ -164,7 +164,7 @@ impl From<forge_core::error::ForgeError> for RpcError {
                 Self::internal("Internal server error")
             }
             forge_core::error::ForgeError::Job(msg) => {
-                tracing::warn!(error = %msg, "Job error");
+                tracing::error!(error = %msg, "Job error");
                 Self::internal("Internal server error")
             }
             forge_core::error::ForgeError::RateLimitExceeded { retry_after, .. } => {
