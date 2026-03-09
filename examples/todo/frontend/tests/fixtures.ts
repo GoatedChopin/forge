@@ -3,7 +3,7 @@ import { test as base, expect, type Page } from "@playwright/test";
 export { expect };
 
 export const API_URL = process.env.VITE_API_URL || "http://localhost:8080";
-export const ACTION_TIMEOUT = process.env.CI ? 15_000 : 5_000;
+export const ACTION_TIMEOUT = process.env.CI ? 10_000 : 5_000;
 
 export function uniqueId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

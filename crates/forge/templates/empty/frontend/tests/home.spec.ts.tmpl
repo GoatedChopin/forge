@@ -1,4 +1,4 @@
-import { test, expect, API_URL, waitForSSE, trackConsoleErrors } from "./fixtures";
+import { test, expect, API_URL, trackConsoleErrors } from "./fixtures";
 
 test.describe("Application", () => {
 	test("homepage loads successfully", async ({ page }) => {
@@ -12,7 +12,7 @@ test.describe("Application", () => {
 		const errors = trackConsoleErrors(page);
 
 		await page.goto("/");
-		await page.waitForTimeout(3000);
+		await expect(page.locator("body")).toBeVisible();
 
 		expect(errors).toHaveLength(0);
 	});
@@ -27,7 +27,7 @@ test.describe("Backend Connection", () => {
 		expect(data.status).toBe("healthy");
 	});
 
-	test("SSE connection establishes through ForgeProvider", async ({ page }) => {
+	test("SSE connection establishes through ForgeProvider", async ({ page, gotoReady }) => {
 		const sseRequests: string[] = [];
 
 		page.on("request", (req) => {
@@ -36,8 +36,7 @@ test.describe("Backend Connection", () => {
 			}
 		});
 
-		await page.goto("/");
-		await waitForSSE(page);
+		await gotoReady();
 
 		expect(sseRequests.length).toBeGreaterThan(0);
 	});

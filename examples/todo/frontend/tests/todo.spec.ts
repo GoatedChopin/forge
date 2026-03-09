@@ -1,27 +1,8 @@
-import { test, expect, type Page } from "@playwright/test";
-
-const API_URL = process.env.VITE_API_URL || "http://localhost:8080";
+import { test, expect, API_URL, ACTION_TIMEOUT, uniqueId } from "./fixtures";
 
 const INPUT = 'input[placeholder="What needs to be done?"]';
-// Reactive updates go through RPC → DB → NOTIFY → SSE → UI.
-// CI runners need more headroom than local dev.
-const ACTION_TIMEOUT = process.env.CI ? 10_000 : 5_000;
 
-function uniqueTitle(prefix: string) {
-  return `${prefix} ${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-}
-
-async function rpc(fn: string, args: unknown = null) {
-  const res = await fetch(`${API_URL}/_api/rpc/${fn}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ args }),
-  });
-  const json = await res.json();
-  return json.data;
-}
-
-async function deleteAllTodos() {
+async function deleteAllTodos(rpc: (fn: string, args?: unknown) => Promise<unknown>) {
   const todos = await rpc("list_todos");
   if (!Array.isArray(todos)) return;
   for (const todo of todos) {
@@ -29,36 +10,20 @@ async function deleteAllTodos() {
   }
 }
 
-// Navigate and wait for UI + SSE subscription to be ready.
-// Without SSE, mutations succeed but reactive updates never arrive.
-async function gotoReady(page: Page) {
-  const sseRequest = page.waitForRequest(
-    (req) => req.url().includes("/_api/events"),
-    { timeout: 15000 },
-  );
-  await page.goto("/");
-  await expect(page.locator(".status, .count, ul")).toBeVisible({
-    timeout: 15000,
-  });
-  await sseRequest;
-  // Let the SSE handshake and subscription registration complete
-  await page.waitForTimeout(2000);
-}
-
-test.beforeEach(async () => {
-  await deleteAllTodos();
+test.beforeEach(async ({ rpc }) => {
+  await deleteAllTodos(rpc);
 });
 
-test.afterEach(async () => {
-  await deleteAllTodos();
+test.afterEach(async ({ rpc }) => {
+  await deleteAllTodos(rpc);
 });
 
 test.describe("smoke", () => {
-  test("page loads with heading visible", async ({ page }) => {
+  test("page loads with heading visible", async ({ page, gotoReady }) => {
     const errors: string[] = [];
     page.on("pageerror", (err) => errors.push(err.message));
 
-    await gotoReady(page);
+    await gotoReady();
     await expect(page.locator("h1")).toHaveText("Todos");
     await expect(page.locator(INPUT)).toBeVisible();
     expect(errors).toHaveLength(0);
@@ -71,9 +36,9 @@ test.describe("smoke", () => {
 });
 
 test.describe("CRUD with reactivity", () => {
-  test("create todo via button click", async ({ page }) => {
-    const title = uniqueTitle("click-add");
-    await gotoReady(page);
+  test("create todo via button click", async ({ page, gotoReady }) => {
+    const title = uniqueId("click-add");
+    await gotoReady();
 
     await page.fill(INPUT, title);
     await page.click(".input-row button");
@@ -83,9 +48,9 @@ test.describe("CRUD with reactivity", () => {
     });
   });
 
-  test("create todo via Enter key", async ({ page }) => {
-    const title = uniqueTitle("enter-add");
-    await gotoReady(page);
+  test("create todo via Enter key", async ({ page, gotoReady }) => {
+    const title = uniqueId("enter-add");
+    await gotoReady();
 
     await page.fill(INPUT, title);
     await page.press(INPUT, "Enter");
@@ -95,9 +60,12 @@ test.describe("CRUD with reactivity", () => {
     });
   });
 
-  test("toggle completion applies strikethrough", async ({ page }) => {
-    const title = uniqueTitle("toggle");
-    await gotoReady(page);
+  test("toggle completion applies strikethrough", async ({
+    page,
+    gotoReady,
+  }) => {
+    const title = uniqueId("toggle");
+    await gotoReady();
 
     await page.fill(INPUT, title);
     await page.click(".input-row button");
@@ -113,9 +81,9 @@ test.describe("CRUD with reactivity", () => {
     });
   });
 
-  test("delete removes todo from list", async ({ page }) => {
-    const title = uniqueTitle("delete");
-    await gotoReady(page);
+  test("delete removes todo from list", async ({ page, gotoReady }) => {
+    const title = uniqueId("delete");
+    await gotoReady();
 
     await page.fill(INPUT, title);
     await page.click(".input-row button");
@@ -140,9 +108,12 @@ test.describe("CRUD with reactivity", () => {
 });
 
 test.describe("reactivity", () => {
-  test("remaining count updates on add and complete", async ({ page }) => {
-    const title = uniqueTitle("count");
-    await gotoReady(page);
+  test("remaining count updates on add and complete", async ({
+    page,
+    gotoReady,
+  }) => {
+    const title = uniqueId("count");
+    await gotoReady();
 
     await expect(
       page.locator(".status", { hasText: "No todos yet" }),
@@ -163,13 +134,13 @@ test.describe("reactivity", () => {
     });
   });
 
-  test("multiple rapid adds all appear", async ({ page }) => {
+  test("multiple rapid adds all appear", async ({ page, gotoReady }) => {
     const titles = [
-      uniqueTitle("rapid-1"),
-      uniqueTitle("rapid-2"),
-      uniqueTitle("rapid-3"),
+      uniqueId("rapid-1"),
+      uniqueId("rapid-2"),
+      uniqueId("rapid-3"),
     ];
-    await gotoReady(page);
+    await gotoReady();
 
     for (const title of titles) {
       await page.fill(INPUT, title);
@@ -190,8 +161,11 @@ test.describe("reactivity", () => {
 });
 
 test.describe("UX details", () => {
-  test("whitespace-only input does not create a todo", async ({ page }) => {
-    await gotoReady(page);
+  test("whitespace-only input does not create a todo", async ({
+    page,
+    gotoReady,
+  }) => {
+    await gotoReady();
 
     await page.fill(INPUT, "   ");
     await expect(page.locator(".input-row button")).toBeDisabled();
@@ -204,9 +178,9 @@ test.describe("UX details", () => {
     ).toBeVisible({ timeout: ACTION_TIMEOUT });
   });
 
-  test("input clears after successful add", async ({ page }) => {
-    const title = uniqueTitle("clear-input");
-    await gotoReady(page);
+  test("input clears after successful add", async ({ page, gotoReady }) => {
+    const title = uniqueId("clear-input");
+    await gotoReady();
 
     await page.fill(INPUT, title);
     await page.click(".input-row button");
@@ -221,9 +195,12 @@ test.describe("UX details", () => {
       });
   });
 
-  test("untoggle completed todo restores it", async ({ page }) => {
-    const title = uniqueTitle("untoggle");
-    await gotoReady(page);
+  test("untoggle completed todo restores it", async ({
+    page,
+    gotoReady,
+  }) => {
+    const title = uniqueId("untoggle");
+    await gotoReady();
 
     await page.fill(INPUT, title);
     await page.click(".input-row button");
@@ -241,9 +218,12 @@ test.describe("UX details", () => {
     });
   });
 
-  test("empty state returns after deleting last todo", async ({ page }) => {
-    const title = uniqueTitle("last-delete");
-    await gotoReady(page);
+  test("empty state returns after deleting last todo", async ({
+    page,
+    gotoReady,
+  }) => {
+    const title = uniqueId("last-delete");
+    await gotoReady();
 
     await page.fill(INPUT, title);
     await page.click(".input-row button");
@@ -261,10 +241,13 @@ test.describe("UX details", () => {
     ).toBeVisible({ timeout: ACTION_TIMEOUT });
   });
 
-  test("summary header shows remaining count above list", async ({ page }) => {
-    const t1 = uniqueTitle("summary-1");
-    const t2 = uniqueTitle("summary-2");
-    await gotoReady(page);
+  test("summary header shows remaining count above list", async ({
+    page,
+    gotoReady,
+  }) => {
+    const t1 = uniqueId("summary-1");
+    const t2 = uniqueId("summary-2");
+    await gotoReady();
 
     await page.fill(INPUT, t1);
     await page.click(".input-row button");
@@ -281,9 +264,9 @@ test.describe("UX details", () => {
     await expect(page.locator(".summary")).toContainText("2 remaining");
   });
 
-  test("todos persist after page reload", async ({ page }) => {
-    const title = uniqueTitle("persist");
-    await gotoReady(page);
+  test("todos persist after page reload", async ({ page, gotoReady }) => {
+    const title = uniqueId("persist");
+    await gotoReady();
 
     await page.fill(INPUT, title);
     await page.click(".input-row button");
@@ -297,9 +280,12 @@ test.describe("UX details", () => {
     });
   });
 
-  test("completed state persists after page reload", async ({ page }) => {
-    const title = uniqueTitle("persist-done");
-    await gotoReady(page);
+  test("completed state persists after page reload", async ({
+    page,
+    gotoReady,
+  }) => {
+    const title = uniqueId("persist-done");
+    await gotoReady();
 
     await page.fill(INPUT, title);
     await page.click(".input-row button");
@@ -319,9 +305,12 @@ test.describe("UX details", () => {
     await expect(reloaded.locator('input[type="checkbox"]')).toBeChecked();
   });
 
-  test("delete button becomes visible on hover", async ({ page }) => {
-    const title = uniqueTitle("hover-del");
-    await gotoReady(page);
+  test("delete button becomes visible on hover", async ({
+    page,
+    gotoReady,
+  }) => {
+    const title = uniqueId("hover-del");
+    await gotoReady();
 
     await page.fill(INPUT, title);
     await page.click(".input-row button");
@@ -337,11 +326,12 @@ test.describe("UX details", () => {
 
   test("bottom count reflects mix of completed and active", async ({
     page,
+    gotoReady,
   }) => {
-    const t1 = uniqueTitle("mix-1");
-    const t2 = uniqueTitle("mix-2");
-    const t3 = uniqueTitle("mix-3");
-    await gotoReady(page);
+    const t1 = uniqueId("mix-1");
+    const t2 = uniqueId("mix-2");
+    const t3 = uniqueId("mix-3");
+    await gotoReady();
 
     for (const t of [t1, t2, t3]) {
       await page.fill(INPUT, t);

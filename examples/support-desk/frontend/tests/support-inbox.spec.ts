@@ -1,18 +1,14 @@
-import { expect, test, type Page } from "@playwright/test";
+import {
+  test,
+  expect,
+  ACTION_TIMEOUT,
+  uniqueId,
+  createTicketViaUI,
+} from "./fixtures";
 
-const API_URL = process.env.VITE_API_URL || "http://localhost:8080";
-const ACTION_TIMEOUT = process.env.CI ? 15_000 : 8_000;
-
-async function rpc(fn: string, args: unknown = null) {
-  const res = await fetch(`${API_URL}/_api/rpc/${fn}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ args }),
-  });
-  return (await res.json()).data;
-}
-
-async function deleteAllTickets() {
+async function deleteAllTickets(
+  rpc: (fn: string, args?: unknown) => Promise<unknown>,
+) {
   const tickets = await rpc("list_support_tickets");
   if (!Array.isArray(tickets)) return;
   for (const t of tickets) {
@@ -20,51 +16,22 @@ async function deleteAllTickets() {
   }
 }
 
-function nonce() {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-}
-
-async function gotoReady(page: Page) {
-  const sseRequest = page.waitForRequest(
-    (req) => req.url().includes("/_api/events"),
-    { timeout: 15000 },
-  );
-  await page.goto("/");
-  await sseRequest;
-  await page.waitForTimeout(1000);
-}
-
-async function createTicketViaUI(
-  page: Page,
-  opts: {
-    customer: string;
-    subject: string;
-    details: string;
-    priority?: string;
-  },
-) {
-  await page.getByTestId("customer-name-input").fill(opts.customer);
-  await page.getByTestId("subject-input").fill(opts.subject);
-  await page.getByTestId("details-input").fill(opts.details);
-  if (opts.priority) {
-    await page.getByTestId("priority-select").selectOption(opts.priority);
-  }
-  await page.getByTestId("open-ticket-button").click();
-}
-
-test.beforeEach(async () => {
-  await deleteAllTickets();
+test.beforeEach(async ({ rpc }) => {
+  await deleteAllTickets(rpc);
 });
 
 test.describe("Support Inbox", () => {
-  test("agent can create and progress a ticket", async ({ page }) => {
-    const n = nonce();
+  test("agent can create and progress a ticket", async ({
+    page,
+    gotoReady,
+  }) => {
+    const n = uniqueId("e2e");
     const customer = `E2E Customer ${n}`;
     const subject = `Invoice sync fails ${n}`;
     const details = `Reproduced on dashboard session ${n}`;
     const note = `Escalated by UI flow ${n}`;
 
-    await gotoReady(page);
+    await gotoReady();
     await createTicketViaUI(page, {
       customer,
       subject,
@@ -99,11 +66,11 @@ test.describe("Support Inbox", () => {
     });
   });
 
-  test("reopen a resolved ticket", async ({ page }) => {
-    const n = nonce();
+  test("reopen a resolved ticket", async ({ page, gotoReady }) => {
+    const n = uniqueId("reopen");
     const subject = `Reopen test ${n}`;
 
-    await gotoReady(page);
+    await gotoReady();
     await createTicketViaUI(page, {
       customer: `Customer ${n}`,
       subject,
@@ -126,11 +93,14 @@ test.describe("Support Inbox", () => {
     });
   });
 
-  test("escalate then de-escalate priority", async ({ page }) => {
-    const n = nonce();
+  test("escalate then de-escalate priority", async ({
+    page,
+    gotoReady,
+  }) => {
+    const n = uniqueId("priority");
     const subject = `Priority cycle ${n}`;
 
-    await gotoReady(page);
+    await gotoReady();
     await createTicketViaUI(page, {
       customer: `Customer ${n}`,
       subject,
@@ -155,13 +125,16 @@ test.describe("Support Inbox", () => {
     });
   });
 
-  test("multiple notes overwrite last_note display", async ({ page }) => {
-    const n = nonce();
+  test("multiple notes overwrite last_note display", async ({
+    page,
+    gotoReady,
+  }) => {
+    const n = uniqueId("notes");
     const subject = `Multi-note ${n}`;
     const note1 = `First note ${n}`;
     const note2 = `Second note ${n}`;
 
-    await gotoReady(page);
+    await gotoReady();
     await createTicketViaUI(page, {
       customer: `Customer ${n}`,
       subject,
@@ -198,10 +171,13 @@ test.describe("Support Inbox", () => {
     await expect(page.getByTestId("open-ticket-button")).toBeEnabled();
   });
 
-  test("form clears after successful ticket creation", async ({ page }) => {
-    const n = nonce();
+  test("form clears after successful ticket creation", async ({
+    page,
+    gotoReady,
+  }) => {
+    const n = uniqueId("clear");
 
-    await gotoReady(page);
+    await gotoReady();
     await createTicketViaUI(page, {
       customer: `Customer ${n}`,
       subject: `Subject ${n}`,
@@ -221,10 +197,13 @@ test.describe("Support Inbox", () => {
     await expect(page.getByTestId("priority-select")).toHaveValue("normal");
   });
 
-  test("ticket total count updates in board header", async ({ page }) => {
-    const n = nonce();
+  test("ticket total count updates in board header", async ({
+    page,
+    gotoReady,
+  }) => {
+    const n = uniqueId("count");
 
-    await gotoReady(page);
+    await gotoReady();
     await createTicketViaUI(page, {
       customer: `Customer ${n}`,
       subject: `Ticket A ${n}`,
@@ -240,17 +219,16 @@ test.describe("Support Inbox", () => {
     await expect(page.locator(".board-head span")).toContainText("total");
   });
 
-  test("empty state shows when no tickets exist", async ({ page }) => {
-    await gotoReady(page);
+  test("empty state shows when no tickets exist", async ({
+    page,
+    gotoReady,
+  }) => {
+    await gotoReady();
 
-    // Wait for either the empty state or tickets to load
     await expect(page.locator(".status, .ticket-list")).toBeVisible({
       timeout: ACTION_TIMEOUT,
     });
 
-    // If there are resolved tickets from cleanup, that's ok.
-    // The empty state only appears with a truly fresh DB.
-    // Check that the page loaded without errors.
     const ticketCount = await page
       .locator('[data-testid="ticket-card"]')
       .count();
@@ -259,20 +237,20 @@ test.describe("Support Inbox", () => {
         page.locator(".status", { hasText: "No tickets yet" }),
       ).toBeVisible({ timeout: ACTION_TIMEOUT });
     } else {
-      // Tickets exist from previous test cleanup (resolved but still listed)
       await expect(page.locator(".board-head span")).toContainText("total");
     }
   });
 
   test("ticket displays customer name, subject, and details", async ({
     page,
+    gotoReady,
   }) => {
-    const n = nonce();
+    const n = uniqueId("display");
     const customer = `Acme Corp ${n}`;
     const subject = `Dashboard crash ${n}`;
     const details = `Steps to reproduce: open settings panel ${n}`;
 
-    await gotoReady(page);
+    await gotoReady();
     await createTicketViaUI(page, { customer, subject, details });
 
     const ticket = page.locator('[data-testid="ticket-card"]', {
@@ -283,11 +261,11 @@ test.describe("Support Inbox", () => {
     await expect(ticket).toContainText(details);
   });
 
-  test("create ticket with low priority", async ({ page }) => {
-    const n = nonce();
+  test("create ticket with low priority", async ({ page, gotoReady }) => {
+    const n = uniqueId("low-prio");
     const subject = `Low priority issue ${n}`;
 
-    await gotoReady(page);
+    await gotoReady();
     await createTicketViaUI(page, {
       customer: `Customer ${n}`,
       subject,
@@ -302,12 +280,12 @@ test.describe("Support Inbox", () => {
     await expect(ticket).toContainText("low");
   });
 
-  test("note input clears after saving", async ({ page }) => {
-    const n = nonce();
+  test("note input clears after saving", async ({ page, gotoReady }) => {
+    const n = uniqueId("note-clear");
     const subject = `Note clear ${n}`;
     const note = `Internal note ${n}`;
 
-    await gotoReady(page);
+    await gotoReady();
     await createTicketViaUI(page, {
       customer: `Customer ${n}`,
       subject,
@@ -328,11 +306,11 @@ test.describe("Support Inbox", () => {
     ).toHaveValue("", { timeout: ACTION_TIMEOUT });
   });
 
-  test("start work then resolve workflow", async ({ page }) => {
-    const n = nonce();
+  test("start work then resolve workflow", async ({ page, gotoReady }) => {
+    const n = uniqueId("workflow");
     const subject = `Full workflow ${n}`;
 
-    await gotoReady(page);
+    await gotoReady();
     await createTicketViaUI(page, {
       customer: `Customer ${n}`,
       subject,
@@ -357,11 +335,14 @@ test.describe("Support Inbox", () => {
     });
   });
 
-  test("default priority is normal when not specified", async ({ page }) => {
-    const n = nonce();
+  test("default priority is normal when not specified", async ({
+    page,
+    gotoReady,
+  }) => {
+    const n = uniqueId("default-prio");
     const subject = `Default priority ${n}`;
 
-    await gotoReady(page);
+    await gotoReady();
     await createTicketViaUI(page, {
       customer: `Customer ${n}`,
       subject,

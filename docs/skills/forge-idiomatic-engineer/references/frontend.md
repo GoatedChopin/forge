@@ -120,6 +120,7 @@ frontend/src/
 │   └── settings/
 │       └── +page.svelte          # User settings
 └── tests/
+    ├── fixtures.ts               # Forge test fixtures (rpc, gotoReady, uniqueId)
     └── app.spec.ts               # Playwright E2E
 ```
 

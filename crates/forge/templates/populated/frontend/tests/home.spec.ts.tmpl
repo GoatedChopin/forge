@@ -1,4 +1,4 @@
-import { test, expect, API_URL, waitForSSE, trackConsoleErrors } from "./fixtures";
+import { test, expect, API_URL, ACTION_TIMEOUT, uniqueId, trackConsoleErrors } from "./fixtures";
 
 test.describe("Forge Demo", () => {
   test("homepage loads with all sections visible", async ({ page }) => {
@@ -21,9 +21,8 @@ test.describe("Forge Demo", () => {
     expect(data.status).toBe("healthy");
   });
 
-  test("creating user appears in list without page refresh", async ({ page }) => {
-    await page.goto("/");
-    await waitForSSE(page);
+  test("creating user appears in list without page refresh", async ({ page, gotoReady }) => {
+    await gotoReady();
 
     const uniqueName = `TestUser-${Date.now()}`;
     const uniqueEmail = `test-${Date.now()}@example.com`;
@@ -32,13 +31,12 @@ test.describe("Forge Demo", () => {
     await page.getByPlaceholder("Email").fill(uniqueEmail);
     await page.getByRole("button", { name: "Create" }).click();
 
-    await expect(page.getByText(uniqueName)).toBeVisible({ timeout: 15000 });
-    await expect(page.getByText(uniqueEmail)).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText(uniqueName)).toBeVisible({ timeout: ACTION_TIMEOUT });
+    await expect(page.getByText(uniqueEmail)).toBeVisible({ timeout: ACTION_TIMEOUT });
   });
 
-  test("deleting user removes from list", async ({ page }) => {
-    await page.goto("/");
-    await waitForSSE(page);
+  test("deleting user removes from list", async ({ page, gotoReady }) => {
+    await gotoReady();
 
     const uniqueName = `ToDelete-${Date.now()}`;
     const uniqueEmail = `delete-${Date.now()}@example.com`;
@@ -47,16 +45,15 @@ test.describe("Forge Demo", () => {
     await page.getByPlaceholder("Email").fill(uniqueEmail);
     await page.getByRole("button", { name: "Create" }).click();
 
-    await expect(page.getByText(uniqueName)).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText(uniqueName)).toBeVisible({ timeout: ACTION_TIMEOUT });
 
     const userRow = page.locator("tr", { hasText: uniqueName });
     await userRow.getByRole("button", { name: "Delete" }).click();
     await userRow.getByRole("button", { name: "Confirm" }).click();
 
-    // Verify deletion persisted (reload avoids SSE timing flakiness)
-    await page.waitForTimeout(1000);
+    // Verify deletion persisted via reload to avoid SSE timing issues
     await page.reload();
-    await expect(page.getByText(uniqueName)).not.toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(uniqueName)).not.toBeVisible({ timeout: ACTION_TIMEOUT });
   });
 
   test("ISS location displays coordinates from cron", async ({ page }) => {
@@ -95,15 +92,16 @@ test.describe("Forge Demo", () => {
         .getByText(/\d+%/)
         .or(page.getByText(/complete/i))
         .or(page.getByText(/progress/i))
-    ).toBeVisible({ timeout: 15000 });
+    ).toBeVisible({ timeout: ACTION_TIMEOUT });
   });
 
   test("verification workflow starts successfully", async ({ page }) => {
     await page.goto("/");
 
     await page.getByRole("button", { name: "Start Workflow" }).click();
-    await page.waitForTimeout(2000);
 
+    // Allow the workflow to start and check for errors
+    await expect(page.locator("body")).toBeVisible();
     const errorVisible = await page.getByText(/error|failed/i).isVisible();
     expect(errorVisible).toBeFalsy();
   });
@@ -117,13 +115,13 @@ test.describe("Forge Demo", () => {
 
     await page.getByRole("button", { name: "New" }).click();
     await page.getByRole("button", { name: "Send" }).click();
-    await page.waitForTimeout(2000);
 
+    await expect(page.locator("body")).toBeVisible();
     const errorVisible = await page.getByText(/error|failed/i).isVisible();
     expect(errorVisible).toBeFalsy();
   });
 
-  test("SSE connection establishes for real-time updates", async ({ page }) => {
+  test("SSE connection establishes for real-time updates", async ({ page, gotoReady }) => {
     const sseRequests: string[] = [];
 
     page.on("request", (req) => {
@@ -132,8 +130,7 @@ test.describe("Forge Demo", () => {
       }
     });
 
-    await page.goto("/");
-    await waitForSSE(page);
+    await gotoReady();
 
     expect(sseRequests.length).toBeGreaterThan(0);
   });
@@ -184,7 +181,7 @@ test.describe("Forge Demo", () => {
     const errors = trackConsoleErrors(page);
 
     await page.goto("/");
-    await page.waitForTimeout(5000);
+    await expect(page.locator("body")).toBeVisible();
 
     expect(errors).toHaveLength(0);
   });

@@ -1,113 +1,24 @@
 import { randomUUID } from "node:crypto";
-import { expect, test, type Page } from "@playwright/test";
-
-const ACTION_TIMEOUT = process.env.CI ? 20_000 : 12_000;
-
-type UserCreds = {
-  name: string;
-  email: string;
-  password: string;
-};
-
-function uniqueId(prefix: string): string {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function makeUser(): UserCreds {
-  const id = uniqueId("kb-user");
-  return {
-    name: `User ${id}`,
-    email: `${id}@example.com`,
-    password: "password123",
-  };
-}
-
-async function gotoAuth(page: Page) {
-  await page.goto("/");
-  await expect(
-    page.getByRole("heading", { name: "Kanban Board" }),
-  ).toBeVisible();
-}
-
-async function registerUser(page: Page, user: UserCreds) {
-  await gotoAuth(page);
-  await page.getByRole("button", { name: "Register" }).click();
-  await page.getByLabel("Name").fill(user.name);
-  await page.getByLabel("Email").fill(user.email);
-  await page.getByLabel("Password").fill(user.password);
-  await page.getByRole("button", { name: "Create account" }).click();
-  await expect(page).toHaveURL(/\/app$/);
-  await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
-}
-
-async function loginUser(page: Page, user: UserCreds) {
-  await gotoAuth(page);
-  await page.getByLabel("Email").fill(user.email);
-  await page.getByLabel("Password").fill(user.password);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page).toHaveURL(/\/app$/);
-}
-
-async function signOut(page: Page) {
-  await page.getByRole("button", { name: "Sign out" }).click();
-  await expect(page).toHaveURL("/");
-}
-
-async function createProject(page: Page, name: string) {
-  await page.getByPlaceholder("New project name").fill(name);
-  await page.getByRole("button", { name: "Create" }).click();
-  await expect(page.locator(".project-list a", { hasText: name })).toBeVisible({
-    timeout: ACTION_TIMEOUT,
-  });
-}
-
-async function openProject(page: Page, name: string) {
-  await page.locator(".project-list a", { hasText: name }).click();
-  await expect(page).toHaveURL(/\/app\/.+/);
-  await expect(page.getByPlaceholder("New task title")).toBeVisible();
-}
-
-async function getProjectId(page: Page, name: string): Promise<string> {
-  const href = await page
-    .locator(".project-list a", { hasText: name })
-    .first()
-    .getAttribute("href");
-  if (!href) {
-    throw new Error(`Missing href for project ${name}`);
-  }
-
-  const projectId = href.replace("/app/", "");
-  if (!projectId) {
-    throw new Error(`Unexpected project link format: ${href}`);
-  }
-
-  return projectId;
-}
-
-async function createTask(page: Page, title: string) {
-  await page.getByPlaceholder("New task title").fill(title);
-  await page.getByRole("button", { name: "Add task" }).click();
-  await expect(page.locator(".card", { hasText: title })).toBeVisible({
-    timeout: ACTION_TIMEOUT,
-  });
-}
+import { test, expect, ACTION_TIMEOUT, uniqueId, makeUser } from "./fixtures";
 
 test.describe("Kanban Board UI E2E", () => {
-  test("registers, creates project, and renames project", async ({ page }) => {
+  test("registers, creates project, and renames project", async ({
+    page,
+    registerUser,
+    createProject,
+  }) => {
     const user = makeUser();
     const projectName = uniqueId("project");
     const renamed = uniqueId("project-renamed");
 
-    await registerUser(page, user);
-    await createProject(page, projectName);
+    await registerUser(user);
+    await createProject(projectName);
 
-    // Click rename to show inline input
     await page
       .locator(".project-row", { hasText: projectName })
       .getByRole("button", { name: "Rename" })
       .click();
 
-    // Fill inline rename input and submit with Enter
     const renameInput = page.locator(".rename-input");
     await expect(renameInput).toBeVisible();
     await renameInput.clear();
@@ -116,26 +27,26 @@ test.describe("Kanban Board UI E2E", () => {
 
     await expect(
       page.locator(".project-list a", { hasText: renamed }),
-    ).toBeVisible({
-      timeout: ACTION_TIMEOUT,
-    });
+    ).toBeVisible({ timeout: ACTION_TIMEOUT });
   });
 
   test("opens board and performs task lifecycle through UI", async ({
     page,
+    registerUser,
+    createProject,
+    openProject,
+    createTask,
   }) => {
     const user = makeUser();
     const projectName = uniqueId("board");
     const task = uniqueId("task");
     const editedTask = uniqueId("task-edited");
 
-    await registerUser(page, user);
-    await createProject(page, projectName);
-    await openProject(page, projectName);
+    await registerUser(user);
+    await createProject(projectName);
+    await openProject(projectName);
+    await createTask(task);
 
-    await createTask(page, task);
-
-    // Click edit to show inline input
     await page
       .locator(".card", { hasText: task })
       .locator("button.edit")
@@ -161,9 +72,7 @@ test.describe("Kanban Board UI E2E", () => {
       page
         .locator(".column", { hasText: "Todo" })
         .locator(".card", { hasText: editedTask }),
-    ).toBeVisible({
-      timeout: ACTION_TIMEOUT,
-    });
+    ).toBeVisible({ timeout: ACTION_TIMEOUT });
 
     await page
       .locator(".column", { hasText: "Todo" })
@@ -176,9 +85,7 @@ test.describe("Kanban Board UI E2E", () => {
       page
         .locator(".column", { hasText: "In Progress" })
         .locator(".card", { hasText: editedTask }),
-    ).toBeVisible({
-      timeout: ACTION_TIMEOUT,
-    });
+    ).toBeVisible({ timeout: ACTION_TIMEOUT });
 
     await page
       .locator(".column", { hasText: "In Progress" })
@@ -187,22 +94,26 @@ test.describe("Kanban Board UI E2E", () => {
       .click();
     await expect(page.locator(".card", { hasText: editedTask })).toHaveCount(
       0,
-      {
-        timeout: ACTION_TIMEOUT,
-      },
+      { timeout: ACTION_TIMEOUT },
     );
   });
 
-  test("exports JSON and CSV through UI", async ({ page }) => {
+  test("exports JSON and CSV through UI", async ({
+    page,
+    registerUser,
+    createProject,
+    openProject,
+    createTask,
+  }) => {
     const user = makeUser();
     const projectName = uniqueId("export-project");
 
-    await registerUser(page, user);
-    await createProject(page, projectName);
-    await openProject(page, projectName);
+    await registerUser(user);
+    await createProject(projectName);
+    await openProject(projectName);
 
-    await createTask(page, uniqueId("task-a"));
-    await createTask(page, uniqueId("task-b"));
+    await createTask(uniqueId("task-a"));
+    await createTask(uniqueId("task-b"));
 
     await page.getByRole("button", { name: "Export JSON" }).click();
     await expect(page.locator(".job-status")).toContainText("tasks exported", {
@@ -217,16 +128,19 @@ test.describe("Kanban Board UI E2E", () => {
 
   test("schedules deletion with countdown and allows unarchive", async ({
     page,
+    registerUser,
+    createProject,
+    openProject,
+    createTask,
   }) => {
     const user = makeUser();
     const projectName = uniqueId("schedule-delete");
 
-    await registerUser(page, user);
-    await createProject(page, projectName);
-    await openProject(page, projectName);
-    await createTask(page, uniqueId("task-to-delete"));
+    await registerUser(user);
+    await createProject(projectName);
+    await openProject(projectName);
+    await createTask(uniqueId("task-to-delete"));
 
-    // Click schedule and confirm via inline banner
     await page
       .getByRole("button", { name: "Schedule Export + Delete" })
       .click();
@@ -236,9 +150,7 @@ test.describe("Kanban Board UI E2E", () => {
 
     await expect(
       page.locator(".job-status", { hasText: "Deletion workflow:" }),
-    ).toBeVisible({
-      timeout: ACTION_TIMEOUT,
-    });
+    ).toBeVisible({ timeout: ACTION_TIMEOUT });
     await expect(page.locator(".archive-notice")).toContainText(
       "scheduled for deletion in 7 days",
       { timeout: ACTION_TIMEOUT },
@@ -264,13 +176,18 @@ test.describe("Kanban Board UI E2E", () => {
 
   test("shows auth errors for duplicate register and invalid login", async ({
     page,
+    registerUser,
+    signOut,
   }) => {
     const user = makeUser();
 
-    await registerUser(page, user);
-    await signOut(page);
+    await registerUser(user);
+    await signOut();
 
-    await gotoAuth(page);
+    await page.goto("/");
+    await expect(
+      page.getByRole("heading", { name: "Kanban Board" }),
+    ).toBeVisible();
     await page.getByRole("button", { name: "Register" }).click();
     await page.getByLabel("Name").fill(`${user.name} Duplicate`);
     await page.getByLabel("Email").fill(user.email);
@@ -289,54 +206,64 @@ test.describe("Kanban Board UI E2E", () => {
 
   test("isolates projects per user and supports sign out/sign in", async ({
     page,
+    registerUser,
+    loginUser,
+    signOut,
+    createProject,
   }) => {
     const userA = makeUser();
     const userB = makeUser();
     const projectA = uniqueId("user-a-project");
 
-    await registerUser(page, userA);
-    await createProject(page, projectA);
-    await signOut(page);
+    await registerUser(userA);
+    await createProject(projectA);
+    await signOut();
 
-    await registerUser(page, userB);
+    await registerUser(userB);
     await expect(
       page.locator(".project-list a", { hasText: projectA }),
     ).toHaveCount(0);
-    await signOut(page);
+    await signOut();
 
-    await loginUser(page, userA);
+    await loginUser(userA);
     await expect(
       page.locator(".project-list a", { hasText: projectA }),
-    ).toBeVisible({
-      timeout: ACTION_TIMEOUT,
-    });
+    ).toBeVisible({ timeout: ACTION_TIMEOUT });
   });
 
   test("blocks cross-user deep-link access to another user's project", async ({
     page,
+    registerUser,
+    signOut,
+    createProject,
+    getProjectId,
   }) => {
     const userA = makeUser();
     const userB = makeUser();
     const projectName = uniqueId("private-project");
 
-    await registerUser(page, userA);
-    await createProject(page, projectName);
-    const projectId = await getProjectId(page, projectName);
-    await signOut(page);
+    await registerUser(userA);
+    await createProject(projectName);
+    const projectId = await getProjectId(projectName);
+    await signOut();
 
-    await registerUser(page, userB);
+    await registerUser(userB);
     await page.goto(`/app/${projectId}`);
     await expect(page.locator(".error")).toContainText("Project not found", {
       timeout: ACTION_TIMEOUT,
     });
   });
 
-  test("rejects tampered user scope for list_projects", async ({ page }) => {
+  test("rejects tampered user scope for list_projects", async ({
+    page,
+    registerUser,
+    createProject,
+  }) => {
     const user = makeUser();
     const projectName = uniqueId("scope-project");
 
-    await registerUser(page, user);
-    await createProject(page, projectName);
+    await registerUser(user);
+    await createProject(projectName);
 
     await page.evaluate((tamperedId) => {
       const raw = localStorage.getItem("kanban_user");
@@ -349,21 +276,25 @@ test.describe("Kanban Board UI E2E", () => {
     await page.goto("/app");
     await expect(page.locator(".error")).toContainText(
       "does not match authenticated principal",
-      {
-        timeout: ACTION_TIMEOUT,
-      },
+      { timeout: ACTION_TIMEOUT },
     );
   });
 
-  test("move task backward through columns", async ({ page }) => {
+  test("move task backward through columns", async ({
+    page,
+    registerUser,
+    createProject,
+    openProject,
+    createTask,
+  }) => {
     const user = makeUser();
     const projectName = uniqueId("backward");
     const task = uniqueId("move-back");
 
-    await registerUser(page, user);
-    await createProject(page, projectName);
-    await openProject(page, projectName);
-    await createTask(page, task);
+    await registerUser(user);
+    await createProject(projectName);
+    await openProject(projectName);
+    await createTask(task);
 
     // Move forward: Backlog -> Todo
     await page
@@ -393,14 +324,19 @@ test.describe("Kanban Board UI E2E", () => {
     ).toBeVisible({ timeout: ACTION_TIMEOUT });
   });
 
-  test("create task via form submit (Enter key)", async ({ page }) => {
+  test("create task via form submit (Enter key)", async ({
+    page,
+    registerUser,
+    createProject,
+    openProject,
+  }) => {
     const user = makeUser();
     const projectName = uniqueId("enter-create");
     const task = uniqueId("enter-task");
 
-    await registerUser(page, user);
-    await createProject(page, projectName);
-    await openProject(page, projectName);
+    await registerUser(user);
+    await createProject(projectName);
+    await openProject(projectName);
 
     await page.getByPlaceholder("New task title").fill(task);
     await page.getByPlaceholder("New task title").press("Enter");
@@ -410,36 +346,52 @@ test.describe("Kanban Board UI E2E", () => {
     });
   });
 
-  test("add task button disabled when title is empty", async ({ page }) => {
+  test("add task button disabled when title is empty", async ({
+    page,
+    registerUser,
+    createProject,
+    openProject,
+  }) => {
     const user = makeUser();
     const projectName = uniqueId("disabled-btn");
 
-    await registerUser(page, user);
-    await createProject(page, projectName);
-    await openProject(page, projectName);
+    await registerUser(user);
+    await createProject(projectName);
+    await openProject(projectName);
 
-    await expect(page.getByRole("button", { name: "Add task" })).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "Add task" }),
+    ).toBeDisabled();
   });
 
-  test("project count displays on projects page", async ({ page }) => {
+  test("project count displays on projects page", async ({
+    page,
+    registerUser,
+    createProject,
+  }) => {
     const user = makeUser();
     const p1 = uniqueId("count-p1");
     const p2 = uniqueId("count-p2");
 
-    await registerUser(page, user);
-    await createProject(page, p1);
-    await createProject(page, p2);
+    await registerUser(user);
+    await createProject(p1);
+    await createProject(p2);
 
     await expect(page.locator(".subtitle")).toContainText("2 project");
   });
 
-  test("empty board shows four columns with zero counts", async ({ page }) => {
+  test("empty board shows four columns with zero counts", async ({
+    page,
+    registerUser,
+    createProject,
+    openProject,
+  }) => {
     const user = makeUser();
     const projectName = uniqueId("empty-board");
 
-    await registerUser(page, user);
-    await createProject(page, projectName);
-    await openProject(page, projectName);
+    await registerUser(user);
+    await createProject(projectName);
+    await openProject(projectName);
 
     for (const label of ["Backlog", "Todo", "In Progress", "Done"]) {
       await expect(page.locator(".column", { hasText: label })).toBeVisible();
@@ -451,14 +403,19 @@ test.describe("Kanban Board UI E2E", () => {
     }
   });
 
-  test("task shows correct priority badge", async ({ page }) => {
+  test("task shows correct priority badge", async ({
+    page,
+    registerUser,
+    createProject,
+    openProject,
+  }) => {
     const user = makeUser();
     const projectName = uniqueId("priority-badge");
     const task = uniqueId("high-task");
 
-    await registerUser(page, user);
-    await createProject(page, projectName);
-    await openProject(page, projectName);
+    await registerUser(user);
+    await createProject(projectName);
+    await openProject(projectName);
 
     await page.getByPlaceholder("New task title").fill(task);
     await page.locator(".create-form select").selectOption("high");
@@ -469,11 +426,14 @@ test.describe("Kanban Board UI E2E", () => {
     await expect(card.locator(".priority")).toContainText("High");
   });
 
-  test("create project via form submit (Enter key)", async ({ page }) => {
+  test("create project via form submit (Enter key)", async ({
+    page,
+    registerUser,
+  }) => {
     const user = makeUser();
     const projectName = uniqueId("enter-project");
 
-    await registerUser(page, user);
+    await registerUser(user);
 
     await page.getByPlaceholder("New project name").fill(projectName);
     await page.getByPlaceholder("New project name").press("Enter");
@@ -483,30 +443,40 @@ test.describe("Kanban Board UI E2E", () => {
     ).toBeVisible({ timeout: ACTION_TIMEOUT });
   });
 
-  test("create button disabled when project name empty", async ({ page }) => {
+  test("create button disabled when project name empty", async ({
+    page,
+    registerUser,
+  }) => {
     const user = makeUser();
 
-    await registerUser(page, user);
+    await registerUser(user);
 
     await expect(
       page.locator(".create-form button[type='submit']"),
     ).toBeDisabled();
   });
 
-  test("empty projects page shows placeholder message", async ({ page }) => {
+  test("empty projects page shows placeholder message", async ({
+    page,
+    registerUser,
+  }) => {
     const user = makeUser();
 
-    await registerUser(page, user);
+    await registerUser(user);
 
     await expect(page.locator(".empty-panel")).toContainText("No projects yet");
   });
 
-  test("rename via Escape cancels edit", async ({ page }) => {
+  test("rename via Escape cancels edit", async ({
+    page,
+    registerUser,
+    createProject,
+  }) => {
     const user = makeUser();
     const projectName = uniqueId("esc-rename");
 
-    await registerUser(page, user);
-    await createProject(page, projectName);
+    await registerUser(user);
+    await createProject(projectName);
 
     await page
       .locator(".project-row", { hasText: projectName })
@@ -527,15 +497,21 @@ test.describe("Kanban Board UI E2E", () => {
     ).toHaveCount(0);
   });
 
-  test("edit task via Escape cancels edit", async ({ page }) => {
+  test("edit task via Escape cancels edit", async ({
+    page,
+    registerUser,
+    createProject,
+    openProject,
+    createTask,
+  }) => {
     const user = makeUser();
     const projectName = uniqueId("esc-edit");
     const task = uniqueId("esc-task");
 
-    await registerUser(page, user);
-    await createProject(page, projectName);
-    await openProject(page, projectName);
-    await createTask(page, task);
+    await registerUser(user);
+    await createProject(projectName);
+    await openProject(projectName);
+    await createTask(task);
 
     await page
       .locator(".card", { hasText: task })
@@ -556,18 +532,24 @@ test.describe("Kanban Board UI E2E", () => {
     ).toHaveCount(0);
   });
 
-  test("task column counts update correctly", async ({ page }) => {
+  test("task column counts update correctly", async ({
+    page,
+    registerUser,
+    createProject,
+    openProject,
+    createTask,
+  }) => {
     const user = makeUser();
     const projectName = uniqueId("col-count");
     const t1 = uniqueId("count-1");
     const t2 = uniqueId("count-2");
 
-    await registerUser(page, user);
-    await createProject(page, projectName);
-    await openProject(page, projectName);
+    await registerUser(user);
+    await createProject(projectName);
+    await openProject(projectName);
 
-    await createTask(page, t1);
-    await createTask(page, t2);
+    await createTask(t1);
+    await createTask(t2);
 
     await expect(
       page
@@ -575,7 +557,6 @@ test.describe("Kanban Board UI E2E", () => {
         .locator(".count", { hasText: "2" }),
     ).toBeVisible({ timeout: ACTION_TIMEOUT });
 
-    // Move one task forward
     await page
       .locator(".card", { hasText: t1 })
       .locator(".card-actions button")
@@ -595,13 +576,20 @@ test.describe("Kanban Board UI E2E", () => {
     ).toBeVisible({ timeout: ACTION_TIMEOUT });
   });
 
-  test("sign in via Enter key submits form", async ({ page }) => {
+  test("sign in via Enter key submits form", async ({
+    page,
+    registerUser,
+    signOut,
+  }) => {
     const user = makeUser();
 
-    await registerUser(page, user);
-    await signOut(page);
+    await registerUser(user);
+    await signOut();
 
-    await gotoAuth(page);
+    await page.goto("/");
+    await expect(
+      page.getByRole("heading", { name: "Kanban Board" }),
+    ).toBeVisible();
     await page.getByLabel("Email").fill(user.email);
     await page.getByLabel("Password").fill(user.password);
     await page.getByLabel("Password").press("Enter");
@@ -609,15 +597,21 @@ test.describe("Kanban Board UI E2E", () => {
     await expect(page).toHaveURL(/\/app$/);
   });
 
-  test("delete task removes it from the board", async ({ page }) => {
+  test("delete task removes it from the board", async ({
+    page,
+    registerUser,
+    createProject,
+    openProject,
+    createTask,
+  }) => {
     const user = makeUser();
     const projectName = uniqueId("del-task");
     const task = uniqueId("to-delete");
 
-    await registerUser(page, user);
-    await createProject(page, projectName);
-    await openProject(page, projectName);
-    await createTask(page, task);
+    await registerUser(user);
+    await createProject(projectName);
+    await openProject(projectName);
+    await createTask(task);
 
     await page
       .locator(".card", { hasText: task })
@@ -634,16 +628,23 @@ test.describe("Kanban Board UI E2E", () => {
     ).toBeVisible({ timeout: ACTION_TIMEOUT });
   });
 
-  test("back to projects link navigates correctly", async ({ page }) => {
+  test("back to projects link navigates correctly", async ({
+    page,
+    registerUser,
+    createProject,
+    openProject,
+  }) => {
     const user = makeUser();
     const projectName = uniqueId("back-nav");
 
-    await registerUser(page, user);
-    await createProject(page, projectName);
-    await openProject(page, projectName);
+    await registerUser(user);
+    await createProject(projectName);
+    await openProject(projectName);
 
     await page.locator("a", { hasText: "Projects" }).click();
     await expect(page).toHaveURL(/\/app$/);
-    await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Projects" }),
+    ).toBeVisible();
   });
 });

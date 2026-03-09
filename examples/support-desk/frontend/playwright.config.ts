@@ -1,7 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const skipWebServer = process.env.SKIP_PLAYWRIGHT_WEBSERVER === "1";
-
 export default defineConfig({
   testDir: "./tests",
   fullyParallel: true,
@@ -20,12 +18,10 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
     },
   ],
-  webServer: skipWebServer
-    ? undefined
-    : {
-        command: "bun run dev",
-        url: "http://localhost:5173",
-        reuseExistingServer: true,
-        timeout: 120 * 1000,
-      },
+  webServer: {
+    command: "bun run dev",
+    url: "http://localhost:5173",
+    reuseExistingServer: true,
+    timeout: 120 * 1000,
+  },
 });

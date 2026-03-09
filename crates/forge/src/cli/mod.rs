@@ -5,6 +5,7 @@ mod migrate;
 mod new;
 mod runtime_generator;
 mod template;
+mod test;
 mod ui;
 
 pub use check::CheckCommand;
@@ -12,6 +13,7 @@ pub use dev::DevCommand;
 pub use generate::GenerateCommand;
 pub use migrate::MigrateCommand;
 pub use new::NewCommand;
+pub use test::TestCommand;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -33,6 +35,8 @@ const AFTER_HELP: &str = r#"Examples:
   forge dev                      Start development (requires Docker)
   forge dev down                 Stop the development environment
   forge dev down --clear         Stop and remove volumes + target/
+  forge test                     Run Playwright tests
+  forge test --ui                Run tests in Playwright UI mode
   forge check                    Validate project configuration
   forge generate                 Generate frontend/runtime bindings from backend code
   forge migrate status           Check migration status
@@ -63,6 +67,9 @@ pub enum Commands {
     /// Generate frontend/runtime bindings from backend source
     Generate(GenerateCommand),
 
+    /// Run Playwright frontend tests
+    Test(TestCommand),
+
     /// Manage database migrations
     Migrate(MigrateCommand),
 }
@@ -74,6 +81,7 @@ impl Cli {
             Commands::New(cmd) => cmd.execute().await,
             Commands::Check(cmd) => cmd.execute().await,
             Commands::Dev(cmd) => cmd.execute().await,
+            Commands::Test(cmd) => cmd.execute().await,
             Commands::Generate(cmd) => cmd.execute().await,
             Commands::Migrate(cmd) => cmd.execute().await,
         }
@@ -106,6 +114,24 @@ mod tests {
     #[test]
     fn test_cli_parse_generate() {
         let cli = Cli::try_parse_from(["forge", "generate"]);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_cli_parse_test() {
+        let cli = Cli::try_parse_from(["forge", "test"]);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_cli_parse_test_ui() {
+        let cli = Cli::try_parse_from(["forge", "test", "--ui"]);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_cli_parse_test_with_args() {
+        let cli = Cli::try_parse_from(["forge", "test", "tests/home.spec.ts", "--headed"]);
         assert!(cli.is_ok());
     }
 }

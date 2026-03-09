@@ -257,28 +257,54 @@ A well-tested module should make a reviewer think "I can't change this behavior 
 
 ## 12) Playwright patterns for Forge apps
 
-### Fresh user per test
+### Use the fixtures
 
-Register a unique user in each test for full isolation. Use a timestamp or random suffix in the username so tests never collide, even when running in parallel.
+Every Forge project generates a `tests/fixtures.ts` that extends Playwright's `test` with Forge-specific fixtures. Always import `test` from fixtures instead of `@playwright/test`:
 
 ```typescript
-const username = `testuser-${Date.now()}`
-await page.fill('input[autocomplete="username"]', username)
-await page.fill('input[autocomplete="new-password"]', "password123")
-await page.click('button[type="submit"]')
+import { test, expect, ACTION_TIMEOUT, uniqueId } from "./fixtures";
+
+test("create item appears in list", async ({ page, gotoReady, rpc }) => {
+  await gotoReady();
+  // ... test using rpc() for data setup, uniqueId() for isolation
+});
+```
+
+Available fixtures:
+- `rpc(fn, args?)` - Call backend RPC endpoints directly for setup/cleanup
+- `gotoReady(path?)` - Navigate and wait for SSE subscription to be fully wired up
+- `uniqueId(prefix)` - Generate collision-free identifiers for test isolation
+- `ACTION_TIMEOUT` - CI-aware timeout constant (higher in CI, lower locally)
+- `trackConsoleErrors(page)` - Collect unexpected console errors
+
+### Fresh user per test
+
+Register a unique user in each test for full isolation. Use `uniqueId()` from fixtures so tests never collide, even when running in parallel.
+
+```typescript
+const user = {
+  name: `User ${uniqueId("test")}`,
+  email: `${uniqueId("test")}@example.com`,
+  password: "password123",
+};
 ```
 
 ### Local frontend for Playwright
 
 `forge dev` runs the frontend inside Docker, but Playwright needs a locally accessible dev server. Stop the Docker frontend container, then run `bun run dev` locally in the `frontend/` directory. The backend can stay in Docker.
 
-### SSE connection timing
+### SSE readiness
 
-Don't add `waitForSSE` in `beforeEach` if the SSE connection was already established during the registration/login step. Instead, wait for a UI element that depends on server data to appear. This is more reliable and avoids flaky timeouts.
+The `gotoReady()` fixture waits for the first `/_api/subscribe` response, which is the actual signal that reactivity is wired up. This replaces the old pattern of waiting for the `/_api/events` request plus an arbitrary `waitForTimeout(2000)`.
+
+Don't use `gotoReady()` if the SSE connection was already established during a registration/login step. In that case, wait for a UI element that depends on server data instead.
 
 ```typescript
-// wait for actual data, not the SSE connection event
-await page.waitForSelector('[data-testid="todo-list"]')
+// gotoReady() already handles SSE readiness
+await gotoReady();
+
+// for auth flows where SSE connects during login, wait for data instead
+await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
 ```
 
 ### Ignoring test artifacts
@@ -290,11 +316,24 @@ test-results/
 playwright-report/
 ```
 
-## 13) Required execution sequence
+## 13) Running Playwright tests
+
+Use `forge test` from the project root. It checks that the backend and frontend are reachable, installs Playwright browsers if needed, and runs the test suite.
+
+```bash
+forge test                      # run all tests
+forge test --ui                 # interactive UI mode for debugging
+forge test tests/todo.spec.ts   # run a specific file
+forge test --headed             # run with visible browser
+```
+
+The backend must be running before tests execute. Start it with `forge dev` or `cargo run`.
+
+## 14) Required execution sequence
 
 1. Write backend tests for changed behavior before calling the work done.
 2. Run backend tests for changed areas.
 3. Generate and review coverage results; enforce 100% line coverage on changed modules.
-4. If UI exists or changed, write or update Playwright integration tests and run them. Fix any failures before proceeding.
+4. If UI exists or changed, write or update Playwright integration tests. Run them with `forge test`. Fix any failures before proceeding.
 5. If the task is meant to work out of the box, boot the real app flow and verify the primary path before delivery.
 6. As the absolute final step, run `forge check` from the app root. Fix all findings and rerun until fully clean. Nothing ships with unresolved findings, failing tests, missing test coverage, or unverified app boot.

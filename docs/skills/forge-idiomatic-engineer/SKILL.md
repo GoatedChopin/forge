@@ -81,6 +81,8 @@ Keep them close to the code they prove:
 
 Good test code keeps special cases visible. Name and test the weird cases directly instead of hiding them behind clever fixtures or giant tables. The goal is not “clean-looking” tests. The goal is that a future change breaks loudly when behavior changes.
 
+For Playwright tests, always import `test` from the generated `tests/fixtures.ts` instead of `@playwright/test`. The fixtures provide `rpc`, `gotoReady`, `uniqueId`, and `ACTION_TIMEOUT` so tests stay focused on behavior, not setup boilerplate.
+
 Minimum bar:
 
 - backend behavior change => add backend tests
@@ -162,7 +164,7 @@ Run verification in this order when not blocked:
 2. `forge generate` if the contract changed
 3. frontend checks if frontend changed
 4. runtime verification if runtime behavior matters
-5. Playwright if UI changed
+5. `forge test` if UI changed (or `forge test --ui` to debug)
 6. `forge check` last
 
 Do not claim completion if tests were not run, Playwright failed, runtime boot is blocked, or `forge check` still fails.

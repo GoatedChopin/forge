@@ -1,10 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const FRONTEND_PORT = 5173;
-
 export default defineConfig({
   testDir: "./tests",
-  fullyParallel: false,
+  fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
@@ -15,7 +13,7 @@ export default defineConfig({
     timeout: process.env.CI ? 15_000 : 10_000,
   },
   use: {
-    baseURL: `http://localhost:${FRONTEND_PORT}`,
+    baseURL: "http://localhost:5173",
     trace: "on-first-retry",
   },
   projects: [
@@ -25,10 +23,9 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `docker compose up --build`,
-    url: `http://localhost:${FRONTEND_PORT}`,
-    cwd: "..",
+    command: "bun run dev",
+    url: "http://localhost:5173",
     reuseExistingServer: true,
-    timeout: 10 * 60 * 1000,
+    timeout: 120 * 1000,
   },
 });
