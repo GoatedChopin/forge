@@ -35,7 +35,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use sqlx::postgres::{PgArguments, PgQueryResult, PgRow};
+use sqlx::postgres::{PgArguments, PgConnection, PgQueryResult, PgRow};
 use sqlx::{FromRow, Postgres, Transaction};
 use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
@@ -147,6 +147,43 @@ impl DbConn<'_> {
         }
         .instrument(span)
         .await
+    }
+}
+
+/// Connection wrapper that implements `DerefMut<Target = PgConnection>`, making it
+/// compatible with sqlx compile-time checked macros (`query_as!`, `query!`).
+///
+/// Obtain via `ctx.conn().await?` in mutation handlers, or any pool-backed context
+/// (job, cron, daemon, webhook, mcp). `QueryContext.db()` returns `&PgPool` which
+/// works directly with macros without needing `ForgeConn`.
+///
+/// ```ignore
+/// let mut conn = ctx.conn().await?;
+/// sqlx::query_as!(User, "SELECT * FROM users WHERE id = $1", id)
+///     .fetch_one(&mut *conn)
+///     .await?
+/// ```
+pub enum ForgeConn<'a> {
+    Pool(sqlx::pool::PoolConnection<Postgres>),
+    Tx(tokio::sync::MutexGuard<'a, Transaction<'static, Postgres>>),
+}
+
+impl std::ops::Deref for ForgeConn<'_> {
+    type Target = PgConnection;
+    fn deref(&self) -> &PgConnection {
+        match self {
+            ForgeConn::Pool(c) => &**c,
+            ForgeConn::Tx(g) => &***g,
+        }
+    }
+}
+
+impl std::ops::DerefMut for ForgeConn<'_> {
+    fn deref_mut(&mut self) -> &mut PgConnection {
+        match self {
+            ForgeConn::Pool(c) => &mut **c,
+            ForgeConn::Tx(g) => &mut ***g,
+        }
     }
 }
 
@@ -562,6 +599,24 @@ impl MutationContext {
         match &self.tx {
             Some(tx) => DbConn::Transaction(tx.clone()),
             None => DbConn::Pool(&self.db_pool),
+        }
+    }
+
+    /// Acquire a connection compatible with sqlx compile-time checked macros.
+    ///
+    /// In transactional mode, returns a guard over the active transaction.
+    /// Otherwise acquires a fresh connection from the pool.
+    ///
+    /// ```ignore
+    /// let mut conn = ctx.conn().await?;
+    /// sqlx::query_as!(User, "INSERT INTO users ... RETURNING *", ...)
+    ///     .fetch_one(&mut *conn)
+    ///     .await?
+    /// ```
+    pub async fn conn(&self) -> sqlx::Result<ForgeConn<'_>> {
+        match &self.tx {
+            Some(tx) => Ok(ForgeConn::Tx(tx.lock().await)),
+            None => Ok(ForgeConn::Pool(self.db_pool.acquire().await?)),
         }
     }
 

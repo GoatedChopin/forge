@@ -49,8 +49,7 @@ PostgreSQL already does all of this. [SKIP LOCKED](https://www.inferable.ai/blog
 ```rust
 #[forge::query(cache = "30s")]
 pub async fn get_user(ctx: &QueryContext, id: Uuid) -> Result<User> {
-    sqlx::query_as("SELECT * FROM users WHERE id = $1")
-        .bind(id)
+    sqlx::query_as!(User, "SELECT * FROM users WHERE id = $1", id)
         .fetch_one(ctx.db())
         .await
         .map_err(Into::into)
@@ -58,9 +57,9 @@ pub async fn get_user(ctx: &QueryContext, id: Uuid) -> Result<User> {
 
 #[forge::mutation]
 pub async fn create_user(ctx: &MutationContext, input: CreateUser) -> Result<User> {
-    let user = sqlx::query_as("INSERT INTO users (email) VALUES ($1) RETURNING *")
-        .bind(&input.email)
-        .fetch_one(ctx.db())
+    let mut conn = ctx.conn().await?;
+    let user = sqlx::query_as!(User, "INSERT INTO users (email) VALUES ($1) RETURNING *", &input.email)
+        .fetch_one(&mut *conn)
         .await?;
 
     ctx.dispatch_job("send_welcome_email", json!({ "user_id": user.id })).await?;

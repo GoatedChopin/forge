@@ -3,7 +3,7 @@ use forge::prelude::*;
 
 use crate::schema::{
     AddTicketNoteInput, CreateSupportTicketInput, SetTicketPriorityInput, SetTicketStatusInput,
-    SupportTicket, TicketPriority,
+    SupportTicket, TicketPriority, TicketStatus,
 };
 
 fn normalized_non_empty(label: &str, raw: &str, max: usize) -> Result<String> {
@@ -115,7 +115,24 @@ pub(crate) async fn add_note(db: DbConn<'_>, input: AddTicketNoteInput) -> Resul
 
 #[forge::query(public, tables = ["support_tickets"])]
 pub async fn list_support_tickets(ctx: &QueryContext) -> Result<Vec<SupportTicket>> {
-    list_tickets(ctx.db_conn()).await
+    sqlx::query_as!(
+        SupportTicket,
+        r#"SELECT id, customer_name, title, details,
+                  status as "status: TicketStatus",
+                  priority as "priority: TicketPriority",
+                  last_note, created_at, updated_at
+         FROM support_tickets
+         ORDER BY
+           CASE status
+             WHEN 'new' THEN 0
+             WHEN 'working' THEN 1
+             ELSE 2
+           END,
+           updated_at DESC"#
+    )
+    .fetch_all(ctx.db())
+    .await
+    .map_err(Into::into)
 }
 
 #[forge::mutation(public)]
@@ -123,7 +140,31 @@ pub async fn create_support_ticket(
     ctx: &MutationContext,
     input: CreateSupportTicketInput,
 ) -> Result<SupportTicket> {
-    create_ticket(ctx.db(), input).await
+    let customer_name = normalized_non_empty("Customer name", &input.customer_name, 80)?;
+    let title = normalized_non_empty("Title", &input.title, 120)?;
+    let details = normalized_non_empty("Details", &input.details, 1000)?;
+    let priority = input.priority.unwrap_or(TicketPriority::Normal);
+
+    let mut conn = ctx
+        .conn()
+        .await?;
+
+    sqlx::query_as!(
+        SupportTicket,
+        r#"INSERT INTO support_tickets (customer_name, title, details, priority)
+         VALUES ($1, $2, $3, $4)
+         RETURNING id, customer_name, title, details,
+                   status as "status: TicketStatus",
+                   priority as "priority: TicketPriority",
+                   last_note, created_at, updated_at"#,
+        customer_name,
+        title,
+        details,
+        priority as TicketPriority
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(Into::into)
 }
 
 #[forge::mutation(public)]
@@ -131,7 +172,25 @@ pub async fn set_ticket_status(
     ctx: &MutationContext,
     input: SetTicketStatusInput,
 ) -> Result<SupportTicket> {
-    set_status(ctx.db(), input).await
+    let mut conn = ctx
+        .conn()
+        .await?;
+
+    sqlx::query_as!(
+        SupportTicket,
+        r#"UPDATE support_tickets
+         SET status = $1, updated_at = NOW()
+         WHERE id = $2
+         RETURNING id, customer_name, title, details,
+                   status as "status: TicketStatus",
+                   priority as "priority: TicketPriority",
+                   last_note, created_at, updated_at"#,
+        input.status as _,
+        input.id
+    )
+    .fetch_optional(&mut *conn)
+    .await?
+    .ok_or_else(|| ForgeError::NotFound("Ticket not found".into()))
 }
 
 #[forge::mutation(public)]
@@ -139,7 +198,25 @@ pub async fn set_ticket_priority(
     ctx: &MutationContext,
     input: SetTicketPriorityInput,
 ) -> Result<SupportTicket> {
-    set_priority(ctx.db(), input).await
+    let mut conn = ctx
+        .conn()
+        .await?;
+
+    sqlx::query_as!(
+        SupportTicket,
+        r#"UPDATE support_tickets
+         SET priority = $1, updated_at = NOW()
+         WHERE id = $2
+         RETURNING id, customer_name, title, details,
+                   status as "status: TicketStatus",
+                   priority as "priority: TicketPriority",
+                   last_note, created_at, updated_at"#,
+        input.priority as _,
+        input.id
+    )
+    .fetch_optional(&mut *conn)
+    .await?
+    .ok_or_else(|| ForgeError::NotFound("Ticket not found".into()))
 }
 
 #[forge::mutation(public)]
@@ -147,7 +224,27 @@ pub async fn add_ticket_note(
     ctx: &MutationContext,
     input: AddTicketNoteInput,
 ) -> Result<SupportTicket> {
-    add_note(ctx.db(), input).await
+    let note = normalized_non_empty("Note", &input.note, 300)?;
+
+    let mut conn = ctx
+        .conn()
+        .await?;
+
+    sqlx::query_as!(
+        SupportTicket,
+        r#"UPDATE support_tickets
+         SET last_note = $1, updated_at = NOW()
+         WHERE id = $2
+         RETURNING id, customer_name, title, details,
+                   status as "status: TicketStatus",
+                   priority as "priority: TicketPriority",
+                   last_note, created_at, updated_at"#,
+        note,
+        input.id
+    )
+    .fetch_optional(&mut *conn)
+    .await?
+    .ok_or_else(|| ForgeError::NotFound("Ticket not found".into()))
 }
 
 #[cfg(test)]

@@ -86,6 +86,9 @@ impl CheckCommand {
         result.section("Schema");
         self.check_schema(&mut result)?;
 
+        result.section("SQLx Cache");
+        self.check_sqlx_cache(&mut result)?;
+
         result.section("Rust Tooling");
         self.check_rust_linting(&mut result).await;
 
@@ -490,6 +493,89 @@ impl CheckCommand {
                     recognized, model_count
                 ),
                 "Add #[forge::model] or #[derive(Serialize, Deserialize, sqlx::FromRow)] to model structs",
+            );
+        }
+
+        Ok(())
+    }
+
+    fn check_sqlx_cache(&self, result: &mut CheckResult) -> Result<()> {
+        let sqlx_dir = Path::new(".sqlx");
+
+        if !sqlx_dir.exists() {
+            result.fail(
+                ".sqlx/ directory missing",
+                "Run 'forge migrate prepare' to generate the offline query cache",
+            );
+            return Ok(());
+        }
+
+        // Count query-*.json files
+        let query_files: Vec<_> = std::fs::read_dir(sqlx_dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("query-")
+            })
+            .collect();
+
+        if query_files.is_empty() {
+            result.fail(
+                ".sqlx/ has no cached queries",
+                "Run 'forge migrate prepare' to populate the offline cache",
+            );
+            return Ok(());
+        }
+
+        result.pass(&format!(".sqlx/ cache with {} query file(s)", query_files.len()));
+
+        // Warn if migrations are newer than cache
+        let migrations_dir = Path::new("migrations");
+        if migrations_dir.exists() {
+            let cache_mtime = query_files
+                .iter()
+                .filter_map(|e| e.metadata().ok())
+                .filter_map(|m| m.modified().ok())
+                .min();
+
+            let migration_mtime = std::fs::read_dir(migrations_dir)?
+                .filter_map(|e| e.ok())
+                .filter(|e| {
+                    e.path()
+                        .extension()
+                        .is_some_and(|ext| ext == "sql")
+                })
+                .filter_map(|e| e.metadata().ok())
+                .filter_map(|m| m.modified().ok())
+                .max();
+
+            if let (Some(oldest_cache), Some(newest_migration)) = (cache_mtime, migration_mtime) {
+                if newest_migration > oldest_cache {
+                    result.warn(
+                        "Migrations are newer than .sqlx/ cache",
+                        "Run 'forge migrate prepare' to refresh the cache",
+                    );
+                }
+            }
+        }
+
+        // Check sqlx.toml
+        let sqlx_toml = Path::new("sqlx.toml");
+        if sqlx_toml.exists() {
+            let content = std::fs::read_to_string(sqlx_toml)?;
+            if content.contains("offline = true") {
+                result.pass("sqlx.toml configured with offline = true");
+            } else {
+                result.warn(
+                    "sqlx.toml missing offline = true",
+                    "Add [common] offline = true to sqlx.toml",
+                );
+            }
+        } else {
+            result.warn(
+                "sqlx.toml not found",
+                "Create sqlx.toml with [common] offline = true",
             );
         }
 

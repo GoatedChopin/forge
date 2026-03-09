@@ -75,33 +75,40 @@ pub async fn register(ctx: &MutationContext, input: RegisterInput) -> Result<Aut
     let password_hash =
         bcrypt::hash(&input.password, 10).map_err(|e| ForgeError::Internal(e.to_string()))?;
 
-    let user: User = ctx
-        .db()
-        .fetch_one(
-            sqlx::query_as(
-                "INSERT INTO users (email, name, password_hash) VALUES ($1, $2, $3) RETURNING *",
-            )
-            .bind(input.email.trim())
-            .bind(input.name.trim())
-            .bind(&password_hash),
-        )
-        .await
-        .map_err(|e| {
-            if e.to_string().contains("idx_users_email") {
-                ForgeError::Validation("Email already registered".into())
-            } else {
-                ForgeError::from(e)
-            }
-        })?;
+    let email = input.email.trim().to_string();
+    let name = input.name.trim().to_string();
+    let mut conn = ctx
+        .conn()
+        .await?;
+
+    let user = sqlx::query_as!(
+        User,
+        "INSERT INTO users (email, name, password_hash) VALUES ($1, $2, $3) RETURNING *",
+        email,
+        name,
+        &password_hash
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(|e| {
+        if e.to_string().contains("idx_users_email") {
+            ForgeError::Validation("Email already registered".into())
+        } else {
+            ForgeError::from(e)
+        }
+    })?;
 
     auth_response(ctx, &user)
 }
 
 #[forge::mutation(public)]
 pub async fn login(ctx: &MutationContext, input: LoginInput) -> Result<AuthResponse> {
-    let user: User = ctx
-        .db()
-        .fetch_optional(sqlx::query_as("SELECT * FROM users WHERE email = $1").bind(&input.email))
+    let mut conn = ctx
+        .conn()
+        .await?;
+
+    let user = sqlx::query_as!(User, "SELECT * FROM users WHERE email = $1", &input.email)
+        .fetch_optional(&mut *conn)
         .await?
         .ok_or_else(|| ForgeError::Validation("Invalid email or password".into()))?;
 

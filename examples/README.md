@@ -23,4 +23,11 @@ Postgres binds to `127.0.0.1:5432` so you can connect from host tools (psql, rus
 
 These examples are workspace members. The docker-compose files set build context to the workspace root so changes to `crates/` are picked up by cargo-watch automatically.
 
-To verify sqlx queries on host, make sure the db container is running and your editor picks up `DATABASE_URL` from the example's `.env`.
+All examples use `sqlx::query_as!` macros for compile-time SQL checking. To regenerate the `.sqlx/` offline cache after changing queries or migrations:
+
+```bash
+cd examples/todo
+docker compose exec backend forge migrate prepare
+```
+
+To verify queries on host, make sure the db container is running and your editor picks up `DATABASE_URL` from the example's `.env`.

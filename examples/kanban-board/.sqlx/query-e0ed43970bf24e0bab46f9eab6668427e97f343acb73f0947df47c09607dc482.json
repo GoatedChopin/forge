@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT archived, archive_delete_at\n                 FROM projects\n                 WHERE id = $1 AND owner_id = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "archived",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 1,
+        "name": "archive_delete_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "e0ed43970bf24e0bab46f9eab6668427e97f343acb73f0947df47c09607dc482"
+}

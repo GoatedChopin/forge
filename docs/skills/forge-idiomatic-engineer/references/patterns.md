@@ -161,8 +161,7 @@ pub async fn sync_partner(ctx: &MutationContext, input: SyncInput) -> Result<()>
 #[forge::query(consistent)]
 pub async fn invoice_after_checkout(ctx: &QueryContext, id: uuid::Uuid) -> Result<Invoice> {
     // `consistent` forces primary read, bypassing replicas.
-    sqlx::query_as("SELECT * FROM invoices WHERE id = $1")
-        .bind(id)
+    sqlx::query_as!(Invoice, "SELECT * FROM invoices WHERE id = $1", id)
         .fetch_one(ctx.db())
         .await
         .map_err(Into::into)
@@ -171,7 +170,7 @@ pub async fn invoice_after_checkout(ctx: &QueryContext, id: uuid::Uuid) -> Resul
 #[forge::query(cache = "15s")]
 pub async fn invoice_dashboard(ctx: &QueryContext) -> Result<Vec<InvoiceSummary>> {
     // Replica-safe: dashboard tolerates lag. Explicit columns enable column-aware invalidation.
-    sqlx::query_as("SELECT status, count(*) AS count FROM invoices GROUP BY status")
+    sqlx::query_as!(InvoiceSummary, "SELECT status, count(*) AS count FROM invoices GROUP BY status")
         .fetch_all(ctx.db())
         .await
         .map_err(Into::into)

@@ -29,7 +29,7 @@ Runs Docker Compose with PostgreSQL, backend (cargo-watch), and frontend (Vite).
 ```rust
 #[forge::query]
 pub async fn list_todos(ctx: &QueryContext) -> Result<Vec<Todo>> {
-    sqlx::query_as("SELECT * FROM todos")
+    sqlx::query_as!(Todo, "SELECT * FROM todos")
         .fetch_all(ctx.db())
         .await
         .map_err(Into::into)

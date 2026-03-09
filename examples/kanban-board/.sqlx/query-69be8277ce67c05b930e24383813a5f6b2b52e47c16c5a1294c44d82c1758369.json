@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE projects\n                 SET archived = true,\n                     archive_started_at = NOW(),\n                     archive_delete_at = NOW() + INTERVAL '7 days'\n                 WHERE id = $1 AND owner_id = $2\n                 RETURNING archive_delete_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "archive_delete_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "69be8277ce67c05b930e24383813a5f6b2b52e47c16c5a1294c44d82c1758369"
+}

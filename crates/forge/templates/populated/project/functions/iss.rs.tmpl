@@ -26,9 +26,10 @@ struct IssPosition {
 /// Get the latest ISS location from database
 #[forge::query(public)]
 pub async fn get_iss_location(ctx: &QueryContext) -> Result<Option<IssLocation>> {
-    sqlx::query_as(
+    sqlx::query_as!(
+        IssLocation,
         "SELECT id, latitude, longitude, api_timestamp, created_at \
-         FROM iss_location ORDER BY created_at DESC LIMIT 1",
+         FROM iss_location ORDER BY created_at DESC LIMIT 1"
     )
     .fetch_optional(ctx.db())
     .await
@@ -64,13 +65,11 @@ pub async fn iss_location(ctx: &CronContext) -> Result<()> {
     let latitude: f64 = data.iss_position.latitude.parse().unwrap_or(0.0);
     let longitude: f64 = data.iss_position.longitude.parse().unwrap_or(0.0);
 
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO iss_location (id, latitude, longitude, api_timestamp, created_at) \
          VALUES (gen_random_uuid(), $1, $2, to_timestamp($3), NOW())",
+        latitude, longitude, data.timestamp
     )
-    .bind(latitude)
-    .bind(longitude)
-    .bind(data.timestamp)
     .execute(ctx.db())
     .await?;
 

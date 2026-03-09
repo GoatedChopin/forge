@@ -34,7 +34,7 @@ forge-codegen = { path = "crates/forge-codegen" }
 tokio = { version = "1.48", features = ["full"] }
 
 # Database
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "uuid", "chrono", "json"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "uuid", "chrono", "json", "macros"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }

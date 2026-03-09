@@ -409,6 +409,7 @@ const EMPTY_SCHEMA_MOD: &str = include_str!("../../templates/empty/project/schem
 const EMPTY_FUNCTIONS_MOD: &str =
     include_str!("../../templates/empty/project/functions/mod.rs.tmpl");
 const EMPTY_IGNORE: &str = include_str!("../../templates/empty/project/ignore.tmpl");
+const SQLX_TOML: &str = include_str!("../../templates/empty/project/sqlx.toml.tmpl");
 
 // Empty frontend templates (for --empty flag)
 const EMPTY_FRONTEND_PACKAGE_JSON: &str =
@@ -630,6 +631,7 @@ pub fn create_project(dir: &Path, name: &str, demo: bool) -> Result<()> {
         }
 
         fs::write(dir.join("forge.toml"), render(FORGE_TOML, &vars))?;
+        fs::write(dir.join("sqlx.toml"), SQLX_TOML)?;
         fs::write(dir.join("build.rs"), BUILD_RS)?;
         fs::write(dir.join(".gitignore"), GITIGNORE)?;
         fs::write(dir.join(".ignore"), IGNORE)?;
@@ -671,6 +673,7 @@ pub fn create_project(dir: &Path, name: &str, demo: bool) -> Result<()> {
         }
 
         fs::write(dir.join("forge.toml"), render(EMPTY_FORGE_TOML, &vars))?;
+        fs::write(dir.join("sqlx.toml"), SQLX_TOML)?;
         fs::write(dir.join("build.rs"), EMPTY_BUILD_RS)?;
         fs::write(dir.join(".gitignore"), EMPTY_GITIGNORE)?;
         fs::write(dir.join(".ignore"), EMPTY_IGNORE)?;
@@ -865,6 +868,7 @@ mod tests {
         // All demo files should exist
         assert!(path.join("Cargo.toml").exists());
         assert!(path.join("forge.toml").exists());
+        assert!(path.join("sqlx.toml").exists());
         assert!(path.join("src/main.rs").exists());
         assert!(path.join("build.rs").exists());
         assert!(path.join("src/schema/mod.rs").exists());
@@ -903,6 +907,7 @@ mod tests {
         // Core files should exist
         assert!(path.join("Cargo.toml").exists());
         assert!(path.join("forge.toml").exists());
+        assert!(path.join("sqlx.toml").exists());
         assert!(path.join("src/main.rs").exists());
         assert!(path.join("src/schema/mod.rs").exists());
         assert!(path.join("src/functions/mod.rs").exists());

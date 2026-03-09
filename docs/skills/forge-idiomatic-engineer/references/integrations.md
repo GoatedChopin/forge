@@ -257,12 +257,9 @@ pub async fn upload_avatar(ctx: &MutationContext, input: UploadAvatarInput) -> R
 
     let storage_url = upload_to_storage(ctx.http(), uid, bytes, content_type).await?;
 
-    let avatar: AvatarUrl = ctx.db()
-        .fetch_one(
-            sqlx::query_as("UPDATE users SET avatar_url = $1 WHERE id = $2 RETURNING avatar_url")
-                .bind(&storage_url)
-                .bind(uid),
-        )
+    let mut conn = ctx.conn().await?;
+    let avatar: AvatarUrl = sqlx::query_as!(AvatarUrl, "UPDATE users SET avatar_url = $1 WHERE id = $2 RETURNING avatar_url", &storage_url, uid)
+        .fetch_one(&mut *conn)
         .await?;
 
     Ok(avatar)
@@ -339,13 +336,9 @@ pub async fn request_upload_url(ctx: &MutationContext, input: RequestUploadInput
         uid,
     ).await?;
 
-    ctx.db()
-        .execute(
-            sqlx::query("INSERT INTO pending_uploads (id, user_id, storage_key, expires_at) VALUES ($1, $2, $3, now() + interval '15 minutes')")
-                .bind(presigned.upload_id)
-                .bind(uid)
-                .bind(&presigned.storage_key),
-        )
+    let mut conn = ctx.conn().await?;
+    sqlx::query!("INSERT INTO pending_uploads (id, user_id, storage_key, expires_at) VALUES ($1, $2, $3, now() + interval '15 minutes')", presigned.upload_id, uid, &presigned.storage_key)
+        .execute(&mut *conn)
         .await?;
 
     Ok(presigned)
@@ -355,21 +348,13 @@ pub async fn request_upload_url(ctx: &MutationContext, input: RequestUploadInput
 pub async fn confirm_upload(ctx: &MutationContext, input: ConfirmUploadInput) -> Result<FileRecord> {
     let uid = ctx.require_user_id()?;
 
-    let pending: PendingUpload = ctx.db()
-        .fetch_one(
-            sqlx::query_as("DELETE FROM pending_uploads WHERE id = $1 AND user_id = $2 RETURNING *")
-                .bind(input.upload_id)
-                .bind(uid),
-        )
+    let mut conn = ctx.conn().await?;
+    let pending: PendingUpload = sqlx::query_as!(PendingUpload, "DELETE FROM pending_uploads WHERE id = $1 AND user_id = $2 RETURNING *", input.upload_id, uid)
+        .fetch_one(&mut *conn)
         .await?;
 
-    let file: FileRecord = ctx.db()
-        .fetch_one(
-            sqlx::query_as("INSERT INTO files (user_id, storage_key, name) VALUES ($1, $2, $3) RETURNING *")
-                .bind(uid)
-                .bind(&pending.storage_key)
-                .bind(&input.file_name),
-        )
+    let file: FileRecord = sqlx::query_as!(FileRecord, "INSERT INTO files (user_id, storage_key, name) VALUES ($1, $2, $3) RETURNING *", uid, &pending.storage_key, &input.file_name)
+        .fetch_one(&mut *conn)
         .await?;
 
     Ok(file)
@@ -381,7 +366,7 @@ Clean up expired uploads with a cron:
 ```rust
 #[forge::cron("*/15 * * * *")]
 pub async fn cleanup_expired_uploads(ctx: &CronContext) -> Result<()> {
-    sqlx::query("DELETE FROM pending_uploads WHERE expires_at < now()")
+    sqlx::query!("DELETE FROM pending_uploads WHERE expires_at < now()")
         .execute(ctx.db())
         .await?;
     Ok(())
@@ -417,16 +402,13 @@ pub async fn login_with_google(ctx: &MutationContext, input: GoogleLoginInput) -
     let google_claims = verify_google_token(ctx.http(), &input.id_token).await?;
     let email = google_claims.email;
 
-    let user: User = ctx.db()
-        .fetch_one(
-            sqlx::query_as(
-                "INSERT INTO users (email, provider, provider_id) VALUES ($1, 'google', $2)
-                 ON CONFLICT (provider, provider_id) DO UPDATE SET email = $1
-                 RETURNING *"
-            )
-            .bind(&email)
-            .bind(&google_claims.sub),
-        )
+    let mut conn = ctx.conn().await?;
+    let user: User = sqlx::query_as!(User,
+            "INSERT INTO users (email, provider, provider_id) VALUES ($1, 'google', $2)
+             ON CONFLICT (provider, provider_id) DO UPDATE SET email = $1
+             RETURNING *",
+            &email, &google_claims.sub)
+        .fetch_one(&mut *conn)
         .await?;
 
     let claims = Claims::builder()

@@ -129,8 +129,7 @@ try {
 ```rust
 #[forge::query]
 pub async fn get_user(ctx: &QueryContext, id: Uuid) -> Result<User> {
-    let user = sqlx::query_as("SELECT * FROM users WHERE id = $1")
-        .bind(id)
+    let user = sqlx::query_as!(User, "SELECT * FROM users WHERE id = $1", id)
         .fetch_optional(ctx.db())
         .await?;
 
@@ -175,19 +174,18 @@ pub async fn get_audit_logs(ctx: &QueryContext) -> Result<Vec<AuditLog>> {
 ```rust
 #[forge::mutation]
 pub async fn create_user(ctx: &MutationContext, email: String) -> Result<User> {
-    ctx.db().fetch_one(
-        sqlx::query_as("INSERT INTO users (email) VALUES ($1) RETURNING *")
-            .bind(&email)
-    )
-    .await
-    .map_err(|e| {
-        let msg = e.to_string();
-        if msg.contains("unique constraint") {
-            ForgeError::Validation(format!("Email {} already exists", email))
-        } else {
-            e
-        }
-    })
+    let mut conn = ctx.conn().await?;
+    sqlx::query_as!(User, "INSERT INTO users (email) VALUES ($1) RETURNING *", &email)
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("unique constraint") {
+                ForgeError::Validation(format!("Email {} already exists", email))
+            } else {
+                e.into()
+            }
+        })
 }
 ```
 
@@ -325,8 +323,7 @@ SQLx errors automatically convert to `ForgeError::Sql`:
 ```rust
 #[forge::query]
 pub async fn get_user(ctx: &QueryContext, id: Uuid) -> Result<User> {
-    sqlx::query_as("SELECT * FROM users WHERE id = $1")
-        .bind(id)
+    sqlx::query_as!(User, "SELECT * FROM users WHERE id = $1", id)
         .fetch_one(ctx.db())
         .await
         .map_err(Into::into)  // sqlx::Error -> ForgeError::Sql
@@ -338,8 +335,7 @@ To preserve the original error type for matching:
 ```rust
 #[forge::query]
 pub async fn get_user(ctx: &QueryContext, id: Uuid) -> Result<User> {
-    match sqlx::query_as("SELECT * FROM users WHERE id = $1")
-        .bind(id)
+    match sqlx::query_as!(User, "SELECT * FROM users WHERE id = $1", id)
         .fetch_one(ctx.db())
         .await
     {

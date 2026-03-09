@@ -70,6 +70,11 @@ impl McpToolContext {
         crate::function::DbConn::Pool(&self.db_pool)
     }
 
+    /// Acquire a connection compatible with sqlx compile-time checked macros.
+    pub async fn conn(&self) -> sqlx::Result<crate::function::ForgeConn<'static>> {
+        Ok(crate::function::ForgeConn::Pool(self.db_pool.acquire().await?))
+    }
+
     pub fn require_user_id(&self) -> Result<Uuid> {
         self.auth.require_user_id()
     }

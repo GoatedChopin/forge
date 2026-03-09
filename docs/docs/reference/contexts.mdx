@@ -27,10 +27,19 @@ pub async fn list_items(db: DbConn<'_>) -> Result<Vec<Item>> {
     db.fetch_all(sqlx::query_as("SELECT * FROM items ORDER BY created_at DESC")).await.map_err(Into::into)
 }
 
-// Works from any context
+// Works from any context via DbConn helpers
 #[forge::query]
 pub async fn get_items(ctx: &QueryContext) -> Result<Vec<Item>> {
     list_items(ctx.db_conn()).await
+}
+
+// Direct macro usage (preferred when not sharing across contexts)
+#[forge::query]
+pub async fn get_items_direct(ctx: &QueryContext) -> Result<Vec<Item>> {
+    sqlx::query_as!(Item, "SELECT * FROM items ORDER BY created_at DESC")
+        .fetch_all(ctx.db())
+        .await
+        .map_err(Into::into)
 }
 
 #[forge::mutation]
@@ -93,7 +102,7 @@ Read-only database access for query handlers.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `db` | `fn db(&self) -> &PgPool` | Database connection pool |
+| `db` | `fn db(&self) -> &PgPool` | Database connection pool (works directly with `query_as!` macros) |
 | `db_conn` | `fn db_conn(&self) -> DbConn<'_>` | Database connection as `DbConn` for shared helpers |
 | `require_user_id` | `fn require_user_id(&self) -> Result<Uuid>` | Get user ID or return error |
 | `require_subject` | `fn require_subject(&self) -> Result<&str>` | Get subject or return error |
@@ -122,6 +131,7 @@ Transactional database access with HTTP client and job/workflow dispatch.
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `db` | `fn db(&self) -> DbConn<'_>` | Database connection (transaction or pool) |
+| `conn` | `async fn conn(&self) -> sqlx::Result<ForgeConn<'_>>` | Connection for `query_as!` macros (transaction-aware) |
 | `pool` | `fn pool(&self) -> &PgPool` | Direct pool access for non-transactional operations |
 | `http` | `fn http(&self) -> &Client` | HTTP client for external calls |
 | `require_user_id` | `fn require_user_id(&self) -> Result<Uuid>` | Get user ID or return error |
@@ -161,6 +171,7 @@ Background job execution context with progress reporting and heartbeats.
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `db` | `fn db(&self) -> &PgPool` | Database connection pool |
+| `conn` | `async fn conn(&self) -> sqlx::Result<ForgeConn<'static>>` | Connection for `query_as!` macros |
 | `db_conn` | `fn db_conn(&self) -> DbConn<'_>` | Database connection as `DbConn` for shared helpers |
 | `http` | `fn http(&self) -> &Client` | HTTP client for external calls |
 | `progress` | `fn progress(&self, percentage: u8, message: impl Into<String>) -> Result<()>` | Report progress (0-100, clamped) |
@@ -221,6 +232,7 @@ Scheduled task execution context with timing information.
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `db` | `fn db(&self) -> &PgPool` | Database connection pool |
+| `conn` | `async fn conn(&self) -> sqlx::Result<ForgeConn<'static>>` | Connection for `query_as!` macros |
 | `db_conn` | `fn db_conn(&self) -> DbConn<'_>` | Database connection as `DbConn` for shared helpers |
 | `http` | `fn http(&self) -> &Client` | HTTP client for external calls |
 | `delay` | `fn delay(&self) -> chrono::Duration` | Time between scheduled and actual execution |
@@ -262,6 +274,7 @@ Durable workflow execution with step tracking, sleep, events, and compensation.
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `db` | `fn db(&self) -> &PgPool` | Database connection pool |
+| `conn` | `async fn conn(&self) -> sqlx::Result<ForgeConn<'static>>` | Connection for `query_as!` macros |
 | `db_conn` | `fn db_conn(&self) -> DbConn<'_>` | Database connection as `DbConn` for shared helpers |
 | `http` | `fn http(&self) -> &Client` | HTTP client for external calls |
 | `workflow_time` | `fn workflow_time(&self) -> DateTime<Utc>` | Deterministic time (consistent across replays) |
@@ -362,6 +375,7 @@ Long-running service context with shutdown signaling and heartbeats.
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `db` | `fn db(&self) -> &PgPool` | Database connection pool |
+| `conn` | `async fn conn(&self) -> sqlx::Result<ForgeConn<'static>>` | Connection for `query_as!` macros |
 | `db_conn` | `fn db_conn(&self) -> DbConn<'_>` | Database connection as `DbConn` for shared helpers |
 | `http` | `fn http(&self) -> &Client` | HTTP client for external calls |
 | `dispatch_job` | `async fn dispatch_job<T: Serialize>(&self, job_type: &str, args: T) -> Result<Uuid>` | Dispatch a background job |
@@ -406,6 +420,7 @@ Incoming webhook handler context with headers, job dispatch, and idempotency.
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `db` | `fn db(&self) -> &PgPool` | Database connection pool |
+| `conn` | `async fn conn(&self) -> sqlx::Result<ForgeConn<'static>>` | Connection for `query_as!` macros |
 | `db_conn` | `fn db_conn(&self) -> DbConn<'_>` | Database connection as `DbConn` for shared helpers |
 | `http` | `fn http(&self) -> &Client` | HTTP client for external calls |
 | `header` | `fn header(&self, name: &str) -> Option<&str>` | Get request header (case-insensitive) |
@@ -437,6 +452,7 @@ MCP tool execution context with database, auth, dispatch, and environment access
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `db` | `fn db(&self) -> &PgPool` | Database connection pool |
+| `conn` | `async fn conn(&self) -> sqlx::Result<ForgeConn<'static>>` | Connection for `query_as!` macros |
 | `db_conn` | `fn db_conn(&self) -> DbConn<'_>` | Database connection as `DbConn` for shared helpers |
 | `require_user_id` | `fn require_user_id(&self) -> Result<Uuid>` | Get user ID or return error |
 | `require_subject` | `fn require_subject(&self) -> Result<&str>` | Get subject or return error |

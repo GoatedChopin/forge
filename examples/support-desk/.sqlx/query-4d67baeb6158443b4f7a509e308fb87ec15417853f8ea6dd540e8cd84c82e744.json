@@ -1,0 +1,104 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE support_tickets\n         SET status = $1, updated_at = NOW()\n         WHERE id = $2\n         RETURNING id, customer_name, title, details,\n                   status as \"status: TicketStatus\",\n                   priority as \"priority: TicketPriority\",\n                   last_note, created_at, updated_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "customer_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "details",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "status: TicketStatus",
+        "type_info": {
+          "Custom": {
+            "name": "ticket_status",
+            "kind": {
+              "Enum": [
+                "new",
+                "working",
+                "resolved"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "priority: TicketPriority",
+        "type_info": {
+          "Custom": {
+            "name": "ticket_priority",
+            "kind": {
+              "Enum": [
+                "low",
+                "normal",
+                "high"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "last_note",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        {
+          "Custom": {
+            "name": "ticket_status",
+            "kind": {
+              "Enum": [
+                "new",
+                "working",
+                "resolved"
+              ]
+            }
+          }
+        },
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "4d67baeb6158443b4f7a509e308fb87ec15417853f8ea6dd540e8cd84c82e744"
+}

@@ -62,7 +62,7 @@ use crate::schema::Todo;
 
 #[forge::query(public)]
 pub async fn list_todos(ctx: &QueryContext) -> Result<Vec<Todo>> {
-    sqlx::query_as("SELECT * FROM todos ORDER BY created_at DESC")
+    sqlx::query_as!(Todo, "SELECT * FROM todos ORDER BY created_at DESC")
         .fetch_all(ctx.db())
         .await
         .map_err(Into::into)
@@ -121,12 +121,11 @@ pub struct CreateTodoInput {
 
 #[forge::mutation(public)]
 pub async fn create_todo(ctx: &MutationContext, input: CreateTodoInput) -> Result<Todo> {
-    ctx.db().fetch_one(
-        sqlx::query_as("INSERT INTO todos (title) VALUES ($1) RETURNING *")
-            .bind(input.title)
-    )
-    .await
-    .map_err(Into::into)
+    let mut conn = ctx.conn().await?;
+    sqlx::query_as!(Todo, "INSERT INTO todos (title) VALUES ($1) RETURNING *", input.title)
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(Into::into)
 }
 ```
 

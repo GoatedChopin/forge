@@ -1,14 +1,19 @@
 use forge::prelude::*;
 
-use crate::schema::Task;
+use crate::schema::{Task, TaskPriority, TaskStatus};
 
 #[forge::cron("0 9 * * *", timezone = "UTC")]
 pub async fn overdue_checker(ctx: &CronContext) -> Result<()> {
-    let overdue_tasks: Vec<Task> = sqlx::query_as(
-        "SELECT * FROM tasks
+    let overdue_tasks: Vec<Task> = sqlx::query_as!(
+        Task,
+        r#"SELECT id, project_id, title, description,
+                  status as "status: TaskStatus",
+                  priority as "priority: TaskPriority",
+                  assignee_id, due_date, position, created_at, updated_at
+         FROM tasks
          WHERE due_date < CURRENT_DATE
          AND status != 'done'
-         ORDER BY due_date",
+         ORDER BY due_date"#
     )
     .fetch_all(ctx.db())
     .await?;

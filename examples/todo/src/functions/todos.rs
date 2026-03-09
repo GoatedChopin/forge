@@ -17,7 +17,7 @@ pub struct UpdateTodoInput {
 
 #[forge::query(public, tables = ["todos"])]
 pub async fn list_todos(ctx: &QueryContext) -> Result<Vec<Todo>> {
-    sqlx::query_as("SELECT * FROM todos ORDER BY created_at DESC")
+    sqlx::query_as!(Todo, "SELECT * FROM todos ORDER BY created_at DESC")
         .fetch_all(ctx.db())
         .await
         .map_err(Into::into)
@@ -29,39 +29,48 @@ pub async fn create_todo(ctx: &MutationContext, input: CreateTodoInput) -> Resul
         return Err(ForgeError::Validation("Title cannot be empty".into()));
     }
 
-    ctx.db()
-        .fetch_one(
-            sqlx::query_as("INSERT INTO todos (title) VALUES ($1) RETURNING *")
-                .bind(input.title.trim()),
-        )
+    let title = input.title.trim().to_string();
+    let mut conn = ctx
+        .conn()
+        .await?;
+
+    sqlx::query_as!(Todo, "INSERT INTO todos (title) VALUES ($1) RETURNING *", title)
+        .fetch_one(&mut *conn)
         .await
         .map_err(Into::into)
 }
 
 #[forge::mutation(public)]
 pub async fn update_todo(ctx: &MutationContext, input: UpdateTodoInput) -> Result<Todo> {
-    ctx.db()
-        .fetch_optional(
-            sqlx::query_as(
-                "UPDATE todos
-                 SET title = COALESCE($1, title),
-                     completed = COALESCE($2, completed)
-                 WHERE id = $3
-                 RETURNING *",
-            )
-            .bind(input.title.as_deref())
-            .bind(input.completed)
-            .bind(input.id),
-        )
-        .await?
-        .ok_or_else(|| ForgeError::NotFound("Todo not found".into()))
+    let title = input.title.as_deref();
+    let mut conn = ctx
+        .conn()
+        .await?;
+
+    sqlx::query_as!(
+        Todo,
+        "UPDATE todos
+         SET title = COALESCE($1, title),
+             completed = COALESCE($2, completed)
+         WHERE id = $3
+         RETURNING *",
+        title,
+        input.completed,
+        input.id
+    )
+    .fetch_optional(&mut *conn)
+    .await?
+    .ok_or_else(|| ForgeError::NotFound("Todo not found".into()))
 }
 
 #[forge::mutation(public)]
 pub async fn delete_todo(ctx: &MutationContext, id: Uuid) -> Result<bool> {
-    let result = ctx
-        .db()
-        .execute(sqlx::query("DELETE FROM todos WHERE id = $1").bind(id))
+    let mut conn = ctx
+        .conn()
+        .await?;
+
+    let result = sqlx::query!("DELETE FROM todos WHERE id = $1", id)
+        .execute(&mut *conn)
         .await?;
 
     Ok(result.rows_affected() > 0)

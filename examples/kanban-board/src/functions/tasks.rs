@@ -53,15 +53,19 @@ pub async fn list_tasks(ctx: &QueryContext, input: ListTasksInput) -> Result<Vec
         return Err(ForgeError::Forbidden("User scope mismatch".into()));
     }
 
-    sqlx::query_as(
-        "SELECT t.*
+    sqlx::query_as!(
+        Task,
+        r#"SELECT t.id, t.project_id, t.title, t.description,
+                  t.status as "status: TaskStatus",
+                  t.priority as "priority: TaskPriority",
+                  t.assignee_id, t.due_date, t.position, t.created_at, t.updated_at
          FROM tasks t
          JOIN projects p ON p.id = t.project_id
          WHERE t.project_id = $1 AND p.owner_id = $2
-         ORDER BY t.position, t.created_at",
+         ORDER BY t.position, t.created_at"#,
+        input.project_id,
+        user_id
     )
-    .bind(input.project_id)
-    .bind(user_id)
     .fetch_all(ctx.db())
     .await
     .map_err(Into::into)
@@ -79,29 +83,35 @@ pub async fn create_task(ctx: &MutationContext, input: CreateTaskInput) -> Resul
     }
 
     let priority = input.priority.unwrap_or(TaskPriority::Medium);
+    let title = input.title.trim().to_string();
+    let mut conn = ctx
+        .conn()
+        .await?;
 
     // CTE validates project ownership and computes next position in one round-trip
-    ctx.db()
-        .fetch_optional(
-            sqlx::query_as(
-                "WITH owned AS (
-                    SELECT id FROM projects WHERE id = $1 AND owner_id = $2
-                ), pos AS (
-                    SELECT COALESCE(MAX(position) + 1, 0) AS next_pos FROM tasks WHERE project_id = $1
-                )
-                INSERT INTO tasks (project_id, title, description, priority, assignee_id, position)
-                SELECT $1, $3, $4, $5, $6, pos.next_pos FROM owned, pos
-                RETURNING *",
-            )
-            .bind(input.project_id)
-            .bind(user_id)
-            .bind(input.title.trim())
-            .bind(&input.description)
-            .bind(priority)
-            .bind(input.assignee_id),
+    sqlx::query_as!(
+        Task,
+        r#"WITH owned AS (
+            SELECT id FROM projects WHERE id = $1 AND owner_id = $2
+        ), pos AS (
+            SELECT COALESCE(MAX(position) + 1, 0) AS next_pos FROM tasks WHERE project_id = $1
         )
-        .await?
-        .ok_or_else(|| ForgeError::NotFound("Project not found".into()))
+        INSERT INTO tasks (project_id, title, description, priority, assignee_id, position)
+        SELECT $1, $3, $4, $5, $6, pos.next_pos FROM owned, pos
+        RETURNING id, project_id, title, description,
+                  status as "status: TaskStatus",
+                  priority as "priority: TaskPriority",
+                  assignee_id, due_date, position, created_at, updated_at"#,
+        input.project_id,
+        user_id,
+        title,
+        &input.description,
+        priority as TaskPriority,
+        input.assignee_id
+    )
+    .fetch_optional(&mut *conn)
+    .await?
+    .ok_or_else(|| ForgeError::NotFound("Project not found".into()))
 }
 
 #[forge::mutation]
@@ -111,32 +121,40 @@ pub async fn update_task(ctx: &MutationContext, input: UpdateTaskInput) -> Resul
         return Err(ForgeError::Forbidden("User scope mismatch".into()));
     }
 
-    ctx.db()
-        .fetch_optional(
-            sqlx::query_as(
-                "UPDATE tasks t SET
-                     title = COALESCE($1, t.title),
-                     description = COALESCE($2, t.description),
-                     status = COALESCE($3, t.status),
-                     priority = COALESCE($4, t.priority),
-                     assignee_id = COALESCE($5, t.assignee_id),
-                     due_date = COALESCE($6, t.due_date),
-                     updated_at = NOW()
-                 FROM projects p
-                 WHERE t.id = $7 AND p.id = t.project_id AND p.owner_id = $8
-                 RETURNING t.*",
-            )
-            .bind(input.title.as_deref())
-            .bind(input.description.as_deref())
-            .bind(input.status)
-            .bind(input.priority)
-            .bind(input.assignee_id)
-            .bind(input.due_date)
-            .bind(input.id)
-            .bind(user_id),
-        )
-        .await?
-        .ok_or_else(|| ForgeError::NotFound("Task not found".into()))
+    let title = input.title.as_deref();
+    let description = input.description.as_deref();
+    let mut conn = ctx
+        .conn()
+        .await?;
+
+    sqlx::query_as!(
+        Task,
+        r#"UPDATE tasks t SET
+             title = COALESCE($1, t.title),
+             description = COALESCE($2, t.description),
+             status = COALESCE($3, t.status),
+             priority = COALESCE($4, t.priority),
+             assignee_id = COALESCE($5, t.assignee_id),
+             due_date = COALESCE($6, t.due_date),
+             updated_at = NOW()
+         FROM projects p
+         WHERE t.id = $7 AND p.id = t.project_id AND p.owner_id = $8
+         RETURNING t.id, t.project_id, t.title, t.description,
+                   t.status as "status: TaskStatus",
+                   t.priority as "priority: TaskPriority",
+                   t.assignee_id, t.due_date, t.position, t.created_at, t.updated_at"#,
+        title,
+        description,
+        input.status as Option<TaskStatus>,
+        input.priority as Option<TaskPriority>,
+        input.assignee_id,
+        input.due_date,
+        input.id,
+        user_id
+    )
+    .fetch_optional(&mut *conn)
+    .await?
+    .ok_or_else(|| ForgeError::NotFound("Task not found".into()))
 }
 
 #[forge::mutation]
@@ -146,18 +164,19 @@ pub async fn delete_task(ctx: &MutationContext, input: DeleteTaskInput) -> Resul
         return Err(ForgeError::Forbidden("User scope mismatch".into()));
     }
 
-    let result = ctx
-        .db()
-        .execute(
-            sqlx::query(
-                "DELETE FROM tasks t
-                 USING projects p
-                 WHERE t.id = $1 AND p.id = t.project_id AND p.owner_id = $2",
-            )
-            .bind(input.id)
-            .bind(user_id),
-        )
+    let mut conn = ctx
+        .conn()
         .await?;
+
+    let result = sqlx::query!(
+        "DELETE FROM tasks t
+         USING projects p
+         WHERE t.id = $1 AND p.id = t.project_id AND p.owner_id = $2",
+        input.id,
+        user_id
+    )
+    .execute(&mut *conn)
+    .await?;
 
     Ok(result.rows_affected() > 0)
 }
@@ -169,18 +188,24 @@ pub async fn move_task(ctx: &MutationContext, input: MoveTaskInput) -> Result<Ta
         return Err(ForgeError::Forbidden("User scope mismatch".into()));
     }
 
-    ctx.db()
-        .fetch_one(
-            sqlx::query_as(
-                "UPDATE tasks t SET status = $1, updated_at = NOW()
-                 FROM projects p
-                 WHERE t.id = $2 AND p.id = t.project_id AND p.owner_id = $3
-                 RETURNING t.*",
-            )
-            .bind(input.status)
-            .bind(input.id)
-            .bind(user_id),
-        )
-        .await
-        .map_err(Into::into)
+    let mut conn = ctx
+        .conn()
+        .await?;
+
+    sqlx::query_as!(
+        Task,
+        r#"UPDATE tasks t SET status = $1, updated_at = NOW()
+         FROM projects p
+         WHERE t.id = $2 AND p.id = t.project_id AND p.owner_id = $3
+         RETURNING t.id, t.project_id, t.title, t.description,
+                   t.status as "status: TaskStatus",
+                   t.priority as "priority: TaskPriority",
+                   t.assignee_id, t.due_date, t.position, t.created_at, t.updated_at"#,
+        input.status as TaskStatus,
+        input.id,
+        user_id
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(Into::into)
 }

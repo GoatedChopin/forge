@@ -2,7 +2,7 @@ use forge::prelude::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::schema::Task;
+use crate::schema::{Task, TaskPriority, TaskStatus};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ExportProjectInput {
@@ -31,23 +31,29 @@ pub struct ExportOutput {
     idempotent
 )]
 pub async fn export_project(ctx: &JobContext, input: ExportProjectInput) -> Result<ExportOutput> {
-    sqlx::query_as::<_, (Uuid,)>("SELECT id FROM projects WHERE id = $1 AND owner_id = $2")
-        .bind(input.project_id)
-        .bind(input.user_id)
-        .fetch_optional(ctx.db())
-        .await?
-        .ok_or_else(|| ForgeError::NotFound("Project not found".into()))?;
+    sqlx::query_scalar!(
+        "SELECT id FROM projects WHERE id = $1 AND owner_id = $2",
+        input.project_id,
+        input.user_id
+    )
+    .fetch_optional(ctx.db())
+    .await?
+    .ok_or_else(|| ForgeError::NotFound("Project not found".into()))?;
 
     ctx.progress(30, "Fetching tasks")?;
-    let tasks: Vec<Task> = sqlx::query_as(
-        "SELECT t.*
+    let tasks: Vec<Task> = sqlx::query_as!(
+        Task,
+        r#"SELECT t.id, t.project_id, t.title, t.description,
+                  t.status as "status: TaskStatus",
+                  t.priority as "priority: TaskPriority",
+                  t.assignee_id, t.due_date, t.position, t.created_at, t.updated_at
          FROM tasks t
          JOIN projects p ON p.id = t.project_id
          WHERE t.project_id = $1 AND p.owner_id = $2
-         ORDER BY t.position, t.created_at",
+         ORDER BY t.position, t.created_at"#,
+        input.project_id,
+        input.user_id
     )
-    .bind(input.project_id)
-    .bind(input.user_id)
     .fetch_all(ctx.db())
     .await?;
 

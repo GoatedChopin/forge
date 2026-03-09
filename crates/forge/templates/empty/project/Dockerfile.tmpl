@@ -9,7 +9,8 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install cargo-watch for hot reload
-RUN cargo install cargo-watch --locked
+RUN cargo install cargo-watch --locked && \
+    cargo install sqlx-cli --no-default-features --features postgres --locked
 
 # Development command - no frontend embedding, watch for changes
 CMD ["cargo", "watch", "-x", "run --no-default-features"]
@@ -43,6 +44,7 @@ RUN mkdir -p src && \
 
 COPY src ./src
 COPY migrations ./migrations
+COPY .sqlx ./.sqlx
 
 # Copy frontend build for embedding
 COPY --from=frontend-builder /app/frontend/build ./frontend/build

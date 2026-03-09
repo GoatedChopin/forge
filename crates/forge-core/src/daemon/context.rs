@@ -78,6 +78,11 @@ impl DaemonContext {
         crate::function::DbConn::Pool(&self.db_pool)
     }
 
+    /// Acquire a connection compatible with sqlx compile-time checked macros.
+    pub async fn conn(&self) -> sqlx::Result<crate::function::ForgeConn<'static>> {
+        Ok(crate::function::ForgeConn::Pool(self.db_pool.acquire().await?))
+    }
+
     pub fn http(&self) -> &reqwest::Client {
         &self.http_client
     }

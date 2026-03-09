@@ -38,6 +38,9 @@ pub enum MigrateAction {
 
     /// Show migration status.
     Status,
+
+    /// Generate .sqlx/ offline cache for compile-time query checking.
+    Prepare,
 }
 
 impl MigrateCommand {
@@ -109,6 +112,58 @@ impl MigrateCommand {
                         rolled_back.len()
                     );
                 }
+                println!();
+            }
+
+            MigrateAction::Prepare => {
+                ui::section("FORGE Prepare");
+
+                // Run pending migrations first
+                if !available.is_empty() {
+                    println!("  {} Running pending migrations...", ui::step());
+                    runner.run(available).await?;
+                    println!("  {} Migrations complete", ui::ok());
+                }
+
+                // Check for cargo-sqlx
+                let has_cargo_sqlx = std::process::Command::new("cargo-sqlx")
+                    .arg("--version")
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false);
+
+                if !has_cargo_sqlx {
+                    println!(
+                        "  {} {} not found. Install it with:",
+                        ui::warn(),
+                        style("cargo-sqlx").bold()
+                    );
+                    println!(
+                        "    {}",
+                        style("cargo install sqlx-cli --no-default-features --features postgres")
+                            .cyan()
+                    );
+                    println!();
+                    return Ok(());
+                }
+
+                let database_url = config.database.url();
+                println!("  {} Generating .sqlx/ offline cache...", ui::step());
+
+                let output = std::process::Command::new("cargo")
+                    .args(["sqlx", "prepare", "--workspace"])
+                    .env("DATABASE_URL", &database_url)
+                    .output()?;
+
+                if output.status.success() {
+                    println!("  {} Offline cache generated", ui::ok());
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    anyhow::bail!("cargo sqlx prepare failed:\n{}", stderr);
+                }
+
                 println!();
             }
 

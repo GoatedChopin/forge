@@ -31,9 +31,10 @@ struct BinanceTrade {
 /// Get the 4 most recent trades
 #[forge::query(public)]
 pub async fn get_trades(ctx: &QueryContext) -> Result<Vec<Trade>> {
-    sqlx::query_as::<_, Trade>(
+    sqlx::query_as!(
+        Trade,
         "SELECT id, symbol, price, quantity, trade_time, is_buyer_maker, created_at \
-         FROM trades ORDER BY created_at DESC LIMIT 4",
+         FROM trades ORDER BY created_at DESC LIMIT 4"
     )
     .fetch_all(ctx.db())
     .await
@@ -64,15 +65,11 @@ pub async fn trade_stream(ctx: &DaemonContext) -> Result<()> {
                             let trade_time = chrono::DateTime::from_timestamp_millis(trade.trade_time)
                                 .unwrap_or_else(Utc::now);
 
-                            sqlx::query(
+                            sqlx::query!(
                                 "INSERT INTO trades (id, symbol, price, quantity, trade_time, is_buyer_maker, created_at) \
-                                 VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, NOW())"
+                                 VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, NOW())",
+                                &trade.symbol, price, quantity, trade_time, trade.is_buyer_maker
                             )
-                            .bind(&trade.symbol)
-                            .bind(price)
-                            .bind(quantity)
-                            .bind(trade_time)
-                            .bind(trade.is_buyer_maker)
                             .execute(ctx.db())
                             .await
                             .ok();

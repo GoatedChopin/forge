@@ -1,0 +1,104 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE support_tickets\n         SET priority = $1, updated_at = NOW()\n         WHERE id = $2\n         RETURNING id, customer_name, title, details,\n                   status as \"status: TicketStatus\",\n                   priority as \"priority: TicketPriority\",\n                   last_note, created_at, updated_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "customer_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "details",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "status: TicketStatus",
+        "type_info": {
+          "Custom": {
+            "name": "ticket_status",
+            "kind": {
+              "Enum": [
+                "new",
+                "working",
+                "resolved"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "priority: TicketPriority",
+        "type_info": {
+          "Custom": {
+            "name": "ticket_priority",
+            "kind": {
+              "Enum": [
+                "low",
+                "normal",
+                "high"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "last_note",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        {
+          "Custom": {
+            "name": "ticket_priority",
+            "kind": {
+              "Enum": [
+                "low",
+                "normal",
+                "high"
+              ]
+            }
+          }
+        },
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "4648d7292de8efac35f02ccd1ae07224dfee990c2618b8c3f07c59ca4c4b0b38"
+}

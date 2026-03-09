@@ -608,7 +608,7 @@ impl Forge {
         tracing::info!(
             node_id = %node_id,
             roles = ?roles,
-            port = gateway_port,
+            port = self.config.gateway.port,
             "Forge started"
         );
 
