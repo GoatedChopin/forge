@@ -444,16 +444,10 @@ impl Forge {
         // Reactor handle for shutdown
         let mut reactor_handle = None;
 
-        // PORT env var overrides config (used by --backend-port in forge dev)
-        let gateway_port = std::env::var("PORT")
-            .ok()
-            .and_then(|p| p.parse::<u16>().ok())
-            .unwrap_or(self.config.gateway.port);
-
         // Start HTTP gateway if gateway role
         if roles.contains(&NodeRole::Gateway) {
             let gateway_config = RuntimeGatewayConfig {
-                port: gateway_port,
+                port: self.config.gateway.port,
                 max_connections: self.config.gateway.max_connections,
                 request_timeout_secs: self.config.gateway.request_timeout_secs,
                 cors_enabled: self.config.gateway.cors_enabled

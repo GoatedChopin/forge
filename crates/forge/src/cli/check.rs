@@ -89,9 +89,6 @@ impl CheckCommand {
         result.section("Rust Tooling");
         self.check_rust_linting(&mut result).await;
 
-        result.section("Environment");
-        self.check_environment(&mut result);
-
         result.section("Frontend");
         self.check_frontend(&mut result)?;
 
@@ -183,36 +180,25 @@ impl CheckCommand {
 
         // Check [database] section
         if let Some(db) = config.get("database") {
-            let mode = db.get("mode").and_then(|v| v.as_str());
-            match mode {
-                Some("remote") => {
-                    if let Some(url) = db.get("url").and_then(|v| v.as_str()) {
-                        if url.starts_with("${") || url.starts_with("postgres://") {
-                            result.pass("[database] configured (remote)");
-                        } else {
-                            result.warn(
-                                "[database].url format looks incorrect",
-                                "Use postgres://user:pass@host:port/db or ${DATABASE_URL}",
-                            );
-                        }
-                    } else {
-                        result.warn(
-                            "[database].url not set",
-                            "Add url = \"${DATABASE_URL}\" to [database]",
-                        );
-                    }
-                }
-                _ => {
+            if let Some(url) = db.get("url").and_then(|v| v.as_str()) {
+                if url.starts_with("${") || url.starts_with("postgres://") {
+                    result.pass("[database] configured");
+                } else {
                     result.warn(
-                        "[database].mode not set",
-                        "Add mode = \"remote\" with url to [database]",
+                        "[database].url format looks incorrect",
+                        "Use postgres://user:pass@host:port/db or ${DATABASE_URL}",
                     );
                 }
+            } else {
+                result.warn(
+                    "[database].url not set",
+                    "Add url = \"${DATABASE_URL}\" to [database]",
+                );
             }
         } else {
             result.fail(
                 "[database] section missing",
-                "Add [database] section with mode to forge.toml",
+                "Add [database] section with url to forge.toml",
             );
         }
 
@@ -510,53 +496,6 @@ impl CheckCommand {
         Ok(())
     }
 
-    fn check_environment(&self, result: &mut CheckResult) {
-        // Check .env file
-        let env_path = Path::new(".env");
-        if !env_path.exists() {
-            result.warn(
-                ".env file not found",
-                "Create .env with DATABASE_URL (forge dev provides this via Docker Compose)",
-            );
-            return;
-        }
-
-        result.pass(".env file found");
-
-        // Check DATABASE_URL
-        let mut database_url = std::env::var("DATABASE_URL").ok();
-
-        if database_url.is_none()
-            && let Ok(content) = std::fs::read_to_string(env_path)
-        {
-            for line in content.lines() {
-                let line = line.trim();
-                if line.starts_with("DATABASE_URL=") {
-                    let url = line.trim_start_matches("DATABASE_URL=").trim();
-                    if !url.is_empty() {
-                        database_url = Some(url.to_string());
-                    }
-                    break;
-                }
-            }
-        }
-
-        if let Some(ref url) = database_url {
-            result.pass("DATABASE_URL is set");
-            let masked = mask_database_url(url);
-            result.info(&masked);
-
-            if url.contains("localhost") || url.contains("127.0.0.1") {
-                result.info("Using localhost - fine for development");
-            }
-        } else {
-            result.warn(
-                "DATABASE_URL not set",
-                "Set DATABASE_URL in .env or use forge dev (Docker Compose provides PostgreSQL)",
-            );
-        }
-    }
-
     fn check_generated_files(&self, result: &mut CheckResult) -> Result<()> {
         let frontend_dir = Path::new("frontend");
         if !frontend_dir.exists() {
@@ -805,36 +744,10 @@ impl CheckCommand {
     }
 }
 
-fn mask_database_url(url: &str) -> String {
-    if let Some(at_pos) = url.find('@')
-        && let Some(colon_pos) = url[..at_pos].rfind(':')
-    {
-        let protocol_end = url.find("://").map(|p| p + 3).unwrap_or(0);
-        if colon_pos > protocol_end {
-            let before_password = &url[..colon_pos + 1];
-            let after_password = &url[at_pos..];
-            return format!("{}****{}", before_password, after_password);
-        }
-    }
-    url.to_string()
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_mask_database_url() {
-        assert_eq!(
-            mask_database_url("postgres://user:secret@localhost/db"),
-            "postgres://user:****@localhost/db"
-        );
-        assert_eq!(
-            mask_database_url("postgres://localhost/db"),
-            "postgres://localhost/db"
-        );
-    }
 
     #[test]
     fn test_check_result() {

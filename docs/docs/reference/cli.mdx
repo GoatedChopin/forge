@@ -71,7 +71,13 @@ When running, the following services are available:
 |---------|-----|
 | Frontend | http://localhost:5173 |
 | Backend | http://localhost:8080 |
-| PostgreSQL | localhost:5432 |
+
+PostgreSQL runs inside the Docker network and is not exposed to the host. The backend connects to it via the internal `db` hostname. To access the database directly, use `docker compose exec`:
+
+```bash
+docker compose exec db psql -U postgres -d my-app
+docker compose exec db psql -U postgres -d my-app -c "SELECT * FROM users LIMIT 5"
+```
 
 ### Watch Scope
 
@@ -109,7 +115,6 @@ forge check [options]
 - Schema files with `#[forge::model]` or standard derives (`Serialize`, `FromRow`)
 - Generated file checksums (`.forge/` directory)
 - Rust linting (cargo fmt, clippy)
-- Environment variables and DATABASE_URL presence
 - Frontend configuration (if present)
 - Frontend linting (ESLint, Prettier)
 
@@ -192,20 +197,25 @@ forge migrate [action] [options]
 | `down [count]` | Rollback the last N migrations (default: 1) |
 | `status` | Show migration status |
 
+### Automatic migrations
+
+During development, migrations run automatically when the backend starts. Pending migrations are applied before the server accepts requests, so you don't need to run `forge migrate up` manually.
+
+### Manual migration management
+
+Since PostgreSQL is only accessible inside the Docker network, use `docker compose exec` to run migration commands or interact with the database directly:
+
 ```bash
-# Run pending migrations
+docker compose exec db psql -U postgres -d my-app -c "SELECT * FROM forge_migrations ORDER BY id"
+docker compose exec backend forge migrate down
+docker compose exec db psql -U postgres -d my-app
+```
+
+For production or CI, `forge migrate` connects via `DATABASE_URL` directly:
+
+```bash
 forge migrate up
-
-# Rollback last migration
 forge migrate down
-
-# Rollback last 3 migrations
-forge migrate down 3
-
-# Check migration status
-forge migrate status
-
-# Use custom paths
 forge migrate up --config ./config/forge.toml --migrations-dir ./db/migrations
 ```
 
@@ -231,7 +241,7 @@ DROP TABLE users;
 
 | Variable | Description | Used By |
 |----------|-------------|---------|
-| `DATABASE_URL` | PostgreSQL connection string | All commands |
+| `DATABASE_URL` | PostgreSQL connection string (set automatically by docker-compose during dev) | forge migrate, runtime |
 | `RUST_LOG` | Log level (e.g., info, debug, trace) | forge dev |
 | `HOST` | Backend host (default: 0.0.0.0) | forge dev |
 | `PORT` | Backend port (default: 8080) | forge dev |

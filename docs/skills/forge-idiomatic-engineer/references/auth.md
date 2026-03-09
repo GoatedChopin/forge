@@ -191,6 +191,45 @@ let claims = Claims::builder()
 
 No extra dependencies needed. Forge uses the same secret from `[auth].jwt_secret` for both validation and issuance. For RSA/JWKS auth (external providers), token issuance is not available since Forge doesn't hold the private key.
 
+## External Provider Auth (RS256/JWKS)
+
+For apps that authenticate through Firebase, Auth0, Clerk, Supabase, or other external identity providers, use RS256 with a JWKS endpoint instead of HS256.
+
+### forge.toml
+
+```toml
+[auth]
+jwt_algorithm = "RS256"
+jwks_url = "https://your-provider/.well-known/jwks.json"
+jwt_issuer = "https://your-provider"     # validates iss claim
+jwt_audience = "your-app-id"             # validates aud claim
+```
+
+Forge fetches and caches the provider's public keys from the JWKS URL automatically (`jwks_cache_ttl_secs` defaults to 3600).
+
+### Provider JWKS URLs
+
+| Provider | JWKS URL |
+|----------|----------|
+| Firebase | `https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com` |
+| Auth0 | `https://YOUR_DOMAIN.auth0.com/.well-known/jwks.json` |
+| Clerk | `https://YOUR_DOMAIN.clerk.accounts.dev/.well-known/jwks.json` |
+| Supabase | `https://YOUR_PROJECT.supabase.co/auth/v1/jwks` |
+
+### Firebase example
+
+```toml
+[auth]
+jwt_algorithm = "RS256"
+jwks_url = "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com"
+jwt_issuer = "https://securetoken.google.com/YOUR_PROJECT_ID"
+jwt_audience = "YOUR_PROJECT_ID"
+```
+
+When `jwt_issuer` is set, tokens with a different `iss` claim are rejected. When `jwt_audience` is set, tokens with a different `aud` claim are rejected. Both are optional but recommended for external providers to prevent token confusion across services.
+
+Token issuance via `ctx.issue_token()` is not available in RS256 mode since Forge only holds public keys, not the provider's private signing key.
+
 ## Identity Scope Enforcement
 
 Authenticated (non-public) functions with an input parameter must include at least one identity or tenant scope argument. Without it, Forge returns a runtime error: `"Function '...' must include identity or tenant scope arguments"`.

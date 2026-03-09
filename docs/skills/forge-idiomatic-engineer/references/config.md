@@ -20,7 +20,7 @@ Forge configuration, context API, error types, CLI workflow, and project structu
 - `version`: app version label
 
 ### [database]
-- `mode`, `url`, `pool_size`, `pool_timeout_secs`, `statement_timeout_secs`
+- `url`, `pool_size`, `pool_timeout_secs`, `statement_timeout_secs`
 - `replica_urls`, `read_from_replica` (health-aware round-robin, 15s ping, auto-fallback to primary)
 
 ### [database.pools.*]
@@ -67,15 +67,17 @@ Pool routing:
 
 ### Config value types and env var interpolation
 
-Environment variable interpolation (`${VAR}` or `${VAR-default}`) only works for **string** values. Boolean and integer fields must use literal TOML values.
+Environment variable interpolation (`${VAR}` or `${VAR-default}`) works for all value types. Substitution happens before TOML parsing, so the result must be valid TOML syntax.
 
 ```toml
-# correct
-enabled = false
+# booleans: no quotes (substitution produces bare true/false, valid TOML)
+enabled = ${FORGE_OTEL_ENABLED-false}
+
+# strings: use quotes (substitution produces the value inside the quotes)
 otlp_endpoint = "${OTEL_EXPORTER_OTLP_ENDPOINT-http://localhost:4318}"
 
-# wrong - boolean fields cannot use env var interpolation
-enabled = ${FORGE_OTEL_ENABLED-false}
+# wrong: quoting a boolean produces a string, not a boolean
+enabled = "${FORGE_OTEL_ENABLED-false}"
 ```
 
 ## 2) Context quick reference
@@ -253,7 +255,6 @@ If `forge` is not on `PATH`, search the repo and adjacent toolchain locations be
 
 ```bash
 forge new my-app --demo
-forge migrate status
 forge generate
 forge check
 ```
@@ -265,7 +266,7 @@ forge check
 - Author backend handlers/contracts directly in `src/functions/*` and `src/schema/*`.
 - After changing schema/functions/macros, run `forge generate`.
 - If `forge generate` is required but the CLI command is unresolved, solve that tooling problem first instead of faking generated output or deferring the step to the user.
-- When migrations change, use `forge migrate status` and `forge migrate up`.
+- Migrations run automatically on backend startup. For manual migration management during dev, use `docker compose exec db psql -U postgres -d <dbname>` or `docker compose exec backend forge migrate status`.
 - After adding handlers, verify `src/main.rs` registration before frontend work or delivery.
 - Run `forge check` from app root before completion. Fix all findings, rerun until clean.
 - For frontend, run the project's actual quality gates (`lint`, `svelte-check`, types, formatting`) using the detected package manager.
@@ -305,13 +306,24 @@ Do not use `CREATE TABLE IF NOT EXISTS` in migrations. It silently skips creatio
 Do not insert rows directly into `forge_migrations`. If migration state is wrong, fix the migration workflow instead of mutating Forge's bookkeeping table by hand.
 Do not raw-apply Forge-formatted migration files with `psql < ...` unless you know the file is compatible with that runner; markers and Forge helper functions can make this path misleading.
 
+### Database access during development
+
+PostgreSQL is only accessible inside the Docker network. The backend connects via `db:5432`. To interact with the database from the host:
+
+```bash
+# psql session
+docker compose exec db psql -U postgres -d <dbname>
+
+# migration status
+docker compose exec backend forge migrate status
+
+# rollback
+docker compose exec backend forge migrate down
+```
+
 ### Common `forge check` issues
 
-**Prettier finding test artifacts**: Add `test-results/` and `playwright-report/` to `.prettierignore`.
-
 **`#[forge::model]` info warning**: Informational, not an error. Standard derives work fine without the macro.
-
-**`[database].mode not set`**: Fine for local dev. Set it for production.
 
 **Clippy flakiness on first run**: Stale incremental cache. Forge sets `CARGO_INCREMENTAL=0` internally. Run `cargo clean` and retry if persistent.
 

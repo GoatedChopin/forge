@@ -1,328 +1,201 @@
 ---
 name: forge-idiomatic-engineer
-description: "Forge-focused engineering workflow for Rust + Svelte apps. Use for Forge/forgex projects, or whenever the codebase includes `forge.toml`, Forge macros, generated Forge frontend bindings, or Forge CLI-driven backend/frontend generation. Optimize for correct project discovery, authenticated scope handling, safe code generation, migrations, testing, and a clean final `forge check`."
+description: "Forge-focused engineering workflow for Rust + Svelte apps. Use this for Forge/forgex projects, or whenever the repo contains `forge.toml`, Forge macros, generated Forge frontend bindings, or Forge CLI-driven backend/frontend generation. Stay grounded in repo reality, prefer small vertical slices, keep tests beside the code they prove, avoid speculative environment chases, and stop cleanly on blocked runtime prerequisites such as occupied ports."
 ---
 
 # Forge Idiomatic Engineer
 
-Produce code that is easy to test, secure by default, observable in production, simple to extend, and idiomatic to Forge + Rust + Svelte 5.
+Work like a pragmatic maintainer: read the repo in front of you, make the smallest change that solves the user's stated problem, prove it with nearby tests, and stop cleanly when the environment blocks further progress.
 
-Default assumptions unless the project clearly says otherwise: Rust 2024 workspace, `forgex` imported as `forge`, PostgreSQL, macro-first function model, generated frontend bindings, strict linting, no `unwrap`/`expect` in runtime paths.
+Default assumptions unless the repo says otherwise: Rust 2024 workspace, `forgex` imported as `forge`, PostgreSQL, generated frontend bindings, and Svelte 5.
 
-## First Move: Establish Project Reality
+## Operating style
 
-Before editing anything:
+- Prefer direct evidence from this repo over general Forge lore.
+- Prefer one good local check over broad exploration.
+- Prefer a thin vertical slice over a broad rewrite.
+- Prefer explicit blockers over workaround cascades.
+- Prefer plain, nearby tests over clever shared abstractions.
 
-1. Find the app root (`forge.toml`) and run Forge commands from there.
-2. Inspect `forge.toml`, `Cargo.toml`, `src/main.rs`, `frontend/package.json` (or lockfile), and `migrations/`.
-3. Resolve the actual Forge command available in this environment.
-4. Confirm the generated frontend paths and existing tooling before you run generation or checks.
+Do not quietly upgrade a small bug fix into a redesign, auth rebuild, or environment investigation.
 
-Never assume:
-- `forge` is on `PATH`
-- the app binary itself supports Forge CLI subcommands
-- `bun`, `psql`, or Docker are installed
-- generated files live in a guessed directory
+## Start shallow
 
-Prefer project discovery over speculation. If the environment disagrees with the skill, trust the environment.
+Before editing, read only what defines the task surface:
 
-## Non-Negotiable Rules
+1. `forge.toml`
+2. `Cargo.toml`
+3. `src/main.rs`
+4. the exact handler/schema/frontend files you expect to touch
+5. `frontend/package.json` only if frontend work is in scope
+6. `migrations/` only if schema or DB work is in scope
 
-### 1) Discover the Actual Toolchain Before Running Commands
+Resolve the real Forge CLI entrypoint, then start working.
 
-Resolve, then use:
-- Forge CLI command (`forge`, repo-local binary, wrapper script, or other documented entrypoint)
-- frontend package manager (`bun`, `pnpm`, `npm`, etc.)
+Stop exploring once you know:
+
+- which files need changes
+- which command should verify them
+
+Avoid overanalysis. Do not:
+
+- tour unrelated parts of the codebase
+- generate a demo app just to infer patterns already visible here
+- spelunk crate internals before checking local code and `forge --help`
+- stack fallback after fallback once a blocker is already clear
+
+## Build order
+
+For most work:
+
+1. make the backend contract real
+2. add tests for the changed behavior
+3. run `forge generate` if the contract changed
+4. add the thinnest frontend needed to exercise the contract
+5. verify the requested user path
+6. run `forge check` last
+
+Do not start with the polished version.
+
+## UI default
+
+If the user asks for UI work but not for visual exploration, default to a simple UI:
+
+- clear labels
+- obvious states
+- minimal motion
+- no invented brand system
+- no dashboard complexity unless the task needs it
+
+Do not go above and beyond on visuals without user buy-in.
+
+## Test style
+
+Tests are part of the implementation.
+
+Keep them close to the code they prove:
+
+- handlers: same file, `#[cfg(test)] mod tests` at the bottom
+- pure helpers: same file, near the helper
+- test-only helpers: inside that module's test block unless multiple modules truly need them
+
+Good test code keeps special cases visible. Name and test the weird cases directly instead of hiding them behind clever fixtures or giant tables. The goal is not “clean-looking” tests. The goal is that a future change breaks loudly when behavior changes.
+
+Minimum bar:
+
+- backend behavior change => add backend tests
+- bug fix => add a regression test
+- UI change => add or update Playwright coverage
+
+Pure helper tests do not replace handler-level tests when handler behavior changed.
+
+## Runtime blockers
+
+Treat clear environment blockers as blockers.
+
+Before runtime verification, check the configured port from `forge.toml` or env files:
+
+```bash
+lsof -iTCP:<port> -sTCP:LISTEN -n -P
+```
+
+If the port is occupied:
+
+- tell the user which port is blocked and by what
+- stop runtime verification there
+- do not kill the other process
+- do not silently move the app to another port
+- do not continue to Playwright against a guessed alternative
+
+Apply the same principle to missing database access, missing package managers, missing Playwright browsers, or an unresolved Forge CLI.
+
+## Forge rules
+
+### Use the real toolchain
+
+Resolve and use the actual:
+
+- Forge CLI command
+- frontend package manager
+- test commands
 - local database workflow
 
-Do not guess command names. Do not invent fallback subcommands on the app binary.
-If `forge` is not on `PATH`, search project-local binaries, checked-in toolchains, or build outputs before treating generation as unavailable.
+Do not invent subcommands on the app binary. Do not guess generated paths.
 
-### 2) Playwright Tests for UI Changes
+### Backend before generated frontend
 
-Every UI change requires Playwright integration coverage. Write or update the tests and run them. The task is not complete until they pass.
-
-For auth work specifically: cover register, login, authenticated state, and logout.
-
-Do not send a completion summary for a UI task unless you can state the Playwright result explicitly. If Playwright is blocked, report the task as blocked, not complete.
-
-### 3) `forge check` Is the Final Gate
-
-`forge check` is the absolute last step before delivery. Run it from the app root. Fix every error and actionable warning. Rerun until clean.
-
-### 4) All Tests Must Pass
-
-Backend and frontend test failures are blockers. Diagnose the root cause, fix it, rerun, and only then deliver.
-
-Adding zero tests after changing backend behavior or UI is also a failure. `forge check`, lint, `svelte-check`, and manual clicking do not count as test coverage.
-
-Minimum expectation:
-- backend behavior change => add backend tests
-- UI change => add or update Playwright coverage
-- bug fix => add a regression test
-
-Pure helper tests alone are not enough when handlers changed. Add handler-level or integration coverage for the changed backend behavior.
-
-### 5) Backend Contracts Before Frontend Integration
-
-Complete backend behavior and tests first. Run generation. Then wire the frontend against the generated contract. Do not start speculative frontend work against unstable backend signatures.
-
-### 6) Run `forge generate` After Backend Contract Changes
-
-After schema/function/macro changes, run `forge generate` before touching dependent frontend code.
+Finish the backend behavior and its tests first. Then run `forge generate`. Then wire the frontend against the generated contract.
 
 Never hand-edit generated files:
+
 - `frontend/src/lib/forge/*`
 - `frontend/.forge/*`
 
-Never hand-create replacement files inside generated directories either. Placeholder or missing generated files are not permission to author them manually.
+### Handler registration matters
 
-If generation is required and the Forge CLI command is still unresolved, stop and resolve the tooling problem first. Do not defer `forge generate` to the user and do not fake generated bindings.
+After adding handlers, verify they are actually wired through `src/main.rs` and the local module exports. Do not assume macros alone made them reachable.
 
-If generation writes to an unexpected nested location, stop and fix the cwd/config issue instead of patching the duplicate output.
+### Migrations must match the repo
 
-### 7) Migration Discipline
+Before editing migrations, inspect the local format and preserve required markers such as `-- @up` and `-- @down`.
 
-Before adding or editing a migration:
-- inspect the existing scaffold/template in `migrations/`
-- preserve the required format used by this project
-- delete placeholder example migrations when replacing them
+Do not manually reconcile Forge migration state in the database.
 
-Do not:
-- manually insert rows into `forge_migrations`
-- manually apply SQL first and try to reconcile the state later
-- use `CREATE TABLE IF NOT EXISTS` to mask scaffold conflicts
-- pipe Forge-formatted migration files straight into `psql` unless you are certain the format and helper functions are compatible with that path
+### Auth and ownership
 
-If the project expects markers such as `-- @up` / `-- @down`, keep them.
+For user-owned data, default to secure behavior unless the user explicitly asked for no auth.
 
-### 8) Register New Handlers in `src/main.rs`
+- derive acting identity from context
+- never trust client-supplied ownership fields as authority
+- validate ownership on the backend
+- treat frontend payloads as hints, not truth
 
-Forge macros do not make handlers reachable by themselves. After adding queries, mutations, jobs, or workflows:
-- update `src/main.rs`
-- register each new handler on the builder
-- verify the route is actually callable before claiming success
+### No fake inputs
 
-Do not assume `mod.rs` exports are enough.
+If a query or mutation has no real business input, omit the input parameter entirely. Do not use `Option<()>`, `()`, dummy structs, or underscore-prefixed unused inputs.
 
-### 9) Auth by Default for User-Owned Apps
+## Verification order
 
-For greenfield apps with user-owned data, default to auth unless the user explicitly wants a single-user or no-auth build.
+Run verification in this order when not blocked:
 
-Silence on auth is not permission to ship public CRUD for user-owned records.
+1. focused backend tests
+2. `forge generate` if the contract changed
+3. frontend checks if frontend changed
+4. runtime verification if runtime behavior matters
+5. Playwright if UI changed
+6. `forge check` last
 
-When auth is in scope:
-- configure `[auth]` in `forge.toml`
-- create public `register` and `login` mutations
-- verify end-to-end against the running API
-- build the minimal login/register frontend needed to exercise the app
+Do not claim completion if tests were not run, Playwright failed, runtime boot is blocked, or `forge check` still fails.
 
-### 10) Identity Scope Rule for Authenticated Inputs
+## Reference loading
 
-If an authenticated query or mutation accepts any input struct, that Rust input type must include an identity or tenant scope field (`user_id`, `userId`, `owner_id`, `subject`, `principal_id`, `tenant_id`, or camelCase variants).
+Most small tasks need only this file.
 
-Only use the no-input form when the handler truly has no business inputs.
+Load one supporting reference when the task needs it:
 
-Important:
-- the router validates the scope field against the JWT before the handler runs
-- handler code should still use `ctx.require_user_id()?` / `ctx.require_subject()?`
-- generated TypeScript bindings may omit the injected scope field from client-facing call signatures; trust the generated client contract instead of forcing extra frontend args
-
-### 11) Never Trust Frontend Data
-
-Frontend payloads are convenience, not authority.
-
-Always validate on the backend:
-- required fields, lengths, formats, enums, bounds, and state transitions
-- ownership and authorization for every user-visible record
-- derived or sensitive values such as `user_id`, roles, tenant, and timestamps
-
-Rules:
-- never trust a client-supplied `user_id` for SQL scoping; derive the acting principal from `ctx.require_user_id()?`
-- never trust frontend booleans, prices, statuses, or permissions without backend validation
-- use frontend-provided ids only as lookup candidates, then verify ownership in SQL or domain logic
-- treat router scope validation as one layer, not the whole security model
-
-### 12) No Dummy or Underscore Input Parameters
-
-When a query or mutation takes no input, omit the args parameter entirely. Never use `Option<()>`, `()`, or dummy structs.
-
-If a parameter is unused, remove it instead of prefixing it with `_`. Generated TypeScript names preserve the Rust parameter name verbatim.
-
-```rust
-// correct
-#[forge::query(public)]
-pub async fn list_todos(ctx: &QueryContext) -> Result<Vec<Todo>> { ... }
-
-// wrong
-#[forge::query(public)]
-pub async fn list_todos(ctx: &QueryContext, _input: Option<()>) -> Result<Vec<Todo>> { ... }
-```
-
-## Quick Reference
-
-### Primitive selection
-
-| Need | Use |
+| Signal | Load |
 |---|---|
-| Read data | `#[forge::query]` |
-| Write data | `#[forge::mutation]` |
-| Async work | `#[forge::job]` |
-| Recurring schedule | `#[forge::cron]` |
-| Multi-step durable process | `#[forge::workflow]` |
-| External callback | `#[forge::webhook]` |
-| AI-callable tool | `#[forge::mcp_tool]` |
-| Long-running background process | `#[forge::daemon]` |
+| Auth, JWT, login/register, protected routes | `references/auth.md` |
+| Frontend structure or Svelte patterns | `references/frontend.md` |
+| Test design or Playwright expectations | `references/testing.md` |
+| Forge config, CLI flow, migrations, generated paths | `references/config.md` |
+| Jobs, workflows, crons, background work | `references/patterns.md` |
+| Webhooks, daemons, external APIs, file uploads | `references/integrations.md` |
+| Production hardening or observability | `references/operations.md` |
+| Review or anti-pattern checks | `references/quality.md` |
 
-Avoid:
-- workflow for a single async task: use mutation + job
-- heavy sync work in a webhook: dispatch a job, return quickly
-- writes in a query: use mutation
-- cron for a one-off delayed sequence: use workflow with sleep
+Use live documentation only when the local repo does not answer the question or the API may have changed.
 
-### Basic query
+## Output contract
 
-```rust
-#[forge::query(tables = ["orders"])]
-pub async fn list_orders(ctx: &QueryContext) -> Result<Vec<Order>> {
-    let uid = ctx.require_user_id()?;
+For implementation tasks, report:
 
-    sqlx::query_as("SELECT id, status, total FROM orders WHERE user_id = $1 ORDER BY created_at DESC")
-        .bind(uid)
-        .fetch_all(ctx.db())
-        .await
-        .map_err(Into::into)
-}
-```
+1. what changed
+2. which tests were added or updated
+3. what you ran
+4. whether runtime verification succeeded or what blocked it
+5. Playwright result for UI work
+6. `forge check` result
+7. real risks or follow-ups
 
-### Basic mutation
-
-```rust
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CreateOrderInput {
-    pub user_id: Uuid,
-    pub total_cents: i64,
-}
-
-#[forge::mutation(transactional)]
-pub async fn create_order(ctx: &MutationContext, input: CreateOrderInput) -> Result<Order> {
-    let uid = ctx.require_user_id()?;
-    debug_assert_eq!(input.user_id, uid);
-
-    let order: Order = ctx.db()
-        .fetch_one(
-            sqlx::query_as("INSERT INTO orders (user_id, total) VALUES ($1, $2) RETURNING *")
-                .bind(uid)
-                .bind(input.total_cents),
-        )
-        .await?;
-
-    ctx.dispatch_job("send_receipt", serde_json::json!({ "order_id": order.id })).await?;
-    Ok(order)
-}
-```
-
-Use `transactional` when multiple related writes, job/workflow dispatch, or all-or-nothing consistency are involved.
-
-### DbConn calling conventions
-
-- `QueryContext::db()` behaves like `&PgPool`; chain sqlx fetches directly on it.
-- `MutationContext::db()` returns `DbConn<'_>`; prefer its wrapper methods in mutations.
-- `MutationContext::pool()` is the direct pool escape hatch when needed.
-- For shared helpers: `pub(crate) async fn helper(db: DbConn<'_>, ...) -> Result<T>`.
-
-### Scope enforcement
-
-- Authenticated handlers default to protected unless `public` is explicitly justified.
-- Authenticated handlers with input parameters must include an identity or tenant key.
-- No-input authenticated handlers may omit the input and rely on `ctx.require_user_id()?`.
-- Do not add redundant manual `if input.user_id != ctx.require_user_id()?` checks in production logic.
-- Never trust frontend payload fields as authority for ownership, permissions, prices, or other security-sensitive values.
-- Input/output structs derive both `Serialize` and `Deserialize`.
-
-### Error mapping
-
-| Condition | Variant | HTTP |
-|---|---|---|
-| Invalid input | `ForgeError::Validation` | 400 |
-| No/bad auth | `ForgeError::Unauthorized` | 401 |
-| Wrong scope/role | `ForgeError::Forbidden` | 403 |
-| Missing entity | `ForgeError::NotFound` | 404 |
-| Rate limited | `ForgeError::RateLimitExceeded` | 429 |
-| Server fault (last resort) | `ForgeError::Internal` | 500 |
-
-Do not collapse domain-specific failures into `Internal`.
-
-### Project structure
-
-- `src/functions/` for Forge handlers
-- `src/schema/` for all input/output structs and domain models
-- `src/utils/` for pure helpers
-- tests inline with `#[cfg(test)] mod tests` at the bottom of the relevant file
-
-## Execution Order
-
-1. Discover the app root, CLI entrypoints, package manager, migration format, and generated paths.
-2. Implement backend behavior and tests in `src/functions/`, `src/schema/`, and `src/utils/`.
-3. Run backend tests before generation. Do not delete scaffolded test examples without replacing them with real tests.
-4. Run `forge generate` after backend contracts are correct.
-5. Implement the thinnest usable frontend slice against the generated client.
-6. Run frontend quality gates (`lint`, `svelte-check`, types, formatting) using the project's actual package manager.
-7. Prove the app boots through the project's real dev flow (`forge dev` or the discovered equivalent) when the task is supposed to work out of the box.
-8. Run Playwright if UI changed.
-9. Run `forge check` from the app root as the final clean gate.
-
-For greenfield builds, deliver a narrow vertical slice first, then polish. Do not jump straight into a large one-file UI.
-Do not present “everything passes”, “clean”, or “ready” language before steps 7-9 are actually complete for UI work.
-
-## Reference Loading
-
-Most tasks (add a query, fix a mutation, small refactor) need nothing beyond this file.
-
-### No reference needed
-
-- adding or modifying a simple query or mutation
-- bug fixes in existing handlers
-- small refactors inside established patterns
-
-### Load one reference when triggered
-
-| Signal in the task | Load |
-|---|---|
-| Auth setup, login/register, JWT, protected routes, auth store | `references/auth.md` |
-| Jobs, crons, workflows, retries, scheduling, background processing | `references/patterns.md` |
-| Webhooks, custom HTTP routes, daemons, MCP tools, file uploads, OAuth, external APIs | `references/integrations.md` |
-| Frontend, Svelte 5, components, pages, UI, reactivity, design | `references/frontend.md` |
-| Test strategy, Playwright setup, coverage approach | `references/testing.md` |
-| Code review, audit, anti-pattern check, quality gate | `references/quality.md` |
-| `forge.toml`, context API, CLI workflow, migrations, generated paths | `references/config.md` |
-| Read replicas, observability, tracing, production hardening | `references/operations.md` |
-
-### Load two for compound tasks
-
-- full-stack feature: `references/frontend.md` + `references/testing.md`
-- auth + frontend: `references/auth.md` + `references/testing.md`
-- production review: `references/quality.md` + `references/operations.md`
-
-### API uncertainty
-
-Use live documentation lookup when Forge, Svelte 5, or third-party APIs may have changed.
-
-## Output Contract
-
-### Implementation output
-
-1. Contract summary
-2. Files changed and rationale
-3. Backend tests run or added
-4. App boot verification result
-5. Playwright result for UI tasks
-6. Security, scale, and observability checks
-7. `forge check` result
-8. Risks or follow-ups
-
-### Review output
-
-- findings first, ordered by severity with file/line references
-- then assumptions or open questions
-- then a short summary
+For review tasks, give findings first with file references, then assumptions or open questions, then a short summary.
