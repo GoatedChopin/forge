@@ -5,6 +5,7 @@ use std::path::Path;
 use std::process::Stdio;
 use tokio::process::Command;
 
+use super::frontend_target::FrontendTarget;
 use super::runtime_generator::{MismatchKind, verify_checksums};
 use super::ui;
 
@@ -513,11 +514,7 @@ impl CheckCommand {
         // Count query-*.json files
         let query_files: Vec<_> = std::fs::read_dir(sqlx_dir)?
             .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.file_name()
-                    .to_string_lossy()
-                    .starts_with("query-")
-            })
+            .filter(|e| e.file_name().to_string_lossy().starts_with("query-"))
             .collect();
 
         if query_files.is_empty() {
@@ -528,7 +525,10 @@ impl CheckCommand {
             return Ok(());
         }
 
-        result.pass(&format!(".sqlx/ cache with {} query file(s)", query_files.len()));
+        result.pass(&format!(
+            ".sqlx/ cache with {} query file(s)",
+            query_files.len()
+        ));
 
         // Warn if migrations are newer than cache
         let migrations_dir = Path::new("migrations");
@@ -541,11 +541,7 @@ impl CheckCommand {
 
             let migration_mtime = std::fs::read_dir(migrations_dir)?
                 .filter_map(|e| e.ok())
-                .filter(|e| {
-                    e.path()
-                        .extension()
-                        .is_some_and(|ext| ext == "sql")
-                })
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "sql"))
                 .filter_map(|e| e.metadata().ok())
                 .filter_map(|m| m.modified().ok())
                 .max();
@@ -641,65 +637,92 @@ impl CheckCommand {
 
         println!();
         result.pass("frontend/ directory exists");
+        let target = FrontendTarget::detect(frontend_dir).unwrap_or(FrontendTarget::SvelteKit);
 
-        // Check package.json
-        let package_json = frontend_dir.join("package.json");
-        if !package_json.exists() {
-            result.fail(
-                "frontend/package.json not found",
-                "Run 'cd frontend && bun init' to initialize",
-            );
-            return Ok(());
-        }
+        match target {
+            FrontendTarget::SvelteKit => {
+                let package_json = frontend_dir.join("package.json");
+                if !package_json.exists() {
+                    result.fail(
+                        "frontend/package.json not found",
+                        "Run 'cd frontend && bun init' to initialize",
+                    );
+                    return Ok(());
+                }
 
-        let content = std::fs::read_to_string(&package_json)?;
-        let package: serde_json::Value = match serde_json::from_str(&content) {
-            Ok(p) => p,
-            Err(e) => {
-                result.fail(
-                    &format!("package.json parse error: {}", e),
-                    "Fix JSON syntax in package.json",
-                );
-                return Ok(());
+                let content = std::fs::read_to_string(&package_json)?;
+                let package: serde_json::Value = match serde_json::from_str(&content) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        result.fail(
+                            &format!("package.json parse error: {}", e),
+                            "Fix JSON syntax in package.json",
+                        );
+                        return Ok(());
+                    }
+                };
+
+                let has_svelte = package
+                    .get("devDependencies")
+                    .or_else(|| package.get("dependencies"))
+                    .and_then(|deps| deps.get("svelte"))
+                    .is_some();
+
+                if has_svelte {
+                    result.pass("Svelte dependency found");
+                } else {
+                    result.warn(
+                        "Svelte not found in dependencies",
+                        "This might not be a FORGE frontend project",
+                    );
+                }
+
+                if frontend_dir.join(".forge").join("svelte").exists() {
+                    result.pass("FORGE Svelte runtime generated");
+                } else {
+                    result.warn(
+                        ".forge/svelte runtime not found",
+                        "Run 'forge generate' to create TypeScript types",
+                    );
+                }
+
+                if frontend_dir.join("node_modules").exists() {
+                    result.pass("Frontend dependencies installed");
+                } else {
+                    result.warn(
+                        "Frontend dependencies not installed",
+                        "Run 'cd frontend && bun install'",
+                    );
+                }
             }
-        };
+            FrontendTarget::Dioxus => {
+                if frontend_dir.join("Cargo.toml").exists() {
+                    result.pass("Dioxus Cargo.toml found");
+                } else {
+                    result.fail(
+                        "frontend/Cargo.toml not found",
+                        "Add a Dioxus frontend crate in frontend/",
+                    );
+                }
 
-        // Check for svelte dependency
-        let has_svelte = package
-            .get("devDependencies")
-            .or_else(|| package.get("dependencies"))
-            .and_then(|deps| deps.get("svelte"))
-            .is_some();
+                if frontend_dir.join("Dioxus.toml").exists() {
+                    result.pass("Dioxus.toml found");
+                } else {
+                    result.fail(
+                        "frontend/Dioxus.toml not found",
+                        "Create frontend/Dioxus.toml for dx build/serve",
+                    );
+                }
 
-        if has_svelte {
-            result.pass("Svelte dependency found");
-        } else {
-            result.warn(
-                "Svelte not found in dependencies",
-                "This might not be a FORGE frontend project",
-            );
-        }
-
-        // Check for .forge/svelte runtime
-        let runtime_dir = frontend_dir.join(".forge").join("svelte");
-        if runtime_dir.exists() {
-            result.pass("FORGE runtime generated");
-        } else {
-            result.warn(
-                ".forge/svelte runtime not found",
-                "Run 'forge generate' to create TypeScript types",
-            );
-        }
-
-        // Check node_modules
-        let node_modules = frontend_dir.join("node_modules");
-        if node_modules.exists() {
-            result.pass("Frontend dependencies installed");
-        } else {
-            result.warn(
-                "Frontend dependencies not installed",
-                "Run 'cd frontend && bun install'",
-            );
+                if frontend_dir.join(".forge").join("dioxus").exists() {
+                    result.pass("FORGE Dioxus runtime generated");
+                } else {
+                    result.warn(
+                        ".forge/dioxus runtime not found",
+                        "Run 'forge generate' to create Dioxus bindings",
+                    );
+                }
+            }
         }
 
         Ok(())
@@ -766,42 +789,57 @@ impl CheckCommand {
         if !frontend_dir.exists() {
             return;
         }
+        let target = FrontendTarget::detect(frontend_dir).unwrap_or(FrontendTarget::SvelteKit);
 
-        // Check if node_modules exists (linting needs deps)
+        println!();
+
+        if target == FrontendTarget::Dioxus {
+            let cargo_fmt = Command::new("cargo")
+                .args(["fmt", "--check", "--manifest-path", "frontend/Cargo.toml"])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .await;
+
+            match cargo_fmt {
+                Ok(status) if status.success() => result.pass("Dioxus cargo fmt check passed"),
+                Ok(_) => result.fail(
+                    "Dioxus frontend formatting issues found",
+                    "Run 'cargo fmt --manifest-path frontend/Cargo.toml'",
+                ),
+                Err(_) => result.warn(
+                    "Could not run Dioxus cargo fmt",
+                    "Ensure rustfmt is installed",
+                ),
+            }
+        }
+
         if !frontend_dir.join("node_modules").exists() {
             return;
         }
 
-        println!();
+        if target == FrontendTarget::SvelteKit {
+            let eslint_result = Command::new("bunx")
+                .args(["eslint", "."])
+                .current_dir(frontend_dir)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .await;
 
-        // Check ESLint
-        let eslint_result = Command::new("bunx")
-            .args(["eslint", "."])
-            .current_dir(frontend_dir)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .await;
-
-        match eslint_result {
-            Ok(status) if status.success() => {
-                result.pass("ESLint check passed");
-            }
-            Ok(_) => {
-                result.fail(
+            match eslint_result {
+                Ok(status) if status.success() => result.pass("ESLint check passed"),
+                Ok(_) => result.fail(
                     "ESLint errors found",
                     "Run 'cd frontend && bunx eslint .' to see errors",
-                );
-            }
-            Err(_) => {
-                result.warn(
+                ),
+                Err(_) => result.warn(
                     "Could not run ESLint",
                     "Ensure eslint is installed in frontend/",
-                );
+                ),
             }
         }
 
-        // Check Prettier
         let prettier_result = Command::new("bunx")
             .args(["prettier", "--check", "."])
             .current_dir(frontend_dir)

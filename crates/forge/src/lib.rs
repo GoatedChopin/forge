@@ -1,7 +1,7 @@
 //! FORGE - The Rust Full-Stack Framework
 //!
 //! A batteries-included framework for building full-stack web applications
-//! with Rust backend and Svelte 5 frontend.
+//! with a Rust backend and generated SvelteKit or Dioxus frontends.
 
 mod runtime;
 

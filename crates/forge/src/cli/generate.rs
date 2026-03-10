@@ -1,13 +1,14 @@
 use anyhow::Result;
 use clap::Parser;
 use console::style;
-use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 
+use super::frontend_codegen::BindingGeneratorInput;
+use super::frontend_target::FrontendTarget;
 use super::runtime_generator::{
     FORGE_VERSION, generate_runtime, get_installed_version, has_legacy_runtime, needs_update,
-    remove_legacy_runtime, update_frontend_package_json,
+    remove_legacy_runtime,
 };
 use super::ui;
 
@@ -21,6 +22,10 @@ pub struct GenerateCommand {
     /// Output directory (defaults to frontend/src/lib/forge).
     #[arg(short, long)]
     pub output: Option<String>,
+
+    /// Frontend target (`sveltekit` or `dioxus`). Defaults to auto-detection.
+    #[arg(long)]
+    pub target: Option<FrontendTarget>,
 
     /// Source directory to scan for models (defaults to src).
     #[arg(short, long)]
@@ -38,24 +43,22 @@ pub struct GenerateCommand {
 impl GenerateCommand {
     /// Execute the generate command.
     pub async fn execute(self) -> Result<()> {
-        let output_dir = self
-            .output
-            .unwrap_or_else(|| "frontend/src/lib/forge".to_string());
-        let output_path = Path::new(&output_dir);
-
         let src_dir = self.src.unwrap_or_else(|| "src".to_string());
         let src_path = Path::new(&src_dir);
 
-        // Detect frontend directory (parent of output_dir, or current dir)
-        let frontend_dir = output_path
-            .parent()
-            .and_then(|p| p.parent())
-            .and_then(|p| p.parent())
-            .unwrap_or(Path::new("."));
+        let detected_target = self
+            .target
+            .or_else(|| FrontendTarget::detect(Path::new("frontend")))
+            .unwrap_or(FrontendTarget::SvelteKit);
+        let output_dir = self
+            .output
+            .unwrap_or_else(|| detected_target.default_output_dir().to_string());
+        let output_path = Path::new(&output_dir);
+        let frontend_dir = Path::new("frontend");
 
         // Step 1: Check for legacy runtime and handle migration
         eprint!("  Checking project structure...");
-        if has_legacy_runtime(frontend_dir) {
+        if detected_target == FrontendTarget::SvelteKit && has_legacy_runtime(frontend_dir) {
             eprintln!();
 
             ui::section("Runtime Migration");
@@ -94,11 +97,11 @@ impl GenerateCommand {
             );
 
             // Generate new runtime
-            generate_runtime(frontend_dir)?;
+            generate_runtime(frontend_dir, FrontendTarget::SvelteKit)?;
             println!("  {} Created .forge/svelte/ package", ui::ok());
 
             // Update package.json
-            update_frontend_package_json(frontend_dir)?;
+            FrontendTarget::SvelteKit.update_frontend_manifest(frontend_dir)?;
             println!(
                 "  {} Updated package.json with @forge/svelte dependency",
                 ui::ok()
@@ -115,9 +118,12 @@ impl GenerateCommand {
 
         // Step 2: Check runtime version and update if needed
         if !self.skip_runtime {
-            let forge_dir_exists = frontend_dir.join(".forge/svelte").exists();
+            let forge_dir_exists = frontend_dir
+                .join(".forge")
+                .join(detected_target.runtime_dir_name())
+                .exists();
 
-            if forge_dir_exists && needs_update(frontend_dir) {
+            if forge_dir_exists && needs_update(frontend_dir, detected_target) {
                 let installed =
                     get_installed_version(frontend_dir).unwrap_or_else(|| "unknown".to_string());
                 let version_changed = installed != FORGE_VERSION;
@@ -143,7 +149,7 @@ impl GenerateCommand {
                         if input == "n" || input == "no" {
                             println!();
                             println!(
-                                "{} Update declined. Use --skip-runtime to only regenerate types.",
+                                "{} Update declined. Use --skip-runtime to only regenerate bindings.",
                                 ui::info()
                             );
                             return Ok(());
@@ -151,24 +157,28 @@ impl GenerateCommand {
                     }
                 }
 
-                eprint!("  Regenerating @forge/svelte runtime...");
-                generate_runtime(frontend_dir)?;
+                eprint!(
+                    "  Regenerating {} runtime...",
+                    detected_target.display_name()
+                );
+                generate_runtime(frontend_dir, detected_target)?;
                 eprintln!(" done");
 
                 if version_changed {
                     println!();
                     println!(
-                        "  {} Updated @forge/svelte runtime (v{} → v{})",
+                        "  {} Updated {} runtime (v{} → v{})",
                         ui::ok(),
+                        detected_target.display_name(),
                         installed,
                         FORGE_VERSION
                     );
                 }
             } else if !forge_dir_exists {
                 // First time generation
-                eprint!("  Generating @forge/svelte runtime...");
-                generate_runtime(frontend_dir)?;
-                update_frontend_package_json(frontend_dir)?;
+                eprint!("  Generating {} runtime...", detected_target.display_name());
+                generate_runtime(frontend_dir, detected_target)?;
+                detected_target.update_frontend_manifest(frontend_dir)?;
                 eprintln!(" done");
             }
         }
@@ -187,41 +197,25 @@ impl GenerateCommand {
             || !registry.all_enums().is_empty()
             || !registry.all_functions().is_empty();
 
-        if has_schema {
-            // Use forge_codegen to generate TypeScript
-            eprint!("  Generating TypeScript from schema...");
-
-            // Check if auth is configured in forge.toml
-            let generate_auth = forge_core::config::ForgeConfig::from_file("forge.toml")
-                .map(|c| c.auth.jwt_secret.is_some() || c.auth.jwks_url.is_some())
-                .unwrap_or(false);
-
-            let options = forge_codegen::GenerateOptions {
-                generate_auth_store: generate_auth,
-            };
-            let generator = forge_codegen::TypeScriptGenerator::with_options(&output_dir, options);
-            generator.generate(&registry)?;
-            eprintln!(" done");
-        } else {
-            // Fall back to default templates if no schema found
-            if !output_path.exists() {
-                fs::create_dir_all(output_path)?;
-            }
-
-            eprint!("  Generating defaults...");
-            generate_types(output_path, self.force)?;
-            generate_api(output_path, self.force)?;
-            generate_stores(output_path, self.force)?;
-            generate_runes(output_path)?;
-            generate_index(output_path)?;
-            eprintln!(" done");
-        }
+        eprint!(
+            "  Generating {} bindings...",
+            detected_target.display_name()
+        );
+        detected_target.generate_bindings(&BindingGeneratorInput {
+            output_dir: &output_dir,
+            output_path,
+            registry: &registry,
+            has_schema,
+            force: self.force,
+        })?;
+        eprintln!(" done");
 
         println!();
         if !self.skip_runtime {
             println!(
-                "  {} Generated @forge/svelte runtime (v{})",
+                "  {} Generated {} runtime (v{})",
                 ui::ok(),
+                detected_target.display_name(),
                 FORGE_VERSION
             );
         }
@@ -230,7 +224,7 @@ impl GenerateCommand {
             let enum_count = registry.all_enums().len();
             let function_count = registry.all_functions().len();
             println!(
-                "  {} Generated TypeScript from {} models, {} enums, {} functions",
+                "  {} Generated bindings from {} models, {} enums, {} functions",
                 ui::ok(),
                 style(table_count).cyan(),
                 style(enum_count).cyan(),
@@ -241,175 +235,5 @@ impl GenerateCommand {
         println!();
 
         Ok(())
-    }
-}
-
-/// Generate types.ts from schema.
-fn generate_types(output_dir: &Path, force: bool) -> Result<()> {
-    let file_path = output_dir.join("types.ts");
-    if file_path.exists() && !force {
-        return Ok(());
-    }
-
-    let content = r#"// Auto-generated by FORGE - DO NOT EDIT
-// Run `forge generate` after adding or modifying models
-
-// Model types will be generated here based on your Rust schema
-// Example: export interface User { id: string; name: string; }
-
-// Common types (re-exported from @forge/svelte for convenience)
-export type { ForgeError, QueryResult, SubscriptionResult } from "@forge/svelte";
-"#;
-
-    fs::write(file_path, content)?;
-    Ok(())
-}
-
-/// Generate api.ts with function bindings.
-fn generate_api(output_dir: &Path, force: bool) -> Result<()> {
-    let file_path = output_dir.join("api.ts");
-    if file_path.exists() && !force {
-        return Ok(());
-    }
-
-    let content = r#"// Auto-generated by FORGE - DO NOT EDIT
-// Run `forge generate` after adding functions to src/functions/
-
-// Function bindings will be generated here based on your Rust functions
-// Example:
-// import { createQuery, createMutation } from "@forge/svelte";
-// import type { User } from "./types";
-// export const getUsers = createQuery<null, User[]>("get_users");
-// export const createUser = createMutation<{ name: string }, User>("create_user");
-
-export {};
-"#;
-
-    fs::write(file_path, content)?;
-    Ok(())
-}
-
-/// Generate stores.ts for Svelte integration.
-fn generate_stores(output_dir: &Path, force: bool) -> Result<()> {
-    let file_path = output_dir.join("stores.ts");
-    if file_path.exists() && !force {
-        return Ok(());
-    }
-
-    let content = r#"// Auto-generated by FORGE - DO NOT EDIT
-export {
-  getForgeClient,
-  createConnectionStore,
-  createQueryStore,
-  createSubscriptionStore,
-  createJobStore,
-  createWorkflowStore,
-  dt,
-} from '@forge/svelte';
-export type {
-  Readable,
-  ConnectionStatusStore,
-  QueryStore,
-  SubscriptionStore,
-  JobStore,
-  WorkflowStore,
-} from '@forge/svelte';
-"#;
-
-    fs::write(file_path, content)?;
-    Ok(())
-}
-
-/// Generate runes.svelte.ts for Svelte 5 runes support.
-fn generate_runes(output_dir: &Path) -> Result<()> {
-    let file_path = output_dir.join("runes.svelte.ts");
-
-    let content = r#"// Auto-generated by FORGE - DO NOT EDIT
-import type { SubscriptionStore } from "@forge/svelte";
-import type { SubscriptionResult } from "@forge/svelte";
-
-export interface ReactiveQuery<T> extends SubscriptionResult<T> {
-  unsubscribe: () => void;
-}
-
-export function toReactive<T>(store: SubscriptionStore<T>): ReactiveQuery<T> {
-  const state: ReactiveQuery<T> = $state({
-    loading: true,
-    data: null,
-    error: null,
-    stale: false,
-    unsubscribe: () => {
-      unsubscribeCallback();
-      store.unsubscribe();
-    },
-  });
-
-  const unsubscribeCallback = store.subscribe((s) => {
-    state.loading = s.loading;
-    state.data = s.data;
-    state.error = s.error;
-    state.stale = s.stale;
-  });
-
-  return state;
-}
-"#;
-
-    fs::write(file_path, content)?;
-    Ok(())
-}
-
-/// Generate index.ts.
-fn generate_index(output_dir: &Path) -> Result<()> {
-    let file_path = output_dir.join("index.ts");
-
-    let content = r#"// Auto-generated by FORGE - DO NOT EDIT
-
-// Types
-export * from './types';
-
-// API bindings
-export * from './api';
-
-// Stores (re-exported from @forge/svelte)
-export * from './stores';
-
-// Runes (Svelte 5 reactive helpers)
-export * from './runes.svelte';
-
-// Client and Provider (re-exported from @forge/svelte)
-export { ForgeClient, ForgeClientError, createForgeClient, ForgeProvider } from '@forge/svelte';
-"#;
-
-    fs::write(file_path, content)?;
-
-    Ok(())
-}
-
-#[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
-mod tests {
-    use super::*;
-    use tempfile::tempdir;
-
-    #[test]
-    fn test_generate_types() {
-        let dir = tempdir().unwrap();
-        generate_types(dir.path(), false).unwrap();
-        assert!(dir.path().join("types.ts").exists());
-    }
-
-    #[test]
-    fn test_generate_api() {
-        let dir = tempdir().unwrap();
-        generate_api(dir.path(), false).unwrap();
-        assert!(dir.path().join("api.ts").exists());
-    }
-
-    #[test]
-    fn test_generate_stores() {
-        let dir = tempdir().unwrap();
-        generate_stores(dir.path(), false).unwrap();
-        assert!(dir.path().join("stores.ts").exists());
     }
 }

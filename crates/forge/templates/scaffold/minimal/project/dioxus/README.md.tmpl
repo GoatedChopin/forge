@@ -1,0 +1,34 @@
+# {{project_name}}
+
+Built with [FORGE](https://tryforge.dev). Rust backend, Dioxus frontend, one PostgreSQL dependency.
+
+## Development
+
+```bash
+forge dev
+```
+
+Starts PostgreSQL, the Rust backend, and the Dioxus web frontend.
+
+- Frontend: http://localhost:5173
+- Backend: http://localhost:8080
+- PostgreSQL: localhost:5432
+
+### Useful Commands
+
+```bash
+forge generate              # regenerate Dioxus bindings from Rust models/functions
+forge check                 # validate config, migrations, and project health
+forge migrate status        # check which migrations have run
+forge migrate up            # apply pending migrations
+forge migrate down          # rollback the last migration
+```
+
+### Production Build
+
+```bash
+cd frontend && dx build --web --release && cd ..
+cargo build --release
+```
+
+The release binary embeds the compiled Dioxus app from `frontend/dist`.

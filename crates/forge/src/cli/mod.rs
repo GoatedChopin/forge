@@ -1,5 +1,9 @@
 mod check;
 mod dev;
+mod frontend_codegen;
+mod frontend_runtime;
+mod frontend_scaffold;
+mod frontend_target;
 mod generate;
 mod migrate;
 mod new;

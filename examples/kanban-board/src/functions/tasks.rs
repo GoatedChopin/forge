@@ -84,9 +84,7 @@ pub async fn create_task(ctx: &MutationContext, input: CreateTaskInput) -> Resul
 
     let priority = input.priority.unwrap_or(TaskPriority::Medium);
     let title = input.title.trim().to_string();
-    let mut conn = ctx
-        .conn()
-        .await?;
+    let mut conn = ctx.conn().await?;
 
     // CTE validates project ownership and computes next position in one round-trip
     sqlx::query_as!(
@@ -123,9 +121,7 @@ pub async fn update_task(ctx: &MutationContext, input: UpdateTaskInput) -> Resul
 
     let title = input.title.as_deref();
     let description = input.description.as_deref();
-    let mut conn = ctx
-        .conn()
-        .await?;
+    let mut conn = ctx.conn().await?;
 
     sqlx::query_as!(
         Task,
@@ -164,9 +160,7 @@ pub async fn delete_task(ctx: &MutationContext, input: DeleteTaskInput) -> Resul
         return Err(ForgeError::Forbidden("User scope mismatch".into()));
     }
 
-    let mut conn = ctx
-        .conn()
-        .await?;
+    let mut conn = ctx.conn().await?;
 
     let result = sqlx::query!(
         "DELETE FROM tasks t
@@ -188,9 +182,7 @@ pub async fn move_task(ctx: &MutationContext, input: MoveTaskInput) -> Result<Ta
         return Err(ForgeError::Forbidden("User scope mismatch".into()));
     }
 
-    let mut conn = ctx
-        .conn()
-        .await?;
+    let mut conn = ctx.conn().await?;
 
     sqlx::query_as!(
         Task,

@@ -1,0 +1,67 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgres://postgres:forge@db:5432/{{project_name}}
+      - SQLX_OFFLINE=false
+      - FORGE_OTEL_ENABLED=true
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel:4318
+    command: cargo watch --poll -x "run --no-default-features"
+    volumes:
+      - .:/app
+      - cargo_cache:/usr/local/cargo/registry
+      - ./target:/app/target
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/_api/ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    working_dir: /app/frontend
+    command: dx serve --web --port 5173 --addr 0.0.0.0 --open false
+    ports:
+      - "5173:5173"
+    environment:
+      - FORGE_API_URL=http://localhost:8080
+    volumes:
+      - ./frontend:/app/frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  db:
+    image: postgres:18
+    env_file:
+      - .env
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d {{project_name}}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  otel:
+    image: ghcr.io/isala404/forge/otel-lgtm:0.20.0
+    ports:
+      - "3000:3000"
+
+volumes:
+  postgres_data:
+  cargo_cache:

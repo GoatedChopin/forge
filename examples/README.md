@@ -5,6 +5,7 @@ Working apps built with FORGE. Each one runs with docker compose.
 | Example | Highlights | Description |
 |---------|------------|-------------|
 | [todo](todo/) | Queries, Mutations | Minimal CRUD to get started |
+| [todo-dioxus](todo-dioxus/) | Queries, Mutations, Dioxus | Minimal CRUD with generated Dioxus bindings |
 | [kanban-board](kanban-board/) | Auth, Jobs, Crons, Workflows | Full-featured board with JWT auth, background exports, and scheduled cleanup |
 | [support-desk](support-desk/) | MCP, Real-time | Ticket system exposing domain logic as MCP tools for LLM agents |
 

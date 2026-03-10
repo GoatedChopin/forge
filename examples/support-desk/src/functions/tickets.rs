@@ -145,9 +145,7 @@ pub async fn create_support_ticket(
     let details = normalized_non_empty("Details", &input.details, 1000)?;
     let priority = input.priority.unwrap_or(TicketPriority::Normal);
 
-    let mut conn = ctx
-        .conn()
-        .await?;
+    let mut conn = ctx.conn().await?;
 
     sqlx::query_as!(
         SupportTicket,
@@ -172,9 +170,7 @@ pub async fn set_ticket_status(
     ctx: &MutationContext,
     input: SetTicketStatusInput,
 ) -> Result<SupportTicket> {
-    let mut conn = ctx
-        .conn()
-        .await?;
+    let mut conn = ctx.conn().await?;
 
     sqlx::query_as!(
         SupportTicket,
@@ -198,9 +194,7 @@ pub async fn set_ticket_priority(
     ctx: &MutationContext,
     input: SetTicketPriorityInput,
 ) -> Result<SupportTicket> {
-    let mut conn = ctx
-        .conn()
-        .await?;
+    let mut conn = ctx.conn().await?;
 
     sqlx::query_as!(
         SupportTicket,
@@ -226,9 +220,7 @@ pub async fn add_ticket_note(
 ) -> Result<SupportTicket> {
     let note = normalized_non_empty("Note", &input.note, 300)?;
 
-    let mut conn = ctx
-        .conn()
-        .await?;
+    let mut conn = ctx.conn().await?;
 
     sqlx::query_as!(
         SupportTicket,
@@ -255,6 +247,10 @@ mod tests {
 
     use crate::schema::TicketStatus;
 
+    fn db_tests_enabled() -> bool {
+        cfg!(feature = "testcontainers") || std::env::var_os("TEST_DATABASE_URL").is_some()
+    }
+
     async fn setup_db(test_name: &str) -> IsolatedTestDb {
         IsolatedTestDb::setup(
             test_name,
@@ -267,6 +263,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_and_list_tickets() {
+        if !db_tests_enabled() {
+            eprintln!("skipping database-backed support-desk test");
+            return;
+        }
+
         let db = setup_db("create_and_list_tickets").await;
         let pool = db.pool().clone();
 
@@ -306,6 +307,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_status_priority_and_note() {
+        if !db_tests_enabled() {
+            eprintln!("skipping database-backed support-desk test");
+            return;
+        }
+
         let db = setup_db("update_status_priority_note").await;
         let pool = db.pool().clone();
         let created = create_ticket(
@@ -361,6 +367,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_validation_rejects_empty_fields() {
+        if !db_tests_enabled() {
+            eprintln!("skipping database-backed support-desk test");
+            return;
+        }
+
         let db = setup_db("validation_rejects_empty_fields").await;
         let pool = db.pool().clone();
 

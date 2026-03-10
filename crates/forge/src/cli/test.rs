@@ -52,10 +52,7 @@ impl TestCommand {
 
         // Check dependencies are installed
         if !frontend_dir.join("node_modules").exists() {
-            println!(
-                "  {} Installing frontend dependencies...",
-                ui::step()
-            );
+            println!("  {} Installing frontend dependencies...", ui::step());
             let status = Command::new("bun")
                 .args(["install"])
                 .current_dir(frontend_dir)
@@ -84,10 +81,7 @@ impl TestCommand {
         };
 
         if needs_install {
-            println!(
-                "  {} Installing Playwright browsers...",
-                ui::step()
-            );
+            println!("  {} Installing Playwright browsers...", ui::step());
             let status = Command::new("bunx")
                 .args(["playwright", "install", "chromium"])
                 .current_dir(frontend_dir)
@@ -109,10 +103,7 @@ impl TestCommand {
         } else {
             println!(" {}", style("not reachable").red());
             println!();
-            println!(
-                "  {} Backend is not running. Start it first:",
-                ui::warn()
-            );
+            println!("  {} Backend is not running. Start it first:", ui::warn());
             println!("    {} {}", ui::bullet(), style("forge dev").cyan());
             println!(
                 "    {} {}",
@@ -148,11 +139,7 @@ impl TestCommand {
         }
 
         println!();
-        println!(
-            "  {} Running: bunx {}",
-            ui::step(),
-            pw_args.join(" ")
-        );
+        println!("  {} Running: bunx {}", ui::step(), pw_args.join(" "));
         println!();
 
         let status = Command::new("bunx")
@@ -170,7 +157,11 @@ impl TestCommand {
         } else {
             println!("{} Some tests failed.", ui::error());
             println!();
-            println!("  Debug with: {} or {}", style("forge test --ui").cyan(), style("forge test --headed").cyan());
+            println!(
+                "  Debug with: {} or {}",
+                style("forge test --ui").cyan(),
+                style("forge test --headed").cyan()
+            );
             std::process::exit(1);
         }
 

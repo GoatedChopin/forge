@@ -1,2 +1,5 @@
 [alias]
 example = "run -p"
+
+[env]
+SQLX_OFFLINE = "true"

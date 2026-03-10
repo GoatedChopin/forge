@@ -5,6 +5,8 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use super::frontend_scaffold::{ScaffoldMode, TemplateFile, shared_frontend_templates};
+use super::frontend_target::FrontendTarget;
 use super::template::render;
 use super::ui;
 use crate::template_vars;
@@ -123,13 +125,9 @@ fn run_forge_generate(dir: &Path) -> Result<()> {
 
     println!("  {} Frontend types generated", ui::ok());
 
-    // Pre-generate .svelte-kit/ so vite doesn't warn about missing tsconfig
     let frontend_dir = dir.join("frontend");
-    if frontend_dir.exists() {
-        let _ = Command::new("bunx")
-            .args(["svelte-kit", "sync"])
-            .current_dir(&frontend_dir)
-            .output();
+    if let Some(target) = FrontendTarget::detect(&frontend_dir) {
+        target.post_generate(&frontend_dir)?;
     }
 
     Ok(())
@@ -137,9 +135,8 @@ fn run_forge_generate(dir: &Path) -> Result<()> {
 
 /// Run formatters (bun format and cargo fmt) to ensure clean code.
 fn run_formatters(dir: &Path) -> Result<()> {
-    // Run bun format in frontend directory
     let frontend_dir = dir.join("frontend");
-    if frontend_dir.exists() {
+    if frontend_dir.exists() && frontend_dir.join("package.json").exists() {
         println!("  {} Formatting frontend...", ui::step());
         let output = Command::new("bun")
             .args(["run", "format"])
@@ -150,13 +147,16 @@ fn run_formatters(dir: &Path) -> Result<()> {
             Ok(o) if o.status.success() => {
                 println!("  {} Frontend formatted", ui::ok());
             }
-            _ => {
-                // Non-fatal: continue without formatting
-            }
+            _ => {}
         }
     }
 
-    // Run cargo fmt if cargo is available
+    if let Some(target) = FrontendTarget::detect(&frontend_dir)
+        && target.extra_format(dir)?
+    {
+        println!("  {} Dioxus frontend formatted", ui::ok());
+    }
+
     let cargo_check = Command::new("cargo").arg("--version").output();
     if matches!(cargo_check, Ok(ref o) if o.status.success()) {
         println!("  {} Formatting backend...", ui::step());
@@ -169,9 +169,7 @@ fn run_formatters(dir: &Path) -> Result<()> {
             Ok(o) if o.status.success() => {
                 println!("  {} Backend formatted", ui::ok());
             }
-            _ => {
-                // Non-fatal: continue without formatting
-            }
+            _ => {}
         }
     }
 
@@ -213,6 +211,9 @@ fn generate_cargo_lockfile(dir: &Path) -> Result<()> {
 /// Runs `bun install --lockfile-only` in the frontend directory.
 fn generate_bun_lockfile(dir: &Path) -> Result<()> {
     let frontend_dir = dir.join("frontend");
+    if !frontend_dir.join("package.json").exists() {
+        return Ok(());
+    }
 
     println!("  {} Generating bun.lock...", ui::step());
 
@@ -333,113 +334,68 @@ fn init_git_repo(dir: &Path) -> Result<()> {
     Ok(())
 }
 
-// Populated project templates (default)
-const CARGO_TOML: &str = include_str!("../../templates/populated/project/Cargo.toml.tmpl");
-const FORGE_TOML: &str = include_str!("../../templates/populated/project/forge.toml.tmpl");
-const MAIN_RS: &str = include_str!("../../templates/populated/project/main.rs.tmpl");
-const BUILD_RS: &str = include_str!("../../templates/populated/project/build.rs.tmpl");
-const GITIGNORE: &str = include_str!("../../templates/populated/project/gitignore.tmpl");
-const ENV: &str = include_str!("../../templates/populated/project/env.tmpl");
-const DOCKERFILE: &str = include_str!("../../templates/populated/project/Dockerfile.tmpl");
-const DOCKER_COMPOSE: &str =
-    include_str!("../../templates/populated/project/docker-compose.yml.tmpl");
-const README: &str = include_str!("../../templates/populated/project/README.md.tmpl");
+const CARGO_TOML: &str =
+    include_str!("../../templates/scaffold/demo/project/common/Cargo.toml.tmpl");
+const FORGE_TOML: &str =
+    include_str!("../../templates/scaffold/demo/project/common/forge.toml.tmpl");
+const GITIGNORE: &str = include_str!("../../templates/scaffold/demo/project/common/gitignore.tmpl");
+const ENV: &str = include_str!("../../templates/scaffold/demo/project/common/env.tmpl");
 const MIGRATION_INITIAL: &str =
-    include_str!("../../templates/populated/project/migrations/0001_initial.sql.tmpl");
-const SCHEMA_MOD: &str = include_str!("../../templates/populated/project/schema/mod.rs.tmpl");
-const SCHEMA_USER: &str = include_str!("../../templates/populated/project/schema/user.rs.tmpl");
-const FUNCTIONS_MOD: &str = include_str!("../../templates/populated/project/functions/mod.rs.tmpl");
+    include_str!("../../templates/scaffold/demo/project/common/migrations/0001_initial.sql.tmpl");
+const SCHEMA_MOD: &str =
+    include_str!("../../templates/scaffold/demo/project/common/schema/mod.rs.tmpl");
+const SCHEMA_USER: &str =
+    include_str!("../../templates/scaffold/demo/project/common/schema/user.rs.tmpl");
+const FUNCTIONS_MOD: &str =
+    include_str!("../../templates/scaffold/demo/project/common/functions/mod.rs.tmpl");
 const FUNCTIONS_USERS: &str =
-    include_str!("../../templates/populated/project/functions/users.rs.tmpl");
-const FUNCTIONS_ISS: &str = include_str!("../../templates/populated/project/functions/iss.rs.tmpl");
+    include_str!("../../templates/scaffold/demo/project/common/functions/users.rs.tmpl");
+const FUNCTIONS_ISS: &str =
+    include_str!("../../templates/scaffold/demo/project/common/functions/iss.rs.tmpl");
 const FUNCTIONS_TRADES: &str =
-    include_str!("../../templates/populated/project/functions/trades.rs.tmpl");
+    include_str!("../../templates/scaffold/demo/project/common/functions/trades.rs.tmpl");
 const FUNCTIONS_EXPORT: &str =
-    include_str!("../../templates/populated/project/functions/export.rs.tmpl");
+    include_str!("../../templates/scaffold/demo/project/common/functions/export.rs.tmpl");
 const FUNCTIONS_VERIFICATION: &str =
-    include_str!("../../templates/populated/project/functions/verification.rs.tmpl");
+    include_str!("../../templates/scaffold/demo/project/common/functions/verification.rs.tmpl");
 const FUNCTIONS_WEBHOOK: &str =
-    include_str!("../../templates/populated/project/functions/webhook.rs.tmpl");
-const IGNORE: &str = include_str!("../../templates/populated/project/ignore.tmpl");
+    include_str!("../../templates/scaffold/demo/project/common/functions/webhook.rs.tmpl");
+const IGNORE: &str = include_str!("../../templates/scaffold/demo/project/common/ignore.tmpl");
 
-// Populated frontend templates (default)
-const FRONTEND_PACKAGE_JSON: &str =
-    include_str!("../../templates/populated/frontend/package.json.tmpl");
-const FRONTEND_SVELTE_CONFIG: &str =
-    include_str!("../../templates/populated/frontend/svelte.config.js.tmpl");
-const FRONTEND_VITE_CONFIG: &str =
-    include_str!("../../templates/populated/frontend/vite.config.ts.tmpl");
-const FRONTEND_TSCONFIG: &str =
-    include_str!("../../templates/populated/frontend/tsconfig.json.tmpl");
-const FRONTEND_APP_HTML: &str = include_str!("../../templates/populated/frontend/app.html.tmpl");
-const FRONTEND_ENV_EXAMPLE: &str = include_str!("../../templates/populated/frontend/env.tmpl");
-const FRONTEND_LAYOUT_SVELTE: &str =
-    include_str!("../../templates/populated/frontend/routes/layout.svelte.tmpl");
-const FRONTEND_LAYOUT_TS: &str =
-    include_str!("../../templates/populated/frontend/routes/layout.ts.tmpl");
-const FRONTEND_PAGE_SVELTE: &str =
-    include_str!("../../templates/populated/frontend/routes/page.svelte.tmpl");
-const FRONTEND_ESLINT_CONFIG: &str =
-    include_str!("../../templates/populated/frontend/eslint.config.js.tmpl");
-const FRONTEND_PRETTIERIGNORE: &str =
-    include_str!("../../templates/populated/frontend/.prettierignore.tmpl");
-const FRONTEND_PLAYWRIGHT_HOME_SPEC: &str =
-    include_str!("../../templates/populated/frontend/tests/home.spec.ts.tmpl");
-const FRONTEND_PLAYWRIGHT_CONFIG: &str =
-    include_str!("../../templates/populated/frontend/playwright.config.ts.tmpl");
-const FRONTEND_PLAYWRIGHT_GLOBAL_SETUP: &str =
-    include_str!("../../templates/populated/frontend/tests/global-setup.ts.tmpl");
-const FRONTEND_PLAYWRIGHT_FIXTURES: &str =
-    include_str!("../../templates/populated/frontend/tests/fixtures.ts.tmpl");
-
-// Empty project templates (for --empty flag)
-const EMPTY_CARGO_TOML: &str = include_str!("../../templates/empty/project/Cargo.toml.tmpl");
-const EMPTY_FORGE_TOML: &str = include_str!("../../templates/empty/project/forge.toml.tmpl");
-const EMPTY_MAIN_RS: &str = include_str!("../../templates/empty/project/main.rs.tmpl");
-const EMPTY_BUILD_RS: &str = include_str!("../../templates/empty/project/build.rs.tmpl");
-const EMPTY_GITIGNORE: &str = include_str!("../../templates/empty/project/gitignore.tmpl");
-const EMPTY_ENV: &str = include_str!("../../templates/empty/project/env.tmpl");
-const EMPTY_DOCKERFILE: &str = include_str!("../../templates/empty/project/Dockerfile.tmpl");
-const EMPTY_DOCKER_COMPOSE: &str =
-    include_str!("../../templates/empty/project/docker-compose.yml.tmpl");
-const EMPTY_README: &str = include_str!("../../templates/empty/project/README.md.tmpl");
-const EMPTY_MIGRATION_INITIAL: &str =
-    include_str!("../../templates/empty/project/migrations/0001_initial.sql.example.tmpl");
-const EMPTY_SCHEMA_MOD: &str = include_str!("../../templates/empty/project/schema/mod.rs.tmpl");
+const EMPTY_CARGO_TOML: &str =
+    include_str!("../../templates/scaffold/minimal/project/common/Cargo.toml.tmpl");
+const EMPTY_FORGE_TOML: &str =
+    include_str!("../../templates/scaffold/minimal/project/common/forge.toml.tmpl");
+const EMPTY_GITIGNORE: &str =
+    include_str!("../../templates/scaffold/minimal/project/common/gitignore.tmpl");
+const EMPTY_ENV: &str = include_str!("../../templates/scaffold/minimal/project/common/env.tmpl");
+const EMPTY_MIGRATION_INITIAL: &str = include_str!(
+    "../../templates/scaffold/minimal/project/common/migrations/0001_initial.sql.example.tmpl"
+);
+const EMPTY_SCHEMA_MOD: &str =
+    include_str!("../../templates/scaffold/minimal/project/common/schema/mod.rs.tmpl");
 const EMPTY_FUNCTIONS_MOD: &str =
-    include_str!("../../templates/empty/project/functions/mod.rs.tmpl");
-const EMPTY_IGNORE: &str = include_str!("../../templates/empty/project/ignore.tmpl");
-const SQLX_TOML: &str = include_str!("../../templates/empty/project/sqlx.toml.tmpl");
+    include_str!("../../templates/scaffold/minimal/project/common/functions/mod.rs.tmpl");
+const EMPTY_IGNORE: &str =
+    include_str!("../../templates/scaffold/minimal/project/common/ignore.tmpl");
+const SQLX_TOML: &str =
+    include_str!("../../templates/scaffold/minimal/project/common/sqlx.toml.tmpl");
+fn write_template_files(
+    base_dir: &Path,
+    files: &[TemplateFile],
+    vars: &std::collections::HashMap<&str, &str>,
+) -> Result<()> {
+    for file in files {
+        let content = if file.render {
+            render(file.template, vars)
+        } else {
+            file.template.to_string()
+        };
+        fs::write(base_dir.join(file.path), content)?;
+    }
 
-// Empty frontend templates (for --empty flag)
-const EMPTY_FRONTEND_PACKAGE_JSON: &str =
-    include_str!("../../templates/empty/frontend/package.json.tmpl");
-const EMPTY_FRONTEND_SVELTE_CONFIG: &str =
-    include_str!("../../templates/empty/frontend/svelte.config.js.tmpl");
-const EMPTY_FRONTEND_VITE_CONFIG: &str =
-    include_str!("../../templates/empty/frontend/vite.config.ts.tmpl");
-const EMPTY_FRONTEND_TSCONFIG: &str =
-    include_str!("../../templates/empty/frontend/tsconfig.json.tmpl");
-const EMPTY_FRONTEND_APP_HTML: &str = include_str!("../../templates/empty/frontend/app.html.tmpl");
-const EMPTY_FRONTEND_ENV_EXAMPLE: &str = include_str!("../../templates/empty/frontend/env.tmpl");
-const EMPTY_FRONTEND_LAYOUT_SVELTE: &str =
-    include_str!("../../templates/empty/frontend/routes/layout.svelte.tmpl");
-const EMPTY_FRONTEND_LAYOUT_TS: &str =
-    include_str!("../../templates/empty/frontend/routes/layout.ts.tmpl");
-const EMPTY_FRONTEND_PAGE_SVELTE: &str =
-    include_str!("../../templates/empty/frontend/routes/page.svelte.tmpl");
-const EMPTY_FRONTEND_ESLINT_CONFIG: &str =
-    include_str!("../../templates/empty/frontend/eslint.config.js.tmpl");
-const EMPTY_FRONTEND_PRETTIERIGNORE: &str =
-    include_str!("../../templates/empty/frontend/.prettierignore.tmpl");
-const EMPTY_FRONTEND_PLAYWRIGHT_HOME_SPEC: &str =
-    include_str!("../../templates/empty/frontend/tests/home.spec.ts.tmpl");
-const EMPTY_FRONTEND_PLAYWRIGHT_CONFIG: &str =
-    include_str!("../../templates/empty/frontend/playwright.config.ts.tmpl");
-const EMPTY_FRONTEND_PLAYWRIGHT_GLOBAL_SETUP: &str =
-    include_str!("../../templates/empty/frontend/tests/global-setup.ts.tmpl");
-const EMPTY_FRONTEND_PLAYWRIGHT_FIXTURES: &str =
-    include_str!("../../templates/empty/frontend/tests/fixtures.ts.tmpl");
+    Ok(())
+}
 
 /// Create a new FORGE project.
 #[derive(Parser)]
@@ -467,6 +423,10 @@ pub struct NewCommand {
     /// Output directory (defaults to project name).
     #[arg(short, long)]
     pub output: Option<String>,
+
+    /// Frontend target (`sveltekit` or `dioxus`).
+    #[arg(long, default_value = "sveltekit")]
+    pub target: FrontendTarget,
 
     /// Skip generating bun.lock file before initial commit.
     ///
@@ -554,7 +514,7 @@ impl NewCommand {
         }
 
         fs::create_dir_all(path)?;
-        create_project(path, &project_name, self.demo)?;
+        create_project(path, &project_name, self.demo, self.target)?;
 
         // Generate lockfiles before git commit (unless --no-lock)
         if !self.no_lock {
@@ -611,8 +571,13 @@ impl NewCommand {
 ///
 /// - `demo = true`: Full demo project with example code
 /// - `demo = false`: Minimal scaffolding without example code
-pub fn create_project(dir: &Path, name: &str, demo: bool) -> Result<()> {
+pub fn create_project(dir: &Path, name: &str, demo: bool, target: FrontendTarget) -> Result<()> {
     let vars = template_vars!("name" => name, "project_name" => name);
+    let mode = if demo {
+        ScaffoldMode::Demo
+    } else {
+        ScaffoldMode::Minimal
+    };
 
     // Create directory structure
     fs::create_dir_all(dir.join("src/schema"))?;
@@ -620,7 +585,6 @@ pub fn create_project(dir: &Path, name: &str, demo: bool) -> Result<()> {
     fs::create_dir_all(dir.join("migrations"))?;
 
     if demo {
-        // Demo templates - full example code
         fs::write(dir.join("Cargo.toml"), render(CARGO_TOML, &vars))?;
 
         // In debug builds, patch for local forge development
@@ -632,20 +596,13 @@ pub fn create_project(dir: &Path, name: &str, demo: bool) -> Result<()> {
 
         fs::write(dir.join("forge.toml"), render(FORGE_TOML, &vars))?;
         fs::write(dir.join("sqlx.toml"), SQLX_TOML)?;
-        fs::write(dir.join("build.rs"), BUILD_RS)?;
         fs::write(dir.join(".gitignore"), GITIGNORE)?;
         fs::write(dir.join(".ignore"), IGNORE)?;
         fs::write(dir.join(".env"), render(ENV, &vars))?;
-        fs::write(dir.join("Dockerfile"), render(DOCKERFILE, &vars))?;
-        fs::write(
-            dir.join("docker-compose.yml"),
-            render(DOCKER_COMPOSE, &vars),
-        )?;
+        write_template_files(dir, target.project_templates(mode), &vars)?;
 
         #[cfg(debug_assertions)]
         patch_docker_compose(&dir.join("docker-compose.yml"))?;
-        fs::write(dir.join("README.md"), render(README, &vars))?;
-        fs::write(dir.join("src/main.rs"), MAIN_RS)?;
         fs::write(dir.join("migrations/0001_initial.sql"), MIGRATION_INITIAL)?;
         fs::write(dir.join("src/schema/mod.rs"), SCHEMA_MOD)?;
         fs::write(dir.join("src/schema/user.rs"), SCHEMA_USER)?;
@@ -660,9 +617,8 @@ pub fn create_project(dir: &Path, name: &str, demo: bool) -> Result<()> {
         )?;
         fs::write(dir.join("src/functions/webhook.rs"), FUNCTIONS_WEBHOOK)?;
         // Demo frontend
-        create_frontend(dir, name, true)?;
+        create_frontend(dir, name, true, target)?;
     } else {
-        // Minimal templates - clean scaffolding without example code
         fs::write(dir.join("Cargo.toml"), render(EMPTY_CARGO_TOML, &vars))?;
 
         // In debug builds, patch for local forge development
@@ -674,21 +630,14 @@ pub fn create_project(dir: &Path, name: &str, demo: bool) -> Result<()> {
 
         fs::write(dir.join("forge.toml"), render(EMPTY_FORGE_TOML, &vars))?;
         fs::write(dir.join("sqlx.toml"), SQLX_TOML)?;
-        fs::write(dir.join("build.rs"), EMPTY_BUILD_RS)?;
         fs::write(dir.join(".gitignore"), EMPTY_GITIGNORE)?;
         fs::write(dir.join(".ignore"), EMPTY_IGNORE)?;
         fs::write(dir.join(".env"), render(EMPTY_ENV, &vars))?;
         fs::write(dir.join(".env.example"), render(EMPTY_ENV, &vars))?;
-        fs::write(dir.join("Dockerfile"), render(EMPTY_DOCKERFILE, &vars))?;
-        fs::write(
-            dir.join("docker-compose.yml"),
-            render(EMPTY_DOCKER_COMPOSE, &vars),
-        )?;
+        write_template_files(dir, target.project_templates(mode), &vars)?;
 
         #[cfg(debug_assertions)]
         patch_docker_compose(&dir.join("docker-compose.yml"))?;
-        fs::write(dir.join("README.md"), render(EMPTY_README, &vars))?;
-        fs::write(dir.join("src/main.rs"), EMPTY_MAIN_RS)?;
         fs::write(
             dir.join("migrations/0001_initial.sql.example"),
             EMPTY_MIGRATION_INITIAL,
@@ -696,7 +645,7 @@ pub fn create_project(dir: &Path, name: &str, demo: bool) -> Result<()> {
         fs::write(dir.join("src/schema/mod.rs"), EMPTY_SCHEMA_MOD)?;
         fs::write(dir.join("src/functions/mod.rs"), EMPTY_FUNCTIONS_MOD)?;
         // Minimal frontend
-        create_frontend(dir, name, false)?;
+        create_frontend(dir, name, false, target)?;
     }
 
     Ok(())
@@ -706,130 +655,27 @@ pub fn create_project(dir: &Path, name: &str, demo: bool) -> Result<()> {
 ///
 /// - `demo = true`: Full demo frontend with complete UI
 /// - `demo = false`: Minimal frontend with starter page
-fn create_frontend(dir: &Path, name: &str, demo: bool) -> Result<()> {
+fn create_frontend(dir: &Path, name: &str, demo: bool, target: FrontendTarget) -> Result<()> {
     let vars = template_vars!("name" => name, "project_name" => name);
+    let mode = if demo {
+        ScaffoldMode::Demo
+    } else {
+        ScaffoldMode::Minimal
+    };
+    let templates = target.frontend_templates(mode);
 
     let frontend_dir = dir.join("frontend");
     fs::create_dir_all(&frontend_dir)?;
-    fs::create_dir_all(frontend_dir.join("src/routes"))?;
-
-    // Create tests directory
     fs::create_dir_all(frontend_dir.join("tests"))?;
 
-    if demo {
-        // Demo templates - full frontend with complete UI
-        fs::write(
-            frontend_dir.join("playwright.config.ts"),
-            FRONTEND_PLAYWRIGHT_CONFIG,
-        )?;
-        fs::write(
-            frontend_dir.join("tests/global-setup.ts"),
-            FRONTEND_PLAYWRIGHT_GLOBAL_SETUP,
-        )?;
-        fs::write(
-            frontend_dir.join("tests/fixtures.ts"),
-            FRONTEND_PLAYWRIGHT_FIXTURES,
-        )?;
-        fs::write(
-            frontend_dir.join("package.json"),
-            render(FRONTEND_PACKAGE_JSON, &vars),
-        )?;
-        fs::write(
-            frontend_dir.join("svelte.config.js"),
-            FRONTEND_SVELTE_CONFIG,
-        )?;
-        fs::write(frontend_dir.join("vite.config.ts"), FRONTEND_VITE_CONFIG)?;
-        fs::write(frontend_dir.join("tsconfig.json"), FRONTEND_TSCONFIG)?;
-        fs::write(frontend_dir.join("src/app.html"), FRONTEND_APP_HTML)?;
-        fs::write(frontend_dir.join(".env"), FRONTEND_ENV_EXAMPLE)?;
-        fs::write(frontend_dir.join(".env.example"), FRONTEND_ENV_EXAMPLE)?;
-        fs::write(
-            frontend_dir.join("eslint.config.js"),
-            FRONTEND_ESLINT_CONFIG,
-        )?;
-        fs::write(
-            frontend_dir.join(".prettierignore"),
-            FRONTEND_PRETTIERIGNORE,
-        )?;
-        fs::write(
-            frontend_dir.join("src/routes/+layout.svelte"),
-            FRONTEND_LAYOUT_SVELTE,
-        )?;
-        fs::write(
-            frontend_dir.join("src/routes/+layout.ts"),
-            FRONTEND_LAYOUT_TS,
-        )?;
-        fs::write(
-            frontend_dir.join("src/routes/+page.svelte"),
-            FRONTEND_PAGE_SVELTE,
-        )?;
-        // Demo test spec
-        fs::write(
-            frontend_dir.join("tests/home.spec.ts"),
-            FRONTEND_PLAYWRIGHT_HOME_SPEC,
-        )?;
-    } else {
-        // Minimal templates - starter frontend
-        fs::write(
-            frontend_dir.join("playwright.config.ts"),
-            EMPTY_FRONTEND_PLAYWRIGHT_CONFIG,
-        )?;
-        fs::write(
-            frontend_dir.join("tests/global-setup.ts"),
-            EMPTY_FRONTEND_PLAYWRIGHT_GLOBAL_SETUP,
-        )?;
-        fs::write(
-            frontend_dir.join("tests/fixtures.ts"),
-            EMPTY_FRONTEND_PLAYWRIGHT_FIXTURES,
-        )?;
-        fs::write(
-            frontend_dir.join("package.json"),
-            render(EMPTY_FRONTEND_PACKAGE_JSON, &vars),
-        )?;
-        fs::write(
-            frontend_dir.join("svelte.config.js"),
-            EMPTY_FRONTEND_SVELTE_CONFIG,
-        )?;
-        fs::write(
-            frontend_dir.join("vite.config.ts"),
-            EMPTY_FRONTEND_VITE_CONFIG,
-        )?;
-        fs::write(frontend_dir.join("tsconfig.json"), EMPTY_FRONTEND_TSCONFIG)?;
-        fs::write(frontend_dir.join("src/app.html"), EMPTY_FRONTEND_APP_HTML)?;
-        fs::write(frontend_dir.join(".env"), EMPTY_FRONTEND_ENV_EXAMPLE)?;
-        fs::write(
-            frontend_dir.join(".env.example"),
-            EMPTY_FRONTEND_ENV_EXAMPLE,
-        )?;
-        fs::write(
-            frontend_dir.join("eslint.config.js"),
-            EMPTY_FRONTEND_ESLINT_CONFIG,
-        )?;
-        fs::write(
-            frontend_dir.join(".prettierignore"),
-            EMPTY_FRONTEND_PRETTIERIGNORE,
-        )?;
-        fs::write(
-            frontend_dir.join("src/routes/+layout.svelte"),
-            EMPTY_FRONTEND_LAYOUT_SVELTE,
-        )?;
-        fs::write(
-            frontend_dir.join("src/routes/+layout.ts"),
-            EMPTY_FRONTEND_LAYOUT_TS,
-        )?;
-        fs::write(
-            frontend_dir.join("src/routes/+page.svelte"),
-            render(EMPTY_FRONTEND_PAGE_SVELTE, &vars),
-        )?;
-        // Minimal test spec
-        fs::write(
-            frontend_dir.join("tests/home.spec.ts"),
-            EMPTY_FRONTEND_PLAYWRIGHT_HOME_SPEC,
-        )?;
+    for relative_dir in templates.directories {
+        fs::create_dir_all(frontend_dir.join(relative_dir))?;
     }
 
-    // Generate @forge/svelte runtime package
-    super::runtime_generator::generate_runtime(&frontend_dir)?;
+    write_template_files(&frontend_dir, shared_frontend_templates(), &vars)?;
+    write_template_files(&frontend_dir, templates.files, &vars)?;
+
+    super::runtime_generator::generate_runtime(&frontend_dir, target)?;
 
     Ok(())
 }
@@ -863,7 +709,7 @@ mod tests {
         let path = dir.path().join("test-demo");
         fs::create_dir_all(&path).unwrap();
 
-        create_project(&path, "test-demo", true).unwrap();
+        create_project(&path, "test-demo", true, FrontendTarget::SvelteKit).unwrap();
 
         // All demo files should exist
         assert!(path.join("Cargo.toml").exists());
@@ -902,7 +748,7 @@ mod tests {
         let path = dir.path().join("test-minimal");
         fs::create_dir_all(&path).unwrap();
 
-        create_project(&path, "test-minimal", false).unwrap();
+        create_project(&path, "test-minimal", false, FrontendTarget::SvelteKit).unwrap();
 
         // Core files should exist
         assert!(path.join("Cargo.toml").exists());
@@ -932,5 +778,19 @@ mod tests {
         assert!(path.join("frontend/tests/home.spec.ts").exists());
         // Observability baked into Docker image, not scaffolded
         assert!(!path.join("grafana").exists());
+    }
+
+    #[test]
+    fn test_create_minimal_dioxus_project() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test-minimal-dioxus");
+        fs::create_dir_all(&path).unwrap();
+
+        create_project(&path, "test-minimal-dioxus", false, FrontendTarget::Dioxus).unwrap();
+
+        assert!(path.join("frontend/Cargo.toml").exists());
+        assert!(path.join("frontend/Dioxus.toml").exists());
+        assert!(path.join("frontend/src/main.rs").exists());
+        assert!(path.join("frontend/.forge/dioxus/Cargo.toml").exists());
     }
 }

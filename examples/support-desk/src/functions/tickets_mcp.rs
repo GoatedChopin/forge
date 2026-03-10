@@ -124,6 +124,10 @@ mod tests {
 
     use crate::schema::{TicketPriority, TicketStatus};
 
+    fn db_tests_enabled() -> bool {
+        cfg!(feature = "testcontainers") || std::env::var_os("TEST_DATABASE_URL").is_some()
+    }
+
     async fn setup_db(test_name: &str) -> IsolatedTestDb {
         IsolatedTestDb::setup(
             test_name,
@@ -140,6 +144,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_mcp_tools_can_run_same_actions_as_ui() {
+        if !db_tests_enabled() {
+            eprintln!("skipping database-backed support-desk test");
+            return;
+        }
+
         let db = setup_db("mcp_tools_parity").await;
         let pool = db.pool().clone();
         let ctx = mcp_ctx(pool.clone());

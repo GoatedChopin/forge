@@ -77,9 +77,7 @@ pub async fn register(ctx: &MutationContext, input: RegisterInput) -> Result<Aut
 
     let email = input.email.trim().to_string();
     let name = input.name.trim().to_string();
-    let mut conn = ctx
-        .conn()
-        .await?;
+    let mut conn = ctx.conn().await?;
 
     let user = sqlx::query_as!(
         User,
@@ -103,9 +101,7 @@ pub async fn register(ctx: &MutationContext, input: RegisterInput) -> Result<Aut
 
 #[forge::mutation(public)]
 pub async fn login(ctx: &MutationContext, input: LoginInput) -> Result<AuthResponse> {
-    let mut conn = ctx
-        .conn()
-        .await?;
+    let mut conn = ctx.conn().await?;
 
     let user = sqlx::query_as!(User, "SELECT * FROM users WHERE email = $1", &input.email)
         .fetch_optional(&mut *conn)

@@ -104,9 +104,7 @@ pub async fn create_project(ctx: &MutationContext, input: CreateProjectInput) ->
     }
 
     let name = input.name.trim().to_string();
-    let mut conn = ctx
-        .conn()
-        .await?;
+    let mut conn = ctx.conn().await?;
 
     sqlx::query_as!(
         Project,
@@ -129,9 +127,7 @@ pub async fn update_project(ctx: &MutationContext, input: UpdateProjectInput) ->
 
     let name = input.name.as_deref();
     let description = input.description.as_deref();
-    let mut conn = ctx
-        .conn()
-        .await?;
+    let mut conn = ctx.conn().await?;
 
     sqlx::query_as!(
         Project,
@@ -159,9 +155,7 @@ pub async fn unarchive_project(
         return Err(ForgeError::Forbidden("User scope mismatch".into()));
     }
 
-    let mut conn = ctx
-        .conn()
-        .await?;
+    let mut conn = ctx.conn().await?;
 
     sqlx::query_as!(
         Project,
