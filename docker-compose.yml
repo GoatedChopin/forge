@@ -7,8 +7,7 @@ services:
     volumes:
       - .:/app
       - cargo_cache:/usr/local/cargo/registry
-      - target_cache:/app/target
+      - ./target:/app/target
 
 volumes:
   cargo_cache:
-  target_cache:

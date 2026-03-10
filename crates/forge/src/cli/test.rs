@@ -17,7 +17,11 @@ pub struct TestCommand {
     #[arg(long)]
     pub ui: bool,
 
-    /// Extra arguments passed through to Playwright (e.g. file patterns, --headed)
+    /// Run tests in a visible browser window
+    #[arg(long)]
+    pub headed: bool,
+
+    /// Extra arguments passed through to Playwright (e.g. file patterns)
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub args: Vec<String>,
 }
@@ -119,17 +123,13 @@ impl TestCommand {
             anyhow::bail!("Backend must be running before tests can execute");
         }
 
-        // Check frontend dev server
+        // Check frontend dev server (informational only, Playwright starts one if needed)
         print!("  {} Checking frontend...", ui::step());
         let frontend_ready = check_frontend_health().await;
         if frontend_ready {
-            println!(" {}", style("ready").green());
+            println!(" {}", style("ready (reusing)").green());
         } else {
-            println!(" {}", style("not reachable").yellow());
-            println!(
-                "  {} Frontend dev server not detected. Playwright will start one.",
-                ui::info()
-            );
+            println!(" {}", style("will be started by Playwright").dim());
         }
 
         // Build Playwright command
@@ -137,6 +137,10 @@ impl TestCommand {
 
         if self.ui {
             pw_args.push("--ui");
+        }
+
+        if self.headed {
+            pw_args.push("--headed");
         }
 
         for arg in &self.args {
@@ -216,9 +220,11 @@ mod tests {
     fn test_command_default() {
         let cmd = TestCommand {
             ui: false,
+            headed: false,
             args: vec![],
         };
         assert!(!cmd.ui);
+        assert!(!cmd.headed);
         assert!(cmd.args.is_empty());
     }
 
@@ -226,9 +232,20 @@ mod tests {
     fn test_command_with_args() {
         let cmd = TestCommand {
             ui: true,
-            args: vec!["tests/todo.spec.ts".into(), "--headed".into()],
+            headed: false,
+            args: vec!["tests/todo.spec.ts".into()],
         };
         assert!(cmd.ui);
-        assert_eq!(cmd.args.len(), 2);
+        assert_eq!(cmd.args.len(), 1);
+    }
+
+    #[test]
+    fn test_command_headed() {
+        let cmd = TestCommand {
+            ui: false,
+            headed: true,
+            args: vec![],
+        };
+        assert!(cmd.headed);
     }
 }

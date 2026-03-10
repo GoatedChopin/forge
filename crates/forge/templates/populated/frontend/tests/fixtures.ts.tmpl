@@ -39,18 +39,22 @@ export const test = base.extend<ForgeFixtures>({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ args }),
       });
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`RPC ${fn} failed (${res.status}): ${body}`);
+      }
       return (await res.json()).data;
     });
   },
 
   gotoReady: async ({ page }, use) => {
     await use(async (path = "/") => {
-      // Wait for the first subscription registration response, not just the
-      // SSE connection. This is the actual signal that reactivity is wired up.
+      // Wait for the subscription registration response, not just the SSE
+      // connection. This signals that reactivity is fully wired up.
       const subscribed = page.waitForResponse(
         (res) =>
           res.url().includes("/_api/subscribe") && res.status() === 200,
-        { timeout: 15_000 },
+        { timeout: ACTION_TIMEOUT * 3 },
       );
       await page.goto(path);
       await subscribed;

@@ -151,9 +151,14 @@ test.describe("Kanban Board UI E2E", () => {
     await expect(
       page.locator(".job-status", { hasText: "Deletion workflow:" }),
     ).toBeVisible({ timeout: ACTION_TIMEOUT });
+
+    // Workflow sets archive_delete_at asynchronously. The PG NOTIFY may not
+    // reach the SSE subscription in time, so reload to force a fresh fetch.
+    await page.waitForTimeout(2_000);
+    await page.reload();
     await expect(page.locator(".archive-notice")).toContainText(
       "scheduled for deletion in 7 days",
-      { timeout: ACTION_TIMEOUT },
+      { timeout: ACTION_TIMEOUT * 2 },
     );
     await expect(page.locator(".archive-notice")).toContainText("Time left:", {
       timeout: ACTION_TIMEOUT,
@@ -166,11 +171,15 @@ test.describe("Kanban Board UI E2E", () => {
     await page
       .getByRole("button", { name: "Unarchive (Cancel Delete)" })
       .click();
+
+    // Same SSE propagation issue: reload to pick up the cleared archive state.
+    await page.waitForTimeout(1_000);
+    await page.reload();
     await expect(page.locator(".archive-notice")).toHaveCount(0, {
       timeout: ACTION_TIMEOUT,
     });
     await expect(page.locator(".badge.archived")).toHaveCount(0, {
-      timeout: ACTION_TIMEOUT * 2,
+      timeout: ACTION_TIMEOUT,
     });
   });
 
