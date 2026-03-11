@@ -149,4 +149,4 @@ export type TaskPriority = 'low' | 'medium' | 'high';
 
 export type TaskStatus = 'backlog' | 'todo' | 'in_progress' | 'done';
 
-export type { ForgeError, QueryResult, SubscriptionResult } from "@forge/svelte";
+export type { ForgeError, QueryResult, SubscriptionResult } from "@forge-rs/svelte";

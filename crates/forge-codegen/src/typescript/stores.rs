@@ -18,7 +18,7 @@ export {
   createJobStore,
   createWorkflowStore,
   dt,
-} from '@forge/svelte';
+} from '@forge-rs/svelte';
 export type {
   Readable,
   ConnectionStatusStore,
@@ -26,7 +26,7 @@ export type {
   SubscriptionStore,
   JobStore,
   WorkflowStore,
-} from '@forge/svelte';
+} from '@forge-rs/svelte';
 "#
         .to_string())
     }
@@ -40,7 +40,7 @@ mod tests {
     fn test_generate_stores_content() {
         let generator = StoreGenerator::new();
         let content = generator.generate().unwrap();
-        assert!(content.contains("@forge/svelte"));
+        assert!(content.contains("@forge-rs/svelte"));
         assert!(content.contains("getForgeClient"));
         assert!(content.contains("createQueryStore"));
         assert!(content.contains("createJobStore"));

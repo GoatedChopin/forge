@@ -43,7 +43,6 @@ export default [
       "build/",
       ".svelte-kit/",
       "dist/",
-      ".forge/",
       "src/lib/forge/",
       "playwright-report/",
       "test-results/",

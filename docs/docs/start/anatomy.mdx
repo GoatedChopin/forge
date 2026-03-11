@@ -35,8 +35,7 @@ my-app/
     │           ├── ForgeProvider.svelte
     │           ├── datetime.ts
     │           └── index.ts
-    └── .forge/          # Runtime library (@forge/svelte)
-        └── svelte/
+    └── node_modules/    # Dependencies (includes @forge-rs/svelte)
 ```
 
 ## Key Files
@@ -137,7 +136,7 @@ import { listTodos$, createTodo, updateTodo, deleteTodo } from '$lib/forge';
 import type { Todo, CreateTodoInput } from '$lib/forge';
 ```
 
-The `frontend/.forge/svelte/` directory contains the runtime library (`@forge/svelte`) that powers subscriptions and API calls.
+The `@forge-rs/svelte` npm package provides the runtime library that powers subscriptions and API calls.
 
 ## Build Output
 

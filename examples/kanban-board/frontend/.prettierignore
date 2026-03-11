@@ -1,7 +1,6 @@
 build/
 .svelte-kit/
 dist/
-.forge/
 src/lib/forge/
 node_modules/
 playwright-report/

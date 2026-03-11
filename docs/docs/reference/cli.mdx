@@ -113,7 +113,7 @@ forge check [options]
 - Migration file naming and `-- @up` markers
 - Function files with forge macros (query, mutation, job, cron, workflow, daemon, webhook, mcp_tool)
 - Schema files with `#[forge::model]` or standard derives (`Serialize`, `FromRow`)
-- Generated file checksums (`.forge/` directory)
+
 - Rust linting (cargo fmt, clippy)
 - Frontend configuration (if present)
 - Frontend linting (ESLint, Prettier)
@@ -141,7 +141,6 @@ forge generate [options]
 | `--force` | Force regeneration even if files exist |
 | `--output, -o <dir>` | Output directory (default: frontend/src/lib/forge) |
 | `--src, -s <dir>` | Source directory to scan (default: src) |
-| `--skip-runtime` | Only regenerate types, skip runtime update |
 | `--yes, -y` | Auto-accept prompts (useful for CI) |
 
 ### Generated Files
@@ -153,7 +152,6 @@ forge generate [options]
 | stores.ts | Svelte store exports |
 | runes.svelte.ts | Svelte 5 runes helpers |
 | index.ts | Re-exports all modules |
-| .forge/svelte/ | Runtime package (@forge/svelte) |
 
 Backend handler/model files are authored in `src/functions/` and `src/schema/`. `forge generate` then syncs generated frontend/runtime artifacts from that backend source of truth.
 
@@ -163,9 +161,6 @@ forge generate
 
 # Force regenerate everything
 forge generate --force
-
-# Only update types (keep runtime)
-forge generate --skip-runtime
 
 # CI mode (no prompts)
 forge generate -y

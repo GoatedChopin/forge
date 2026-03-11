@@ -656,7 +656,8 @@ pub fn create_project(dir: &Path, name: &str, demo: bool, target: FrontendTarget
 /// - `demo = true`: Full demo frontend with complete UI
 /// - `demo = false`: Minimal frontend with starter page
 fn create_frontend(dir: &Path, name: &str, demo: bool, target: FrontendTarget) -> Result<()> {
-    let vars = template_vars!("name" => name, "project_name" => name);
+    let version = env!("CARGO_PKG_VERSION");
+    let vars = template_vars!("name" => name, "project_name" => name, "version" => version);
     let mode = if demo {
         ScaffoldMode::Demo
     } else {
@@ -674,8 +675,6 @@ fn create_frontend(dir: &Path, name: &str, demo: bool, target: FrontendTarget) -
 
     write_template_files(&frontend_dir, shared_frontend_templates(), &vars)?;
     write_template_files(&frontend_dir, templates.files, &vars)?;
-
-    super::runtime_generator::generate_runtime(&frontend_dir, target)?;
 
     Ok(())
 }
@@ -791,6 +790,5 @@ mod tests {
         assert!(path.join("frontend/Cargo.toml").exists());
         assert!(path.join("frontend/Dioxus.toml").exists());
         assert!(path.join("frontend/src/main.rs").exists());
-        assert!(path.join("frontend/.forge/dioxus/Cargo.toml").exists());
     }
 }

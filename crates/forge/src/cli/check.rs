@@ -5,8 +5,8 @@ use std::path::Path;
 use std::process::Stdio;
 use tokio::process::Command;
 
+use super::frontend_codegen::BindingGeneratorInput;
 use super::frontend_target::FrontendTarget;
-use super::runtime_generator::{MismatchKind, verify_checksums};
 use super::ui;
 
 /// Validate project configuration and dependencies.
@@ -96,8 +96,8 @@ impl CheckCommand {
         result.section("Frontend");
         self.check_frontend(&mut result)?;
 
-        result.section("Generated Files");
-        self.check_generated_files(&mut result)?;
+        result.section("Generated Bindings");
+        self.check_generated_bindings(&mut result)?;
 
         result.section("Frontend Tooling");
         self.check_frontend_linting(&mut result).await;
@@ -578,56 +578,6 @@ impl CheckCommand {
         Ok(())
     }
 
-    fn check_generated_files(&self, result: &mut CheckResult) -> Result<()> {
-        let frontend_dir = Path::new("frontend");
-        if !frontend_dir.exists() {
-            return Ok(());
-        }
-
-        let forge_dir = frontend_dir.join(".forge");
-        if !forge_dir.exists() {
-            result.warn(
-                "No .forge/ directory found",
-                "Run 'forge generate' to create runtime files",
-            );
-            return Ok(());
-        }
-
-        println!();
-
-        match verify_checksums(frontend_dir) {
-            Ok(mismatches) if mismatches.is_empty() => {
-                result.pass("Generated files integrity verified");
-            }
-            Ok(mismatches) => {
-                for m in &mismatches {
-                    match m.kind {
-                        MismatchKind::Modified => {
-                            result.fail(
-                                &format!(".forge/{} has been modified", m.file),
-                                "Run 'forge generate' to restore generated files",
-                            );
-                        }
-                        MismatchKind::Missing => {
-                            result.fail(
-                                &format!(".forge/{} is missing", m.file),
-                                "Run 'forge generate' to restore generated files",
-                            );
-                        }
-                    }
-                }
-            }
-            Err(_) => {
-                result.warn(
-                    "Could not verify generated file integrity",
-                    "Run 'forge generate' to regenerate checksums",
-                );
-            }
-        }
-
-        Ok(())
-    }
-
     fn check_frontend(&self, result: &mut CheckResult) -> Result<()> {
         let frontend_dir = Path::new("frontend");
         if !frontend_dir.exists() {
@@ -677,15 +627,6 @@ impl CheckCommand {
                     );
                 }
 
-                if frontend_dir.join(".forge").join("svelte").exists() {
-                    result.pass("FORGE Svelte runtime generated");
-                } else {
-                    result.warn(
-                        ".forge/svelte runtime not found",
-                        "Run 'forge generate' to create TypeScript types",
-                    );
-                }
-
                 if frontend_dir.join("node_modules").exists() {
                     result.pass("Frontend dependencies installed");
                 } else {
@@ -713,15 +654,131 @@ impl CheckCommand {
                         "Create frontend/Dioxus.toml for dx build/serve",
                     );
                 }
+            }
+        }
 
-                if frontend_dir.join(".forge").join("dioxus").exists() {
-                    result.pass("FORGE Dioxus runtime generated");
-                } else {
+        Ok(())
+    }
+
+    fn check_generated_bindings(&self, result: &mut CheckResult) -> Result<()> {
+        let frontend_dir = Path::new("frontend");
+        if !frontend_dir.exists() {
+            result.info("No frontend/ directory, skipping binding check");
+            return Ok(());
+        }
+
+        let target = FrontendTarget::detect(frontend_dir).unwrap_or(FrontendTarget::SvelteKit);
+        let output_dir = target.default_output_dir();
+        let output_path = Path::new(output_dir);
+
+        if !output_path.exists() {
+            result.warn(
+                "Generated bindings directory not found",
+                &format!("Run 'forge generate' to create {}", output_dir),
+            );
+            return Ok(());
+        }
+
+        let src_path = Path::new("src");
+        let registry = if src_path.exists() {
+            match forge_codegen::parse_project(src_path) {
+                Ok(r) => r,
+                Err(e) => {
                     result.warn(
-                        ".forge/dioxus runtime not found",
-                        "Run 'forge generate' to create Dioxus bindings",
+                        &format!("Could not parse source: {}", e),
+                        "Fix source errors and re-run",
                     );
+                    return Ok(());
                 }
+            }
+        } else {
+            forge_core::schema::SchemaRegistry::new()
+        };
+
+        let has_schema = !registry.all_tables().is_empty()
+            || !registry.all_enums().is_empty()
+            || !registry.all_functions().is_empty();
+
+        let tmp_dir = std::env::temp_dir().join(format!("forge-check-{}", std::process::id()));
+        let tmp_output = tmp_dir.join("bindings");
+        std::fs::create_dir_all(&tmp_output)?;
+        let tmp_output_str = tmp_output.to_string_lossy().to_string();
+
+        let gen_result = target.generate_bindings(&BindingGeneratorInput {
+            output_dir: &tmp_output_str,
+            output_path: &tmp_output,
+            registry: &registry,
+            has_schema,
+            force: true,
+        });
+
+        let cleanup = || {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+        };
+
+        if let Err(e) = gen_result {
+            cleanup();
+            result.warn(
+                &format!("Could not regenerate bindings: {}", e),
+                "Run 'forge generate' to check manually",
+            );
+            return Ok(());
+        }
+
+        let mut modified = Vec::new();
+        let mut missing = Vec::new();
+
+        if let Ok(entries) = std::fs::read_dir(&tmp_output) {
+            for entry in entries.flatten() {
+                if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                    continue;
+                }
+                let filename = entry.file_name();
+                let Ok(expected) = std::fs::read(entry.path()) else {
+                    continue;
+                };
+                let on_disk = output_path.join(&filename);
+
+                if !on_disk.exists() {
+                    missing.push(filename.to_string_lossy().to_string());
+                    continue;
+                }
+
+                let Ok(actual) = std::fs::read(&on_disk) else {
+                    missing.push(filename.to_string_lossy().to_string());
+                    continue;
+                };
+
+                if actual != expected {
+                    modified.push(filename.to_string_lossy().to_string());
+                }
+            }
+        }
+
+        cleanup();
+
+        if modified.is_empty() && missing.is_empty() {
+            result.pass("Generated bindings are up to date");
+        } else {
+            if !modified.is_empty() {
+                result.warn(
+                    &format!(
+                        "{} binding file(s) modified: {}",
+                        modified.len(),
+                        modified.join(", ")
+                    ),
+                    "Run 'forge generate --force' to restore generated bindings",
+                );
+            }
+            if !missing.is_empty() {
+                result.warn(
+                    &format!(
+                        "{} binding file(s) missing: {}",
+                        missing.len(),
+                        missing.join(", ")
+                    ),
+                    "Run 'forge generate' to recreate missing bindings",
+                );
             }
         }
 

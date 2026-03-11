@@ -264,7 +264,7 @@ After `forge generate`, you get:
 |------|----------|
 | `types.ts` | Interfaces from `#[forge::model]`, union types from `#[forge::forge_enum]` |
 | `api.ts` | Query and mutation bindings |
-| `stores.ts` | Re-exports from `@forge/svelte` |
+| `stores.ts` | Re-exports from `@forge-rs/svelte` |
 | `runes.svelte.ts` | Svelte 5 `toReactive()` helper |
 | `reactive.svelte.ts` | Runes-based subscription functions (`getUser$`) |
 | `auth.svelte.ts` | Auth store (when auth configured) |
@@ -281,7 +281,6 @@ forge generate [OPTIONS]
 | `--force` | Regenerate even if files exist |
 | `--output, -o` | Output directory (default: `frontend/src/lib/forge`) |
 | `--src, -s` | Source directory to scan (default: `src`) |
-| `--skip-runtime` | Only regenerate types, skip `@forge/svelte` update |
 | `-y, --yes` | Auto-accept prompts (for CI) |
 
 ## Usage in Components

@@ -20,7 +20,6 @@ FROM oven/bun:1-alpine AS frontend-builder
 WORKDIR /app/frontend
 
 COPY frontend/package.json frontend/bun.lock* ./
-COPY frontend/.forge ./.forge
 
 RUN bun install --frozen-lockfile || bun install
 

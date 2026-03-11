@@ -259,7 +259,7 @@ if input.user_id != uid {
 ## Frontend Auth Store (src/lib/auth.svelte.ts)
 
 ```typescript
-import { getForgeClient } from "@forge/svelte"
+import { getForgeClient } from "@forge-rs/svelte"
 import { getContext, setContext } from "svelte"
 
 const AUTH_KEY = Symbol("auth")

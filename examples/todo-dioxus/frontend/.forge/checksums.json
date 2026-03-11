@@ -1,9 +1,0 @@
-{
-  "dioxus/Cargo.toml": "2c980b89a29973ffaffd34b5f10bcace5ecb4c0cc2b54d130fd1f6af9c75e105",
-  "dioxus/src/client.rs": "77d18aea114697ef2b61333f62cbed6ebe592858391c0c1456d77588e65d64c8",
-  "dioxus/src/context.rs": "dd59a754965059945ca1b7c048dcd8193859404edb11382b4196ab38d673c7ce",
-  "dioxus/src/hooks.rs": "d350db018f19cff482af74db5884e3dd7353c99fead6d3bf06aeaca407b83825",
-  "dioxus/src/lib.rs": "073cc4bfcf81ce264d0e1966617a39afa56ca36e7bceef44a2acec636b26f21d",
-  "dioxus/src/types.rs": "9eb99e04d2f8d3e123b34ba96aa7f1fb7ad6fe27d6a9835b5a654496a755e391",
-  "dioxus/src/upload.rs": "f04dd3093b2ac05eb45d550281904afc4269b7901de620da748604a8f3dfd97d"
-}

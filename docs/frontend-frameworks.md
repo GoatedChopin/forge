@@ -40,7 +40,7 @@ Most CLI code (`forge new`, `forge generate`, runtime generation) should continu
 - Keep framework-specific template lists in their own module. Do not append more giant arrays to shared files.
 - Put shared templates in shared modules only when they are truly framework-agnostic.
 - If a framework needs custom formatting, manifest patching, or post-generation steps, hang that behavior off the framework spec.
-- Keep generated runtime files under `frontend/.forge/<framework>/`.
+- Publish runtime packages to registries (npm for JS frameworks, crates.io for Rust frameworks).
 - Keep generated user-facing bindings in a framework-specific default output directory declared in the framework spec.
 
 ## Remaining work

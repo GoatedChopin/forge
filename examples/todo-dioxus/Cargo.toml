@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [features]
-default = ["embedded-frontend"]
+default = []
 embedded-frontend = ["dep:rust-embed", "dep:mime_guess"]
 testcontainers = ["forge/testcontainers"]
 

@@ -136,7 +136,7 @@ impl ApiGenerator {
             helpers.push("createWorkflowStore");
         }
         output.push_str(&format!(
-            "import {{ {} }} from \"@forge/svelte\";\n",
+            "import {{ {} }} from \"@forge-rs/svelte\";\n",
             helpers.join(", ")
         ));
 

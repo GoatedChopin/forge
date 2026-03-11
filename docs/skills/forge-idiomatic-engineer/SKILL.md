@@ -131,7 +131,6 @@ Finish the backend behavior and its tests first. Then run `forge generate`. Then
 Never hand-edit generated files:
 
 - `frontend/src/lib/forge/*`
-- `frontend/.forge/*`
 
 ### Handler registration matters
 

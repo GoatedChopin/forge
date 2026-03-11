@@ -10,7 +10,6 @@ WORKDIR /app/frontend
 RUN rustup target add wasm32-unknown-unknown
 RUN cargo install dioxus-cli --version 0.7.3 --locked
 COPY frontend/Cargo.toml frontend/Dioxus.toml ./
-COPY frontend/.forge ./.forge
 COPY frontend/src ./src
 RUN dx build --web --release
 

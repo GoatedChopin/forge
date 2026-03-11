@@ -41,7 +41,7 @@ impl TypeGenerator {
         }
 
         output.push_str(
-            "export type { ForgeError, QueryResult, SubscriptionResult } from \"@forge/svelte\";\n",
+            "export type { ForgeError, QueryResult, SubscriptionResult } from \"@forge-rs/svelte\";\n",
         );
 
         Ok(output)
@@ -102,6 +102,6 @@ mod tests {
         let registry = SchemaRegistry::new();
         let output = generator.generate(&registry).unwrap();
         assert!(output.contains("ForgeError"));
-        assert!(output.contains("@forge/svelte"));
+        assert!(output.contains("@forge-rs/svelte"));
     }
 }

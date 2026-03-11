@@ -1,13 +1,11 @@
 mod check;
 mod dev;
 mod frontend_codegen;
-mod frontend_runtime;
 mod frontend_scaffold;
 mod frontend_target;
 mod generate;
 mod migrate;
 mod new;
-mod runtime_generator;
 mod template;
 mod test;
 mod ui;
@@ -42,7 +40,7 @@ const AFTER_HELP: &str = r#"Examples:
   forge test                     Run Playwright tests
   forge test --ui                Run tests in Playwright UI mode
   forge check                    Validate project configuration
-  forge generate                 Generate frontend/runtime bindings from backend code
+  forge generate                 Generate frontend bindings from backend code
   forge migrate status           Check migration status
 "#;
 
@@ -68,7 +66,7 @@ pub enum Commands {
     /// Start development environment with Docker Compose
     Dev(DevCommand),
 
-    /// Generate frontend/runtime bindings from backend source
+    /// Generate frontend bindings from backend source
     Generate(GenerateCommand),
 
     /// Run Playwright frontend tests

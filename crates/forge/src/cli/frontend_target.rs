@@ -7,17 +7,12 @@ use std::str::FromStr;
 use super::frontend_codegen::{
     BindingGeneratorFn, BindingGeneratorInput, generate_dioxus_bindings, generate_svelte_bindings,
 };
-use super::frontend_runtime::{
-    DIOXUS_RUNTIME_FILES, RuntimeTemplate, SVELTE_RUNTIME_FILES, update_frontend_cargo_toml,
-    update_frontend_package_json,
-};
 use super::frontend_scaffold::{
     FrontendTemplates, ScaffoldMode, TemplateFile, dioxus_frontend_templates,
     dioxus_project_templates, sveltekit_frontend_templates, sveltekit_project_templates,
 };
 
 type DetectFn = fn(&Path) -> bool;
-type ManifestUpdaterFn = fn(&Path) -> Result<()>;
 type PostGenerateFn = fn(&Path) -> Result<()>;
 type ExtraFormatFn = fn(&Path) -> Result<bool>;
 type ProjectTemplatesFn = fn(ScaffoldMode) -> &'static [TemplateFile];
@@ -27,10 +22,7 @@ pub struct FrontendTargetSpec {
     pub id: &'static str,
     pub display_name: &'static str,
     pub default_output_dir: &'static str,
-    pub runtime_dir_name: &'static str,
-    pub runtime_templates: &'static [RuntimeTemplate],
     detect: DetectFn,
-    update_manifest: ManifestUpdaterFn,
     post_generate: PostGenerateFn,
     extra_format: ExtraFormatFn,
     project_templates: ProjectTemplatesFn,
@@ -51,10 +43,7 @@ const SVELTEKIT_SPEC: FrontendTargetSpec = FrontendTargetSpec {
     id: "sveltekit",
     display_name: "SvelteKit",
     default_output_dir: "frontend/src/lib/forge",
-    runtime_dir_name: "svelte",
-    runtime_templates: SVELTE_RUNTIME_FILES,
     detect: detect_sveltekit,
-    update_manifest: update_frontend_package_json,
     post_generate: post_generate_sveltekit,
     extra_format: no_extra_format,
     project_templates: sveltekit_project_templates,
@@ -66,10 +55,7 @@ const DIOXUS_SPEC: FrontendTargetSpec = FrontendTargetSpec {
     id: "dioxus",
     display_name: "Dioxus",
     default_output_dir: "frontend/src/forge",
-    runtime_dir_name: "dioxus",
-    runtime_templates: DIOXUS_RUNTIME_FILES,
     detect: detect_dioxus,
-    update_manifest: update_frontend_cargo_toml,
     post_generate: no_post_generate,
     extra_format: format_dioxus_frontend,
     project_templates: dioxus_project_templates,
@@ -95,10 +81,6 @@ impl FrontendTarget {
         self.spec().default_output_dir
     }
 
-    pub fn runtime_dir_name(self) -> &'static str {
-        self.spec().runtime_dir_name
-    }
-
     pub fn display_name(self) -> &'static str {
         self.spec().display_name
     }
@@ -109,14 +91,6 @@ impl FrontendTarget {
 
     pub fn frontend_templates(self, mode: ScaffoldMode) -> FrontendTemplates {
         (self.spec().frontend_templates)(mode)
-    }
-
-    pub fn runtime_templates(self) -> &'static [RuntimeTemplate] {
-        self.spec().runtime_templates
-    }
-
-    pub fn update_frontend_manifest(self, frontend_dir: &Path) -> Result<()> {
-        (self.spec().update_manifest)(frontend_dir)
     }
 
     pub fn post_generate(self, frontend_dir: &Path) -> Result<()> {

@@ -282,8 +282,6 @@ forge check
 ### Never edit generated files
 
 - `frontend/src/lib/forge/*`
-- `frontend/.forge/svelte/*`
-- `frontend/.forge/version`
 
 When change is needed, modify Rust source or Forge config, then regenerate.
 Do not hand-create files in these locations as a substitute for generation.
