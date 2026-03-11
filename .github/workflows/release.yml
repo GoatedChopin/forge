@@ -185,7 +185,7 @@ jobs:
       - name: Patch to use local workspace
         run: |
           cd /tmp/forge-integration-test
-          # Add [patch.crates-io] section to use local forge crates
+          # Patch Rust crates to use local workspace
           cat >> Cargo.toml << 'EOF'
 
           # Local patches for integration testing
@@ -197,6 +197,16 @@ jobs:
           forge-codegen = { path = "${{ github.workspace }}/crates/forge-codegen" }
           EOF
           cat Cargo.toml
+
+          # Patch npm package to use local source (not yet published)
+          if [ -f frontend/package.json ]; then
+            jq --arg p "file:${{ github.workspace }}/packages/forge-svelte" '
+              if .dependencies["@forge-rs/svelte"] then .dependencies["@forge-rs/svelte"] = $p
+              elif .devDependencies["@forge-rs/svelte"] then .devDependencies["@forge-rs/svelte"] = $p
+              else . end
+            ' frontend/package.json > frontend/package.json.tmp
+            mv frontend/package.json.tmp frontend/package.json
+          fi
 
       - name: Install Playwright
         working-directory: /tmp/forge-integration-test/frontend
@@ -303,6 +313,33 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+
+      - name: Patch example frontend dependencies to use local packages
+        run: |
+          # Svelte examples: point @forge-rs/svelte to local package
+          for pkg in examples/*/frontend/package.json; do
+            if [ -f "$pkg" ] && grep -q '@forge-rs/svelte' "$pkg"; then
+              jq --arg p "file:$GITHUB_WORKSPACE/packages/forge-svelte" '
+                if .dependencies["@forge-rs/svelte"] then .dependencies["@forge-rs/svelte"] = $p
+                elif .devDependencies["@forge-rs/svelte"] then .devDependencies["@forge-rs/svelte"] = $p
+                else . end
+              ' "$pkg" > "$pkg.tmp"
+              mv "$pkg.tmp" "$pkg"
+              echo "Patched $pkg"
+            fi
+          done
+
+          # Dioxus examples: patch forge-dioxus to use local package
+          for cargo in examples/*/frontend/Cargo.toml; do
+            if [ -f "$cargo" ] && grep -q 'forge-dioxus' "$cargo"; then
+              cat >> "$cargo" << EOF
+
+          [patch.crates-io]
+          forge-dioxus = { path = "$GITHUB_WORKSPACE/packages/forge-dioxus" }
+          EOF
+              echo "Patched $cargo"
+            fi
+          done
 
       - name: Test example projects
         env:

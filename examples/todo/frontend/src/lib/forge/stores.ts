@@ -7,7 +7,7 @@ export {
   createJobStore,
   createWorkflowStore,
   dt,
-} from '@forge/svelte';
+} from '@forge-rs/svelte';
 export type {
   Readable,
   ConnectionStatusStore,
@@ -15,4 +15,4 @@ export type {
   SubscriptionStore,
   JobStore,
   WorkflowStore,
-} from '@forge/svelte';
+} from '@forge-rs/svelte';

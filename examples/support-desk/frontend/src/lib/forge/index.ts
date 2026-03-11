@@ -4,4 +4,4 @@ export * from './api';
 export * from './stores';
 export * from './runes.svelte';
 export * from './reactive.svelte';
-export { ForgeClient, ForgeClientError, createForgeClient, ForgeProvider } from '@forge/svelte';
+export { ForgeClient, ForgeClientError, createForgeClient, ForgeProvider } from '@forge-rs/svelte';

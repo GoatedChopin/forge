@@ -72,4 +72,4 @@ export type TicketPriority = 'low' | 'normal' | 'high';
 
 export type TicketStatus = 'new' | 'working' | 'resolved';
 
-export type { ForgeError, QueryResult, SubscriptionResult } from "@forge/svelte";
+export type { ForgeError, QueryResult, SubscriptionResult } from "@forge-rs/svelte";

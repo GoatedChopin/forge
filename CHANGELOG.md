@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-03-12
+
+### Added
+
+- Dioxus frontend support with scaffolding, codegen, and runtime client (`forge new --target dioxus`)
+- `forge test` command wrapping Playwright with prerequisite checks, `--ui` and `--headed` flags
+- `forge prepare` command for sqlx compile-time query checking with offline cache support
+- Published `@forge-rs/svelte` npm package and `forge-dioxus` crate as standalone runtime packages
+
+### Changed
+
+- Frontend runtimes extracted from embedded CLI templates into published packages (`@forge-rs/svelte`, `forge-dioxus`)
+- `forge generate` no longer writes runtime files to `.forge/`; projects depend on published packages instead
+- Runtime config and docker-compose template defaults simplified
+- Playwright test suites run sequentially by default for reliability
+- Example docker-compose switched from named volumes to bind mounts for host LSP visibility
+- RPC error handling improved in test fixtures
+
+### Removed
+
+- Embedded frontend runtime templates (`.forge/svelte/`, `.forge/dioxus/`); replaced by published packages
+
 ## [0.6.0] - 2026-03-09
 
 ### Added
@@ -330,7 +352,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust 2024 edition unsafe block compatibility
 - Release workflow cargo-edit installation
 
-[unreleased]: https://github.com/isala404/forge/compare/v0.6.0...HEAD
+[unreleased]: https://github.com/isala404/forge/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/isala404/forge/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/isala404/forge/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/isala404/forge/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/isala404/forge/compare/v0.4.1...v0.5.0

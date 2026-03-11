@@ -17,4 +17,4 @@ export interface UpdateTodoInput {
   completed?: boolean;
 }
 
-export type { ForgeError, QueryResult, SubscriptionResult } from "@forge/svelte";
+export type { ForgeError, QueryResult, SubscriptionResult } from "@forge-rs/svelte";

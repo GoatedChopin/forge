@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ForgeProvider } from "@forge/svelte";
+  import { ForgeProvider } from "@forge-rs/svelte";
   import { PUBLIC_API_URL } from "$env/static/public";
 
   interface Props {
