@@ -31,15 +31,17 @@ fn build_frontend() {
         panic!("frontend directory not found");
     }
 
-    let dx = std::process::Command::new("dx")
+    let has_dx = std::process::Command::new("dx")
         .arg("--version")
         .output()
         .ok()
         .filter(|o| o.status.success())
         .is_some();
 
-    if !dx {
-        panic!("dioxus-cli (dx) is required to build the Dioxus frontend");
+    if !has_dx {
+        println!("cargo:warning=dioxus-cli (dx) not found, skipping frontend build");
+        ensure_dev_frontend_dist();
+        return;
     }
 
     let status = std::process::Command::new("dx")
