@@ -2,6 +2,8 @@
 
 Complete end-to-end auth setup for Forge apps with HS256 self-issued JWT. This is the single source of truth for auth configuration, backend implementation, and frontend wiring.
 
+Frontend examples below are SvelteKit-first. For Dioxus repos, keep the same backend/auth rules and adapt the client wiring to the Dioxus runtime patterns in `references/dioxus.md`.
+
 ## forge.toml
 
 ```toml

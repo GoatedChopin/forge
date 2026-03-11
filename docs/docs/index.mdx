@@ -1,8 +1,8 @@
 # Forge Documentation
 
 Forge is a Rust framework that compiles backend functions (queries, mutations, jobs, crons,
-workflows, and webhooks) into a single runtime backed by PostgreSQL. This documentation
-focuses on how to build and operate applications with Forge.
+workflows, and webhooks) into a single runtime backed by PostgreSQL. It generates frontend
+bindings from the same Rust source of truth, with first-class support for SvelteKit and Dioxus today.
 
 ## Documentation map
 
@@ -22,7 +22,7 @@ cd my-app
 forge dev
 ```
 
-Runs Docker Compose with PostgreSQL, backend (cargo-watch), and frontend (Vite). Use `forge dev down --clear` to reset.
+Runs Docker Compose with PostgreSQL, backend (cargo-watch), and the selected frontend target. Use `forge dev down --clear` to reset. Pass `--target dioxus` to scaffold a Dioxus frontend instead of the default SvelteKit app.
 
 ## Queries and mutations
 
@@ -44,7 +44,8 @@ const todos = listTodos$();
 ```
 
 Queries and mutations are exposed as RPC endpoints under `/_api/rpc` and used by the
-generated TypeScript client. Subscriptions use PostgreSQL `LISTEN/NOTIFY` plus a
+generated frontend bindings. SvelteKit projects get TypeScript clients and stores; Dioxus
+projects get Rust bindings and hooks. Subscriptions use PostgreSQL `LISTEN/NOTIFY` plus a
 SSE connection to push updates.
 
 ## Background jobs
@@ -117,6 +118,7 @@ Forge relies on core PostgreSQL features for coordination and data propagation:
 - `LISTEN/NOTIFY` for real-time subscriptions
 - Advisory locks for leader election and migration coordination
 - WAL durability for workflow and job state
+- `sqlx` macros plus `.sqlx/` offline cache for compile-time query validation
 
 ## Build output
 

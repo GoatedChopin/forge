@@ -2,8 +2,11 @@ use anyhow::Result;
 use clap::Parser;
 use console::style;
 use std::fs;
+use std::io::IsTerminal;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command as StdCommand, Stdio};
+use tokio::process::Command as TokioCommand;
+use tokio::signal;
 
 use super::frontend_scaffold::{ScaffoldMode, TemplateFile, shared_frontend_templates};
 use super::frontend_target::FrontendTarget;
@@ -84,7 +87,7 @@ pub(super) fn extract_project_name(input: &str) -> String {
 
 /// Check if git is available on the system.
 fn is_git_available() -> bool {
-    Command::new("git")
+    StdCommand::new("git")
         .arg("--version")
         .output()
         .map(|o| o.status.success())
@@ -93,7 +96,7 @@ fn is_git_available() -> bool {
 
 /// Check if the directory is inside an existing git repository.
 fn is_inside_git_repo(dir: &Path) -> bool {
-    Command::new("git")
+    StdCommand::new("git")
         .args(["rev-parse", "--git-dir"])
         .current_dir(dir)
         .output()
@@ -108,7 +111,7 @@ fn run_forge_generate(dir: &Path) -> Result<()> {
     // Get the current executable path to run forge generate
     let forge_exe = std::env::current_exe().unwrap_or_else(|_| "forge".into());
 
-    let output = Command::new(&forge_exe)
+    let output = StdCommand::new(&forge_exe)
         .args(["generate", "-y"])
         .current_dir(dir)
         .output()?;
@@ -138,7 +141,7 @@ fn run_formatters(dir: &Path) -> Result<()> {
     let frontend_dir = dir.join("frontend");
     if frontend_dir.exists() && frontend_dir.join("package.json").exists() {
         println!("  {} Formatting frontend...", ui::step());
-        let output = Command::new("bun")
+        let output = StdCommand::new("bun")
             .args(["run", "format"])
             .current_dir(&frontend_dir)
             .output();
@@ -157,10 +160,10 @@ fn run_formatters(dir: &Path) -> Result<()> {
         println!("  {} Dioxus frontend formatted", ui::ok());
     }
 
-    let cargo_check = Command::new("cargo").arg("--version").output();
+    let cargo_check = StdCommand::new("cargo").arg("--version").output();
     if matches!(cargo_check, Ok(ref o) if o.status.success()) {
         println!("  {} Formatting backend...", ui::step());
-        let output = Command::new("cargo")
+        let output = StdCommand::new("cargo")
             .args(["fmt"])
             .current_dir(dir)
             .output();
@@ -180,7 +183,7 @@ fn run_formatters(dir: &Path) -> Result<()> {
 fn generate_cargo_lockfile(dir: &Path) -> Result<()> {
     println!("  {} Generating Cargo.lock...", ui::step());
 
-    if !matches!(Command::new("cargo").arg("--version").output(), Ok(o) if o.status.success()) {
+    if !matches!(StdCommand::new("cargo").arg("--version").output(), Ok(o) if o.status.success()) {
         eprintln!(
             "  {} cargo not found, skipping lockfile generation",
             ui::warn()
@@ -188,7 +191,7 @@ fn generate_cargo_lockfile(dir: &Path) -> Result<()> {
         return Ok(());
     }
 
-    let output = Command::new("cargo")
+    let output = StdCommand::new("cargo")
         .args(["generate-lockfile"])
         .current_dir(dir)
         .output()?;
@@ -218,7 +221,7 @@ fn generate_bun_lockfile(dir: &Path) -> Result<()> {
     println!("  {} Generating bun.lock...", ui::step());
 
     // Check if bun is available
-    let bun_check = Command::new("bun").arg("--version").output();
+    let bun_check = StdCommand::new("bun").arg("--version").output();
 
     if !matches!(bun_check, Ok(ref o) if o.status.success()) {
         eprintln!(
@@ -232,7 +235,7 @@ fn generate_bun_lockfile(dir: &Path) -> Result<()> {
         return Ok(());
     }
 
-    let output = Command::new("bun")
+    let output = StdCommand::new("bun")
         .args(["install", "--lockfile-only"])
         .current_dir(&frontend_dir)
         .output()?;
@@ -253,14 +256,17 @@ fn generate_bun_lockfile(dir: &Path) -> Result<()> {
     Ok(())
 }
 
+const SKILL_INSTALL_URL: &str =
+    "https://github.com/isala404/forge/tree/main/docs/skills/forge-idiomatic-engineer";
+
 /// Install the forge-idiomatic-engineer skill for AI agents.
-fn install_skill(dir: &Path) -> Result<()> {
+async fn install_skill(dir: &Path) -> Result<()> {
     println!(
-        "  {} Installing forge-idiomatic-engineer skill...",
+        "  {} Preparing forge-idiomatic-engineer skill installer...",
         ui::step()
     );
 
-    let bun_check = Command::new("bun").arg("--version").output();
+    let bun_check = StdCommand::new("bun").arg("--version").output();
     if !matches!(bun_check, Ok(ref o) if o.status.success()) {
         eprintln!(
             "  {} bun not found, skipping skill installation",
@@ -268,32 +274,111 @@ fn install_skill(dir: &Path) -> Result<()> {
         );
         eprintln!(
             "    Run {} to install later",
-            style("bunx skills add https://github.com/isala404/forge/tree/main/docs/skills/forge-idiomatic-engineer -y").cyan()
+            style(format!("bunx skills add {SKILL_INSTALL_URL}")).cyan()
         );
         return Ok(());
     }
 
-    let output = Command::new("bunx")
-        .args([
-            "skills",
-            "add",
-            "https://github.com/isala404/forge/tree/main/docs/skills/forge-idiomatic-engineer",
-            "-y",
-        ])
-        .current_dir(dir)
-        .output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    if !std::io::stdin().is_terminal()
+        || !std::io::stdout().is_terminal()
+        || !std::io::stderr().is_terminal()
+    {
         eprintln!(
-            "  {} Failed to install skill: {}",
-            ui::warn(),
-            stderr.trim()
+            "  {} Interactive terminal not available, skipping skill installer",
+            ui::warn()
+        );
+        eprintln!(
+            "    Run {} to install later",
+            style(format!("bunx skills add {SKILL_INSTALL_URL}")).cyan()
         );
         return Ok(());
     }
 
-    println!("  {} forge-idiomatic-engineer skill installed", ui::ok());
+    println!(
+        "  {} Handing terminal control to the skill installer...",
+        ui::step()
+    );
+    println!(
+        "    Run completes when the installer exits. Press Ctrl+C in the installer to stop and continue."
+    );
+
+    let mut child = match TokioCommand::new("bunx")
+        .args(["skills", "add", SKILL_INSTALL_URL])
+        .current_dir(dir)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(err) => {
+            eprintln!("  {} Failed to start skill installer: {}", ui::warn(), err);
+            eprintln!(
+                "    Run {} to install later",
+                style(format!("bunx skills add {SKILL_INSTALL_URL}")).cyan()
+            );
+            return Ok(());
+        }
+    };
+
+    tokio::select! {
+        status = child.wait() => {
+            match status {
+                Ok(status) if status.success() => {
+                    println!("  {} forge-idiomatic-engineer skill installed", ui::ok());
+                }
+                Ok(status) => {
+                    eprintln!(
+                        "  {} Skill installer exited with status {}",
+                        ui::warn(),
+                        status
+                    );
+                    eprintln!(
+                        "    Re-run {} if you still want the skill",
+                        style(format!("bunx skills add {SKILL_INSTALL_URL}")).cyan()
+                    );
+                }
+                Err(err) => {
+                    eprintln!(
+                        "  {} Failed to wait for skill installer: {}",
+                        ui::warn(),
+                        err
+                    );
+                }
+            }
+        }
+        _ = signal::ctrl_c() => {
+            println!();
+            println!(
+                "  {} Leaving skill installer and continuing project setup...",
+                ui::stop()
+            );
+
+            #[cfg(unix)]
+            if let Some(id) = child.id() {
+                use nix::sys::signal::{Signal, kill};
+                use nix::unistd::Pid;
+                let _ = kill(Pid::from_raw(id as i32), Signal::SIGINT);
+            }
+
+            match child.wait().await {
+                Ok(status) if status.success() => {
+                    println!("  {} forge-idiomatic-engineer skill installed", ui::ok());
+                }
+                Ok(_) => {
+                    eprintln!("  {} Skill installation left to the user", ui::warn());
+                }
+                Err(err) => {
+                    eprintln!(
+                        "  {} Failed to wait for skill installer after Ctrl+C: {}",
+                        ui::warn(),
+                        err
+                    );
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -306,7 +391,7 @@ fn init_git_repo(dir: &Path) -> Result<()> {
     }
 
     // git init
-    let init = Command::new("git")
+    let init = StdCommand::new("git")
         .args(["init"])
         .current_dir(dir)
         .output()?;
@@ -316,7 +401,7 @@ fn init_git_repo(dir: &Path) -> Result<()> {
     }
 
     // git add .
-    let add = Command::new("git")
+    let add = StdCommand::new("git")
         .args(["add", "."])
         .current_dir(dir)
         .output()?;
@@ -326,7 +411,7 @@ fn init_git_repo(dir: &Path) -> Result<()> {
     }
 
     // git commit
-    let _ = Command::new("git")
+    let _ = StdCommand::new("git")
         .args(["commit", "-m", "Initialize project with Forge"])
         .current_dir(dir)
         .output()?;
@@ -529,7 +614,7 @@ impl NewCommand {
         run_formatters(path)?;
 
         // Install forge-idiomatic-engineer skill for AI agents
-        install_skill(path)?;
+        install_skill(path).await?;
 
         // Initialize git repository if git is available
         if is_git_available() {

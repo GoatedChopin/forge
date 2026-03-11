@@ -18,6 +18,8 @@ cd my-app
 forge dev
 ```
 
+This scaffolds a SvelteKit frontend by default. To start with Dioxus instead, use `forge new my-app --minimal --target dioxus`.
+
 This runs Docker Compose with three services:
 
 | Service | URL |
@@ -170,17 +172,28 @@ This sets up PostgreSQL triggers that emit `NOTIFY` on changes.
 
 The query itself doesn't need to change. Forge extracts table dependencies from the SQL at compile time.
 
+If you change SQL or migrations and want to refresh the offline cache used by `sqlx` macros and `forge check`, run:
+
+```bash
+forge migrate prepare
+```
+
 ## Use from Frontend
 
-Generate the TypeScript client:
+Generate frontend bindings:
 
 ```bash
 forge generate
 ```
 
-This creates type-safe bindings in `frontend/src/lib/forge/`.
+This creates type-safe bindings in the default output for your target:
 
-Now use them in your Svelte component:
+- `frontend/src/lib/forge/` for SvelteKit
+- `frontend/src/forge/` for Dioxus
+
+### SvelteKit example
+
+The default scaffold uses SvelteKit, so you can use the generated TypeScript bindings like this:
 
 ```svelte
 <script lang="ts">
@@ -214,11 +227,33 @@ Now use them in your Svelte component:
 The `$` suffix subscribes to real-time updates through the Forge SSE client, which relays
 PostgreSQL `LISTEN/NOTIFY` changes. Create a todo in one browser tab, it appears in all others.
 
+### Dioxus example
+
+With `--target dioxus`, Forge generates Rust bindings and hooks instead:
+
+```rust
+use dioxus::prelude::*;
+use crate::forge::use_list_todos_subscription;
+
+#[component]
+fn TodoList() -> Element {
+    let todos = use_list_todos_subscription();
+
+    rsx! {
+        ul {
+            for todo in todos.read().data.clone().unwrap_or_default() {
+                li { "{todo.title}" }
+            }
+        }
+    }
+}
+```
+
 ## What You Built
 
 - Query with compile-time SQL validation
 - Mutation with automatic type generation
 - Real-time subscriptions via PostgreSQL `LISTEN/NOTIFY`
-- Type-safe frontend client
+- Type-safe frontend bindings for SvelteKit or Dioxus
 
 Next: [Project Anatomy](/docs/start/anatomy) to understand the file structure.

@@ -1,6 +1,6 @@
-# Generated Client
+# Generated Bindings
 
-Type-safe TypeScript bindings generated from your Rust code and Forge macros.
+Type-safe frontend bindings generated from your Rust code and Forge macros.
 
 ## The Code
 
@@ -9,6 +9,10 @@ Run codegen after adding or modifying functions:
 ```bash
 forge generate
 ```
+
+`forge generate` auto-detects the frontend target from `frontend/` and can also be forced with `--target sveltekit` or `--target dioxus`.
+
+## SvelteKit Output
 
 Your Rust types become TypeScript:
 
@@ -41,7 +45,24 @@ The `forge generate` command:
 4. Creates API bindings that call your functions with type safety
 5. Produces subscription factories for queries with real-time support
 
-Output goes to `frontend/src/lib/forge/` by default.
+Output goes to `frontend/src/lib/forge/` by default for SvelteKit projects.
+
+## Dioxus Output
+
+For Dioxus projects, Forge generates Rust bindings under `frontend/src/forge/`:
+
+```rust
+// api.rs - generated from #[forge::query] and #[forge::mutation]
+pub async fn get_user(client: &ForgeClient, id: String) -> Result<User, ForgeClientError> {
+    client.call("get_user", serde_json::json!({ "id": id })).await
+}
+
+pub fn use_get_user_subscription(id: String) -> dioxus::prelude::Signal<SubscriptionState<User>> {
+    use_forge_subscription("get_user", serde_json::json!({ "id": id }))
+}
+```
+
+The generated `mod.rs` also re-exports `ForgeProvider`, `ForgeClient`, error types, and the Dioxus hooks from `forge-dioxus`.
 
 ## Type Mapping
 
@@ -258,7 +279,9 @@ This handles:
 
 ## Generated Files
 
-After `forge generate`, you get:
+### SvelteKit files
+
+After `forge generate`, a SvelteKit target gets:
 
 | File | Contents |
 |------|----------|
@@ -270,6 +293,16 @@ After `forge generate`, you get:
 | `auth.svelte.ts` | Auth store (when auth configured) |
 | `index.ts` | Barrel export |
 
+### Dioxus files
+
+After `forge generate --target dioxus`, a Dioxus target gets:
+
+| File | Contents |
+|------|----------|
+| `types.rs` | Rust structs and enums projected from `#[forge::model]` and `#[forge::forge_enum]` |
+| `api.rs` | Typed RPC functions and subscription/job/workflow hooks |
+| `mod.rs` | Re-exports generated modules plus `forge-dioxus` runtime types |
+
 ## CLI Options
 
 ```bash
@@ -279,11 +312,12 @@ forge generate [OPTIONS]
 | Option | Description |
 |--------|-------------|
 | `--force` | Regenerate even if files exist |
-| `--output, -o` | Output directory (default: `frontend/src/lib/forge`) |
+| `--output, -o` | Output directory (defaults to the target's standard binding path) |
+| `--target` | Frontend target (`sveltekit` or `dioxus`) |
 | `--src, -s` | Source directory to scan (default: `src`) |
 | `-y, --yes` | Auto-accept prompts (for CI) |
 
-## Usage in Components
+## Usage in SvelteKit Components
 
 ```svelte
 <script lang="ts">
@@ -322,6 +356,38 @@ forge generate [OPTIONS]
     {/each}
   </ul>
 {/if}
+```
+
+For Dioxus, the same backend contract is consumed through generated Rust hooks:
+
+```rust
+use dioxus::prelude::*;
+
+use crate::forge::{create_todo, use_forge_client, use_list_todos_subscription};
+
+#[component]
+fn TodoList() -> Element {
+    let client = use_forge_client();
+    let todos = use_list_todos_subscription();
+
+    rsx! {
+        button {
+            onclick: move |_| {
+                let client = client.clone();
+                spawn(async move {
+                    let _ = create_todo(&client, "Ship it".to_string()).await;
+                });
+            },
+            "Add"
+        }
+
+        ul {
+            for todo in todos.read().data.clone().unwrap_or_default() {
+                li { "{todo.title}" }
+            }
+        }
+    }
+}
 ```
 
 ## Under the Hood

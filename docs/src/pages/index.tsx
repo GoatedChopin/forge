@@ -3,6 +3,7 @@ import Link from '@docusaurus/Link';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
+import type {JSX} from 'react';
 
 import styles from './index.module.css';
 
@@ -51,8 +52,8 @@ const FeatureList: FeatureItem[] = [
     title: 'Type-Safe End-to-End',
     description: (
       <>
-        Write your backend in Rust with full type safety. TypeScript types are generated
-        automatically for your frontend. No more runtime surprises.
+        Write your backend in Rust with full type safety. Forge generates SvelteKit
+        TypeScript bindings and Dioxus Rust bindings from the same backend contract.
       </>
     ),
   },
@@ -87,8 +88,8 @@ const FeatureList: FeatureItem[] = [
     title: 'Ship in Hours',
     description: (
       <>
-        One command to scaffold a full-stack app. One binary to deploy. Focus on
-        your business logic, not infrastructure.
+        One command to scaffold a full-stack app. Pick SvelteKit or Dioxus today,
+        keep one binary to deploy, and focus on business logic instead of plumbing.
       </>
     ),
   },
@@ -148,7 +149,7 @@ pub struct Task {
 {`#[forge::query]
 pub async fn list_tasks(ctx: &QueryContext)
     -> Result<Vec<Task>> {
-    sqlx::query_as("SELECT * FROM tasks")
+    sqlx::query_as!(Task, "SELECT * FROM tasks")
         .fetch_all(ctx.db()).await
         .map_err(Into::into)
 }`}
@@ -159,7 +160,8 @@ pub async fn list_tasks(ctx: &QueryContext)
           <div className="col col--12">
             <Heading as="h4">Use it in your frontend</Heading>
             <pre className={styles.codeBlock}>
-{`<script lang="ts">
+{`// SvelteKit example
+<script lang="ts">
   import { listTasksStore$ } from '$lib/forge';
   const tasks = listTasksStore$({});  // Auto-updates!
 </script>
@@ -168,6 +170,9 @@ pub async fn list_tasks(ctx: &QueryContext)
   <div>{task.title}</div>
 {/each}`}
             </pre>
+            <p className="text--center margin-top--md">
+              The same backend contract can also generate Dioxus bindings in <code>frontend/src/forge</code>.
+            </p>
           </div>
         </div>
       </div>
@@ -190,6 +195,9 @@ function CTASection(): JSX.Element {
 forge new my-app --demo
 cd my-app && forge dev`}
             </pre>
+            <p className="margin-top--md">
+              Want Rust on both sides? Use <code>forge new my-app --demo --target dioxus</code>.
+            </p>
             <div className={styles.buttons}>
               <Link
                 className="button button--primary button--lg"

@@ -156,7 +156,7 @@ tracing::warn!(job_id=%ctx.job_id, attempt=ctx.attempt, "job failed");
 
 ### AP-9: Editing generated Forge frontend files
 
-Change Rust schema/functions, then run `forge generate`. Never hand-edit `frontend/src/lib/forge/*`.
+Change Rust schema/functions, then run `forge generate`. Never hand-edit `frontend/src/lib/forge/*` or `frontend/src/forge/*`.
 
 Do not hand-create fake generated bindings in those directories either.
 
@@ -236,7 +236,7 @@ Prefer `$derived` for computed state and explicit event handlers for user action
 
 ### AP-20: Skipping frontend quality gates
 
-Run CLI checks (`eslint`, `svelte-check`) and verify SEO + accessibility baseline.
+Run the real frontend checks for the active target. For SvelteKit that usually means `eslint` and `svelte-check`; for Dioxus it usually means `cargo fmt`, `cargo check`, and the target's Rust-side UI checks.
 
 ### AP-21: Generic AI-sounding UI copy
 

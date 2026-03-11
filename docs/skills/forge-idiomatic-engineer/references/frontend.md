@@ -1,4 +1,6 @@
-# Frontend Svelte 5 Playbook
+# Frontend SvelteKit Playbook
+
+Load this reference only when the repo is using the SvelteKit target (`frontend/package.json`, `svelte.config.js`, `frontend/src/routes`, generated bindings in `frontend/src/lib/forge`).
 
 Frontend is the default deliverable for full-stack or user-facing Forge work.
 

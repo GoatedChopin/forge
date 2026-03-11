@@ -13,6 +13,7 @@ forge new [project-name] --demo|--minimal [options]
 | `--demo` | Full demo project with User CRUD, jobs, crons, workflows, webhooks |
 | `--minimal` | Clean scaffolding with empty directories and commented examples |
 | `--output, -o <dir>` | Output directory (defaults to project name) |
+| `--target <framework>` | Frontend target (`sveltekit` by default, or `dioxus`) |
 | `--no-lock` | Skip generating bun.lock before initial commit |
 
 One of `--demo` or `--minimal` is required.
@@ -23,6 +24,9 @@ forge new my-app --demo
 
 # Clean slate for experienced developers
 forge new my-app --minimal
+
+# Dioxus frontend instead of SvelteKit
+forge new my-app --demo --target dioxus
 
 # Custom output directory
 forge new my-app --demo --output /path/to/projects/my-app
@@ -139,11 +143,14 @@ forge generate [options]
 | Option | Description |
 |--------|-------------|
 | `--force` | Force regeneration even if files exist |
-| `--output, -o <dir>` | Output directory (default: frontend/src/lib/forge) |
+| `--output, -o <dir>` | Output directory (defaults to the detected target path) |
+| `--target <framework>` | Frontend target (`sveltekit` or `dioxus`) |
 | `--src, -s <dir>` | Source directory to scan (default: src) |
 | `--yes, -y` | Auto-accept prompts (useful for CI) |
 
 ### Generated Files
+
+SvelteKit target:
 
 | File | Description |
 |------|-------------|
@@ -153,11 +160,22 @@ forge generate [options]
 | runes.svelte.ts | Svelte 5 runes helpers |
 | index.ts | Re-exports all modules |
 
+Dioxus target:
+
+| File | Description |
+|------|-------------|
+| types.rs | Rust types generated from Rust models |
+| api.rs | Typed RPC functions and hooks |
+| mod.rs | Re-exports of generated modules plus `forge-dioxus` runtime items |
+
 Backend handler/model files are authored in `src/functions/` and `src/schema/`. `forge generate` then syncs generated frontend/runtime artifacts from that backend source of truth.
 
 ```bash
-# Generate all TypeScript code
+# Generate bindings for the detected target
 forge generate
+
+# Generate Dioxus bindings explicitly
+forge generate --target dioxus
 
 # Force regenerate everything
 forge generate --force
@@ -191,6 +209,7 @@ forge migrate [action] [options]
 | `up` | Run all pending migrations |
 | `down [count]` | Rollback the last N migrations (default: 1) |
 | `status` | Show migration status |
+| `prepare` | Run pending migrations, then refresh the `.sqlx/` offline cache |
 
 ### Automatic migrations
 
@@ -203,6 +222,7 @@ Since PostgreSQL is only accessible inside the Docker network, use `docker compo
 ```bash
 docker compose exec db psql -U postgres -d my-app -c "SELECT * FROM forge_migrations ORDER BY id"
 docker compose exec backend forge migrate down
+docker compose exec backend forge migrate prepare
 docker compose exec db psql -U postgres -d my-app
 ```
 

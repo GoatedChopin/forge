@@ -5,8 +5,11 @@ Build and deploy the runtime binary with embedded frontend support, automatic mi
 ## The Build
 
 ```bash
-# Build frontend
+# Build frontend (SvelteKit)
 cd frontend && bun install && bun run build && cd ..
+
+# Or build frontend (Dioxus)
+cd frontend && dx build --web --release && cd ..
 
 # Build release binary (frontend embedded by default)
 cargo build --release
@@ -22,7 +25,10 @@ Forge bundles the frontend build directory into the binary at compile time using
 
 ## Embedded Frontend
 
-The `embedded-frontend` feature bundles your SvelteKit build into the binary.
+The `embedded-frontend` feature bundles the compiled frontend into the binary.
+
+- SvelteKit templates embed `frontend/build`
+- Dioxus templates embed `frontend/dist`
 
 ```rust
 // src/main.rs
@@ -119,8 +125,8 @@ Multiple nodes can start simultaneously. First node runs migrations. Others wait
 
 | Endpoint | Purpose | Response |
 |----------|---------|----------|
-| `/_api/health` | Liveness probe | `200 { status: "healthy", version: "0.1.0" }` |
-| `/_api/ready` | Readiness probe | `200/503 { ready: bool, database: bool, reactor: bool, version: "0.1.0" }` |
+| `/health` | Liveness probe | `200 { status: "healthy", version: "0.1.0" }` |
+| `/ready` | Readiness probe | `200/503 { ready: bool, database: bool, reactor: bool, version: "0.1.0" }` |
 
 The readiness probe queries the database:
 
@@ -134,13 +140,13 @@ Returns `503 Service Unavailable` if the database connection fails. Use this for
 # kubernetes
 livenessProbe:
   httpGet:
-    path: /_api/health
+    path: /health
     port: 8080
   periodSeconds: 10
 
 readinessProbe:
   httpGet:
-    path: /_api/ready
+    path: /ready
     port: 8080
   periodSeconds: 5
 ```

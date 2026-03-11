@@ -40,6 +40,10 @@ Seven systems. Seven failure points. Seven things to deploy, monitor, and debug 
 
 PostgreSQL already does all of this. [SKIP LOCKED](https://www.inferable.ai/blog/posts/postgres-skip-locked) for job queues. [LISTEN/NOTIFY](https://neon.com/guides/pub-sub-listen-notify) for pub/sub. Advisory locks for coordination. You just need a runtime that actually uses them.
 
+![Real-time sync between iOS and web](docs/static/demo/web-ios-sync.gif)
+
+One mutation. Both clients update instantly. No manual cache busting, no fetch wrappers, no Redux.
+
 ---
 
 ## How It Works
@@ -68,7 +72,7 @@ pub async fn create_user(ctx: &MutationContext, input: CreateUser) -> Result<Use
 }
 ```
 
-These become typed RPC endpoints automatically. A TypeScript client is generated. No routing files, no fetch wrappers, no manual type definitions.
+These become typed RPC endpoints automatically. Forge generates framework bindings from the same Rust source of truth. Today that means TypeScript bindings for SvelteKit and Rust bindings plus hooks for Dioxus. No routing files, no fetch wrappers, no manual type definitions.
 
 Mutations run inside a database transaction. The `dispatch_job` call gets buffered and inserted atomically when the transaction commits. If the mutation fails, the job never exists.
 
@@ -150,6 +154,24 @@ Sleep for 45 days, deploy new code, restart servers, scale up. The workflow pick
 
 Compile-time SQL parsing extracts table dependencies (including JOINs and subqueries). PostgreSQL triggers fire NOTIFY on changes. FORGE re-runs affected queries. SSE pushes diffs to clients. No manual cache invalidation. No pub/sub wiring.
 
+### Frontend Bindings
+
+Frontend support is no longer hard-wired to Svelte. The CLI now treats frontend targets as framework specs, so codegen, scaffolding, formatting, and runtime package wiring all hang off the selected target.
+
+Current first-class targets:
+
+- `sveltekit` -> generated TypeScript bindings in `frontend/src/lib/forge` backed by `@forge-rs/svelte`
+- `dioxus` -> generated Rust bindings in `frontend/src/forge` backed by `forge-dioxus`
+
+SvelteKit remains the default target for `forge new`, but Dioxus is supported end to end:
+
+```bash
+forge new my-app --demo --target dioxus
+forge generate --target dioxus
+```
+
+The frontend target architecture is designed so more framework bindings can be added without reworking the CLI around another pile of match statements.
+
 ### Webhooks
 
 ```rust
@@ -222,6 +244,16 @@ const user = await api.get_user({ id: '...' });  // Fully typed
 
 If your Rust code compiles, your frontend types are correct.
 
+### SQLx Compile-Time Checking
+
+FORGE leans on `sqlx` macros for query validation at compile time.
+
+- New projects include `sqlx.toml` with offline mode enabled.
+- `forge migrate prepare` runs pending migrations and then executes `cargo sqlx prepare --workspace`.
+- `forge check` verifies that `.sqlx/` exists and is not older than your migrations.
+
+That gives you typed frontend bindings and compile-time-checked SQL from the same Rust source.
+
 ---
 
 ## Architecture
@@ -255,7 +287,7 @@ forge              → Public API, Forge::builder(), prelude, CLI
 ├── forge-runtime  → Gateway, function router, job worker, workflow executor, cron scheduler
 │   ├── forge-core → Types, traits, error types, contexts, schema definitions
 │   └── forge-macros → #[query], #[mutation], #[job], #[workflow], #[cron]
-└── forge-codegen  → TypeScript/Svelte client generator
+└── forge-codegen  → Framework binding generators (SvelteKit, Dioxus)
 ```
 
 ---
@@ -285,7 +317,7 @@ forge              → Public API, Forge::builder(), prelude, CLI
 
 ## CLI
 
-`forge dev` starts PostgreSQL, a cargo-watch backend, and a Vite frontend. All three come up together and stop with Ctrl+C. `--demo` scaffolds a working app with queries, mutations, jobs, crons, and workflows. `--minimal` gives you a clean slate.
+`forge dev` starts PostgreSQL, a cargo-watch backend, and the selected frontend target. `--demo` scaffolds a working app with queries, mutations, jobs, crons, and workflows. `--minimal` gives you a clean slate. `forge new` defaults to SvelteKit, and `--target dioxus` switches the scaffold and binding generator to Dioxus.
 
 ```bash
 forge generate                   # generate frontend/runtime bindings from backend code
@@ -293,6 +325,7 @@ forge check                      # validate config, migrations, project health
 forge migrate status             # check which migrations have run
 forge migrate up                 # apply pending migrations
 forge migrate down               # rollback the last migration
+forge migrate prepare            # refresh the .sqlx offline cache for sqlx macros
 ```
 
 ### Deploy

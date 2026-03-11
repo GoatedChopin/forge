@@ -1,13 +1,13 @@
 ---
 name: forge-idiomatic-engineer
-description: "Forge-focused engineering workflow for Rust + Svelte apps. Use this for Forge/forgex projects, or whenever the repo contains `forge.toml`, Forge macros, generated Forge frontend bindings, or Forge CLI-driven backend/frontend generation. Stay grounded in repo reality, prefer small vertical slices, keep tests beside the code they prove, avoid speculative environment chases, and stop cleanly on blocked runtime prerequisites such as occupied ports."
+description: "Forge-focused engineering workflow for Rust apps with generated frontend bindings. Use this for Forge/forgex projects, or whenever the repo contains `forge.toml`, Forge macros, generated Forge frontend bindings, or Forge CLI-driven backend/frontend generation. Stay grounded in repo reality, prefer small vertical slices, keep tests beside the code they prove, avoid speculative environment chases, and stop cleanly on blocked runtime prerequisites such as occupied ports."
 ---
 
 # Forge Idiomatic Engineer
 
 Work like a pragmatic maintainer: read the repo in front of you, make the smallest change that solves the user's stated problem, prove it with nearby tests, and stop cleanly when the environment blocks further progress.
 
-Default assumptions unless the repo says otherwise: Rust 2024 workspace, `forgex` imported as `forge`, PostgreSQL, generated frontend bindings, and Svelte 5.
+Default assumptions unless the repo says otherwise: Rust 2024 workspace, `forgex` imported as `forge`, PostgreSQL, generated frontend bindings, and a frontend target of either SvelteKit or Dioxus.
 
 ## Operating style
 
@@ -27,7 +27,7 @@ Before editing, read only what defines the task surface:
 2. `Cargo.toml`
 3. `src/main.rs`
 4. the exact handler/schema/frontend files you expect to touch
-5. `frontend/package.json` only if frontend work is in scope
+5. `frontend/package.json` for SvelteKit work or `frontend/Cargo.toml` for Dioxus work
 6. `migrations/` only if schema or DB work is in scope
 
 Resolve the real Forge CLI entrypoint, then start working.
@@ -131,6 +131,7 @@ Finish the backend behavior and its tests first. Then run `forge generate`. Then
 Never hand-edit generated files:
 
 - `frontend/src/lib/forge/*`
+- `frontend/src/forge/*`
 
 ### Handler registration matters
 
@@ -177,7 +178,8 @@ Load one supporting reference when the task needs it:
 | Signal | Load |
 |---|---|
 | Auth, JWT, login/register, protected routes | `references/auth.md` |
-| Frontend structure or Svelte patterns | `references/frontend.md` |
+| Frontend structure or SvelteKit patterns | `references/frontend.md` |
+| Dioxus frontend structure, hooks, or binding usage | `references/dioxus.md` |
 | Test design or Playwright expectations | `references/testing.md` |
 | Forge config, CLI flow, migrations, generated paths | `references/config.md` |
 | Jobs, workflows, crons, background work | `references/patterns.md` |

@@ -24,16 +24,12 @@ forge dev down --clear  # stop + remove volumes and target/
 ### Useful Commands
 
 ```bash
-forge add query list_items         # read data
-forge add mutation create_item     # write data
-forge add job process_item         # background work
-forge add cron nightly_cleanup     # scheduled task
-forge add workflow user_onboarding # multi-step process
-forge generate                     # regenerate TypeScript types from Rust models
-forge check                        # validate config, migrations, project health
+forge generate                     # regenerate SvelteKit bindings from Rust models/functions
+forge check                        # validate config, migrations, and project health
 forge migrate status               # check which migrations have run
 forge migrate up                   # apply pending migrations
 forge migrate down                 # rollback the last migration
+forge migrate prepare              # refresh the .sqlx offline cache
 ```
 
 ### Running Tests
@@ -57,7 +53,7 @@ For Docker, VM, and other deployment options: [Deployment Guide](https://tryforg
 
 ## Project Structure
 
-```
+```text
 kanban-board/
 ├── src/
 │   ├── main.rs              # Entry point
@@ -66,12 +62,12 @@ kanban-board/
 │   │   ├── project.rs       # Project model
 │   │   └── task.rs          # Task model with status/priority enums
 │   └── functions/
-│       ├── auth.rs           # Register and login mutations
-│       ├── projects.rs       # Project CRUD queries and mutations
-│       ├── tasks.rs          # Task CRUD with drag-and-drop reordering
-│       ├── overdue.rs        # Daily cron: flag overdue tasks
-│       ├── export.rs         # Background job: CSV export
-│       └── archive.rs        # Durable workflow: project archival
+│       ├── auth.rs          # Register and login mutations
+│       ├── projects.rs      # Project CRUD queries and mutations
+│       ├── tasks.rs         # Task CRUD with drag-and-drop reordering
+│       ├── overdue.rs       # Daily cron: flag overdue tasks
+│       ├── export.rs        # Background job: CSV export
+│       └── archive.rs       # Durable workflow: project archival
 ├── migrations/              # SQL migrations (applied on startup)
 ├── frontend/                # SvelteKit app
 ├── forge.toml               # Runtime configuration

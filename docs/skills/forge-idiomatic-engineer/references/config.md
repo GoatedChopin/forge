@@ -246,6 +246,7 @@ Resolve the actual CLI entrypoints before you run anything:
 - app root: directory containing `forge.toml`
 - Forge CLI command: `forge`, project wrapper, documented local binary, or checked-in build output
 - frontend package manager: inspect `frontend/package.json`, lockfiles, or project scripts
+- frontend target: inspect `frontend/package.json` + `svelte.config.js` for SvelteKit, or `frontend/Cargo.toml` + `Dioxus.toml` for Dioxus
 - database workflow: inspect project docs and available tooling
 
 Do not assume the app binary itself supports Forge CLI subcommands.
@@ -269,7 +270,7 @@ forge check
 - Migrations run automatically on backend startup. For manual migration management during dev, use `docker compose exec db psql -U postgres -d <dbname>` or `docker compose exec backend forge migrate status`.
 - After adding handlers, verify `src/main.rs` registration before frontend work or delivery.
 - Run `forge check` from app root before completion. Fix all findings, rerun until clean.
-- For frontend, run the project's actual quality gates (`lint`, `svelte-check`, types, formatting`) using the detected package manager.
+- For frontend, run the target's real quality gates: SvelteKit usually means `lint`, `svelte-check`, types, and formatting; Dioxus usually means `cargo fmt`, `cargo check`, and any project-specific frontend tests.
 - For tasks that should work out of the box, boot the project through its real dev entrypoint (`forge dev` or equivalent) before delivery.
 
 ### Backend generation policy
@@ -282,6 +283,7 @@ forge check
 ### Never edit generated files
 
 - `frontend/src/lib/forge/*`
+- `frontend/src/forge/*`
 
 When change is needed, modify Rust source or Forge config, then regenerate.
 Do not hand-create files in these locations as a substitute for generation.

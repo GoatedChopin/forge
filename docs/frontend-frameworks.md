@@ -1,6 +1,15 @@
 # Frontend Framework Architecture
 
-This codebase now treats a frontend target as a small framework spec instead of a set of unrelated match statements.
+Forge now treats a frontend target as a small framework spec instead of a set of unrelated match statements. The refactor exists specifically so Forge is not Svelte-exclusive: the CLI can scaffold, detect, format, and generate bindings for multiple frontend frameworks from the same backend source.
+
+## Current support
+
+| Target | Runtime package | Generated bindings | Default output dir |
+|---|---|---|---|
+| `sveltekit` | `@forge-rs/svelte` | TypeScript client, stores, and Svelte helpers | `frontend/src/lib/forge` |
+| `dioxus` | `forge-dioxus` | Rust types, RPC functions, and Dioxus hooks | `frontend/src/forge` |
+
+SvelteKit is still the default for `forge new`, but the target system is designed so additional frameworks can be registered through the same spec model.
 
 ## Current layout
 
@@ -34,6 +43,8 @@ The intended flow is:
 4. Register a single `FrontendTargetSpec` in `frontend_target.rs`.
 
 Most CLI code (`forge new`, `forge generate`, runtime generation) should continue working through the spec without any extra branching.
+
+The backend contract does not change per framework. Rust handlers, schema models, migrations, and `sqlx` compile-time validation remain the source of truth; each frontend target just projects that contract into a different binding format.
 
 ## Rules for new frameworks
 
