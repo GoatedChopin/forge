@@ -137,6 +137,28 @@ jobs:
             fi
           done
 
+      - name: Patch example frontend dependencies to use local packages
+        run: |
+          for pkg in examples/*/frontend/package.json; do
+            if [ -f "$pkg" ] && grep -q '@forge-rs/svelte' "$pkg"; then
+              jq --arg p "file:$GITHUB_WORKSPACE/packages/forge-svelte" '
+                if .dependencies["@forge-rs/svelte"] then .dependencies["@forge-rs/svelte"] = $p
+                elif .devDependencies["@forge-rs/svelte"] then .devDependencies["@forge-rs/svelte"] = $p
+                else . end
+              ' "$pkg" > "$pkg.tmp"
+              mv "$pkg.tmp" "$pkg"
+            fi
+          done
+          for cargo in examples/*/frontend/Cargo.toml; do
+            if [ -f "$cargo" ] && grep -q 'forge-dioxus' "$cargo"; then
+              cat >> "$cargo" << EOF
+
+          [patch.crates-io]
+          forge-dioxus = { path = "$GITHUB_WORKSPACE/packages/forge-dioxus" }
+          EOF
+            fi
+          done
+
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
