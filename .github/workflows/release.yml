@@ -253,6 +253,19 @@ jobs:
             sleep 1
           done
 
+      - name: Run migrations and build
+        working-directory: /tmp/forge-integration-test
+        env:
+          DATABASE_URL: postgres://forge:forge@localhost:5432/forge
+        run: |
+          # Apply migrations so sqlx compile-time macros can validate queries
+          for f in migrations/*.sql; do
+            [ -f "$f" ] && psql "$DATABASE_URL" -f "$f"
+          done
+          # Disable offline mode since we have a live database
+          export SQLX_OFFLINE=false
+          cargo build --release
+
       - name: Start backend and frontend
         working-directory: /tmp/forge-integration-test
         env:
@@ -261,9 +274,6 @@ jobs:
           JWT_SECRET: test-secret-for-ci
           WEBHOOK_SECRET: test-webhook-secret
         run: |
-          cargo build --release 2>&1 &
-          BUILD_PID=$!
-          wait $BUILD_PID
           ./target/release/forge-integration-test &
           BACKEND_PID=$!
 
