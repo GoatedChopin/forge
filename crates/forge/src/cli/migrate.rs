@@ -154,7 +154,7 @@ impl MigrateCommand {
 
                 let output = std::process::Command::new("cargo")
                     .args(["sqlx", "prepare", "--workspace"])
-                    .env("DATABASE_URL", &database_url)
+                    .env("DATABASE_URL", database_url)
                     .output()?;
 
                 if output.status.success() {

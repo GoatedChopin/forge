@@ -546,13 +546,13 @@ impl CheckCommand {
                 .filter_map(|m| m.modified().ok())
                 .max();
 
-            if let (Some(oldest_cache), Some(newest_migration)) = (cache_mtime, migration_mtime) {
-                if newest_migration > oldest_cache {
-                    result.warn(
-                        "Migrations are newer than .sqlx/ cache",
-                        "Run 'forge migrate prepare' to refresh the cache",
-                    );
-                }
+            if let (Some(oldest_cache), Some(newest_migration)) = (cache_mtime, migration_mtime)
+                && newest_migration > oldest_cache
+            {
+                result.warn(
+                    "Migrations are newer than .sqlx/ cache",
+                    "Run 'forge migrate prepare' to refresh the cache",
+                );
             }
         }
 
