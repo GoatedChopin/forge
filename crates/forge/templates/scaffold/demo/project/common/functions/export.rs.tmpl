@@ -36,7 +36,7 @@ pub async fn export_users(ctx: &JobContext, input: ExportInput) -> Result<Export
 
     let _ = ctx.progress(20, "Fetching users...");
     tokio::time::sleep(Duration::from_millis(800)).await;
-    let users: Vec<User> = sqlx::query_as!(User, "SELECT * FROM users ORDER BY created_at DESC")
+    let users: Vec<User> = sqlx::query_as::<_, User>("SELECT * FROM users ORDER BY created_at DESC")
         .fetch_all(ctx.db())
         .await?;
 

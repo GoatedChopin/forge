@@ -4,7 +4,7 @@ use forge::prelude::*;
 /// List all users with reactive subscription support
 #[forge::query(cache = "30s", public)]
 pub async fn get_users(ctx: &QueryContext) -> Result<Vec<User>> {
-    sqlx::query_as!(User, "SELECT * FROM users ORDER BY created_at DESC")
+    sqlx::query_as::<_, User>("SELECT * FROM users ORDER BY created_at DESC")
         .fetch_all(ctx.db())
         .await
         .map_err(Into::into)
@@ -13,7 +13,8 @@ pub async fn get_users(ctx: &QueryContext) -> Result<Vec<User>> {
 /// Get single user by ID
 #[forge::query(timeout = 10, public)]
 pub async fn get_user(ctx: &QueryContext, id: Uuid) -> Result<Option<User>> {
-    sqlx::query_as!(User, "SELECT * FROM users WHERE id = $1", id)
+    sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
+        .bind(id)
         .fetch_optional(ctx.db())
         .await
         .map_err(Into::into)
@@ -32,12 +33,16 @@ pub async fn create_user(
     let role = role.unwrap_or_default();
 
     let mut conn = ctx.conn().await.map_err(|e| ForgeError::Database(e.to_string()))?;
-    sqlx::query_as!(
-        User,
+    sqlx::query_as::<_, User>(
         "INSERT INTO users (id, email, name, role, created_at, updated_at) \
          VALUES ($1, $2, $3, $4, $5, $6) RETURNING *",
-        id, &email, &name, role as UserRole, now, now
     )
+    .bind(id)
+    .bind(&email)
+    .bind(&name)
+    .bind(role as UserRole)
+    .bind(now)
+    .bind(now)
     .fetch_one(&mut *conn)
     .await
     .map_err(Into::into)
@@ -53,16 +58,18 @@ pub async fn update_user(
     role: Option<UserRole>,
 ) -> Result<User> {
     let mut conn = ctx.conn().await.map_err(|e| ForgeError::Database(e.to_string()))?;
-    sqlx::query_as!(
-        User,
+    sqlx::query_as::<_, User>(
         "UPDATE users SET \
          email = COALESCE($2, email), \
          name = COALESCE($3, name), \
          role = COALESCE($4, role), \
          updated_at = NOW() \
          WHERE id = $1 RETURNING *",
-        id, email, name, role as Option<UserRole>
     )
+    .bind(id)
+    .bind(email)
+    .bind(name)
+    .bind(role as Option<UserRole>)
     .fetch_one(&mut *conn)
     .await
     .map_err(Into::into)
@@ -72,7 +79,8 @@ pub async fn update_user(
 #[forge::mutation(public)]
 pub async fn delete_user(ctx: &MutationContext, id: Uuid) -> Result<bool> {
     let mut conn = ctx.conn().await.map_err(|e| ForgeError::Database(e.to_string()))?;
-    let result = sqlx::query!("DELETE FROM users WHERE id = $1", id)
+    let result = sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(id)
         .execute(&mut *conn)
         .await?;
 
