@@ -172,8 +172,8 @@ impl std::ops::Deref for ForgeConn<'_> {
     type Target = PgConnection;
     fn deref(&self) -> &PgConnection {
         match self {
-            ForgeConn::Pool(c) => &**c,
-            ForgeConn::Tx(g) => &***g,
+            ForgeConn::Pool(c) => c,
+            ForgeConn::Tx(g) => g,
         }
     }
 }
@@ -181,8 +181,8 @@ impl std::ops::Deref for ForgeConn<'_> {
 impl std::ops::DerefMut for ForgeConn<'_> {
     fn deref_mut(&mut self) -> &mut PgConnection {
         match self {
-            ForgeConn::Pool(c) => &mut **c,
-            ForgeConn::Tx(g) => &mut ***g,
+            ForgeConn::Pool(c) => c,
+            ForgeConn::Tx(g) => g,
         }
     }
 }
