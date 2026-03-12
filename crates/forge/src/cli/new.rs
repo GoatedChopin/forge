@@ -180,6 +180,7 @@ fn run_formatters(dir: &Path) -> Result<()> {
 }
 
 /// Generate Cargo.lock before initial commit.
+/// Also generates frontend/Cargo.lock for Dioxus projects.
 fn generate_cargo_lockfile(dir: &Path) -> Result<()> {
     println!("  {} Generating Cargo.lock...", ui::step());
 
@@ -207,6 +208,27 @@ fn generate_cargo_lockfile(dir: &Path) -> Result<()> {
     }
 
     println!("  {} Cargo.lock generated", ui::ok());
+
+    // Dioxus frontend is a separate workspace, generate its lockfile too
+    let frontend_cargo = dir.join("frontend/Cargo.toml");
+    if frontend_cargo.exists() {
+        let output = StdCommand::new("cargo")
+            .args(["generate-lockfile"])
+            .current_dir(dir.join("frontend"))
+            .output()?;
+
+        if output.status.success() {
+            println!("  {} frontend/Cargo.lock generated", ui::ok());
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eprintln!(
+                "  {} Failed to generate frontend/Cargo.lock: {}",
+                ui::warn(),
+                stderr.trim()
+            );
+        }
+    }
+
     Ok(())
 }
 
@@ -259,8 +281,9 @@ fn generate_bun_lockfile(dir: &Path) -> Result<()> {
 const SKILL_INSTALL_URL: &str =
     "https://github.com/isala404/forge/tree/main/docs/skills/forge-idiomatic-engineer";
 
-/// Install the forge-idiomatic-engineer skill for AI agents.
-async fn install_skill(dir: &Path) -> Result<()> {
+/// Runs `bunx skills add` so AI agents get project-aware conventions out of the box.
+/// When `non_interactive` is true, passes `-y` to skip prompts.
+async fn install_skill(dir: &Path, non_interactive: bool) -> Result<()> {
     println!(
         "  {} Preparing forge-idiomatic-engineer skill installer...",
         ui::step()
@@ -276,6 +299,35 @@ async fn install_skill(dir: &Path) -> Result<()> {
             "    Run {} to install later",
             style(format!("bunx skills add {SKILL_INSTALL_URL}")).cyan()
         );
+        return Ok(());
+    }
+
+    if non_interactive {
+        let output = StdCommand::new("bunx")
+            .args(["skills", "add", "-y", SKILL_INSTALL_URL])
+            .current_dir(dir)
+            .output();
+
+        match output {
+            Ok(o) if o.status.success() => {
+                println!("  {} forge-idiomatic-engineer skill installed", ui::ok());
+            }
+            Ok(o) => {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                eprintln!(
+                    "  {} Skill installation failed: {}",
+                    ui::warn(),
+                    stderr.trim()
+                );
+                eprintln!(
+                    "    Run {} to install later",
+                    style(format!("bunx skills add {SKILL_INSTALL_URL}")).cyan()
+                );
+            }
+            Err(err) => {
+                eprintln!("  {} Failed to run skill installer: {}", ui::warn(), err);
+            }
+        }
         return Ok(());
     }
 
@@ -520,6 +572,14 @@ pub struct NewCommand {
     /// Use this flag to skip lockfile generation.
     #[arg(long)]
     pub no_lock: bool,
+
+    /// Skip interactive skill installer prompts.
+    ///
+    /// When set, passes `-y` to `bunx skills add` so the
+    /// forge-idiomatic-engineer skill installs without user input.
+    /// Without this flag, the installer runs interactively.
+    #[arg(long)]
+    pub include_skill: bool,
 }
 
 const NEW_AFTER_HELP: &str = r#"TEMPLATE MODES:
@@ -614,7 +674,7 @@ impl NewCommand {
         run_formatters(path)?;
 
         // Install forge-idiomatic-engineer skill for AI agents
-        install_skill(path).await?;
+        install_skill(path, self.include_skill).await?;
 
         // Initialize git repository if git is available
         if is_git_available() {
@@ -631,6 +691,13 @@ impl NewCommand {
         println!("  1. {}", style(format!("cd {}", project_dir)).cyan());
         println!("  2. {}", style("forge dev").cyan());
         println!("     Start development environment (requires Docker)");
+        if self.target == FrontendTarget::Dioxus {
+            println!(
+                "  3. {}",
+                style("cd frontend && dx serve").cyan()
+            );
+            println!("     Start the Dioxus frontend natively (web by default)");
+        }
 
         ui::section("Useful Commands");
         ui::command("forge dev down", "Stop the development environment");
@@ -640,7 +707,9 @@ impl NewCommand {
         );
 
         ui::section("Default Service URLs");
-        ui::kv("Frontend", "http://localhost:5173");
+        if self.target != FrontendTarget::Dioxus {
+            ui::kv("Frontend", "http://localhost:5173");
+        }
         ui::kv("Backend", "http://localhost:8080");
         ui::kv("Grafana", "http://localhost:3000");
 
