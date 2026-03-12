@@ -31,7 +31,7 @@ impl DevCommand {
         if !Path::new("forge.toml").exists() {
             anyhow::bail!(
                 "Not a FORGE project (forge.toml not found).\n\n\
-                To create a new project:\n  forge new my-app --demo"
+                To create a new project:\n  forge new my-app --template with-svelte/minimal"
             );
         }
 

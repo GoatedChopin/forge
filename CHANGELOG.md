@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Dioxus frontend support with scaffolding, codegen, and runtime client (`forge new --target dioxus`)
+- Dioxus frontend support with template-driven project creation, codegen, and runtime client (`forge new --template with-dioxus/demo`)
 - `forge test` command wrapping Playwright with prerequisite checks, `--ui` and `--headed` flags
 - `forge prepare` command for sqlx compile-time query checking with offline cache support
 - Published `@forge-rs/svelte` npm package and `forge-dioxus` crate as standalone runtime packages

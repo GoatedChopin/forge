@@ -1,0 +1,66 @@
+template_id = "with-dioxus/realtime-todo-list"
+frontend = "dioxus"
+canonical_internal_slug = "todo-dioxus"
+
+rewrite_paths = [
+  "Cargo.toml",
+  "forge.toml",
+  ".env",
+  "docker-compose.yml",
+  "README.md",
+  "frontend/Cargo.toml",
+]
+
+copy_exclude = [
+  ".forge-template.toml",
+  "pg_data",
+  "target",
+  "node_modules",
+  ".svelte-kit",
+  "build",
+  "dist",
+  "playwright-report",
+  "test-results",
+  ".forge-dev-integration.log",
+  "skills",
+  "package-lock.json",
+  "bun.lock",
+  "Cargo.lock",
+  "frontend/Cargo.lock",
+  "frontend/target",
+]
+
+[[replacement]]
+from = "todo-dioxus-frontend"
+to = "{{frontend_package_name}}"
+files = ["frontend/Cargo.toml"]
+
+[[replacement]]
+from = "name = \"todo-dioxus\""
+to = "name = \"{{project_slug}}\""
+files = ["Cargo.toml", "forge.toml"]
+
+[[replacement]]
+from = "POSTGRES_DB=todo-dioxus"
+to = "POSTGRES_DB={{project_db_name}}"
+files = [".env"]
+
+[[replacement]]
+from = "postgres://postgres:forge@db:5432/todo_dioxus"
+to = "postgres://postgres:forge@db:5432/{{project_db_name}}"
+files = ["docker-compose.yml"]
+
+[[replacement]]
+from = "pg_isready -U postgres -d todo_dioxus"
+to = "pg_isready -U postgres -d {{project_db_name}}"
+files = ["docker-compose.yml"]
+
+[[replacement]]
+from = "# todo-dioxus"
+to = "# {{project_slug}}"
+files = ["README.md"]
+
+[[replacement]]
+from = "todo-dioxus/"
+to = "{{project_slug}}/"
+files = ["README.md"]

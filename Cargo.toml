@@ -6,10 +6,14 @@ members = [
     "crates/forge-macros",
     "crates/forge-runtime",
     "crates/forge-codegen",
-    "examples/todo",
-    "examples/todo-dioxus",
-    "examples/kanban-board",
-    "examples/support-desk",
+    "examples/with-svelte/minimal",
+    "examples/with-svelte/demo",
+    "examples/with-svelte/realtime-todo-list",
+    "examples/with-dioxus/minimal",
+    "examples/with-dioxus/demo",
+    "examples/with-dioxus/realtime-todo-list",
+    "examples/with-svelte/kanban-board",
+    "examples/with-svelte/support-desk-with-mcp",
 ]
 exclude = [
     "packages/forge-dioxus",
@@ -109,3 +113,10 @@ indexing_slicing = "deny"
 lto = true
 codegen-units = 1
 strip = true
+
+[patch.crates-io]
+forgex = { path = "crates/forge" }
+forge-core = { path = "crates/forge-core" }
+forge-macros = { path = "crates/forge-macros" }
+forge-runtime = { path = "crates/forge-runtime" }
+forge-codegen = { path = "crates/forge-codegen" }

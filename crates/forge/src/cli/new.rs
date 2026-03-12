@@ -1,6 +1,7 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use console::style;
+use std::collections::HashMap;
 use std::fs;
 use std::io::IsTerminal;
 use std::path::Path;
@@ -8,11 +9,12 @@ use std::process::{Command as StdCommand, Stdio};
 use tokio::process::Command as TokioCommand;
 use tokio::signal;
 
-use super::frontend_scaffold::{ScaffoldMode, TemplateFile, shared_frontend_templates};
 use super::frontend_target::FrontendTarget;
 use super::template::render;
+use super::template_catalog::{
+    TemplateDefinition, load_template_definition, supported_template_ids,
+};
 use super::ui;
-use crate::template_vars;
 
 // In debug builds, embed the path to the forge source directory
 #[cfg(debug_assertions)]
@@ -471,69 +473,6 @@ fn init_git_repo(dir: &Path) -> Result<()> {
     Ok(())
 }
 
-const CARGO_TOML: &str =
-    include_str!("../../templates/scaffold/demo/project/common/Cargo.toml.tmpl");
-const FORGE_TOML: &str =
-    include_str!("../../templates/scaffold/demo/project/common/forge.toml.tmpl");
-const GITIGNORE: &str = include_str!("../../templates/scaffold/demo/project/common/gitignore.tmpl");
-const ENV: &str = include_str!("../../templates/scaffold/demo/project/common/env.tmpl");
-const MIGRATION_INITIAL: &str =
-    include_str!("../../templates/scaffold/demo/project/common/migrations/0001_initial.sql.tmpl");
-const SCHEMA_MOD: &str =
-    include_str!("../../templates/scaffold/demo/project/common/schema/mod.rs.tmpl");
-const SCHEMA_USER: &str =
-    include_str!("../../templates/scaffold/demo/project/common/schema/user.rs.tmpl");
-const FUNCTIONS_MOD: &str =
-    include_str!("../../templates/scaffold/demo/project/common/functions/mod.rs.tmpl");
-const FUNCTIONS_USERS: &str =
-    include_str!("../../templates/scaffold/demo/project/common/functions/users.rs.tmpl");
-const FUNCTIONS_ISS: &str =
-    include_str!("../../templates/scaffold/demo/project/common/functions/iss.rs.tmpl");
-const FUNCTIONS_TRADES: &str =
-    include_str!("../../templates/scaffold/demo/project/common/functions/trades.rs.tmpl");
-const FUNCTIONS_EXPORT: &str =
-    include_str!("../../templates/scaffold/demo/project/common/functions/export.rs.tmpl");
-const FUNCTIONS_VERIFICATION: &str =
-    include_str!("../../templates/scaffold/demo/project/common/functions/verification.rs.tmpl");
-const FUNCTIONS_WEBHOOK: &str =
-    include_str!("../../templates/scaffold/demo/project/common/functions/webhook.rs.tmpl");
-const IGNORE: &str = include_str!("../../templates/scaffold/demo/project/common/ignore.tmpl");
-
-const EMPTY_CARGO_TOML: &str =
-    include_str!("../../templates/scaffold/minimal/project/common/Cargo.toml.tmpl");
-const EMPTY_FORGE_TOML: &str =
-    include_str!("../../templates/scaffold/minimal/project/common/forge.toml.tmpl");
-const EMPTY_GITIGNORE: &str =
-    include_str!("../../templates/scaffold/minimal/project/common/gitignore.tmpl");
-const EMPTY_ENV: &str = include_str!("../../templates/scaffold/minimal/project/common/env.tmpl");
-const EMPTY_MIGRATION_INITIAL: &str = include_str!(
-    "../../templates/scaffold/minimal/project/common/migrations/0001_initial.sql.example.tmpl"
-);
-const EMPTY_SCHEMA_MOD: &str =
-    include_str!("../../templates/scaffold/minimal/project/common/schema/mod.rs.tmpl");
-const EMPTY_FUNCTIONS_MOD: &str =
-    include_str!("../../templates/scaffold/minimal/project/common/functions/mod.rs.tmpl");
-const EMPTY_IGNORE: &str =
-    include_str!("../../templates/scaffold/minimal/project/common/ignore.tmpl");
-const SQLX_TOML: &str =
-    include_str!("../../templates/scaffold/minimal/project/common/sqlx.toml.tmpl");
-fn write_template_files(
-    base_dir: &Path,
-    files: &[TemplateFile],
-    vars: &std::collections::HashMap<&str, &str>,
-) -> Result<()> {
-    for file in files {
-        let content = if file.render {
-            render(file.template, vars)
-        } else {
-            file.template.to_string()
-        };
-        fs::write(base_dir.join(file.path), content)?;
-    }
-
-    Ok(())
-}
-
 /// Create a new FORGE project.
 #[derive(Parser)]
 #[command(after_help = NEW_AFTER_HELP)]
@@ -541,67 +480,36 @@ pub struct NewCommand {
     /// Project name.
     pub name: String,
 
-    /// Create a full demo project with example code.
-    ///
-    /// Includes: User CRUD, background jobs, cron tasks, workflows,
-    /// external API actions, and a complete frontend demo UI.
-    /// Perfect for learning FORGE or starting with working examples.
-    #[arg(long, conflicts_with = "minimal")]
-    pub demo: bool,
-
-    /// Create a clean project with minimal scaffolding.
-    ///
-    /// Includes: Empty schema, functions, and migrations directories
-    /// with commented examples. Frontend has a starter page.
-    /// Perfect for experienced developers starting fresh.
-    #[arg(long, conflicts_with = "demo")]
-    pub minimal: bool,
+    /// Template id (for example: with-svelte/minimal).
+    #[arg(long)]
+    pub template: String,
 
     /// Output directory (defaults to project name).
     #[arg(short, long)]
     pub output: Option<String>,
 
-    /// Frontend target (`sveltekit` or `dioxus`).
-    #[arg(long, default_value = "sveltekit")]
-    pub target: FrontendTarget,
-
     /// Skip generating bun.lock file before initial commit.
-    ///
-    /// By default, forge new runs `bun install --lockfile-only` in Docker
-    /// to generate the bun.lock file before the initial git commit.
-    /// Use this flag to skip lockfile generation.
     #[arg(long)]
     pub no_lock: bool,
 
     /// Skip interactive skill installer prompts.
-    ///
-    /// When set, passes `-y` to `bunx skills add` so the
-    /// forge-idiomatic-engineer skill installs without user input.
-    /// Without this flag, the installer runs interactively.
     #[arg(long)]
     pub include_skill: bool,
 }
 
-const NEW_AFTER_HELP: &str = r#"TEMPLATE MODES:
-  You must choose one of --demo or --minimal:
-
-  --demo      Full demo project with working examples
-              - User model with CRUD operations
-              - Background job (export users)
-              - Cron task (ISS location tracker)
-              - Durable workflow (account verification)
-              - Mutations with HTTP support
-              - Complete frontend demo UI
-
-  --minimal   Clean slate with just the structure
-              - Empty schema/ and functions/ directories
-              - Commented examples showing patterns
-              - Starter frontend page
-              - Ready for your own code
+const NEW_AFTER_HELP: &str = r#"TEMPLATES:
+  with-svelte/minimal
+  with-svelte/demo
+  with-svelte/realtime-todo-list
+  with-svelte/support-desk-with-mcp
+  with-svelte/kanban-board
+  with-dioxus/minimal
+  with-dioxus/demo
+  with-dioxus/realtime-todo-list
 
 EXAMPLES:
-  forge new my-app --demo       Learn FORGE with working examples
-  forge new my-app --minimal    Start fresh with clean scaffolding"#;
+  forge new my-app --template with-svelte/minimal
+  forge new my-app --template with-dioxus/realtime-todo-list"#;
 
 impl NewCommand {
     /// Execute the new project command.
@@ -609,47 +517,12 @@ impl NewCommand {
         ui::section("Create FORGE Project");
         println!("  {} Generating project files...", ui::tool());
 
-        // Require either --demo or --minimal
-        if !self.demo && !self.minimal {
-            eprintln!("{} You must specify a template mode", ui::error());
-            eprintln!();
-            eprintln!("Choose one of:");
-            eprintln!();
-            eprintln!(
-                "  {} {} {}",
-                ui::bullet(),
-                style("--demo").cyan().bold(),
-                style("Full demo project with working examples").dim()
-            );
-            eprintln!("          User CRUD, jobs, crons, workflows, actions, and demo UI");
-            eprintln!();
-            eprintln!(
-                "  {} {} {}",
-                ui::bullet(),
-                style("--minimal").cyan().bold(),
-                style("Clean slate with just the structure").dim()
-            );
-            eprintln!("          Empty directories with commented examples, starter frontend");
-            eprintln!();
-            eprintln!("Examples:");
-            eprintln!(
-                "  {} {} {}",
-                ui::bullet(),
-                style("forge new my-app --demo").green(),
-                style("# Learn FORGE with examples").dim()
-            );
-            eprintln!(
-                "  {} {} {}",
-                ui::bullet(),
-                style("forge new my-app --minimal").green(),
-                style("# Start fresh").dim()
-            );
-            eprintln!();
-            eprintln!("Run {} for more details", style("forge new --help").cyan());
-            std::process::exit(1);
+        if !supported_template_ids().contains(&self.template.as_str()) {
+            return Err(invalid_template_error(&self.template));
         }
 
-        // Extract just the project name from paths like "path/to/my-app"
+        let template = load_template_definition(&self.template)?;
+
         let project_name = extract_project_name(&self.name);
         let project_dir = self.output.as_ref().unwrap_or(&self.name);
         let path = Path::new(project_dir);
@@ -659,24 +532,17 @@ impl NewCommand {
         }
 
         fs::create_dir_all(path)?;
-        create_project(path, &project_name, self.demo, self.target)?;
+        create_project_from_template(path, &project_name, &template)?;
 
-        // Generate lockfiles before git commit (unless --no-lock)
         if !self.no_lock {
             generate_bun_lockfile(path)?;
             generate_cargo_lockfile(path)?;
         }
 
-        // Generate frontend types
         run_forge_generate(path)?;
-
-        // Run formatters before git commit
         run_formatters(path)?;
-
-        // Install forge-idiomatic-engineer skill for AI agents
         install_skill(path, self.include_skill).await?;
 
-        // Initialize git repository if git is available
         if is_git_available() {
             init_git_repo(path)?;
         }
@@ -691,11 +557,8 @@ impl NewCommand {
         println!("  1. {}", style(format!("cd {}", project_dir)).cyan());
         println!("  2. {}", style("forge dev").cyan());
         println!("     Start development environment (requires Docker)");
-        if self.target == FrontendTarget::Dioxus {
-            println!(
-                "  3. {}",
-                style("cd frontend && dx serve").cyan()
-            );
+        if template.frontend == FrontendTarget::Dioxus {
+            println!("  3. {}", style("cd frontend && dx serve").cyan());
             println!("     Start the Dioxus frontend natively (web by default)");
         }
 
@@ -707,7 +570,7 @@ impl NewCommand {
         );
 
         ui::section("Default Service URLs");
-        if self.target != FrontendTarget::Dioxus {
+        if template.frontend != FrontendTarget::Dioxus {
             ui::kv("Frontend", "http://localhost:5173");
         }
         ui::kv("Backend", "http://localhost:8080");
@@ -721,116 +584,113 @@ impl NewCommand {
     }
 }
 
-/// Create project files in the given directory.
-///
-/// - `demo = true`: Full demo project with example code
-/// - `demo = false`: Minimal scaffolding without example code
-pub fn create_project(dir: &Path, name: &str, demo: bool, target: FrontendTarget) -> Result<()> {
-    let vars = template_vars!("name" => name, "project_name" => name);
-    let mode = if demo {
-        ScaffoldMode::Demo
-    } else {
-        ScaffoldMode::Minimal
-    };
+pub fn create_project_from_template(
+    dir: &Path,
+    project_name: &str,
+    template: &TemplateDefinition,
+) -> Result<()> {
+    for relative_dir in template.bundled_directories()? {
+        if template.should_exclude(&relative_dir) {
+            continue;
+        }
+        fs::create_dir_all(dir.join(relative_dir))?;
+    }
 
-    // Create directory structure
-    fs::create_dir_all(dir.join("src/schema"))?;
-    fs::create_dir_all(dir.join("src/functions"))?;
-    fs::create_dir_all(dir.join("migrations"))?;
+    let project_db_name = project_name.replace('-', "_");
+    let frontend_package_name = format!("{project_name}-frontend");
+    let rewrite_vars = HashMap::from([
+        ("project_name", project_name),
+        ("project_slug", project_name),
+        ("project_db_name", project_db_name.as_str()),
+        ("frontend_package_name", frontend_package_name.as_str()),
+        (
+            "canonical_internal_slug",
+            template.canonical_internal_slug.as_str(),
+        ),
+    ]);
 
-    if demo {
-        fs::write(dir.join("Cargo.toml"), render(CARGO_TOML, &vars))?;
+    for bundled_file in template.bundled_files()? {
+        if template.should_exclude(&bundled_file.relative_path) {
+            continue;
+        }
 
-        // In debug builds, patch for local forge development
-        #[cfg(debug_assertions)]
-        {
+        let output_path = dir.join(&bundled_file.relative_path);
+        if let Some(parent) = output_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        if template.rewrite_file(&bundled_file.relative_path) {
+            let content = std::str::from_utf8(bundled_file.file.contents()).with_context(|| {
+                format!(
+                    "template file '{}' is not valid UTF-8",
+                    bundled_file.relative_path.display()
+                )
+            })?;
+            let rewritten = apply_template_replacements(
+                content,
+                &bundled_file.relative_path,
+                template,
+                &rewrite_vars,
+            );
+            fs::write(output_path, rewritten)?;
+        } else {
+            fs::write(output_path, bundled_file.file.contents())?;
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    {
+        if dir.join("Cargo.toml").exists() {
             append_cargo_patch(&dir.join("Cargo.toml"))?;
             println!("  {} Added cargo patch for local development", ui::step());
         }
 
-        fs::write(dir.join("forge.toml"), render(FORGE_TOML, &vars))?;
-        fs::write(dir.join("sqlx.toml"), SQLX_TOML)?;
-        fs::write(dir.join(".gitignore"), GITIGNORE)?;
-        fs::write(dir.join(".ignore"), IGNORE)?;
-        fs::write(dir.join(".env"), render(ENV, &vars))?;
-        write_template_files(dir, target.project_templates(mode), &vars)?;
-
-        #[cfg(debug_assertions)]
-        patch_docker_compose(&dir.join("docker-compose.yml"))?;
-        fs::write(dir.join("migrations/0001_initial.sql"), MIGRATION_INITIAL)?;
-        fs::write(dir.join("src/schema/mod.rs"), SCHEMA_MOD)?;
-        fs::write(dir.join("src/schema/user.rs"), SCHEMA_USER)?;
-        fs::write(dir.join("src/functions/mod.rs"), FUNCTIONS_MOD)?;
-        fs::write(dir.join("src/functions/users.rs"), FUNCTIONS_USERS)?;
-        fs::write(dir.join("src/functions/iss.rs"), FUNCTIONS_ISS)?;
-        fs::write(dir.join("src/functions/trades.rs"), FUNCTIONS_TRADES)?;
-        fs::write(dir.join("src/functions/export.rs"), FUNCTIONS_EXPORT)?;
-        fs::write(
-            dir.join("src/functions/verification.rs"),
-            FUNCTIONS_VERIFICATION,
-        )?;
-        fs::write(dir.join("src/functions/webhook.rs"), FUNCTIONS_WEBHOOK)?;
-        // Demo frontend
-        create_frontend(dir, name, true, target)?;
-    } else {
-        fs::write(dir.join("Cargo.toml"), render(EMPTY_CARGO_TOML, &vars))?;
-
-        // In debug builds, patch for local forge development
-        #[cfg(debug_assertions)]
-        {
-            append_cargo_patch(&dir.join("Cargo.toml"))?;
-            println!("  {} Added cargo patch for local development", ui::step());
+        if dir.join("docker-compose.yml").exists() {
+            patch_docker_compose(&dir.join("docker-compose.yml"))?;
         }
-
-        fs::write(dir.join("forge.toml"), render(EMPTY_FORGE_TOML, &vars))?;
-        fs::write(dir.join("sqlx.toml"), SQLX_TOML)?;
-        fs::write(dir.join(".gitignore"), EMPTY_GITIGNORE)?;
-        fs::write(dir.join(".ignore"), EMPTY_IGNORE)?;
-        fs::write(dir.join(".env"), render(EMPTY_ENV, &vars))?;
-        fs::write(dir.join(".env.example"), render(EMPTY_ENV, &vars))?;
-        write_template_files(dir, target.project_templates(mode), &vars)?;
-
-        #[cfg(debug_assertions)]
-        patch_docker_compose(&dir.join("docker-compose.yml"))?;
-        fs::write(
-            dir.join("migrations/0001_initial.sql.example"),
-            EMPTY_MIGRATION_INITIAL,
-        )?;
-        fs::write(dir.join("src/schema/mod.rs"), EMPTY_SCHEMA_MOD)?;
-        fs::write(dir.join("src/functions/mod.rs"), EMPTY_FUNCTIONS_MOD)?;
-        // Minimal frontend
-        create_frontend(dir, name, false, target)?;
     }
 
     Ok(())
 }
 
-/// Create frontend scaffolding.
-///
-/// - `demo = true`: Full demo frontend with complete UI
-/// - `demo = false`: Minimal frontend with starter page
-fn create_frontend(dir: &Path, name: &str, demo: bool, target: FrontendTarget) -> Result<()> {
-    let version = env!("CARGO_PKG_VERSION");
-    let vars = template_vars!("name" => name, "project_name" => name, "version" => version);
-    let mode = if demo {
-        ScaffoldMode::Demo
-    } else {
-        ScaffoldMode::Minimal
-    };
-    let templates = target.frontend_templates(mode);
+fn apply_template_replacements(
+    content: &str,
+    relative_path: &Path,
+    template: &TemplateDefinition,
+    rewrite_vars: &HashMap<&str, &str>,
+) -> String {
+    let relative_path = relative_path.to_string_lossy();
+    let mut rewritten = content.to_string();
 
-    let frontend_dir = dir.join("frontend");
-    fs::create_dir_all(&frontend_dir)?;
-    fs::create_dir_all(frontend_dir.join("tests"))?;
+    for replacement in &template.replacements {
+        if !replacement.files.is_empty()
+            && !replacement
+                .files
+                .iter()
+                .any(|path| path == relative_path.as_ref())
+        {
+            continue;
+        }
 
-    for relative_dir in templates.directories {
-        fs::create_dir_all(frontend_dir.join(relative_dir))?;
+        let target = render(&replacement.to, rewrite_vars);
+        rewritten = rewritten.replace(&replacement.from, &target);
     }
 
-    write_template_files(&frontend_dir, shared_frontend_templates(), &vars)?;
-    write_template_files(&frontend_dir, templates.files, &vars)?;
+    rewritten
+}
 
-    Ok(())
+fn invalid_template_error(template_id: &str) -> anyhow::Error {
+    let supported = supported_template_ids()
+        .iter()
+        .map(|id| format!("  - {id}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    anyhow::anyhow!(
+        "Unknown template '{}'.\n\nSupported templates:\n{}",
+        template_id,
+        supported
+    )
 }
 
 #[cfg(test)]
@@ -841,108 +701,96 @@ mod tests {
 
     #[test]
     fn test_extract_project_name() {
-        // Simple name
         assert_eq!(extract_project_name("my-app"), "my-app");
-
-        // Path with slashes
         assert_eq!(extract_project_name("path/to/my-app"), "my-app");
         assert_eq!(extract_project_name("./my-app"), "my-app");
         assert_eq!(extract_project_name("../my-app"), "my-app");
-
-        // Absolute path
         assert_eq!(extract_project_name("/home/user/projects/my-app"), "my-app");
-
-        // Trailing slash (edge case)
         assert_eq!(extract_project_name("my-app/"), "my-app");
     }
 
     #[test]
-    fn test_create_demo_project() {
+    fn test_copy_svelte_minimal_template_rewrites_names() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("test-demo");
+        let path = dir.path().join("my-app");
         fs::create_dir_all(&path).unwrap();
 
-        create_project(&path, "test-demo", true, FrontendTarget::SvelteKit).unwrap();
+        let template = load_template_definition("with-svelte/minimal").unwrap();
+        create_project_from_template(&path, "my-app", &template).unwrap();
 
-        // All demo files should exist
         assert!(path.join("Cargo.toml").exists());
-        assert!(path.join("forge.toml").exists());
-        assert!(path.join("sqlx.toml").exists());
-        assert!(path.join("src/main.rs").exists());
-        assert!(path.join("build.rs").exists());
-        assert!(path.join("src/schema/mod.rs").exists());
-        assert!(path.join("src/schema/user.rs").exists());
-        assert!(path.join("src/functions/users.rs").exists());
-        assert!(path.join("src/functions/iss.rs").exists());
-        assert!(path.join("src/functions/trades.rs").exists());
-        assert!(path.join("src/functions/export.rs").exists());
-        assert!(path.join("src/functions/verification.rs").exists());
-        assert!(path.join("src/functions/webhook.rs").exists());
         assert!(path.join("frontend/package.json").exists());
-        assert!(path.join("frontend/src/routes/+layout.ts").exists());
-        // Note: frontend/src/lib/forge/ files are generated by `forge generate`, not scaffolded
-        assert!(path.join("frontend/eslint.config.js").exists());
-        assert!(path.join("migrations/0001_initial.sql").exists());
-        assert!(path.join("Dockerfile").exists());
-        assert!(path.join("docker-compose.yml").exists());
-        assert!(path.join("README.md").exists());
-        // Playwright test files
-        assert!(path.join("frontend/playwright.config.ts").exists());
-        assert!(path.join("frontend/tests/global-setup.ts").exists());
-        assert!(path.join("frontend/tests/fixtures.ts").exists());
-        assert!(path.join("frontend/tests/home.spec.ts").exists());
-        // Observability baked into Docker image, not scaffolded
-        assert!(!path.join("grafana").exists());
+        assert!(path.join(".sqlx").exists());
+        assert!(!path.join(".forge-template.toml").exists());
+
+        let cargo_toml = fs::read_to_string(path.join("Cargo.toml")).unwrap();
+        assert!(cargo_toml.contains("name = \"my-app\""));
+
+        let package_json = fs::read_to_string(path.join("frontend/package.json")).unwrap();
+        assert!(package_json.contains("\"my-app-frontend\""));
+
+        let page = fs::read_to_string(path.join("frontend/src/routes/+page.svelte")).unwrap();
+        assert!(page.contains("<h1>my-app</h1>"));
     }
 
     #[test]
-    fn test_create_minimal_project() {
+    fn test_copy_realtime_todo_template_skips_transient_dirs() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("test-minimal");
+        let path = dir.path().join("my-app");
         fs::create_dir_all(&path).unwrap();
 
-        create_project(&path, "test-minimal", false, FrontendTarget::SvelteKit).unwrap();
+        let template = load_template_definition("with-svelte/realtime-todo-list").unwrap();
+        create_project_from_template(&path, "my-app", &template).unwrap();
 
-        // Core files should exist
-        assert!(path.join("Cargo.toml").exists());
-        assert!(path.join("forge.toml").exists());
-        assert!(path.join("sqlx.toml").exists());
-        assert!(path.join("src/main.rs").exists());
-        assert!(path.join("src/schema/mod.rs").exists());
-        assert!(path.join("src/functions/mod.rs").exists());
-        assert!(path.join("migrations/0001_initial.sql.example").exists());
+        assert!(path.join(".sqlx").exists());
+        assert!(!path.join("pg_data").exists());
+        assert!(!path.join("test-results").exists());
 
-        // Example files should NOT exist
-        assert!(!path.join("src/schema/user.rs").exists());
-        assert!(!path.join("src/functions/users.rs").exists());
-        assert!(!path.join("src/functions/iss.rs").exists());
-        assert!(!path.join("src/functions/trades.rs").exists());
-        assert!(!path.join("src/functions/export.rs").exists());
-        assert!(!path.join("src/functions/verification.rs").exists());
-        assert!(!path.join("src/functions/webhook.rs").exists());
-
-        // Frontend should exist with minimal templates
-        assert!(path.join("frontend/package.json").exists());
-        // Note: frontend/src/lib/forge/ files are generated by `forge generate`, not scaffolded
-        // Playwright test files
-        assert!(path.join("frontend/playwright.config.ts").exists());
-        assert!(path.join("frontend/tests/global-setup.ts").exists());
-        assert!(path.join("frontend/tests/fixtures.ts").exists());
-        assert!(path.join("frontend/tests/home.spec.ts").exists());
-        // Observability baked into Docker image, not scaffolded
-        assert!(!path.join("grafana").exists());
+        let cargo_toml = fs::read_to_string(path.join("Cargo.toml")).unwrap();
+        assert!(cargo_toml.contains("name = \"my-app\""));
     }
 
     #[test]
-    fn test_create_minimal_dioxus_project() {
+    fn test_copy_dioxus_minimal_template_rewrites_frontend_manifest() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("test-minimal-dioxus");
+        let path = dir.path().join("my-app");
         fs::create_dir_all(&path).unwrap();
 
-        create_project(&path, "test-minimal-dioxus", false, FrontendTarget::Dioxus).unwrap();
+        let template = load_template_definition("with-dioxus/minimal").unwrap();
+        create_project_from_template(&path, "my-app", &template).unwrap();
 
+        assert!(path.join(".sqlx").exists());
         assert!(path.join("frontend/Cargo.toml").exists());
-        assert!(path.join("frontend/Dioxus.toml").exists());
-        assert!(path.join("frontend/src/main.rs").exists());
+        assert!(!path.join("frontend/dist").exists());
+        assert!(!path.join("frontend/target").exists());
+
+        let frontend_manifest = fs::read_to_string(path.join("frontend/Cargo.toml")).unwrap();
+        assert!(frontend_manifest.contains("name = \"my-app-frontend\""));
+
+        let frontend_main = fs::read_to_string(path.join("frontend/src/main.rs")).unwrap();
+        assert!(frontend_main.contains("\"my-app\""));
+    }
+
+    #[test]
+    fn test_copy_svelte_demo_template_includes_sqlx_cache() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("my-app");
+        fs::create_dir_all(&path).unwrap();
+
+        let template = load_template_definition("with-svelte/demo").unwrap();
+        create_project_from_template(&path, "my-app", &template).unwrap();
+
+        assert!(path.join(".sqlx").exists());
+        assert!(path.join(".sqlx").read_dir().unwrap().next().is_some());
+    }
+
+    #[test]
+    fn test_invalid_template_error_lists_supported_templates() {
+        let error = invalid_template_error("with-svelte/unknown");
+        let message = error.to_string();
+
+        assert!(message.contains("Unknown template 'with-svelte/unknown'"));
+        assert!(message.contains("with-svelte/minimal"));
+        assert!(message.contains("with-dioxus/realtime-todo-list"));
     }
 }

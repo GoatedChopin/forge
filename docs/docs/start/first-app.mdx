@@ -13,12 +13,12 @@ Requires Docker (with Compose v2).
 ## Create and Run
 
 ```bash
-forge new my-app --minimal
+forge new my-app --template with-svelte/minimal
 cd my-app
 forge dev
 ```
 
-This scaffolds a SvelteKit frontend by default. To start with Dioxus instead, use `forge new my-app --minimal --target dioxus`.
+This template starts with a SvelteKit frontend. To start with Dioxus instead, use `forge new my-app --template with-dioxus/minimal`.
 
 This runs Docker Compose with three services:
 
@@ -193,7 +193,7 @@ This creates type-safe bindings in the default output for your target:
 
 ### SvelteKit example
 
-The default scaffold uses SvelteKit, so you can use the generated TypeScript bindings like this:
+The `with-svelte/minimal` template uses SvelteKit, so you can use the generated TypeScript bindings like this:
 
 ```svelte
 <script lang="ts">

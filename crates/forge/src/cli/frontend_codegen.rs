@@ -1,6 +1,7 @@
 use anyhow::Result;
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 pub struct BindingGeneratorInput<'a> {
     pub output_dir: &'a str,
@@ -41,6 +42,32 @@ pub(crate) fn generate_svelte_bindings(input: &BindingGeneratorInput<'_>) -> Res
 pub(crate) fn generate_dioxus_bindings(input: &BindingGeneratorInput<'_>) -> Result<()> {
     let generator = forge_codegen::DioxusGenerator::new(input.output_dir);
     generator.generate(input.registry)?;
+    format_generated_rust_bindings(input.output_path)?;
+    Ok(())
+}
+
+fn format_generated_rust_bindings(output_dir: &Path) -> Result<()> {
+    let mut rust_files = Vec::new();
+
+    for entry in fs::read_dir(output_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+            rust_files.push(path);
+        }
+    }
+
+    if rust_files.is_empty() {
+        return Ok(());
+    }
+
+    let mut rustfmt = Command::new("rustfmt");
+    rustfmt.args(["--edition", "2024"]);
+    for file in rust_files {
+        rustfmt.arg(file);
+    }
+
+    let _ = rustfmt.status();
     Ok(())
 }
 

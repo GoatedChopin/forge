@@ -255,7 +255,7 @@ If `forge` is not on `PATH`, search the repo and adjacent toolchain locations be
 ### Go-to commands once the toolchain is confirmed
 
 ```bash
-forge new my-app --demo
+forge new my-app --template with-svelte/minimal
 forge generate
 forge check
 ```
@@ -297,8 +297,8 @@ Do not hand-create files in these locations as a substitute for generation.
 ### Migration cleanup
 
 When creating real migration files, check `migrations/` for scaffolded files from `forge new`:
-- `--minimal` creates `0001_initial.sql.example` (commented placeholder). Delete it before creating your real migration.
-- `--demo` creates `0001_initial.sql` (real migration with tables). Delete it and drop those tables if already run.
+- `with-*/minimal` templates create `0001_initial.sql.example` (commented placeholder). Delete it before creating your real migration.
+- `with-*/demo` templates create `0001_initial.sql` (real migration with tables). Delete it and drop those tables if already run.
 
 Before writing a migration, inspect an existing project/template migration and preserve its expected format. Some projects require markers such as `-- @up` and `-- @down`.
 

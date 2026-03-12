@@ -1,0 +1,12 @@
+# Cargo-watch: only rebuild on source and config changes
+*
+!src/
+!src/**
+!migrations/
+!migrations/**
+!Cargo.toml
+!Cargo.lock
+!build.rs
+!forge.toml
+!.env
+frontend/

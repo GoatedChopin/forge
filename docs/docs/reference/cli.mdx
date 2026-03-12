@@ -5,31 +5,38 @@
 Create a new project.
 
 ```bash
-forge new [project-name] --demo|--minimal [options]
+forge new [project-name] --template <id> [options]
 ```
 
 | Option | Description |
 |--------|-------------|
-| `--demo` | Full demo project with User CRUD, jobs, crons, workflows, webhooks |
-| `--minimal` | Clean scaffolding with empty directories and commented examples |
+| `--template <id>` | Required template id copied from the embedded example catalog |
 | `--output, -o <dir>` | Output directory (defaults to project name) |
-| `--target <framework>` | Frontend target (`sveltekit` by default, or `dioxus`) |
 | `--no-lock` | Skip generating bun.lock before initial commit |
+| `--include-skill` | Include the skill installer prompt during project creation |
 
-One of `--demo` or `--minimal` is required.
+Supported template ids:
 
 ```bash
-# Demo project with working examples
-forge new my-app --demo
+with-svelte/minimal
+with-svelte/demo
+with-svelte/realtime-todo-list
+with-svelte/support-desk-with-mcp
+with-svelte/kanban-board
+with-dioxus/minimal
+with-dioxus/demo
+with-dioxus/realtime-todo-list
+```
 
-# Clean slate for experienced developers
-forge new my-app --minimal
+```bash
+# Small Svelte starter
+forge new my-app --template with-svelte/minimal
 
-# Dioxus frontend instead of SvelteKit
-forge new my-app --demo --target dioxus
+# Real-time Dioxus example
+forge new my-app --template with-dioxus/realtime-todo-list
 
 # Custom output directory
-forge new my-app --demo --output /path/to/projects/my-app
+forge new my-app --template with-svelte/demo --output /path/to/projects/my-app
 ```
 
 ---

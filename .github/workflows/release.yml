@@ -129,7 +129,7 @@ jobs:
 
       - name: Create example .env files for frontend builds
         run: |
-          for dir in examples/*/frontend; do
+          for dir in examples/with-*/*/frontend; do
             if [ -f "$dir/.env.example" ] && [ ! -f "$dir/.env" ]; then
               cp "$dir/.env.example" "$dir/.env"
             elif [ ! -f "$dir/.env" ]; then
@@ -139,7 +139,7 @@ jobs:
 
       - name: Patch example frontend dependencies to use local packages
         run: |
-          for pkg in examples/*/frontend/package.json; do
+          for pkg in examples/with-*/*/frontend/package.json; do
             if [ -f "$pkg" ] && grep -q '@forge-rs/svelte' "$pkg"; then
               jq --arg p "file:$GITHUB_WORKSPACE/packages/forge-svelte" '
                 if .dependencies["@forge-rs/svelte"] then .dependencies["@forge-rs/svelte"] = $p
@@ -149,7 +149,7 @@ jobs:
               mv "$pkg.tmp" "$pkg"
             fi
           done
-          for cargo in examples/*/frontend/Cargo.toml; do
+          for cargo in examples/with-*/*/frontend/Cargo.toml; do
             if [ -f "$cargo" ] && grep -q 'forge-dioxus' "$cargo"; then
               cat >> "$cargo" << EOF
 
@@ -160,18 +160,49 @@ jobs:
           done
 
       - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: >
+          cargo clippy --all-targets --all-features --workspace
+          --exclude todo
+          --exclude todo-dioxus
+          --exclude kanban-board
+          --exclude support-desk
+          --exclude forge-svelte-minimal-template
+          --exclude forge-svelte-demo-template
+          --exclude forge-dioxus-minimal-template
+          --exclude forge-dioxus-demo-template
+          -- -D warnings
 
       - name: Build (dry-run)
-        run: cargo build --release
+        run: cargo build --release -p forgex
 
       - name: Run tests
-        run: cargo test --all-features --workspace --exclude todo --exclude kanban-board --exclude support-desk
+        run: >
+          cargo test --all-features --workspace
+          --exclude todo
+          --exclude todo-dioxus
+          --exclude kanban-board
+          --exclude support-desk
+          --exclude forge-svelte-minimal-template
+          --exclude forge-svelte-demo-template
+          --exclude forge-dioxus-minimal-template
+          --exclude forge-dioxus-demo-template
 
   integration-test:
-    name: Integration Tests
+    name: Integration Tests (${{ matrix.template }})
     needs: [parse-changelog, validate]
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        template:
+          - with-svelte/minimal
+          - with-svelte/demo
+          - with-svelte/realtime-todo-list
+          - with-svelte/support-desk-with-mcp
+          - with-svelte/kanban-board
+          - with-dioxus/minimal
+          - with-dioxus/demo
+          - with-dioxus/realtime-todo-list
     steps:
       - uses: actions/checkout@v4
 
@@ -183,7 +214,7 @@ jobs:
 
       - name: Create example .env files for frontend builds
         run: |
-          for dir in examples/*/frontend; do
+          for dir in examples/with-*/*/frontend; do
             if [ -f "$dir/.env.example" ] && [ ! -f "$dir/.env" ]; then
               cp "$dir/.env.example" "$dir/.env"
             elif [ ! -f "$dir/.env" ]; then
@@ -192,16 +223,19 @@ jobs:
           done
 
       - name: Build forge CLI
-        run: cargo build --release
+        run: cargo build --release -p forgex
 
       - name: Install bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
-      - name: Scaffold demo project
+      - name: Install dioxus-cli
+        run: cargo install dioxus-cli --version 0.7.3 --locked
+
+      - name: Create project from template
         run: |
-          ./target/release/forge new /tmp/forge-integration-test --demo
+          ./target/release/forge new /tmp/forge-integration-test --template "${{ matrix.template }}"
           ls -la /tmp/forge-integration-test
 
       - name: Patch to use local workspace
@@ -230,6 +264,18 @@ jobs:
             mv frontend/package.json.tmp frontend/package.json
           fi
 
+          if [ -f frontend/Cargo.toml ] && grep -q 'forge-dioxus' frontend/Cargo.toml; then
+            cat >> frontend/Cargo.toml << 'EOF'
+
+          [patch.crates-io]
+          forge-dioxus = { path = "${{ github.workspace }}/packages/forge-dioxus" }
+          EOF
+          fi
+
+      - name: Run forge check
+        working-directory: /tmp/forge-integration-test
+        run: $GITHUB_WORKSPACE/target/release/forge check
+
       - name: Install Playwright
         working-directory: /tmp/forge-integration-test/frontend
         run: |
@@ -239,35 +285,38 @@ jobs:
       - name: Start PostgreSQL
         working-directory: /tmp/forge-integration-test
         run: |
+          PROJECT_SLUG="$(basename "$PWD")"
+          DB_NAME="${PROJECT_SLUG//-/_}"
+
           docker run -d --name forge-test-pg \
-            -e POSTGRES_USER=forge \
+            -e POSTGRES_USER=postgres \
             -e POSTGRES_PASSWORD=forge \
-            -e POSTGRES_DB=forge \
+            -e POSTGRES_DB="$DB_NAME" \
             -p 5432:5432 \
             postgres:18
           for i in {1..30}; do
-            if docker exec forge-test-pg pg_isready -U forge 2>/dev/null; then
+            if docker exec forge-test-pg pg_isready -U postgres 2>/dev/null; then
               echo "PostgreSQL ready"
               break
             fi
             sleep 1
           done
 
-      - name: Build scaffolded project
+      - name: Build generated project
         working-directory: /tmp/forge-integration-test
-        run: |
-          # Remove sqlx.toml offline mode - no .sqlx cache in scaffolded project
-          rm -f sqlx.toml
-          cargo build --release
+        run: cargo build --release
 
       - name: Start backend and frontend
         working-directory: /tmp/forge-integration-test
-        env:
-          DATABASE_URL: postgres://forge:forge@localhost:5432/forge
-          PORT: "8080"
-          JWT_SECRET: test-secret-for-ci
-          WEBHOOK_SECRET: test-webhook-secret
         run: |
+          PROJECT_SLUG="$(basename "$PWD")"
+          DB_NAME="${PROJECT_SLUG//-/_}"
+
+          export DATABASE_URL="postgres://postgres:forge@localhost:5432/$DB_NAME"
+          export PORT=8080
+          export JWT_SECRET=test-secret-for-ci
+          export WEBHOOK_SECRET=test-webhook-secret
+
           ./target/release/forge-integration-test &
           BACKEND_PID=$!
 
@@ -324,7 +373,7 @@ jobs:
 
       - name: Create example .env files for frontend builds
         run: |
-          for dir in examples/*/frontend; do
+          for dir in examples/with-*/*/frontend; do
             if [ -f "$dir/.env.example" ] && [ ! -f "$dir/.env" ]; then
               cp "$dir/.env.example" "$dir/.env"
             elif [ ! -f "$dir/.env" ]; then
@@ -333,17 +382,20 @@ jobs:
           done
 
       - name: Build forge CLI
-        run: cargo build --release
+        run: cargo build --release -p forgex
 
       - name: Install bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
+      - name: Install dioxus-cli
+        run: cargo install dioxus-cli --version 0.7.3 --locked
+
       - name: Patch example frontend dependencies to use local packages
         run: |
           # Svelte examples: point @forge-rs/svelte to local package
-          for pkg in examples/*/frontend/package.json; do
+          for pkg in examples/with-*/*/frontend/package.json; do
             if [ -f "$pkg" ] && grep -q '@forge-rs/svelte' "$pkg"; then
               jq --arg p "file:$GITHUB_WORKSPACE/packages/forge-svelte" '
                 if .dependencies["@forge-rs/svelte"] then .dependencies["@forge-rs/svelte"] = $p
@@ -356,7 +408,7 @@ jobs:
           done
 
           # Dioxus examples: patch forge-dioxus to use local package
-          for cargo in examples/*/frontend/Cargo.toml; do
+          for cargo in examples/with-*/*/frontend/Cargo.toml; do
             if [ -f "$cargo" ] && grep -q 'forge-dioxus' "$cargo"; then
               cat >> "$cargo" << EOF
 
@@ -373,22 +425,20 @@ jobs:
         run: |
           set -euo pipefail
 
-          for example_dir in examples/*/; do
+          for example_dir in examples/with-*/*/; do
             if [ ! -d "$example_dir/frontend" ]; then
               echo "Skipping $example_dir (no frontend/)"
               continue
             fi
 
-            # Skip Dioxus examples - requires dx CLI which isn't available in CI
-            if [ -f "$example_dir/frontend/Dioxus.toml" ]; then
-              echo "Skipping $example_dir (Dioxus frontend, dx CLI not available in CI)"
-              continue
-            fi
-
+            framework_name=$(basename "$(dirname "$example_dir")")
             example_name=$(basename "$example_dir")
-            echo "=== Testing example: $example_name ==="
+            example_key="${framework_name}-${example_name}"
+            echo "=== Testing example: $example_key ==="
 
             cd "$example_dir"
+
+            $GITHUB_WORKSPACE/target/release/forge check
 
             # Install playwright in frontend
             cd frontend
@@ -396,26 +446,40 @@ jobs:
             bunx playwright install chromium --with-deps
             cd ..
 
+            POSTGRES_USER="$(grep '^POSTGRES_USER=' .env | cut -d= -f2- || true)"
+            POSTGRES_PASSWORD="$(grep '^POSTGRES_PASSWORD=' .env | cut -d= -f2- || true)"
+            POSTGRES_DB="$(grep '^POSTGRES_DB=' .env | cut -d= -f2- || true)"
+            DATABASE_URL="$(grep '^DATABASE_URL=' .env | cut -d= -f2- || true)"
+
+            if [ -z "$POSTGRES_USER" ]; then POSTGRES_USER=postgres; fi
+            if [ -z "$POSTGRES_PASSWORD" ]; then POSTGRES_PASSWORD=forge; fi
+            if [ -z "$POSTGRES_DB" ]; then POSTGRES_DB="${example_name//-/_}"; fi
+            if [ -z "$DATABASE_URL" ]; then
+              DATABASE_URL="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/${POSTGRES_DB}"
+            fi
+
             # Start a fresh PostgreSQL container
-            docker run -d --name "forge-example-pg-${example_name}" \
-              -e POSTGRES_USER=postgres \
-              -e POSTGRES_PASSWORD=forge \
-              -e POSTGRES_DB="${example_name//-/_}" \
+            docker run -d --name "forge-example-pg-${example_key}" \
+              -e POSTGRES_USER="$POSTGRES_USER" \
+              -e POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
+              -e POSTGRES_DB="$POSTGRES_DB" \
               -p 5432:5432 \
               postgres:18
             for i in {1..30}; do
-              if docker exec "forge-example-pg-${example_name}" pg_isready -U postgres 2>/dev/null; then
+              if docker exec "forge-example-pg-${example_key}" pg_isready -U "$POSTGRES_USER" 2>/dev/null; then
                 echo "PostgreSQL ready"
                 break
               fi
               sleep 1
             done
 
+            package_name=$(grep '^name = "' Cargo.toml | head -n1 | sed -E 's/name = "([^"]+)"/\1/')
+
             # Run the pre-built example binary directly
-            DATABASE_URL="postgres://postgres:forge@localhost:5432/${example_name//-/_}" \
+            DATABASE_URL="$DATABASE_URL" \
               HOST=0.0.0.0 PORT=8080 RUST_LOG=warn,forge=info \
               JWT_SECRET=test-secret-for-ci \
-              "$GITHUB_WORKSPACE/target/release/$example_name" &
+              "$GITHUB_WORKSPACE/target/release/$package_name" &
             BACKEND_PID=$!
 
             # Start frontend dev server
@@ -432,10 +496,10 @@ jobs:
                 break
               fi
               if [ $i -eq 120 ]; then
-                echo "Backend failed to start for $example_name"
+                echo "Backend failed to start for $example_key"
                 kill $BACKEND_PID $FRONTEND_PID 2>/dev/null || true
-                docker stop "forge-example-pg-${example_name}" 2>/dev/null || true
-                docker rm "forge-example-pg-${example_name}" 2>/dev/null || true
+                docker stop "forge-example-pg-${example_key}" 2>/dev/null || true
+                docker rm "forge-example-pg-${example_key}" 2>/dev/null || true
                 exit 1
               fi
               sleep 1
@@ -456,18 +520,18 @@ jobs:
             cd ..
 
             kill $BACKEND_PID $FRONTEND_PID 2>/dev/null || true
-            docker stop "forge-example-pg-${example_name}" 2>/dev/null || true
-            docker rm "forge-example-pg-${example_name}" 2>/dev/null || true
+            docker stop "forge-example-pg-${example_key}" 2>/dev/null || true
+            docker rm "forge-example-pg-${example_key}" 2>/dev/null || true
             sleep 2
 
             cd "$GITHUB_WORKSPACE"
 
             if [ "$TEST_EXIT" -ne 0 ]; then
-              echo "Tests failed for $example_name"
+              echo "Tests failed for $example_key"
               exit $TEST_EXIT
             fi
 
-            echo "=== $example_name passed ==="
+            echo "=== $example_key passed ==="
           done
 
   bump-versions:
@@ -506,16 +570,6 @@ jobs:
             fi
           done
 
-      - name: Update scaffold template versions
-        run: |
-          VERSION="${{ needs.parse-changelog.outputs.version }}"
-
-          for template in crates/forge/templates/scaffold/*/project/common/Cargo.toml.tmpl; do
-            if [ -f "$template" ]; then
-              sed -i "s/forge = { version = \"[^\"]*\"/forge = { version = \"$VERSION\"/g" "$template"
-            fi
-          done
-
       - name: Update runtime package versions
         run: |
           VERSION="${{ needs.parse-changelog.outputs.version }}"
@@ -531,8 +585,8 @@ jobs:
             sed -i "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" packages/forge-dioxus/Cargo.toml
           fi
 
-          # Update example frontend dependencies (not scaffold templates, those use {{version}})
-          for pkg in examples/*/frontend/package.json; do
+          # Update checked-in example frontend dependencies
+          for pkg in examples/with-*/*/frontend/package.json; do
             if [ -f "$pkg" ]; then
               jq --arg v "=$VERSION" '
                 if .dependencies["@forge-rs/svelte"] then .dependencies["@forge-rs/svelte"] = $v
@@ -542,7 +596,7 @@ jobs:
               mv "$pkg.tmp" "$pkg"
             fi
           done
-          for cargo in examples/*/frontend/Cargo.toml; do
+          for cargo in examples/with-*/*/frontend/Cargo.toml; do
             if [ -f "$cargo" ]; then
               sed -i "s/forge-dioxus\", version = \"=[^\"]*\"/forge-dioxus\", version = \"=$VERSION\"/g" "$cargo"
             fi
@@ -564,7 +618,7 @@ jobs:
         run: |
           VERSION="${{ needs.parse-changelog.outputs.version }}"
 
-          for cargo_toml in examples/*/Cargo.toml; do
+          for cargo_toml in examples/with-*/*/Cargo.toml; do
             if [ -f "$cargo_toml" ]; then
               sed -i "s/forge = { version = \"[^\"]*\"/forge = { version = \"$VERSION\"/g" "$cargo_toml"
             fi
@@ -580,7 +634,7 @@ jobs:
 
       - name: Create example .env files for frontend builds
         run: |
-          for dir in examples/*/frontend; do
+          for dir in examples/with-*/*/frontend; do
             if [ -f "$dir/.env.example" ] && [ ! -f "$dir/.env" ]; then
               cp "$dir/.env.example" "$dir/.env"
             elif [ ! -f "$dir/.env" ]; then
@@ -593,7 +647,7 @@ jobs:
 
       - name: Regenerate example frontend types
         run: |
-          for example_dir in examples/*/; do
+          for example_dir in examples/with-*/*/; do
             if [ -f "$example_dir/forge.toml" ]; then
               echo "Regenerating types for $(basename "$example_dir")"
               cd "$example_dir"
@@ -613,18 +667,14 @@ jobs:
           grep -r "forge-runtime = { version" crates/*/Cargo.toml || true
 
           echo ""
-          echo "=== Scaffold template versions ==="
-          grep "forge = { version" crates/forge/templates/scaffold/*/project/common/Cargo.toml.tmpl || true
-
-          echo ""
           echo "=== Runtime package versions ==="
           jq '.version' packages/forge-svelte/package.json 2>/dev/null || true
           grep "^version" packages/forge-dioxus/Cargo.toml || true
 
           echo ""
           echo "=== Example frontend runtime versions ==="
-          grep -r "forge-rs/svelte" examples/*/frontend/package.json || true
-          grep "forge-dioxus" examples/*/frontend/Cargo.toml || true
+          grep -r "forge-rs/svelte" examples/with-*/*/frontend/package.json || true
+          grep "forge-dioxus" examples/with-*/*/frontend/Cargo.toml || true
 
           echo ""
           echo "=== docs/package.json version ==="
@@ -695,13 +745,13 @@ jobs:
 
       - name: Create example .env files for frontend builds
         run: |
-          for dir in examples/*/frontend; do
+          for dir in examples/with-*/*/frontend; do
             [ -d "$dir" ] || continue
             echo "PUBLIC_API_URL=http://localhost:8080" > "$dir/.env"
           done
 
       - name: Build binary
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }} -p forgex
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -804,6 +854,9 @@ jobs:
           sleep 30
           cd packages/forge-dioxus
           cargo publish --allow-dirty --token ${{ secrets.CARGO_REGISTRY_TOKEN }} 2>&1 || echo "already published"
+
+      - name: Build generated forgex template archive
+        run: bash ./scripts/build-template-archive.sh
 
       - name: Publish forgex
         run: |

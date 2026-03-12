@@ -1,0 +1,73 @@
+-- @up
+
+CREATE TYPE user_role AS ENUM ('admin', 'member', 'guest');
+
+CREATE TABLE users (
+    id UUID PRIMARY KEY,
+    email VARCHAR(255) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    role user_role NOT NULL DEFAULT 'member',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX idx_users_email ON users(email);
+
+CREATE TABLE iss_location (
+    id UUID PRIMARY KEY,
+    latitude DOUBLE PRECISION NOT NULL,
+    longitude DOUBLE PRECISION NOT NULL,
+    api_timestamp TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE trades (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    symbol VARCHAR(20) NOT NULL,
+    price DOUBLE PRECISION NOT NULL,
+    quantity DOUBLE PRECISION NOT NULL,
+    trade_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    is_buyer_maker BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_trades_created_at ON trades(created_at DESC);
+
+CREATE TABLE webhook_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    idempotency_key VARCHAR(255) NOT NULL,
+    webhook_name VARCHAR(100) NOT NULL,
+    payload JSONB,
+    processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_webhook_events_processed_at ON webhook_events(processed_at DESC);
+
+SELECT forge_enable_reactivity('users');
+SELECT forge_enable_reactivity('iss_location');
+SELECT forge_enable_reactivity('trades');
+SELECT forge_enable_reactivity('webhook_events');
+
+-- Sample user for demo
+INSERT INTO users (id, email, name, role, created_at, updated_at)
+VALUES (
+    'a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d',
+    'demo@example.com',
+    'Demo User',
+    'member',
+    NOW(),
+    NOW()
+);
+
+-- @down
+
+SELECT forge_disable_reactivity('webhook_events');
+SELECT forge_disable_reactivity('trades');
+SELECT forge_disable_reactivity('iss_location');
+SELECT forge_disable_reactivity('users');
+DROP TABLE IF EXISTS webhook_events;
+DROP TABLE IF EXISTS trades;
+DROP TABLE IF EXISTS iss_location;
+DROP INDEX IF EXISTS idx_users_email;
+DROP TABLE IF EXISTS users;
+DROP TYPE IF EXISTS user_role;

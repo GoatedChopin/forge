@@ -88,8 +88,8 @@ const FeatureList: FeatureItem[] = [
     title: 'Ship in Hours',
     description: (
       <>
-        One command to scaffold a full-stack app. Pick SvelteKit or Dioxus today,
-        keep one binary to deploy, and focus on business logic instead of plumbing.
+        Start from a runnable template, pick SvelteKit or Dioxus, keep one binary to
+        deploy, and focus on business logic instead of plumbing.
       </>
     ),
   },
@@ -192,11 +192,11 @@ function CTASection(): JSX.Element {
             </p>
             <pre className={styles.codeBlock}>
 {`cargo install forgex
-forge new my-app --demo
+forge new my-app --template with-svelte/minimal
 cd my-app && forge dev`}
             </pre>
             <p className="margin-top--md">
-              Want Rust on both sides? Use <code>forge new my-app --demo --target dioxus</code>.
+              Want Rust on both sides? Use <code>forge new my-app --template with-dioxus/minimal</code>.
             </p>
             <div className={styles.buttons}>
               <Link

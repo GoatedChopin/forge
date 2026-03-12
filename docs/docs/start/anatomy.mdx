@@ -35,7 +35,7 @@ my-app/
     └── Dioxus.toml      # Present for Dioxus frontends
 ```
 
-`forge new` defaults to `--target sveltekit`. Pass `--target dioxus` to scaffold a Dioxus frontend instead.
+`forge new` uses explicit template ids. Choose `with-svelte/*` for SvelteKit frontends and `with-dioxus/*` for Dioxus frontends.
 
 ## Key Files
 
@@ -127,7 +127,7 @@ The `forge_enable_reactivity()` function sets up LISTEN/NOTIFY triggers for real
 
 ### sqlx.toml and .sqlx/
 
-Forge scaffolds `sqlx.toml` with offline mode enabled so `sqlx::query!` and `sqlx::query_as!`
+Forge templates scaffold `sqlx.toml` with offline mode enabled so `sqlx::query!` and `sqlx::query_as!`
 can be checked without a live database in CI once the cache is prepared.
 
 Refresh the cache after changing SQL or migrations:

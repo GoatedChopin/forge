@@ -7,16 +7,10 @@ use std::str::FromStr;
 use super::frontend_codegen::{
     BindingGeneratorFn, BindingGeneratorInput, generate_dioxus_bindings, generate_svelte_bindings,
 };
-use super::frontend_scaffold::{
-    FrontendTemplates, ScaffoldMode, TemplateFile, dioxus_frontend_templates,
-    dioxus_project_templates, sveltekit_frontend_templates, sveltekit_project_templates,
-};
 
 type DetectFn = fn(&Path) -> bool;
 type PostGenerateFn = fn(&Path) -> Result<()>;
 type ExtraFormatFn = fn(&Path) -> Result<bool>;
-type ProjectTemplatesFn = fn(ScaffoldMode) -> &'static [TemplateFile];
-type FrontendTemplatesFn = fn(ScaffoldMode) -> FrontendTemplates;
 
 pub struct FrontendTargetSpec {
     pub id: &'static str,
@@ -25,8 +19,6 @@ pub struct FrontendTargetSpec {
     detect: DetectFn,
     post_generate: PostGenerateFn,
     extra_format: ExtraFormatFn,
-    project_templates: ProjectTemplatesFn,
-    frontend_templates: FrontendTemplatesFn,
     generate_bindings: BindingGeneratorFn,
 }
 
@@ -46,8 +38,6 @@ const SVELTEKIT_SPEC: FrontendTargetSpec = FrontendTargetSpec {
     detect: detect_sveltekit,
     post_generate: post_generate_sveltekit,
     extra_format: no_extra_format,
-    project_templates: sveltekit_project_templates,
-    frontend_templates: sveltekit_frontend_templates,
     generate_bindings: generate_svelte_bindings,
 };
 
@@ -58,8 +48,6 @@ const DIOXUS_SPEC: FrontendTargetSpec = FrontendTargetSpec {
     detect: detect_dioxus,
     post_generate: no_post_generate,
     extra_format: format_dioxus_frontend,
-    project_templates: dioxus_project_templates,
-    frontend_templates: dioxus_frontend_templates,
     generate_bindings: generate_dioxus_bindings,
 };
 
@@ -83,14 +71,6 @@ impl FrontendTarget {
 
     pub fn display_name(self) -> &'static str {
         self.spec().display_name
-    }
-
-    pub fn project_templates(self, mode: ScaffoldMode) -> &'static [TemplateFile] {
-        (self.spec().project_templates)(mode)
-    }
-
-    pub fn frontend_templates(self, mode: ScaffoldMode) -> FrontendTemplates {
-        (self.spec().frontend_templates)(mode)
     }
 
     pub fn post_generate(self, frontend_dir: &Path) -> Result<()> {

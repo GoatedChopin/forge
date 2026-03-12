@@ -10,7 +10,7 @@ FORGE compiles your entire backend into **one binary**: API, jobs, crons, workfl
 
 ```bash
 curl -fsSL https://tryforge.dev/install.sh | sh
-forge new my-app --demo && cd my-app
+forge new my-app --template with-svelte/minimal && cd my-app
 forge dev
 ```
 
@@ -163,10 +163,10 @@ Current first-class targets:
 - `sveltekit` -> generated TypeScript bindings in `frontend/src/lib/forge` backed by `@forge-rs/svelte`
 - `dioxus` -> generated Rust bindings in `frontend/src/forge` backed by `forge-dioxus`
 
-SvelteKit remains the default target for `forge new`, but Dioxus is supported end to end:
+Forge ships template ids for both SvelteKit and Dioxus examples:
 
 ```bash
-forge new my-app --demo --target dioxus
+forge new my-app --template with-dioxus/demo
 forge generate --target dioxus
 ```
 
@@ -317,7 +317,7 @@ forge              → Public API, Forge::builder(), prelude, CLI
 
 ## CLI
 
-`forge dev` starts PostgreSQL, a cargo-watch backend, and the selected frontend target. `--demo` scaffolds a working app with queries, mutations, jobs, crons, and workflows. `--minimal` gives you a clean slate. `forge new` defaults to SvelteKit, and `--target dioxus` switches the scaffold and binding generator to Dioxus.
+`forge dev` starts PostgreSQL, a cargo-watch backend, and the selected frontend target. `forge new` now requires a checked-in template id such as `with-svelte/minimal`, `with-svelte/demo`, or `with-dioxus/realtime-todo-list`. `forge generate --target dioxus` still forces Dioxus binding generation when detection is not enough.
 
 ```bash
 forge generate                   # generate frontend/runtime bindings from backend code

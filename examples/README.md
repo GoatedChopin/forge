@@ -1,18 +1,29 @@
 # Examples
 
-Working apps built with FORGE. Each one runs with docker compose.
+Runnable FORGE apps grouped by frontend framework. These directories are also the source of truth for `forge new --template`.
 
-| Example | Highlights | Description |
-|---------|------------|-------------|
-| [todo](todo/) | Queries, Mutations | Minimal CRUD to get started |
-| [todo-dioxus](todo-dioxus/) | Queries, Mutations, Dioxus | Minimal CRUD with generated Dioxus bindings |
-| [kanban-board](kanban-board/) | Auth, Jobs, Crons, Workflows | Full-featured board with JWT auth, background exports, and scheduled cleanup |
-| [support-desk](support-desk/) | MCP, Real-time | Ticket system exposing domain logic as MCP tools for LLM agents |
+## Svelte
+
+| Template id | Highlights | Description |
+|-------------|------------|-------------|
+| [with-svelte/minimal](with-svelte/minimal/) | Starter, Playwright | Smallest Svelte starter that passes `forge check` out of the box |
+| [with-svelte/demo](with-svelte/demo/) | Queries, mutations, jobs, crons, workflows | Feature tour app used for end-to-end regression coverage |
+| [with-svelte/realtime-todo-list](with-svelte/realtime-todo-list/) | Queries, mutations, reactivity | Real-time todo list with generated Svelte bindings |
+| [with-svelte/support-desk-with-mcp](with-svelte/support-desk-with-mcp/) | MCP, real-time | Ticket system exposing domain logic as MCP tools |
+| [with-svelte/kanban-board](with-svelte/kanban-board/) | Auth, jobs, workflows | Full-featured board with JWT auth and background exports |
+
+## Dioxus
+
+| Template id | Highlights | Description |
+|-------------|------------|-------------|
+| [with-dioxus/minimal](with-dioxus/minimal/) | Starter, Playwright | Smallest Dioxus starter with generated Rust bindings |
+| [with-dioxus/demo](with-dioxus/demo/) | Queries, mutations, runtime bindings | Demo app for Rust-on-both-sides regression coverage |
+| [with-dioxus/realtime-todo-list](with-dioxus/realtime-todo-list/) | Queries, mutations, reactivity | Real-time todo list with generated Dioxus bindings |
 
 ## Running an example
 
 ```bash
-cd examples/todo
+cd examples/with-svelte/realtime-todo-list
 docker compose up
 ```
 
@@ -22,12 +33,12 @@ Postgres binds to `127.0.0.1:5432` so you can connect from host tools (psql, rus
 
 ## Development
 
-These examples are workspace members. The docker-compose files set build context to the workspace root so changes to `crates/` are picked up by cargo-watch automatically.
+These examples are workspace members. Their `docker-compose.yml` files use the workspace root as build context so changes to `crates/` are picked up automatically.
 
-All examples use `sqlx::query_as!` macros for compile-time SQL checking. To regenerate the `.sqlx/` offline cache after changing queries or migrations:
+All templates keep a checked-in `.sqlx/` directory. Templates with compile-time `sqlx::query*!` macros also keep the offline cache there. To refresh it after changing queries or migrations:
 
 ```bash
-cd examples/todo
+cd examples/with-svelte/realtime-todo-list
 docker compose exec backend forge migrate prepare
 ```
 

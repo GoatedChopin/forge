@@ -3,4 +3,5 @@ node_modules
 .svelte-kit
 .env
 .agents/
+crates/forge/generated/
 **/test-results/**

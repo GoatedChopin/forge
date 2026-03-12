@@ -2,8 +2,8 @@ use anyhow::Result;
 use clap::Parser;
 use console::style;
 use std::path::Path;
-use std::process::Stdio;
-use tokio::process::Command;
+use std::process::{Command as StdCommand, Stdio};
+use tokio::process::Command as TokioCommand;
 
 use super::frontend_codegen::BindingGeneratorInput;
 use super::frontend_target::FrontendTarget;
@@ -24,6 +24,13 @@ struct CheckResult {
     passed: bool,
     warnings: Vec<String>,
     errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SqlxCacheCheck {
+    Missing,
+    Empty,
+    Ready(usize),
 }
 
 impl CheckResult {
@@ -144,7 +151,7 @@ impl CheckCommand {
         if !config_path.exists() {
             result.fail(
                 "forge.toml not found",
-                "Create a new project with: forge new my-app --demo",
+                "Create a new project with: forge new my-app --template with-svelte/minimal",
             );
             return Ok(());
         }
@@ -502,33 +509,44 @@ impl CheckCommand {
 
     fn check_sqlx_cache(&self, result: &mut CheckResult) -> Result<()> {
         let sqlx_dir = Path::new(".sqlx");
+        let uses_compile_time_macros = project_uses_compile_time_sqlx_macros(Path::new("src"))?;
+        let cache_status = inspect_sqlx_cache(sqlx_dir)?;
 
-        if !sqlx_dir.exists() {
-            result.fail(
-                ".sqlx/ directory missing",
-                "Run 'forge migrate prepare' to generate the offline query cache",
-            );
-            return Ok(());
+        match cache_status {
+            SqlxCacheCheck::Missing => {
+                if uses_compile_time_macros {
+                    result.fail(
+                        ".sqlx/ directory missing",
+                        "Run 'forge migrate prepare' to generate the offline query cache",
+                    );
+                } else {
+                    result.info("No .sqlx/ cache yet (no compile-time sqlx macros found)");
+                }
+                return Ok(());
+            }
+            SqlxCacheCheck::Empty => {
+                if uses_compile_time_macros {
+                    result.fail(
+                        ".sqlx/ has no cached queries",
+                        "Run 'forge migrate prepare' to populate the offline cache",
+                    );
+                } else {
+                    result.pass(".sqlx/ directory present");
+                }
+                return Ok(());
+            }
+            SqlxCacheCheck::Ready(query_file_count) => {
+                result.pass(&format!(
+                    ".sqlx/ cache with {} query file(s)",
+                    query_file_count
+                ));
+            }
         }
 
-        // Count query-*.json files
         let query_files: Vec<_> = std::fs::read_dir(sqlx_dir)?
             .filter_map(|e| e.ok())
             .filter(|e| e.file_name().to_string_lossy().starts_with("query-"))
             .collect();
-
-        if query_files.is_empty() {
-            result.fail(
-                ".sqlx/ has no cached queries",
-                "Run 'forge migrate prepare' to populate the offline cache",
-            );
-            return Ok(());
-        }
-
-        result.pass(&format!(
-            ".sqlx/ cache with {} query file(s)",
-            query_files.len()
-        ));
 
         // Warn if migrations are newer than cache
         let migrations_dir = Path::new("migrations");
@@ -699,7 +717,7 @@ impl CheckCommand {
             || !registry.all_enums().is_empty()
             || !registry.all_functions().is_empty();
 
-        let tmp_dir = std::env::temp_dir().join(format!("forge-check-{}", std::process::id()));
+        let tmp_dir = frontend_dir.join(format!("forge-check-{}", std::process::id()));
         let tmp_output = tmp_dir.join("bindings");
         std::fs::create_dir_all(&tmp_output)?;
         let tmp_output_str = tmp_output.to_string_lossy().to_string();
@@ -721,6 +739,17 @@ impl CheckCommand {
             result.warn(
                 &format!("Could not regenerate bindings: {}", e),
                 "Run 'forge generate' to check manually",
+            );
+            return Ok(());
+        }
+
+        if let Err(e) =
+            format_generated_bindings_for_check(target, frontend_dir, output_path, &tmp_output)
+        {
+            cleanup();
+            result.warn(
+                &format!("Could not format regenerated bindings: {}", e),
+                "Run 'forge generate --force' to restore generated bindings",
             );
             return Ok(());
         }
@@ -789,7 +818,7 @@ impl CheckCommand {
         println!();
 
         // Check cargo fmt
-        let fmt_result = Command::new("cargo")
+        let fmt_result = TokioCommand::new("cargo")
             .args(["fmt", "--check"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -815,7 +844,7 @@ impl CheckCommand {
         }
 
         // Check cargo clippy
-        let clippy_result = Command::new("cargo")
+        let clippy_result = TokioCommand::new("cargo")
             .args(["clippy", "--", "-D", "warnings"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -851,7 +880,7 @@ impl CheckCommand {
         println!();
 
         if target == FrontendTarget::Dioxus {
-            let cargo_fmt = Command::new("cargo")
+            let cargo_fmt = TokioCommand::new("cargo")
                 .args(["fmt", "--check", "--manifest-path", "frontend/Cargo.toml"])
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -876,7 +905,7 @@ impl CheckCommand {
         }
 
         if target == FrontendTarget::SvelteKit {
-            let eslint_result = Command::new("bunx")
+            let eslint_result = TokioCommand::new("bunx")
                 .args(["eslint", "."])
                 .current_dir(frontend_dir)
                 .stdout(Stdio::null())
@@ -897,7 +926,7 @@ impl CheckCommand {
             }
         }
 
-        let prettier_result = Command::new("bunx")
+        let prettier_result = TokioCommand::new("bunx")
             .args(["prettier", "--check", "."])
             .current_dir(frontend_dir)
             .stdout(Stdio::null())
@@ -925,6 +954,134 @@ impl CheckCommand {
     }
 }
 
+fn project_uses_compile_time_sqlx_macros(src_dir: &Path) -> Result<bool> {
+    if !src_dir.exists() {
+        return Ok(false);
+    }
+
+    for entry in std::fs::read_dir(src_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+
+        if file_type.is_dir() {
+            if project_uses_compile_time_sqlx_macros(&path)? {
+                return Ok(true);
+            }
+            continue;
+        }
+
+        if !file_type.is_file() || path.extension().is_none_or(|ext| ext != "rs") {
+            continue;
+        }
+
+        let content = std::fs::read_to_string(&path)?;
+        if content.contains("sqlx::query!(")
+            || content.contains("sqlx::query_as!(")
+            || content.contains("sqlx::query_scalar!(")
+            || content.contains("sqlx::query_file!(")
+            || content.contains("sqlx::query_file_as!(")
+        {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+fn inspect_sqlx_cache(sqlx_dir: &Path) -> Result<SqlxCacheCheck> {
+    if !sqlx_dir.exists() {
+        return Ok(SqlxCacheCheck::Missing);
+    }
+
+    let query_file_count = std::fs::read_dir(sqlx_dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("query-"))
+        .count();
+
+    if query_file_count == 0 {
+        Ok(SqlxCacheCheck::Empty)
+    } else {
+        Ok(SqlxCacheCheck::Ready(query_file_count))
+    }
+}
+
+fn format_generated_bindings_for_check(
+    target: FrontendTarget,
+    frontend_dir: &Path,
+    output_path: &Path,
+    tmp_output: &Path,
+) -> Result<()> {
+    if target != FrontendTarget::SvelteKit {
+        return Ok(());
+    }
+
+    if generated_bindings_are_prettier_ignored(frontend_dir, output_path)? {
+        return Ok(());
+    }
+
+    let prettier_target = tmp_output
+        .canonicalize()
+        .unwrap_or_else(|_| tmp_output.to_path_buf());
+
+    let local_prettier = frontend_dir
+        .join("node_modules/.bin/prettier")
+        .canonicalize()
+        .ok();
+    let mut prettier = if let Some(local_prettier) = local_prettier {
+        let mut cmd = StdCommand::new(local_prettier);
+        cmd.arg("--write");
+        cmd
+    } else {
+        let mut cmd = StdCommand::new("bunx");
+        cmd.args(["prettier", "--write"]);
+        cmd
+    };
+
+    let status = prettier
+        .arg(&prettier_target.to_string_lossy().to_string())
+        .current_dir(frontend_dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        anyhow::bail!("bunx prettier --write failed for temporary generated bindings")
+    }
+}
+
+fn generated_bindings_are_prettier_ignored(
+    frontend_dir: &Path,
+    output_path: &Path,
+) -> Result<bool> {
+    let ignore_path = frontend_dir.join(".prettierignore");
+    if !ignore_path.exists() {
+        return Ok(false);
+    }
+
+    let relative_output = output_path
+        .strip_prefix(frontend_dir)
+        .unwrap_or(output_path)
+        .to_string_lossy()
+        .replace('\\', "/");
+    let content = std::fs::read_to_string(ignore_path)?;
+
+    for line in content.lines() {
+        let pattern = line.trim().trim_end_matches('/');
+        if pattern.is_empty() || pattern.starts_with('#') {
+            continue;
+        }
+
+        if relative_output == pattern || relative_output.starts_with(&format!("{pattern}/")) {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
@@ -936,5 +1093,58 @@ mod tests {
         assert!(result.passed);
         assert!(result.warnings.is_empty());
         assert!(result.errors.is_empty());
+    }
+
+    #[test]
+    fn test_detect_compile_time_sqlx_macros() {
+        let dir = tempfile::tempdir().unwrap();
+        let src_dir = dir.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::write(
+            src_dir.join("queries.rs"),
+            r#"fn demo() { let _ = sqlx::query!("SELECT 1"); }"#,
+        )
+        .unwrap();
+
+        assert!(project_uses_compile_time_sqlx_macros(&src_dir).unwrap());
+    }
+
+    #[test]
+    fn test_ignore_runtime_sqlx_calls() {
+        let dir = tempfile::tempdir().unwrap();
+        let src_dir = dir.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::write(
+            src_dir.join("queries.rs"),
+            r#"fn demo() { let _ = sqlx::query("SELECT 1"); }"#,
+        )
+        .unwrap();
+
+        assert!(!project_uses_compile_time_sqlx_macros(&src_dir).unwrap());
+    }
+
+    #[test]
+    fn test_empty_sqlx_directory_is_detected() {
+        let dir = tempfile::tempdir().unwrap();
+        let sqlx_dir = dir.path().join(".sqlx");
+        std::fs::create_dir_all(&sqlx_dir).unwrap();
+
+        assert_eq!(
+            inspect_sqlx_cache(&sqlx_dir).unwrap(),
+            SqlxCacheCheck::Empty
+        );
+    }
+
+    #[test]
+    fn test_sqlx_directory_with_query_cache_is_detected() {
+        let dir = tempfile::tempdir().unwrap();
+        let sqlx_dir = dir.path().join(".sqlx");
+        std::fs::create_dir_all(&sqlx_dir).unwrap();
+        std::fs::write(sqlx_dir.join("query-demo.json"), "{}").unwrap();
+
+        assert_eq!(
+            inspect_sqlx_cache(&sqlx_dir).unwrap(),
+            SqlxCacheCheck::Ready(1)
+        );
     }
 }

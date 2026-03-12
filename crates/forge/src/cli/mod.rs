@@ -1,12 +1,12 @@
 mod check;
 mod dev;
 mod frontend_codegen;
-mod frontend_scaffold;
 mod frontend_target;
 mod generate;
 mod migrate;
 mod new;
 mod template;
+mod template_catalog;
 mod test;
 mod ui;
 
@@ -25,15 +25,15 @@ const ABOUT: &str = r#"FORGE - The Full-Stack Framework for the Impatient
 Everything you need in one binary. No Redis, no Kafka, just PostgreSQL.
 
 Quick Start:
-  forge new my-app --demo   Create a demo project with examples
+  forge new my-app --template with-svelte/minimal
   cd my-app
   forge dev                 Start development (docker compose)
 
 Learn more: https://tryforge.dev/docs"#;
 
 const AFTER_HELP: &str = r#"Examples:
-  forge new my-app --demo        Full demo with User CRUD, jobs, workflows
-  forge new my-app --minimal     Clean slate with just the structure
+  forge new my-app --template with-svelte/minimal
+  forge new my-app --template with-dioxus/realtime-todo-list
   forge dev                      Start development (requires Docker)
   forge dev down                 Stop the development environment
   forge dev down --clear         Stop and remove volumes + target/
@@ -95,21 +95,46 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_cli_parse_new_demo() {
+    fn test_cli_parse_new_template() {
+        let cli = Cli::try_parse_from([
+            "forge",
+            "new",
+            "my-app",
+            "--template",
+            "with-svelte/minimal",
+        ]);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_cli_rejects_removed_demo_flag() {
         let cli = Cli::try_parse_from(["forge", "new", "my-app", "--demo"]);
-        assert!(cli.is_ok());
+        assert!(cli.is_err());
     }
 
     #[test]
-    fn test_cli_parse_new_minimal() {
+    fn test_cli_rejects_removed_minimal_flag() {
         let cli = Cli::try_parse_from(["forge", "new", "my-app", "--minimal"]);
-        assert!(cli.is_ok());
+        assert!(cli.is_err());
     }
 
     #[test]
-    fn test_cli_parse_new_conflicting_flags() {
-        // --demo and --minimal are mutually exclusive
-        let cli = Cli::try_parse_from(["forge", "new", "my-app", "--demo", "--minimal"]);
+    fn test_cli_rejects_removed_target_flag() {
+        let cli = Cli::try_parse_from([
+            "forge",
+            "new",
+            "my-app",
+            "--template",
+            "with-svelte/minimal",
+            "--target",
+            "dioxus",
+        ]);
+        assert!(cli.is_err());
+    }
+
+    #[test]
+    fn test_cli_requires_template_for_new() {
+        let cli = Cli::try_parse_from(["forge", "new", "my-app"]);
         assert!(cli.is_err());
     }
 
