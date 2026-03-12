@@ -29,24 +29,6 @@ services:
       retries: 30
       start_period: 60s
 
-  frontend:
-    build:
-      context: ../..
-      dockerfile: examples/todo-dioxus/Dockerfile
-      target: dev
-    working_dir: /app/examples/todo-dioxus/frontend
-    command: dx serve --web --port 5173 --addr 0.0.0.0 --open false
-    ports:
-      - "5173:5173"
-    environment:
-      - FORGE_API_URL=http://localhost:8080
-    volumes:
-      - ../..:/app
-      - ../../target:/app/target
-    depends_on:
-      backend:
-        condition: service_healthy
-
   db:
     image: postgres:18
     env_file:
