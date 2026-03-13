@@ -29,7 +29,6 @@ test.describe("Backend Connection", () => {
 
   test("SSE connection establishes through ForgeProvider", async ({
     page,
-    gotoReady,
   }) => {
     const sseRequests: string[] = [];
 
@@ -39,7 +38,8 @@ test.describe("Backend Connection", () => {
       }
     });
 
-    await gotoReady();
+    await page.goto("/");
+    await page.waitForTimeout(2000);
 
     expect(sseRequests.length).toBeGreaterThan(0);
   });

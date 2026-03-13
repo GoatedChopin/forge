@@ -7,6 +7,7 @@ rewrite_paths = [
   "forge.toml",
   ".env",
   "docker-compose.yml",
+  "Dockerfile",
   "README.md",
   "frontend/Cargo.toml",
 ]
@@ -46,12 +47,12 @@ to = "POSTGRES_DB={{project_db_name}}"
 files = [".env"]
 
 [[replacement]]
-from = "postgres://postgres:forge@db:5432/todo_dioxus"
+from = "postgres://postgres:forge@db:5432/todo-dioxus"
 to = "postgres://postgres:forge@db:5432/{{project_db_name}}"
 files = ["docker-compose.yml"]
 
 [[replacement]]
-from = "pg_isready -U postgres -d todo_dioxus"
+from = "pg_isready -U postgres -d todo-dioxus"
 to = "pg_isready -U postgres -d {{project_db_name}}"
 files = ["docker-compose.yml"]
 
@@ -64,3 +65,85 @@ files = ["README.md"]
 from = "todo-dioxus/"
 to = "{{project_slug}}/"
 files = ["README.md"]
+
+# Convert workspace-relative docker-compose to standalone
+[[replacement]]
+from = "context: ../.."
+to = "context: ."
+files = ["docker-compose.yml"]
+
+[[replacement]]
+from = "dockerfile: examples/todo-dioxus/Dockerfile"
+to = "dockerfile: Dockerfile"
+files = ["docker-compose.yml"]
+
+[[replacement]]
+from = "\n    working_dir: /app/examples/todo-dioxus"
+to = ""
+files = ["docker-compose.yml"]
+
+[[replacement]]
+from = " -w ../../crates/"
+to = ""
+files = ["docker-compose.yml"]
+
+[[replacement]]
+from = "- ../..:/app"
+to = "- .:/app"
+files = ["docker-compose.yml"]
+
+[[replacement]]
+from = "- ../../target:/app/target"
+to = "- ./target:/app/target"
+files = ["docker-compose.yml"]
+
+# Convert workspace-relative Dockerfile to standalone
+[[replacement]]
+from = "WORKDIR /app/examples/todo-dioxus/frontend"
+to = "WORKDIR /app/frontend"
+files = ["Dockerfile"]
+
+[[replacement]]
+from = "examples/todo-dioxus/frontend/"
+to = "frontend/"
+files = ["Dockerfile"]
+
+[[replacement]]
+from = "COPY crates ./crates"
+to = "COPY src ./src"
+files = ["Dockerfile"]
+
+[[replacement]]
+from = "COPY examples/todo-dioxus ./examples/todo-dioxus"
+to = "COPY migrations ./migrations"
+files = ["Dockerfile"]
+
+[[replacement]]
+from = "COPY --from=frontend-builder /app/examples/todo-dioxus/frontend/dist ./examples/todo-dioxus/frontend/dist"
+to = "COPY forge.toml sqlx.toml build.rs ./\nCOPY frontend ./frontend\nCOPY --from=frontend-builder /app/frontend/dist ./frontend/dist"
+files = ["Dockerfile"]
+
+[[replacement]]
+from = "WORKDIR /app/examples/todo-dioxus"
+to = ""
+files = ["Dockerfile"]
+
+[[replacement]]
+from = "COPY --from=builder /app/examples/todo-dioxus/forge.toml /app/forge.toml"
+to = "COPY forge.toml /app/forge.toml"
+files = ["Dockerfile"]
+
+[[replacement]]
+from = "COPY --from=builder /app/examples/todo-dioxus/migrations /app/migrations"
+to = "COPY migrations /app/migrations"
+files = ["Dockerfile"]
+
+[[replacement]]
+from = "release/todo-dioxus"
+to = "release/{{project_slug}}"
+files = ["Dockerfile"]
+
+[[replacement]]
+from = "/app/todo-dioxus"
+to = "/app/{{project_slug}}"
+files = ["Dockerfile"]

@@ -30,22 +30,20 @@ fn get_forge_workspace_dir() -> Option<&'static str> {
 }
 
 /// Append cargo patch section to use local forge crates (only in debug builds).
+/// The `patches` slice contains `(crate_name, relative_path_from_workspace)` pairs.
 #[cfg(debug_assertions)]
-fn append_cargo_patch(cargo_toml_path: &Path) -> Result<()> {
+fn append_cargo_patch(cargo_toml_path: &Path, patches: &[(&str, &str)]) -> Result<()> {
     let workspace_dir = get_forge_workspace_dir()
         .ok_or_else(|| anyhow::anyhow!("Could not determine forge workspace directory"))?;
 
+    let entries: String = patches
+        .iter()
+        .map(|(name, path)| format!("{name} = {{ path = \"{workspace_dir}/{path}\" }}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
     let patch_section = format!(
-        r#"
-# Local dev patches (debug build) - remove before publishing
-[patch.crates-io]
-forgex = {{ path = "{ws}/crates/forge" }}
-forge-core = {{ path = "{ws}/crates/forge-core" }}
-forge-macros = {{ path = "{ws}/crates/forge-macros" }}
-forge-runtime = {{ path = "{ws}/crates/forge-runtime" }}
-forge-codegen = {{ path = "{ws}/crates/forge-codegen" }}
-"#,
-        ws = workspace_dir
+        "\n# Local dev patches (debug build) - remove before publishing\n[patch.crates-io]\n{entries}\n"
     );
 
     let mut content = fs::read_to_string(cargo_toml_path)?;
@@ -66,9 +64,9 @@ fn patch_docker_compose(docker_compose_path: &Path) -> Result<()> {
 
     let content = fs::read_to_string(docker_compose_path)?;
     let patched = content.replace(
-        "      - target_cache:/app/target\n",
+        "      - ./target:/app/target\n",
         &format!(
-            "      - target_cache:/app/target\n      - {ws}:{ws}\n",
+            "      - ./target:/app/target\n      - {ws}:{ws}\n",
             ws = workspace_dir
         ),
     );
@@ -138,28 +136,26 @@ fn run_forge_generate(dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Run formatters (bun format and cargo fmt) to ensure clean code.
-fn run_formatters(dir: &Path) -> Result<()> {
+/// Run formatters (bun format / cargo fmt) to ensure clean code.
+fn run_formatters(dir: &Path, frontend: FrontendTarget) -> Result<()> {
     let frontend_dir = dir.join("frontend");
-    if frontend_dir.exists() && frontend_dir.join("package.json").exists() {
+
+    // Run bun format when package.json exists (covers both SvelteKit and Dioxus with JS tooling)
+    if frontend_dir.join("package.json").exists() {
         println!("  {} Formatting frontend...", ui::step());
         let output = StdCommand::new("bun")
             .args(["run", "format"])
             .current_dir(&frontend_dir)
             .output();
 
-        match output {
-            Ok(o) if o.status.success() => {
-                println!("  {} Frontend formatted", ui::ok());
-            }
-            _ => {}
+        if matches!(output, Ok(ref o) if o.status.success()) {
+            println!("  {} Frontend formatted", ui::ok());
         }
     }
 
-    if let Some(target) = FrontendTarget::detect(&frontend_dir)
-        && target.extra_format(dir)?
-    {
-        println!("  {} Dioxus frontend formatted", ui::ok());
+    // Dioxus also needs cargo fmt on the frontend manifest
+    if frontend == FrontendTarget::Dioxus {
+        frontend.extra_format(dir)?;
     }
 
     let cargo_check = StdCommand::new("cargo").arg("--version").output();
@@ -170,11 +166,8 @@ fn run_formatters(dir: &Path) -> Result<()> {
             .current_dir(dir)
             .output();
 
-        match output {
-            Ok(o) if o.status.success() => {
-                println!("  {} Backend formatted", ui::ok());
-            }
-            _ => {}
+        if matches!(output, Ok(ref o) if o.status.success()) {
+            println!("  {} Backend formatted", ui::ok());
         }
     }
 
@@ -183,7 +176,7 @@ fn run_formatters(dir: &Path) -> Result<()> {
 
 /// Generate Cargo.lock before initial commit.
 /// Also generates frontend/Cargo.lock for Dioxus projects.
-fn generate_cargo_lockfile(dir: &Path) -> Result<()> {
+fn generate_cargo_lockfile(dir: &Path, frontend: FrontendTarget) -> Result<()> {
     println!("  {} Generating Cargo.lock...", ui::step());
 
     if !matches!(StdCommand::new("cargo").arg("--version").output(), Ok(o) if o.status.success()) {
@@ -211,9 +204,7 @@ fn generate_cargo_lockfile(dir: &Path) -> Result<()> {
 
     println!("  {} Cargo.lock generated", ui::ok());
 
-    // Dioxus frontend is a separate workspace, generate its lockfile too
-    let frontend_cargo = dir.join("frontend/Cargo.toml");
-    if frontend_cargo.exists() {
+    if frontend == FrontendTarget::Dioxus {
         let output = StdCommand::new("cargo")
             .args(["generate-lockfile"])
             .current_dir(dir.join("frontend"))
@@ -234,22 +225,20 @@ fn generate_cargo_lockfile(dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Generate bun.lock file using native bun.
-/// Runs `bun install --lockfile-only` in the frontend directory.
-fn generate_bun_lockfile(dir: &Path) -> Result<()> {
+/// Install frontend dependencies via bun when package.json exists.
+fn install_frontend_deps(dir: &Path, _frontend: FrontendTarget) -> Result<()> {
     let frontend_dir = dir.join("frontend");
     if !frontend_dir.join("package.json").exists() {
         return Ok(());
     }
 
-    println!("  {} Generating bun.lock...", ui::step());
+    println!("  {} Installing frontend dependencies...", ui::step());
 
-    // Check if bun is available
     let bun_check = StdCommand::new("bun").arg("--version").output();
 
     if !matches!(bun_check, Ok(ref o) if o.status.success()) {
         eprintln!(
-            "  {} bun not found, skipping lockfile generation",
+            "  {} bun not found, skipping dependency installation",
             ui::warn()
         );
         eprintln!(
@@ -260,22 +249,21 @@ fn generate_bun_lockfile(dir: &Path) -> Result<()> {
     }
 
     let output = StdCommand::new("bun")
-        .args(["install", "--lockfile-only"])
+        .args(["install"])
         .current_dir(&frontend_dir)
         .output()?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         eprintln!(
-            "  {} Failed to generate bun.lock: {}",
+            "  {} Failed to install frontend dependencies: {}",
             ui::warn(),
             stderr.trim()
         );
-        // Non-fatal: continue without lockfile
         return Ok(());
     }
 
-    println!("  {} bun.lock generated", ui::ok());
+    println!("  {} Frontend dependencies installed", ui::ok());
 
     Ok(())
 }
@@ -488,7 +476,7 @@ pub struct NewCommand {
     #[arg(short, long)]
     pub output: Option<String>,
 
-    /// Skip generating bun.lock file before initial commit.
+    /// Skip generating Cargo.lock before initial commit.
     #[arg(long)]
     pub no_lock: bool,
 
@@ -534,13 +522,13 @@ impl NewCommand {
         fs::create_dir_all(path)?;
         create_project_from_template(path, &project_name, &template)?;
 
-        if !self.no_lock {
-            generate_bun_lockfile(path)?;
-            generate_cargo_lockfile(path)?;
-        }
-
+        install_frontend_deps(path, template.frontend)?;
         run_forge_generate(path)?;
-        run_formatters(path)?;
+        run_formatters(path, template.frontend)?;
+
+        if !self.no_lock {
+            generate_cargo_lockfile(path, template.frontend)?;
+        }
         install_skill(path, self.include_skill).await?;
 
         if is_git_available() {
@@ -640,9 +628,26 @@ pub fn create_project_from_template(
 
     #[cfg(debug_assertions)]
     {
+        let backend_patches: &[(&str, &str)] = &[
+            ("forgex", "crates/forge"),
+            ("forge-core", "crates/forge-core"),
+            ("forge-macros", "crates/forge-macros"),
+            ("forge-runtime", "crates/forge-runtime"),
+            ("forge-codegen", "crates/forge-codegen"),
+        ];
+
         if dir.join("Cargo.toml").exists() {
-            append_cargo_patch(&dir.join("Cargo.toml"))?;
+            append_cargo_patch(&dir.join("Cargo.toml"), backend_patches)?;
             println!("  {} Added cargo patch for local development", ui::step());
+        }
+
+        if template.frontend == FrontendTarget::Dioxus && dir.join("frontend/Cargo.toml").exists() {
+            let frontend_patches: &[(&str, &str)] = &[("forge-dioxus", "packages/forge-dioxus")];
+            append_cargo_patch(&dir.join("frontend/Cargo.toml"), frontend_patches)?;
+            println!(
+                "  {} Added frontend cargo patch for local development",
+                ui::step()
+            );
         }
 
         if dir.join("docker-compose.yml").exists() {

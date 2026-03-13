@@ -57,7 +57,7 @@ WORKDIR /app
 
 RUN apk add --no-cache ca-certificates libgcc
 
-COPY --from=builder /app/target/release/minimal /app/minimal
+COPY --from=builder /app/target/release/forge-svelte-minimal-template /app/forge-svelte-minimal-template
 COPY --from=builder /app/migrations /app/migrations
 
 EXPOSE 8080
@@ -66,4 +66,4 @@ ENV RUST_LOG=info
 ENV HOST=0.0.0.0
 ENV PORT=8080
 
-CMD ["/app/minimal"]
+CMD ["/app/forge-svelte-minimal-template"]

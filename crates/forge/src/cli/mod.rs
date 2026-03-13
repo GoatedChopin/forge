@@ -37,8 +37,10 @@ const AFTER_HELP: &str = r#"Examples:
   forge dev                      Start development (requires Docker)
   forge dev down                 Stop the development environment
   forge dev down --clear         Stop and remove volumes + target/
-  forge test                     Run Playwright tests
-  forge test --ui                Run tests in Playwright UI mode
+  forge test                     Run all tests (backend + frontend)
+  forge test --skip-frontend     Run backend unit tests only
+  forge test --skip-backend      Run frontend Playwright tests only
+  forge test --skip-backend --ui Run frontend tests in Playwright UI mode
   forge check                    Validate project configuration
   forge generate                 Generate frontend bindings from backend code
   forge migrate status           Check migration status
@@ -69,7 +71,7 @@ pub enum Commands {
     /// Generate frontend bindings from backend source
     Generate(GenerateCommand),
 
-    /// Run Playwright frontend tests
+    /// Run project tests (backend + frontend)
     Test(TestCommand),
 
     /// Manage database migrations

@@ -8,6 +8,8 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: "html",
   globalSetup: "./tests/global-setup.ts",
+  // WASM cold start on CI can take 60-90s (download + compile + init)
+  timeout: process.env.CI ? 120_000 : 30_000,
   use: {
     baseURL: "http://localhost:5173",
     trace: "on-first-retry",

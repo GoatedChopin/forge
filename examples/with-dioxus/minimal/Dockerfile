@@ -27,8 +27,8 @@ RUN cargo build --release
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY --from=builder /app/target/release/minimal /app/minimal
+COPY --from=builder /app/target/release/forge-dioxus-minimal-template /app/forge-dioxus-minimal-template
 COPY forge.toml /app/forge.toml
 COPY migrations /app/migrations
 EXPOSE 8080
-CMD ["/app/minimal"]
+CMD ["/app/forge-dioxus-minimal-template"]

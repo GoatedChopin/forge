@@ -197,7 +197,11 @@ impl ForgeClient {
     }
 
     fn get_token(&self) -> Option<String> {
-        self.inner.get_token.as_ref().and_then(|provider| provider())
+        self.inner
+            .get_token
+            .as_ref()
+            .and_then(|provider| provider())
+            .filter(|t| !t.is_empty())
     }
 
     fn emit_connection<TValue, T>(&self, callback: &Rc<RefCell<T>>, state: ConnectionState)

@@ -101,8 +101,8 @@ test.describe("CRUD with reactivity", () => {
     });
   });
 
-  test("add button disabled when input empty", async ({ page }) => {
-    await page.goto("/");
+  test("add button disabled when input empty", async ({ page, gotoReady }) => {
+    await gotoReady();
     await expect(page.locator(".input-row button")).toBeDisabled();
   });
 });

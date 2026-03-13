@@ -10,6 +10,7 @@ services:
       - .env
     environment:
       - DATABASE_URL=postgres://postgres:forge@db:5432/kanban_board
+      - SQLX_OFFLINE=true
       - FORGE_OTEL_ENABLED=true
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel:4318
     working_dir: /app/examples/with-svelte/kanban-board

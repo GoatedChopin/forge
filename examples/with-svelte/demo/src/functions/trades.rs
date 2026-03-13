@@ -48,6 +48,12 @@ pub async fn get_trades(ctx: &QueryContext) -> Result<Vec<Trade>> {
 /// Streams live trades from Binance WebSocket and writes to database
 #[forge::daemon(restart_on_panic = true, restart_delay = "5s")]
 pub async fn trade_stream(ctx: &DaemonContext) -> Result<()> {
+    if std::env::var_os("CI").is_some() {
+        tracing::info!("Skipping Binance WebSocket in CI");
+        ctx.shutdown_signal().await;
+        return Ok(());
+    }
+
     let url = "wss://stream.binance.com:9443/ws/eurusdt@trade";
     tracing::info!("Connecting to Binance WebSocket: {}", url);
 

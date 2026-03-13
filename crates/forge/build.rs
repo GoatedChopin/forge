@@ -36,7 +36,7 @@ fn main() {
         return;
     }
 
-    panic!("could not find examples directory or generated examples archive");
+    unreachable!("could not find examples directory or generated examples archive");
 }
 
 fn build_bundle_from_examples(examples_dir: &Path, bundle_dir: &Path) {
@@ -156,10 +156,10 @@ fn should_exclude(relative_path: &Path) -> bool {
         "skills",
     ];
 
-    if let Some(file_name) = relative_path.file_name().and_then(|name| name.to_str()) {
-        if EXACT_FILES.contains(&file_name) {
-            return true;
-        }
+    if let Some(file_name) = relative_path.file_name().and_then(|name| name.to_str())
+        && EXACT_FILES.contains(&file_name)
+    {
+        return true;
     }
 
     relative_path.components().any(|component| {

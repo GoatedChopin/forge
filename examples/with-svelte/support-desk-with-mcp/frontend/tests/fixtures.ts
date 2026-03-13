@@ -32,7 +32,8 @@ type ForgeFixtures = {
 };
 
 export const test = base.extend<ForgeFixtures>({
-  rpc: async (_fixtures, use) => {
+  // eslint-disable-next-line no-empty-pattern
+  rpc: async ({}, use) => {
     await use(async (fn: string, args: unknown = null) => {
       const res = await fetch(`${API_URL}/_api/rpc/${fn}`, {
         method: "POST",

@@ -32,7 +32,8 @@ type ForgeFixtures = {
 };
 
 export const test = base.extend<ForgeFixtures>({
-  rpc: async (_fixtures, use) => {
+  // eslint-disable-next-line no-empty-pattern
+  rpc: async ({}, use) => {
     await use(async (fn: string, args: unknown = null) => {
       const res = await fetch(`${API_URL}/_api/rpc/${fn}`, {
         method: "POST",
@@ -49,11 +50,12 @@ export const test = base.extend<ForgeFixtures>({
 
   gotoReady: async ({ page }, use) => {
     await use(async (path = "/") => {
-      // Wait for the subscription registration response, not just the SSE
-      // connection. This signals that reactivity is fully wired up.
+      // WASM apps need extra time: download → compile → init → subscribe.
+      // Wait for the app to render before expecting network activity.
       const subscribed = page.waitForResponse(
-        (res) => res.url().includes("/_api/subscribe") && res.status() === 200,
-        { timeout: ACTION_TIMEOUT * 3 },
+        (res) =>
+          res.url().includes("/_api/subscribe") && res.status() === 200,
+        { timeout: 60_000 },
       );
       await page.goto(path);
       await subscribed;

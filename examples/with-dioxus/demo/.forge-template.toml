@@ -7,6 +7,7 @@ rewrite_paths = [
   "forge.toml",
   ".env",
   "docker-compose.yml",
+  "Dockerfile",
   "README.md",
   "frontend/Cargo.toml",
   "frontend/src/main.rs",
@@ -71,3 +72,8 @@ files = ["README.md"]
 from = "\"demo\""
 to = "\"{{project_slug}}\""
 files = ["frontend/src/main.rs", "frontend/tests/home.spec.ts"]
+
+[[replacement]]
+from = "forge-dioxus-demo-template"
+to = "{{project_slug}}"
+files = ["Dockerfile"]

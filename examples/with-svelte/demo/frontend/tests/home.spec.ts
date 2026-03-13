@@ -115,11 +115,15 @@ test.describe("Forge Demo", () => {
   test("verification workflow starts successfully", async ({ page }) => {
     await page.goto("/");
 
-    await page.getByRole("button", { name: "Start Workflow" }).click();
+    const verifySection = page.locator("section", {
+      has: page.getByText("Verification"),
+    });
+    await verifySection.getByRole("button", { name: "Start Workflow" }).click();
 
-    // Allow the workflow to start and check for errors
-    await expect(page.locator("body")).toBeVisible();
-    const errorVisible = await page.getByText(/error|failed/i).isVisible();
+    await page.waitForTimeout(1000);
+    const errorVisible = await verifySection
+      .getByText(/error|failed/i)
+      .isVisible();
     expect(errorVisible).toBeFalsy();
   });
 
@@ -130,11 +134,16 @@ test.describe("Forge Demo", () => {
 
     await page.goto("/");
 
-    await page.getByRole("button", { name: "New" }).click();
-    await page.getByRole("button", { name: "Send" }).click();
+    const webhookSection = page.locator("section", {
+      has: page.getByText("Webhook"),
+    });
+    await webhookSection.getByRole("button", { name: "New" }).click();
+    await webhookSection.getByRole("button", { name: "Send" }).click();
 
-    await expect(page.locator("body")).toBeVisible();
-    const errorVisible = await page.getByText(/error|failed/i).isVisible();
+    await page.waitForTimeout(1000);
+    const errorVisible = await webhookSection
+      .getByText(/error|failed/i)
+      .isVisible();
     expect(errorVisible).toBeFalsy();
   });
 

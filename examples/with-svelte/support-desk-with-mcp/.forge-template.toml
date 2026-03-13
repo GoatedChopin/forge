@@ -7,6 +7,7 @@ rewrite_paths = [
   "forge.toml",
   ".env",
   "docker-compose.yml",
+  "Dockerfile",
   "README.md",
   "frontend/package.json",
 ]
@@ -69,3 +70,45 @@ files = ["README.md"]
 from = "support-desk/"
 to = "{{project_slug}}/"
 files = ["README.md"]
+
+# Convert workspace-relative docker-compose to standalone
+[[replacement]]
+from = "context: ../.."
+to = "context: ."
+files = ["docker-compose.yml"]
+
+[[replacement]]
+from = "dockerfile: examples/support-desk/Dockerfile"
+to = "dockerfile: Dockerfile"
+files = ["docker-compose.yml"]
+
+[[replacement]]
+from = "\n    working_dir: /app/examples/support-desk"
+to = ""
+files = ["docker-compose.yml"]
+
+[[replacement]]
+from = " -w ../../crates/"
+to = ""
+files = ["docker-compose.yml"]
+
+[[replacement]]
+from = "- ../..:/app"
+to = "- .:/app"
+files = ["docker-compose.yml"]
+
+[[replacement]]
+from = "- ../../target:/app/target"
+to = "- ./target:/app/target"
+files = ["docker-compose.yml"]
+
+# Dockerfile binary name
+[[replacement]]
+from = "release/support-desk"
+to = "release/{{project_slug}}"
+files = ["Dockerfile"]
+
+[[replacement]]
+from = "/app/support-desk"
+to = "/app/{{project_slug}}"
+files = ["Dockerfile"]

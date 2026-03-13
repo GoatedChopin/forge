@@ -1039,7 +1039,7 @@ fn format_generated_bindings_for_check(
     };
 
     let status = prettier
-        .arg(&prettier_target.to_string_lossy().to_string())
+        .arg(prettier_target.to_string_lossy().to_string())
         .current_dir(frontend_dir)
         .stdout(Stdio::null())
         .stderr(Stdio::null())

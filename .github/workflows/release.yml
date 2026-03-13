@@ -1,12 +1,13 @@
+---
 name: Release
 
 on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: 'Dry run (validate, test, build without publishing or tagging)'
+        description: Dry run (validate + test without publishing)
         required: false
-        default: 'false'
+        default: "false"
         type: boolean
 
 permissions:
@@ -15,10 +16,11 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   BINARY_NAME: forge
+  SQLX_OFFLINE: "true"
 
 jobs:
   parse-changelog:
-    name: Parse Changelog
+    name: Changelog
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.parse.outputs.version }}
@@ -27,169 +29,34 @@ jobs:
       is_prerelease: ${{ steps.parse.outputs.is_prerelease }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Parse version and notes from CHANGELOG.md
-        id: parse
-        run: |
-          set -euo pipefail
-
-          if [ ! -f "CHANGELOG.md" ]; then
-            echo "::error::CHANGELOG.md not found"
-            exit 1
-          fi
-
-          # Extract first version after [Unreleased] (should be the version to release)
-          VERSION=$(grep -E '^\#\# \[[0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md | head -1 | sed -E 's/^\#\# \[([0-9]+\.[0-9]+\.[0-9]+[^]]*)\].*/\1/')
-
-          if [ -z "$VERSION" ]; then
-            echo "::error::No version found in CHANGELOG.md. Expected format: ## [X.X.X] - YYYY-MM-DD"
-            exit 1
-          fi
-
-          echo "Found version: $VERSION"
-
-          # Check if this version tag already exists
-          if git rev-parse "v$VERSION" >/dev/null 2>&1; then
-            echo "::error::Tag v$VERSION already exists. Update CHANGELOG.md with a new version before releasing."
-            exit 1
-          fi
-
-          # Verify the version has a date and extract it
-          VERSION_LINE=$(grep -E "^\#\# \[$VERSION\]" CHANGELOG.md)
-          if ! echo "$VERSION_LINE" | grep -qE '\- [0-9]{4}-[0-9]{2}-[0-9]{2}$'; then
-            echo "::error::Version $VERSION is missing a release date. Expected format: ## [$VERSION] - YYYY-MM-DD"
-            exit 1
-          fi
-
-          RELEASE_DATE=$(echo "$VERSION_LINE" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}$')
-
-          # Verify Unreleased section exists and is empty (or has no content)
-          UNRELEASED_CONTENT=$(awk '/^\#\# \[Unreleased\]/,/^\#\# \[/ {print}' CHANGELOG.md | tail -n +2 | head -n -1 | grep -v '^$' || true)
-          if [ -n "$UNRELEASED_CONTENT" ]; then
-            echo "::warning::Unreleased section has content. Consider moving it to a versioned section."
-          fi
-
-          # Extract release notes for this version (content between this version header and next version header)
-          RELEASE_NOTES=$(awk -v ver="$VERSION" '
-            BEGIN { found=0; printing=0 }
-            /^## \[/ {
-              if (printing) exit
-              if (index($0, "["ver"]")) { found=1; printing=1; next }
-            }
-            printing { print }
-          ' CHANGELOG.md)
-
-          if [ -z "$RELEASE_NOTES" ]; then
-            echo "::error::No release notes found for version $VERSION"
-            exit 1
-          fi
-
-          # Check for prerelease
-          IS_PRERELEASE="false"
-          if echo "$VERSION" | grep -qE '(alpha|beta|rc)'; then
-            IS_PRERELEASE="true"
-          fi
-
-          # Output version and date
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "release_date=$RELEASE_DATE" >> $GITHUB_OUTPUT
-          echo "is_prerelease=$IS_PRERELEASE" >> $GITHUB_OUTPUT
-
-          # Output release notes (handle multiline)
-          {
-            echo "release_notes<<RELEASE_NOTES_EOF"
-            echo "$RELEASE_NOTES"
-            echo "RELEASE_NOTES_EOF"
-          } >> $GITHUB_OUTPUT
-
-          echo "=== Release Info ==="
-          echo "Version: $VERSION"
-          echo "Date: $RELEASE_DATE"
-          echo "Prerelease: $IS_PRERELEASE"
-          echo "Release Notes:"
-          echo "$RELEASE_NOTES"
+      - id: parse
+        run: bash scripts/ci/parse-changelog.sh
 
   validate:
     name: Validate
-    needs: parse-changelog
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: workspace
+      - run: scripts/ci/create-env-stubs.sh
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets --all-features --workspace -- -D warnings
+      - run: cargo test --workspace
+      - run: cargo build -p forgex
+      - uses: actions/upload-artifact@v4
+        with:
+          name: forge-cli
+          path: target/debug/forge
+          retention-days: 1
 
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
-
-      - name: Check formatting
-        run: cargo fmt --all --check
-
-      - name: Create example .env files for frontend builds
-        run: |
-          for dir in examples/with-*/*/frontend; do
-            if [ -f "$dir/.env.example" ] && [ ! -f "$dir/.env" ]; then
-              cp "$dir/.env.example" "$dir/.env"
-            elif [ ! -f "$dir/.env" ]; then
-              echo 'PUBLIC_API_URL=http://localhost:8080' > "$dir/.env"
-            fi
-          done
-
-      - name: Patch example frontend dependencies to use local packages
-        run: |
-          for pkg in examples/with-*/*/frontend/package.json; do
-            if [ -f "$pkg" ] && grep -q '@forge-rs/svelte' "$pkg"; then
-              jq --arg p "file:$GITHUB_WORKSPACE/packages/forge-svelte" '
-                if .dependencies["@forge-rs/svelte"] then .dependencies["@forge-rs/svelte"] = $p
-                elif .devDependencies["@forge-rs/svelte"] then .devDependencies["@forge-rs/svelte"] = $p
-                else . end
-              ' "$pkg" > "$pkg.tmp"
-              mv "$pkg.tmp" "$pkg"
-            fi
-          done
-          for cargo in examples/with-*/*/frontend/Cargo.toml; do
-            if [ -f "$cargo" ] && grep -q 'forge-dioxus' "$cargo"; then
-              cat >> "$cargo" << EOF
-
-          [patch.crates-io]
-          forge-dioxus = { path = "$GITHUB_WORKSPACE/packages/forge-dioxus" }
-          EOF
-            fi
-          done
-
-      - name: Run clippy
-        run: >
-          cargo clippy --all-targets --all-features --workspace
-          --exclude todo
-          --exclude todo-dioxus
-          --exclude kanban-board
-          --exclude support-desk
-          --exclude forge-svelte-minimal-template
-          --exclude forge-svelte-demo-template
-          --exclude forge-dioxus-minimal-template
-          --exclude forge-dioxus-demo-template
-          -- -D warnings
-
-      - name: Build (dry-run)
-        run: cargo build --release -p forgex
-
-      - name: Run tests
-        run: >
-          cargo test --all-features --workspace
-          --exclude todo
-          --exclude todo-dioxus
-          --exclude kanban-board
-          --exclude support-desk
-          --exclude forge-svelte-minimal-template
-          --exclude forge-svelte-demo-template
-          --exclude forge-dioxus-minimal-template
-          --exclude forge-dioxus-demo-template
-
-  integration-test:
-    name: Integration Tests (${{ matrix.template }})
-    needs: [parse-changelog, validate]
+  test-template:
+    name: ${{ matrix.template }}
+    needs: validate
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -205,338 +72,32 @@ jobs:
           - with-dioxus/realtime-todo-list
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
-
-      - name: Create example .env files for frontend builds
-        run: |
-          for dir in examples/with-*/*/frontend; do
-            if [ -f "$dir/.env.example" ] && [ ! -f "$dir/.env" ]; then
-              cp "$dir/.env.example" "$dir/.env"
-            elif [ ! -f "$dir/.env" ]; then
-              echo 'PUBLIC_API_URL=http://localhost:8080' > "$dir/.env"
-            fi
-          done
-
-      - name: Build forge CLI
-        run: cargo build --release -p forgex
-
-      - name: Install bun
-        uses: oven-sh/setup-bun@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
         with:
-          bun-version: latest
-
-      - name: Install dioxus-cli
-        run: cargo install dioxus-cli --version 0.7.3 --locked
-
-      - name: Create project from template
-        run: |
-          ./target/release/forge new /tmp/forge-integration-test --template "${{ matrix.template }}"
-          ls -la /tmp/forge-integration-test
-
-      - name: Patch to use local workspace
-        run: |
-          cd /tmp/forge-integration-test
-          # Patch Rust crates to use local workspace
-          cat >> Cargo.toml << 'EOF'
-
-          # Local patches for integration testing
-          [patch.crates-io]
-          forgex = { path = "${{ github.workspace }}/crates/forge" }
-          forge-core = { path = "${{ github.workspace }}/crates/forge-core" }
-          forge-macros = { path = "${{ github.workspace }}/crates/forge-macros" }
-          forge-runtime = { path = "${{ github.workspace }}/crates/forge-runtime" }
-          forge-codegen = { path = "${{ github.workspace }}/crates/forge-codegen" }
-          EOF
-          cat Cargo.toml
-
-          # Patch npm package to use local source (not yet published)
-          if [ -f frontend/package.json ]; then
-            jq --arg p "file:${{ github.workspace }}/packages/forge-svelte" '
-              if .dependencies["@forge-rs/svelte"] then .dependencies["@forge-rs/svelte"] = $p
-              elif .devDependencies["@forge-rs/svelte"] then .devDependencies["@forge-rs/svelte"] = $p
-              else . end
-            ' frontend/package.json > frontend/package.json.tmp
-            mv frontend/package.json.tmp frontend/package.json
-          fi
-
-          if [ -f frontend/Cargo.toml ] && grep -q 'forge-dioxus' frontend/Cargo.toml; then
-            cat >> frontend/Cargo.toml << 'EOF'
-
-          [patch.crates-io]
-          forge-dioxus = { path = "${{ github.workspace }}/packages/forge-dioxus" }
-          EOF
-          fi
-
-      - name: Run forge check
-        working-directory: /tmp/forge-integration-test
-        run: $GITHUB_WORKSPACE/target/release/forge check
-
-      - name: Install Playwright
-        working-directory: /tmp/forge-integration-test/frontend
-        run: |
-          bun install
-          bunx playwright install chromium --with-deps
-
-      - name: Start PostgreSQL
-        working-directory: /tmp/forge-integration-test
-        run: |
-          PROJECT_SLUG="$(basename "$PWD")"
-          DB_NAME="${PROJECT_SLUG//-/_}"
-
-          docker run -d --name forge-test-pg \
-            -e POSTGRES_USER=postgres \
-            -e POSTGRES_PASSWORD=forge \
-            -e POSTGRES_DB="$DB_NAME" \
-            -p 5432:5432 \
-            postgres:18
-          for i in {1..30}; do
-            if docker exec forge-test-pg pg_isready -U postgres 2>/dev/null; then
-              echo "PostgreSQL ready"
-              break
-            fi
-            sleep 1
-          done
-
-      - name: Build generated project
-        working-directory: /tmp/forge-integration-test
-        run: cargo build --release
-
-      - name: Start backend and frontend
-        working-directory: /tmp/forge-integration-test
-        run: |
-          PROJECT_SLUG="$(basename "$PWD")"
-          DB_NAME="${PROJECT_SLUG//-/_}"
-
-          export DATABASE_URL="postgres://postgres:forge@localhost:5432/$DB_NAME"
-          export PORT=8080
-          export JWT_SECRET=test-secret-for-ci
-          export WEBHOOK_SECRET=test-webhook-secret
-
-          ./target/release/forge-integration-test &
-          BACKEND_PID=$!
-
-          cd frontend
-          if [ -f .env.example ] && [ ! -f .env ]; then cp .env.example .env; fi
-          bun run dev &
-          FRONTEND_PID=$!
-          cd ..
-
-          echo "Waiting for backend..."
-          for i in {1..180}; do
-            if curl -s http://localhost:8080/_api/health | grep -q "healthy"; then
-              echo "Backend is ready!"
-              break
-            fi
-            if [ $i -eq 180 ]; then
-              echo "Backend failed to start"
-              kill $BACKEND_PID $FRONTEND_PID 2>/dev/null || true
-              exit 1
-            fi
-            sleep 1
-          done
-
-          echo "Waiting for frontend..."
-          for i in {1..60}; do
-            if curl -s http://localhost:5173 > /dev/null 2>&1; then
-              echo "Frontend is ready!"
-              break
-            fi
-            sleep 1
-          done
-
-          cd frontend
-          bunx playwright test tests/home.spec.ts --reporter=line
-          TEST_EXIT=$?
-
-          kill $BACKEND_PID $FRONTEND_PID 2>/dev/null || true
-          docker stop forge-test-pg 2>/dev/null || true
-
-          exit $TEST_EXIT
-
-  test-examples:
-    name: Test Examples
-    needs: [parse-changelog, validate]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
-
-      - name: Create example .env files for frontend builds
-        run: |
-          for dir in examples/with-*/*/frontend; do
-            if [ -f "$dir/.env.example" ] && [ ! -f "$dir/.env" ]; then
-              cp "$dir/.env.example" "$dir/.env"
-            elif [ ! -f "$dir/.env" ]; then
-              echo 'PUBLIC_API_URL=http://localhost:8080' > "$dir/.env"
-            fi
-          done
-
-      - name: Build forge CLI
-        run: cargo build --release -p forgex
-
-      - name: Install bun
-        uses: oven-sh/setup-bun@v2
+          shared-key: template-build
+          workspaces: /tmp/test-project -> target
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/download-artifact@v4
         with:
-          bun-version: latest
-
-      - name: Install dioxus-cli
-        run: cargo install dioxus-cli --version 0.7.3 --locked
-
-      - name: Patch example frontend dependencies to use local packages
-        run: |
-          # Svelte examples: point @forge-rs/svelte to local package
-          for pkg in examples/with-*/*/frontend/package.json; do
-            if [ -f "$pkg" ] && grep -q '@forge-rs/svelte' "$pkg"; then
-              jq --arg p "file:$GITHUB_WORKSPACE/packages/forge-svelte" '
-                if .dependencies["@forge-rs/svelte"] then .dependencies["@forge-rs/svelte"] = $p
-                elif .devDependencies["@forge-rs/svelte"] then .devDependencies["@forge-rs/svelte"] = $p
-                else . end
-              ' "$pkg" > "$pkg.tmp"
-              mv "$pkg.tmp" "$pkg"
-              echo "Patched $pkg"
-            fi
-          done
-
-          # Dioxus examples: patch forge-dioxus to use local package
-          for cargo in examples/with-*/*/frontend/Cargo.toml; do
-            if [ -f "$cargo" ] && grep -q 'forge-dioxus' "$cargo"; then
-              cat >> "$cargo" << EOF
-
-          [patch.crates-io]
-          forge-dioxus = { path = "$GITHUB_WORKSPACE/packages/forge-dioxus" }
-          EOF
-              echo "Patched $cargo"
-            fi
-          done
-
-      - name: Test example projects
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-
-          for example_dir in examples/with-*/*/; do
-            if [ ! -d "$example_dir/frontend" ]; then
-              echo "Skipping $example_dir (no frontend/)"
-              continue
-            fi
-
-            framework_name=$(basename "$(dirname "$example_dir")")
-            example_name=$(basename "$example_dir")
-            example_key="${framework_name}-${example_name}"
-            echo "=== Testing example: $example_key ==="
-
-            cd "$example_dir"
-
-            $GITHUB_WORKSPACE/target/release/forge check
-
-            # Install playwright in frontend
-            cd frontend
-            bun install
-            bunx playwright install chromium --with-deps
-            cd ..
-
-            POSTGRES_USER="$(grep '^POSTGRES_USER=' .env | cut -d= -f2- || true)"
-            POSTGRES_PASSWORD="$(grep '^POSTGRES_PASSWORD=' .env | cut -d= -f2- || true)"
-            POSTGRES_DB="$(grep '^POSTGRES_DB=' .env | cut -d= -f2- || true)"
-            DATABASE_URL="$(grep '^DATABASE_URL=' .env | cut -d= -f2- || true)"
-
-            if [ -z "$POSTGRES_USER" ]; then POSTGRES_USER=postgres; fi
-            if [ -z "$POSTGRES_PASSWORD" ]; then POSTGRES_PASSWORD=forge; fi
-            if [ -z "$POSTGRES_DB" ]; then POSTGRES_DB="${example_name//-/_}"; fi
-            if [ -z "$DATABASE_URL" ]; then
-              DATABASE_URL="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/${POSTGRES_DB}"
-            fi
-
-            # Start a fresh PostgreSQL container
-            docker run -d --name "forge-example-pg-${example_key}" \
-              -e POSTGRES_USER="$POSTGRES_USER" \
-              -e POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
-              -e POSTGRES_DB="$POSTGRES_DB" \
-              -p 5432:5432 \
-              postgres:18
-            for i in {1..30}; do
-              if docker exec "forge-example-pg-${example_key}" pg_isready -U "$POSTGRES_USER" 2>/dev/null; then
-                echo "PostgreSQL ready"
-                break
-              fi
-              sleep 1
-            done
-
-            package_name=$(grep '^name = "' Cargo.toml | head -n1 | sed -E 's/name = "([^"]+)"/\1/')
-
-            # Run the pre-built example binary directly
-            DATABASE_URL="$DATABASE_URL" \
-              HOST=0.0.0.0 PORT=8080 RUST_LOG=warn,forge=info \
-              JWT_SECRET=test-secret-for-ci \
-              "$GITHUB_WORKSPACE/target/release/$package_name" &
-            BACKEND_PID=$!
-
-            # Start frontend dev server
-            cd frontend
-            if [ -f .env.example ] && [ ! -f .env ]; then cp .env.example .env; fi
-            bun run dev --host 0.0.0.0 &
-            FRONTEND_PID=$!
-            cd ..
-
-            echo "Waiting for backend..."
-            for i in {1..120}; do
-              if curl -s http://localhost:8080/_api/health | grep -q "healthy"; then
-                echo "Backend is ready!"
-                break
-              fi
-              if [ $i -eq 120 ]; then
-                echo "Backend failed to start for $example_key"
-                kill $BACKEND_PID $FRONTEND_PID 2>/dev/null || true
-                docker stop "forge-example-pg-${example_key}" 2>/dev/null || true
-                docker rm "forge-example-pg-${example_key}" 2>/dev/null || true
-                exit 1
-              fi
-              sleep 1
-            done
-
-            echo "Waiting for frontend..."
-            for i in {1..60}; do
-              if curl -s http://localhost:5173 > /dev/null 2>&1; then
-                echo "Frontend is ready!"
-                break
-              fi
-              sleep 1
-            done
-
-            cd frontend
-            bunx playwright test --reporter=line
-            TEST_EXIT=$?
-            cd ..
-
-            kill $BACKEND_PID $FRONTEND_PID 2>/dev/null || true
-            docker stop "forge-example-pg-${example_key}" 2>/dev/null || true
-            docker rm "forge-example-pg-${example_key}" 2>/dev/null || true
-            sleep 2
-
-            cd "$GITHUB_WORKSPACE"
-
-            if [ "$TEST_EXIT" -ne 0 ]; then
-              echo "Tests failed for $example_key"
-              exit $TEST_EXIT
-            fi
-
-            echo "=== $example_key passed ==="
-          done
+          name: forge-cli
+          path: /tmp/forge-bin
+      - run: chmod +x /tmp/forge-bin/forge
+      - if: startsWith(matrix.template, 'with-dioxus/')
+        uses: cargo-bins/cargo-binstall@main
+      - if: startsWith(matrix.template, 'with-dioxus/')
+        run: cargo binstall dioxus-cli@0.7.3 --no-confirm
+      - run: scripts/ci/test-template.sh "${{ matrix.template }}" /tmp/forge-bin/forge "${{ github.workspace }}"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-${{ matrix.template }}
+          path: /tmp/test-project/frontend/test-results/
+          retention-days: 7
 
   bump-versions:
     name: Bump Versions
-    needs: [parse-changelog, validate, integration-test, test-examples]
+    needs: [parse-changelog, validate, test-template]
     runs-on: ubuntu-latest
     outputs:
       commit_sha: ${{ steps.commit.outputs.sha }}
@@ -544,159 +105,30 @@ jobs:
       - uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install cargo-edit
-        run: cargo install cargo-edit
-
-      - name: Update workspace version
-        run: |
-          VERSION="${{ needs.parse-changelog.outputs.version }}"
-          echo "Updating to version: $VERSION"
-          cargo set-version --workspace "$VERSION"
-
-      - name: Update internal crate dependencies
-        run: |
-          VERSION="${{ needs.parse-changelog.outputs.version }}"
-
-          for crate_dir in crates/forge crates/forge-runtime crates/forge-codegen crates/forge-macros crates/forge-core; do
-            if [ -f "$crate_dir/Cargo.toml" ]; then
-              sed -i "s/forge-core = { version = \"[^\"]*\"/forge-core = { version = \"$VERSION\"/g" "$crate_dir/Cargo.toml"
-              sed -i "s/forge-macros = { version = \"[^\"]*\"/forge-macros = { version = \"$VERSION\"/g" "$crate_dir/Cargo.toml"
-              sed -i "s/forge-runtime = { version = \"[^\"]*\"/forge-runtime = { version = \"$VERSION\"/g" "$crate_dir/Cargo.toml"
-              sed -i "s/forge-codegen = { version = \"[^\"]*\"/forge-codegen = { version = \"$VERSION\"/g" "$crate_dir/Cargo.toml"
-            fi
-          done
-
-      - name: Update runtime package versions
-        run: |
-          VERSION="${{ needs.parse-changelog.outputs.version }}"
-
-          # @forge-rs/svelte npm package
-          if [ -f "packages/forge-svelte/package.json" ]; then
-            jq --arg v "$VERSION" '.version = $v' packages/forge-svelte/package.json > packages/forge-svelte/package.json.tmp
-            mv packages/forge-svelte/package.json.tmp packages/forge-svelte/package.json
-          fi
-
-          # forge-dioxus crate
-          if [ -f "packages/forge-dioxus/Cargo.toml" ]; then
-            sed -i "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" packages/forge-dioxus/Cargo.toml
-          fi
-
-          # Update checked-in example frontend dependencies
-          for pkg in examples/with-*/*/frontend/package.json; do
-            if [ -f "$pkg" ]; then
-              jq --arg v "=$VERSION" '
-                if .dependencies["@forge-rs/svelte"] then .dependencies["@forge-rs/svelte"] = $v
-                elif .devDependencies["@forge-rs/svelte"] then .devDependencies["@forge-rs/svelte"] = $v
-                else . end
-              ' "$pkg" > "$pkg.tmp"
-              mv "$pkg.tmp" "$pkg"
-            fi
-          done
-          for cargo in examples/with-*/*/frontend/Cargo.toml; do
-            if [ -f "$cargo" ]; then
-              sed -i "s/forge-dioxus\", version = \"=[^\"]*\"/forge-dioxus\", version = \"=$VERSION\"/g" "$cargo"
-            fi
-          done
-
-      - name: Update docs version
-        run: |
-          VERSION="${{ needs.parse-changelog.outputs.version }}"
-
-          if [ -f "docs/package.json" ]; then
-            jq --arg v "$VERSION" '.version = $v' docs/package.json > docs/package.json.tmp
-            mv docs/package.json.tmp docs/package.json
-          fi
-
-          find docs -name "*.mdx" -o -name "*.md" | xargs -I {} sed -i "s/forge = { version = \"[^\"]*\"/forge = { version = \"$VERSION\"/g" {} 2>/dev/null || true
-          find docs -name "*.mdx" -o -name "*.md" | xargs -I {} sed -i "s/forgex = { version = \"[^\"]*\"/forgex = { version = \"$VERSION\"/g" {} 2>/dev/null || true
-
-      - name: Update example Cargo.toml versions
-        run: |
-          VERSION="${{ needs.parse-changelog.outputs.version }}"
-
-          for cargo_toml in examples/with-*/*/Cargo.toml; do
-            if [ -f "$cargo_toml" ]; then
-              sed -i "s/forge = { version = \"[^\"]*\"/forge = { version = \"$VERSION\"/g" "$cargo_toml"
-            fi
-          done
-
-      - name: Install bun
-        uses: oven-sh/setup-bun@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
         with:
-          bun-version: latest
-
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
-
-      - name: Create example .env files for frontend builds
-        run: |
-          for dir in examples/with-*/*/frontend; do
-            if [ -f "$dir/.env.example" ] && [ ! -f "$dir/.env" ]; then
-              cp "$dir/.env.example" "$dir/.env"
-            elif [ ! -f "$dir/.env" ]; then
-              echo 'PUBLIC_API_URL=http://localhost:8080' > "$dir/.env"
-            fi
-          done
-
-      - name: Build forge CLI
-        run: cargo build --release
-
-      - name: Regenerate example frontend types
-        run: |
-          for example_dir in examples/with-*/*/; do
-            if [ -f "$example_dir/forge.toml" ]; then
-              echo "Regenerating types for $(basename "$example_dir")"
-              cd "$example_dir"
-              $GITHUB_WORKSPACE/target/release/forge generate -y
-              cd "$GITHUB_WORKSPACE"
-            fi
-          done
-
-      - name: Verify changes
-        run: |
-          echo "=== Cargo.toml workspace version ==="
-          grep -A1 "\[workspace.package\]" Cargo.toml | grep version
-
-          echo ""
-          echo "=== Internal dependencies ==="
-          grep -r "forge-core = { version" crates/*/Cargo.toml || true
-          grep -r "forge-runtime = { version" crates/*/Cargo.toml || true
-
-          echo ""
-          echo "=== Runtime package versions ==="
-          jq '.version' packages/forge-svelte/package.json 2>/dev/null || true
-          grep "^version" packages/forge-dioxus/Cargo.toml || true
-
-          echo ""
-          echo "=== Example frontend runtime versions ==="
-          grep -r "forge-rs/svelte" examples/with-*/*/frontend/package.json || true
-          grep "forge-dioxus" examples/with-*/*/frontend/Cargo.toml || true
-
-          echo ""
-          echo "=== docs/package.json version ==="
-          jq '.version' docs/package.json 2>/dev/null || echo "docs/package.json not found"
-
-      - name: Commit version bump
-        id: commit
+          shared-key: workspace
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/download-artifact@v4
+        with:
+          name: forge-cli
+          path: /tmp/forge-bin
+      - run: chmod +x /tmp/forge-bin/forge
+      - run: cargo install cargo-edit
+      - run: scripts/ci/create-env-stubs.sh
+      - run: scripts/ci/bump-versions.sh "${{ needs.parse-changelog.outputs.version }}" /tmp/forge-bin/forge
+      - id: commit
         run: |
           if [ "${{ inputs.dry_run }}" = "true" ]; then
-            echo "Dry run: skipping commit and push"
             echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
             git diff --stat
             exit 0
           fi
-
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
           git add -A
-
           if git diff --staged --quiet; then
-            echo "No changes to commit"
             echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
           else
             git commit -m "Bump version to ${{ needs.parse-changelog.outputs.version }}"
@@ -714,61 +146,32 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            archive: tar.gz
           - target: x86_64-apple-darwin
             os: macos-15
-            archive: tar.gz
           - target: aarch64-apple-darwin
             os: macos-14
-            archive: tar.gz
-
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.bump-versions.outputs.commit_sha }}
-
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-
-      - name: Create example .env files for frontend builds
-        run: |
-          for dir in examples/with-*/*/frontend; do
-            [ -d "$dir" ] || continue
-            echo "PUBLIC_API_URL=http://localhost:8080" > "$dir/.env"
-          done
-
-      - name: Build binary
-        run: cargo build --release --target ${{ matrix.target }} -p forgex
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Package binary
-        run: |
-          cd target/${{ matrix.target }}/release
-          tar czvf ../../../${{ env.BINARY_NAME }}-${{ matrix.target }}.${{ matrix.archive }} ${{ env.BINARY_NAME }}
-          cd ../../..
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - run: scripts/ci/create-env-stubs.sh
+      - run: cargo build --release --target ${{ matrix.target }} -p forgex
+      - run: cd target/${{ matrix.target }}/release && tar czvf ../../../${{ env.BINARY_NAME }}-${{ matrix.target }}.tar.gz ${{ env.BINARY_NAME }}
+      - uses: actions/upload-artifact@v4
         with:
           name: ${{ env.BINARY_NAME }}-${{ matrix.target }}
-          path: ${{ env.BINARY_NAME }}-${{ matrix.target }}.${{ matrix.archive }}
+          path: ${{ env.BINARY_NAME }}-${{ matrix.target }}.tar.gz
 
   release:
-    name: Create Release
+    name: Release
     if: ${{ inputs.dry_run != true }}
     needs: [parse-changelog, bump-versions, build]
     runs-on: ubuntu-latest
@@ -776,111 +179,58 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.bump-versions.outputs.commit_sha }}
-
-      - name: Create and push tag
-        run: |
+      - run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          TAG="v${{ needs.parse-changelog.outputs.version }}"
-          git tag -a "$TAG" -m "Release $TAG"
-          git push origin "$TAG"
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+          git tag -a "v${{ needs.parse-changelog.outputs.version }}" -m "Release v${{ needs.parse-changelog.outputs.version }}"
+          git push origin "v${{ needs.parse-changelog.outputs.version }}"
+      - uses: actions/download-artifact@v4
         with:
           path: artifacts
-
-      - name: Create checksums
-        run: |
-          cd artifacts
-          for dir in */; do
-            cd "$dir"
-            for file in *; do
-              sha256sum "$file" > "$file.sha256"
-            done
-            cd ..
-          done
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - run: cd artifacts && for dir in */; do cd "$dir" && for f in *; do sha256sum "$f" > "$f.sha256"; done && cd ..; done
+      - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.parse-changelog.outputs.version }}
           name: ${{ needs.parse-changelog.outputs.version }} - ${{ needs.parse-changelog.outputs.release_date }}
           body: ${{ needs.parse-changelog.outputs.release_notes }}
-          draft: false
           prerelease: ${{ needs.parse-changelog.outputs.is_prerelease == 'true' }}
-          files: |
-            artifacts/**/*
+          files: artifacts/**/*
 
   publish-crates:
-    name: Publish to crates.io
+    name: Publish crates.io
     if: ${{ inputs.dry_run != true }}
-    needs: [parse-changelog, bump-versions, release]
+    needs: [bump-versions, release]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.bump-versions.outputs.commit_sha }}
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
-
-      - name: Publish forge-macros
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - env:
+          TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
-          sleep 30
-          cargo publish -p forge-macros --token ${{ secrets.CARGO_REGISTRY_TOKEN }} 2>&1 || echo "already published"
-
-      - name: Publish forge-core
-        run: |
-          sleep 30
-          cargo publish -p forge-core --token ${{ secrets.CARGO_REGISTRY_TOKEN }} 2>&1 || echo "already published"
-
-      - name: Publish forge-runtime
-        run: |
-          sleep 30
-          cargo publish -p forge-runtime --token ${{ secrets.CARGO_REGISTRY_TOKEN }} 2>&1 || echo "already published"
-
-      - name: Publish forge-codegen
-        run: |
-          sleep 30
-          cargo publish -p forge-codegen --token ${{ secrets.CARGO_REGISTRY_TOKEN }} 2>&1 || echo "already published"
-
-      - name: Publish forge-dioxus
-        run: |
-          sleep 30
-          cd packages/forge-dioxus
-          cargo publish --allow-dirty --token ${{ secrets.CARGO_REGISTRY_TOKEN }} 2>&1 || echo "already published"
-
-      - name: Build generated forgex template archive
-        run: bash ./scripts/build-template-archive.sh
-
-      - name: Publish forgex
-        run: |
-          sleep 30
-          cargo publish -p forgex --token ${{ secrets.CARGO_REGISTRY_TOKEN }} 2>&1 || echo "already published"
+          for pkg in forge-macros forge-core forge-runtime forge-codegen; do
+            sleep 30 && cargo publish -p $pkg --token $TOKEN 2>&1 || echo "$pkg already published"
+          done
+          sleep 30 && cd packages/forge-dioxus && cargo publish --allow-dirty --token $TOKEN 2>&1 || echo "forge-dioxus already published"
+          cd "$GITHUB_WORKSPACE"
+          bash scripts/build-template-archive.sh
+          sleep 30 && cargo publish -p forgex --token $TOKEN 2>&1 || echo "forgex already published"
 
   publish-npm:
-    name: Publish to npm
+    name: Publish npm
     if: ${{ inputs.dry_run != true }}
-    needs: [parse-changelog, bump-versions, release]
+    needs: [bump-versions, release]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.bump-versions.outputs.commit_sha }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: Publish @forge-rs/svelte
-        working-directory: packages/forge-svelte
-        run: npm publish --access public
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+      - run: cd packages/forge-svelte && npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

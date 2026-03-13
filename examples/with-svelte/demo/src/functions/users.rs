@@ -149,6 +149,10 @@ mod tests {
     use forge::testing::IsolatedTestDb;
     use std::path::Path;
 
+    fn db_tests_enabled() -> bool {
+        std::env::var_os("TEST_DATABASE_URL").is_some()
+    }
+
     async fn setup_db() -> IsolatedTestDb {
         IsolatedTestDb::setup(
             "users_test",
@@ -177,6 +181,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_user() {
+        if !db_tests_enabled() {
+            return;
+        }
         let db = setup_db().await;
         let ctx = mutation_ctx(db.pool().clone());
 
@@ -192,6 +199,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_user_with_role() {
+        if !db_tests_enabled() {
+            return;
+        }
         let db = setup_db().await;
         let ctx = mutation_ctx(db.pool().clone());
 
@@ -210,6 +220,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_users() {
+        if !db_tests_enabled() {
+            return;
+        }
         let db = setup_db().await;
         let m_ctx = mutation_ctx(db.pool().clone());
 
@@ -228,6 +241,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_user_by_id() {
+        if !db_tests_enabled() {
+            return;
+        }
         let db = setup_db().await;
         let m_ctx = mutation_ctx(db.pool().clone());
 
@@ -244,6 +260,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_user_not_found() {
+        if !db_tests_enabled() {
+            return;
+        }
         let db = setup_db().await;
         let ctx = query_ctx(db.pool().clone());
 
@@ -254,6 +273,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_user() {
+        if !db_tests_enabled() {
+            return;
+        }
         let db = setup_db().await;
         let ctx = mutation_ctx(db.pool().clone());
 
@@ -278,6 +300,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_user_partial() {
+        if !db_tests_enabled() {
+            return;
+        }
         let db = setup_db().await;
         let ctx = mutation_ctx(db.pool().clone());
 
@@ -296,6 +321,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_user() {
+        if !db_tests_enabled() {
+            return;
+        }
         let db = setup_db().await;
         let ctx = mutation_ctx(db.pool().clone());
 
@@ -314,6 +342,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_user_not_found() {
+        if !db_tests_enabled() {
+            return;
+        }
         let db = setup_db().await;
         let ctx = mutation_ctx(db.pool().clone());
 

@@ -7,6 +7,6 @@ pub mod typescript;
 pub use dioxus::DioxusGenerator;
 pub use parser::parse_project;
 pub use typescript::{
-    ApiGenerator, ClientGenerator, Error, GenerateOptions, StoreGenerator, TypeGenerator,
-    TypeScriptGenerator,
+    ApiGenerator, ClientGenerator, Error, GenerateOptions, RUNES_SVELTE_TS, StoreGenerator,
+    TypeGenerator, TypeScriptGenerator,
 };

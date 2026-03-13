@@ -57,7 +57,7 @@ WORKDIR /app
 
 RUN apk add --no-cache ca-certificates libgcc
 
-COPY --from=builder /app/target/release/demo /app/demo
+COPY --from=builder /app/target/release/forge-svelte-demo-template /app/forge-svelte-demo-template
 COPY --from=builder /app/migrations /app/migrations
 
 EXPOSE 8080
@@ -66,4 +66,4 @@ ENV RUST_LOG=info
 ENV HOST=0.0.0.0
 ENV PORT=8080
 
-CMD ["/app/demo"]
+CMD ["/app/forge-svelte-demo-template"]

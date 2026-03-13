@@ -8,7 +8,7 @@
     "check": "cargo fmt --check --manifest-path Cargo.toml && prettier --check ."
   },
   "devDependencies": {
-    "@playwright/test": "^1.54.0",
+    "@playwright/test": "^1.58.2",
     "prettier": "^3.6.0"
   }
 }
