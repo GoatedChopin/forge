@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-03-14
+
+### Added
+
+- Template catalog system (`.forge-template.toml`) with bundled project templates replacing dynamic scaffolding
+- Non-interactive skill install support for CI environments
+- Dioxus frontend lockfile generation for reproducible builds
+
+### Changed
+
+- `forge new` uses bundled template catalogs instead of dynamic file-by-file scaffolding
+- Examples reorganized by frontend framework (`with-svelte/`, `with-dioxus/`) with minimal, demo, and feature-specific variants
+- Dioxus frontend development moved to native builds outside Docker
+- Release workflow refactored into reusable CI scripts (`scripts/ci/`)
+- Crate publish made idempotent with dirty check fixes for forge-dioxus
+
+### Fixed
+
+- Clippy warnings (`collapsible_if`, `needless_borrows`, `explicit_auto_deref`) across crates
+- CI template builds using unchecked sqlx macros to avoid requiring database at compile time
+- Dioxus test suite gracefully skipped when `dx` CLI is unavailable
+
 ## [0.7.0] - 2026-03-12
 
 ### Added
@@ -352,7 +374,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust 2024 edition unsafe block compatibility
 - Release workflow cargo-edit installation
 
-[unreleased]: https://github.com/isala404/forge/compare/v0.7.0...HEAD
+[unreleased]: https://github.com/isala404/forge/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/isala404/forge/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/isala404/forge/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/isala404/forge/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/isala404/forge/compare/v0.5.0...v0.5.1
