@@ -232,7 +232,7 @@ fn default_grpc_port() -> u16 {
 }
 
 fn default_max_connections() -> usize {
-    512
+    4096
 }
 
 fn default_request_timeout() -> u64 {

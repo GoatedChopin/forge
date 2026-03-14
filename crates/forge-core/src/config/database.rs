@@ -29,6 +29,15 @@ pub struct DatabaseConfig {
     #[serde(default)]
     pub read_from_replica: bool,
 
+    /// Minimum connections to keep alive in the pool (pre-warming).
+    #[serde(default)]
+    pub min_pool_size: u32,
+
+    /// Run a health check query before handing out connections.
+    /// Disabling this halves round-trips for read queries.
+    #[serde(default = "default_true")]
+    pub test_before_acquire: bool,
+
     /// Connection pool isolation configuration.
     #[serde(default)]
     pub pools: PoolsConfig,
@@ -43,6 +52,8 @@ impl Default for DatabaseConfig {
             statement_timeout_secs: default_statement_timeout(),
             replica_urls: Vec::new(),
             read_from_replica: false,
+            min_pool_size: 0,
+            test_before_acquire: true,
             pools: PoolsConfig::default(),
         }
     }
@@ -88,6 +99,10 @@ fn default_statement_timeout() -> u64 {
     30
 }
 
+fn default_true() -> bool {
+    true
+}
+
 /// Pool isolation configuration for different workloads.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PoolsConfig {
@@ -120,6 +135,14 @@ pub struct PoolConfig {
 
     /// Statement timeout in seconds (optional override).
     pub statement_timeout_secs: Option<u64>,
+
+    /// Minimum connections to keep alive.
+    #[serde(default)]
+    pub min_size: u32,
+
+    /// Run a health check query before handing out connections.
+    #[serde(default = "default_true")]
+    pub test_before_acquire: bool,
 }
 
 #[cfg(test)]

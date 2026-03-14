@@ -64,9 +64,29 @@ impl Database {
             .map(|p| p.timeout_secs)
             .unwrap_or(config.pool_timeout_secs);
 
-        let primary = Self::create_pool(&config.url, primary_size, primary_timeout, service_name)
-            .await
-            .map_err(|e| ForgeError::Database(format!("Failed to connect to primary: {}", e)))?;
+        let primary_min = config
+            .pools
+            .default
+            .as_ref()
+            .map(|p| p.min_size)
+            .unwrap_or(config.min_pool_size);
+        let primary_test = config
+            .pools
+            .default
+            .as_ref()
+            .map(|p| p.test_before_acquire)
+            .unwrap_or(config.test_before_acquire);
+
+        let primary = Self::create_pool_with_opts(
+            &config.url,
+            primary_size,
+            primary_min,
+            primary_timeout,
+            primary_test,
+            service_name,
+        )
+        .await
+        .map_err(|e| ForgeError::Database(format!("Failed to connect to primary: {}", e)))?;
 
         let mut replicas = Vec::new();
         for replica_url in &config.replica_urls {
@@ -112,7 +132,7 @@ impl Database {
         let options: PgConnectOptions = url.parse()?;
         Ok(options
             .application_name(service_name)
-            .log_statements(LevelFilter::Debug)
+            .log_statements(LevelFilter::Off)
             .log_slow_statements(LevelFilter::Warn, Duration::from_millis(500)))
     }
 
@@ -122,10 +142,23 @@ impl Database {
         timeout_secs: u64,
         service_name: &str,
     ) -> sqlx::Result<PgPool> {
+        Self::create_pool_with_opts(url, size, 0, timeout_secs, true, service_name).await
+    }
+
+    async fn create_pool_with_opts(
+        url: &str,
+        size: u32,
+        min_size: u32,
+        timeout_secs: u64,
+        test_before_acquire: bool,
+        service_name: &str,
+    ) -> sqlx::Result<PgPool> {
         let options = Self::connect_options(url, service_name)?;
         PgPoolOptions::new()
             .max_connections(size)
+            .min_connections(min_size)
             .acquire_timeout(Duration::from_secs(timeout_secs))
+            .test_before_acquire(test_before_acquire)
             .connect_with(options)
             .await
     }
@@ -138,9 +171,16 @@ impl Database {
         let Some(cfg) = config else {
             return Ok(None);
         };
-        let pool = Self::create_pool(url, cfg.size, cfg.timeout_secs, service_name)
-            .await
-            .map_err(|e| ForgeError::Database(format!("Failed to create isolated pool: {}", e)))?;
+        let pool = Self::create_pool_with_opts(
+            url,
+            cfg.size,
+            cfg.min_size,
+            cfg.timeout_secs,
+            cfg.test_before_acquire,
+            service_name,
+        )
+        .await
+        .map_err(|e| ForgeError::Database(format!("Failed to create isolated pool: {}", e)))?;
         Ok(Some(Arc::new(pool)))
     }
 

@@ -1029,6 +1029,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 
 [[package]]
+name = "forge-bench"
+version = "0.7.1"
+dependencies = [
+ "chrono",
+ "dotenvy",
+ "forgex",
+ "jsonwebtoken 9.3.1",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "forge-codegen"
 version = "0.7.1"
 dependencies = [

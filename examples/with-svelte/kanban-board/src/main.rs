@@ -42,7 +42,8 @@ mod embedded {
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
-    let config = ForgeConfig::from_file("forge.toml")?;
+    let config_path = std::env::var("FORGE_CONFIG").unwrap_or_else(|_| "forge.toml".into());
+    let config = ForgeConfig::from_file(&config_path)?;
     let builder = Forge::builder()
         .register_mutation::<functions::RegisterMutation>()
         .register_mutation::<functions::LoginMutation>()
