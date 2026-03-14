@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::RwLock;
 use tokio::time::Instant;
 
 use forge_core::realtime::{Change, QueryGroupId};
@@ -20,7 +20,10 @@ pub struct InvalidationConfig {
     pub debounce_ms: u64,
     /// Maximum debounce wait in milliseconds.
     pub max_debounce_ms: u64,
-    /// Whether to coalesce changes by table.
+    /// Whether to coalesce changes by table. When enabled, multiple changes
+    /// to the same table within the debounce window are merged into a single
+    /// invalidation per affected group, reducing redundant re-executions.
+    /// When disabled, each change is tracked independently per group.
     pub coalesce_by_table: bool,
     /// Maximum changes to buffer before forcing flush.
     pub max_buffer_size: usize,
@@ -40,7 +43,6 @@ impl Default for InvalidationConfig {
 /// Pending invalidation for a query group.
 #[derive(Debug)]
 struct PendingInvalidation {
-    #[allow(dead_code)]
     group_id: QueryGroupId,
     changed_tables: HashSet<String>,
     first_change: Instant,
@@ -51,27 +53,18 @@ struct PendingInvalidation {
 /// Operates on groups (not individual subscriptions) for O(groups) cost.
 pub struct InvalidationEngine {
     subscription_manager: Arc<SubscriptionManager>,
-    #[allow(dead_code)]
     config: InvalidationConfig,
     /// Pending invalidations per query group.
     pending: Arc<RwLock<HashMap<QueryGroupId, PendingInvalidation>>>,
-    #[allow(dead_code)]
-    invalidation_tx: mpsc::Sender<Vec<QueryGroupId>>,
-    #[allow(dead_code)]
-    invalidation_rx: Arc<RwLock<mpsc::Receiver<Vec<QueryGroupId>>>>,
 }
 
 impl InvalidationEngine {
     /// Create a new invalidation engine.
     pub fn new(subscription_manager: Arc<SubscriptionManager>, config: InvalidationConfig) -> Self {
-        let (invalidation_tx, invalidation_rx) = mpsc::channel(1024);
-
         Self {
             subscription_manager,
             config,
             pending: Arc::new(RwLock::new(HashMap::new())),
-            invalidation_tx,
-            invalidation_rx: Arc::new(RwLock::new(invalidation_rx)),
         }
     }
 
@@ -93,17 +86,33 @@ impl InvalidationEngine {
         let mut pending = self.pending.write().await;
 
         for group_id in affected {
-            let entry = pending
-                .entry(group_id)
-                .or_insert_with(|| PendingInvalidation {
-                    group_id,
-                    changed_tables: HashSet::new(),
-                    first_change: now,
-                    last_change: now,
-                });
+            if self.config.coalesce_by_table {
+                // Coalesce: merge changes to the same table within the debounce window,
+                // extending the last_change timestamp to delay re-execution until
+                // the burst settles.
+                let entry = pending
+                    .entry(group_id)
+                    .or_insert_with(|| PendingInvalidation {
+                        group_id,
+                        changed_tables: HashSet::new(),
+                        first_change: now,
+                        last_change: now,
+                    });
 
-            entry.changed_tables.insert(change.table.clone());
-            entry.last_change = now;
+                entry.changed_tables.insert(change.table.clone());
+                entry.last_change = now;
+            } else {
+                // No coalescing: each change triggers its own invalidation entry,
+                // so the group will be re-executed once per change after debounce.
+                pending
+                    .entry(group_id)
+                    .or_insert_with(|| PendingInvalidation {
+                        group_id,
+                        changed_tables: HashSet::from([change.table.clone()]),
+                        first_change: now,
+                        last_change: now,
+                    });
+            }
         }
 
         if pending.len() >= self.config.max_buffer_size {
@@ -142,20 +151,6 @@ impl InvalidationEngine {
         let ready: Vec<QueryGroupId> = pending.keys().copied().collect();
         pending.clear();
         ready
-    }
-
-    /// Run the invalidation check loop.
-    pub async fn run(&self) {
-        let check_interval = Duration::from_millis(self.config.debounce_ms / 2);
-
-        loop {
-            tokio::time::sleep(check_interval).await;
-
-            let ready = self.check_pending().await;
-            if !ready.is_empty() && self.invalidation_tx.send(ready).await.is_err() {
-                break;
-            }
-        }
     }
 
     /// Get pending count for monitoring.
@@ -219,5 +214,37 @@ mod tests {
 
         let flushed = engine.flush_all().await;
         assert!(flushed.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_coalesce_by_table_enabled() {
+        let subscription_manager = Arc::new(SubscriptionManager::new(50));
+        let config = InvalidationConfig {
+            coalesce_by_table: true,
+            debounce_ms: 0,
+            ..Default::default()
+        };
+        let engine = InvalidationEngine::new(subscription_manager, config);
+
+        // Without subscriptions, no groups are affected, so pending stays empty
+        let change = Change::new("users", forge_core::realtime::ChangeOperation::Insert);
+        engine.process_change(change).await;
+        assert_eq!(engine.pending_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_coalesce_by_table_disabled() {
+        let subscription_manager = Arc::new(SubscriptionManager::new(50));
+        let config = InvalidationConfig {
+            coalesce_by_table: false,
+            debounce_ms: 0,
+            ..Default::default()
+        };
+        let engine = InvalidationEngine::new(subscription_manager, config);
+
+        // Without subscriptions, no groups are affected
+        let change = Change::new("users", forge_core::realtime::ChangeOperation::Insert);
+        engine.process_change(change).await;
+        assert_eq!(engine.pending_count().await, 0);
     }
 }

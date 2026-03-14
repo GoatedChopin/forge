@@ -29,7 +29,7 @@ use super::auth::{AuthConfig, AuthMiddleware, HmacTokenIssuer, auth_middleware};
 use super::mcp::{McpState, mcp_get_handler, mcp_post_handler};
 use super::multipart::rpc_multipart_handler;
 use super::response::{RpcError, RpcResponse};
-use super::rpc::{RpcHandler, rpc_function_handler, rpc_handler};
+use super::rpc::{RpcHandler, rpc_batch_handler, rpc_function_handler, rpc_handler};
 use super::sse::{
     SseState, sse_handler, sse_job_subscribe_handler, sse_subscribe_handler,
     sse_unsubscribe_handler, sse_workflow_subscribe_handler,
@@ -217,6 +217,8 @@ impl GatewayServer {
             .route("/ready", get(readiness_handler).with_state(readiness_state))
             // RPC endpoint
             .route("/rpc", post(rpc_handler))
+            // Batch RPC endpoint
+            .route("/rpc/batch", post(rpc_batch_handler))
             // REST-style function endpoint (JSON)
             .route("/rpc/{function}", post(rpc_function_handler))
             // Prevent oversized JSON payloads from exhausting memory.

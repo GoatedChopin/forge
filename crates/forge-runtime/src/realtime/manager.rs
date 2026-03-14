@@ -388,12 +388,21 @@ impl SubscriptionManager {
     /// Get subscription counts.
     pub fn counts(&self) -> SubscriptionCounts {
         let total_subscribers: usize = self.groups.iter().map(|g| g.subscribers.len()).sum();
+        let groups_count = self.groups.len();
+        let sessions_count = self.session_subscribers.len();
+
+        // Estimate memory usage:
+        // - Each QueryGroup: ~256 bytes (name, args, auth, read_set, subscribers vec)
+        // - Each subscriber entry in the store: ~128 bytes
+        // - Each session mapping entry: ~64 bytes + subscriber ID vec
+        let estimated_bytes =
+            (groups_count * 256) + (total_subscribers * 128) + (sessions_count * 64);
 
         SubscriptionCounts {
             total: total_subscribers,
-            unique_queries: self.groups.len(),
-            sessions: self.session_subscribers.len(),
-            memory_bytes: 0, // TODO: calculate if needed
+            unique_queries: groups_count,
+            sessions: sessions_count,
+            memory_bytes: estimated_bytes,
         }
     }
 

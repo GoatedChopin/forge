@@ -21,11 +21,23 @@ impl RpcRequest {
 }
 
 /// Batch RPC request containing multiple function calls.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchRpcRequest {
     /// List of requests to execute.
     pub requests: Vec<RpcRequest>,
+}
+
+/// Batch RPC response containing results for each request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchRpcResponse {
+    /// Individual results for each request.
+    pub results: Vec<super::response::RpcResponse>,
+}
+
+impl axum::response::IntoResponse for BatchRpcResponse {
+    fn into_response(self) -> axum::response::Response {
+        (axum::http::StatusCode::OK, axum::Json(self)).into_response()
+    }
 }
 
 #[cfg(test)]
@@ -54,5 +66,24 @@ mod tests {
         let json = r#"{"requests": [{"function": "a"}, {"function": "b"}]}"#;
         let batch: BatchRpcRequest = serde_json::from_str(json).unwrap();
         assert_eq!(batch.requests.len(), 2);
+    }
+
+    #[test]
+    fn test_batch_response_serialization() {
+        use super::super::response::RpcResponse;
+
+        let resp = BatchRpcResponse {
+            results: vec![
+                RpcResponse::success(serde_json::json!({"id": 1})),
+                RpcResponse::error(super::super::response::RpcError::not_found("not found")),
+            ],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"results\""));
+
+        let parsed: BatchRpcResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.results.len(), 2);
+        assert!(parsed.results[0].success);
+        assert!(!parsed.results[1].success);
     }
 }

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use opentelemetry::{
     KeyValue, global,
     metrics::{Counter, Gauge, Histogram},

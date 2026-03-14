@@ -7,7 +7,7 @@ use axum::{
 };
 use forge_core::function::{AuthContext, JobDispatch, RequestMetadata, WorkflowDispatch};
 
-use super::request::RpcRequest;
+use super::request::{BatchRpcRequest, BatchRpcResponse, RpcRequest};
 use super::response::{RpcError, RpcResponse};
 use super::tracing::TracingState;
 use crate::db::Database;
@@ -153,6 +153,34 @@ pub async fn rpc_function_handler(
     };
 
     handler.handle(request, auth, metadata).await
+}
+
+/// Axum handler for POST /rpc/batch.
+pub async fn rpc_batch_handler(
+    State(handler): State<Arc<RpcHandler>>,
+    Extension(auth): Extension<AuthContext>,
+    Extension(tracing): Extension<TracingState>,
+    headers: HeaderMap,
+    Json(batch): Json<BatchRpcRequest>,
+) -> BatchRpcResponse {
+    let client_ip = extract_client_ip(&headers);
+    let user_agent = extract_user_agent(&headers);
+    let mut results = Vec::with_capacity(batch.requests.len());
+
+    for request in batch.requests {
+        let metadata = RequestMetadata {
+            request_id: uuid::Uuid::new_v4(),
+            trace_id: tracing.trace_id.clone(),
+            client_ip: client_ip.clone(),
+            user_agent: user_agent.clone(),
+            timestamp: chrono::Utc::now(),
+        };
+
+        let response = handler.handle(request, auth.clone(), metadata).await;
+        results.push(response);
+    }
+
+    BatchRpcResponse { results }
 }
 
 #[cfg(test)]

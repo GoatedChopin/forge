@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{Attribute, Data, DeriveInput, Expr, Lit, Meta, parse_macro_input};
+use syn::{Data, DeriveInput, parse_macro_input};
 
 /// Expand the #[forge::forge_enum] macro.
 pub fn expand_enum(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -35,12 +35,10 @@ fn expand_enum_impl(_attr: TokenStream2, input: DeriveInput) -> syn::Result<Toke
     for variant in variants.iter() {
         let name = &variant.ident;
         let sql_value = to_snake_case(&name.to_string());
-        let int_value = get_int_value(&variant.attrs);
 
         variant_infos.push(VariantInfo {
             name: name.clone(),
             sql_value,
-            int_value,
         });
     }
 
@@ -146,21 +144,6 @@ fn expand_enum_impl(_attr: TokenStream2, input: DeriveInput) -> syn::Result<Toke
 struct VariantInfo {
     name: syn::Ident,
     sql_value: String,
-    #[allow(dead_code)]
-    int_value: Option<i32>,
-}
-
-fn get_int_value(attrs: &[Attribute]) -> Option<i32> {
-    for attr in attrs {
-        if attr.path().is_ident("value")
-            && let Meta::NameValue(nv) = &attr.meta
-            && let Expr::Lit(lit) = &nv.value
-            && let Lit::Int(i) = &lit.lit
-        {
-            return i.base10_parse().ok();
-        }
-    }
-    None
 }
 
 fn to_snake_case(s: &str) -> String {

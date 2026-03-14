@@ -101,7 +101,6 @@ pub enum RealtimeMessage {
 struct SessionEntry {
     sender: mpsc::Sender<RealtimeMessage>,
     subscriptions: Vec<SubscriptionId>,
-    #[allow(dead_code)]
     connected_at: chrono::DateTime<chrono::Utc>,
     last_active: chrono::DateTime<chrono::Utc>,
     /// Consecutive failed try_send attempts. Resets on success.
@@ -311,14 +310,24 @@ impl SessionServer {
         let cutoff = chrono::Utc::now()
             - chrono::Duration::from_std(max_idle).unwrap_or(chrono::TimeDelta::MAX);
 
-        let stale: Vec<SessionId> = self
+        let stale: Vec<(SessionId, chrono::DateTime<chrono::Utc>)> = self
             .connections
             .iter()
             .filter(|entry| entry.last_active < cutoff)
-            .map(|entry| *entry.key())
+            .map(|entry| (*entry.key(), entry.connected_at))
             .collect();
 
-        for session_id in stale {
+        if let Some((_, oldest_connected_at)) =
+            stale.iter().min_by_key(|(_, connected_at)| *connected_at)
+        {
+            tracing::debug!(
+                count = stale.len(),
+                oldest_connected_at = %oldest_connected_at,
+                "Cleaning up stale connections"
+            );
+        }
+
+        for (session_id, _) in stale {
             self.remove_connection(session_id);
         }
     }

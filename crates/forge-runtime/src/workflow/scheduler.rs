@@ -39,7 +39,6 @@ impl Default for WorkflowSchedulerConfig {
 pub struct WorkflowScheduler {
     pool: PgPool,
     executor: Arc<WorkflowExecutor>,
-    #[allow(dead_code)]
     event_store: Arc<EventStore>,
     config: WorkflowSchedulerConfig,
 }
@@ -70,6 +69,7 @@ impl WorkflowScheduler {
     pub async fn run(&self, shutdown: CancellationToken) {
         let fallback_interval = self.config.poll_interval * 10;
         let mut interval = tokio::time::interval(fallback_interval);
+        let mut cleanup_interval = tokio::time::interval(Duration::from_secs(3600));
 
         // Set up NOTIFY listener for immediate wakeup
         let mut listener = match sqlx::postgres::PgListener::connect_with(&self.pool).await {
@@ -114,6 +114,19 @@ impl WorkflowScheduler {
                         Err(e) => {
                             tracing::debug!(error = %e, "Workflow wakeup listener error, will retry on next poll");
                         }
+                    }
+                }
+                _ = cleanup_interval.tick() => {
+                    // Periodically clean up consumed events older than 24 hours
+                    let cutoff = chrono::Utc::now() - chrono::Duration::hours(24);
+                    match self.event_store.cleanup_consumed_events(cutoff).await {
+                        Ok(count) if count > 0 => {
+                            tracing::debug!(count, "Cleaned up consumed workflow events");
+                        }
+                        Err(e) => {
+                            tracing::debug!(error = %e, "Failed to clean up consumed events");
+                        }
+                        _ => {}
                     }
                 }
                 _ = shutdown.cancelled() => {
@@ -192,8 +205,31 @@ impl WorkflowScheduler {
         .await
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
 
-        for (workflow_id, _event_name) in workflows {
-            self.resume_with_event(workflow_id).await;
+        for (workflow_id, event_name) in workflows {
+            // Consume the event via event_store so it's marked as processed
+            match self
+                .event_store
+                .consume_event(&event_name, &workflow_id.to_string(), workflow_id)
+                .await
+            {
+                Ok(Some(_event)) => {
+                    self.resume_with_event(workflow_id).await;
+                }
+                Ok(None) => {
+                    tracing::debug!(
+                        workflow_run_id = %workflow_id,
+                        event_name = %event_name,
+                        "Event already consumed, skipping wakeup"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        workflow_run_id = %workflow_id,
+                        error = %e,
+                        "Failed to consume workflow event"
+                    );
+                }
+            }
         }
 
         Ok(())

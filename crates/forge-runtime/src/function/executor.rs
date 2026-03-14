@@ -276,7 +276,7 @@ impl FunctionExecutor {
 }
 
 /// Result of executing a function.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ExecutionResult {
     /// Function name that was executed.
     pub function_name: String,
@@ -304,7 +304,6 @@ mod duration_millis {
         serializer.serialize_u64(duration.as_millis() as u64)
     }
 
-    #[allow(dead_code)]
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Duration, D::Error>
     where
         D: Deserializer<'de>,
@@ -333,5 +332,24 @@ mod tests {
         let json = serde_json::to_string(&result).unwrap();
         assert!(json.contains("\"duration\":42"));
         assert!(json.contains("\"success\":true"));
+    }
+
+    #[test]
+    fn test_execution_result_round_trip() {
+        let original = ExecutionResult {
+            function_name: "create_user".to_string(),
+            function_kind: "mutation".to_string(),
+            result: serde_json::json!({"id": "456"}),
+            duration: Duration::from_millis(100),
+            success: true,
+            error: None,
+        };
+
+        let json = serde_json::to_string(&original).unwrap();
+        let deserialized: ExecutionResult = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.function_name, "create_user");
+        assert_eq!(deserialized.duration, Duration::from_millis(100));
+        assert!(deserialized.success);
     }
 }

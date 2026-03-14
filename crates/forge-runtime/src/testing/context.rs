@@ -4,11 +4,10 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use serde::{Serialize, de::DeserializeOwned};
 use uuid::Uuid;
 
 use forge_core::error::{ForgeError, Result};
-use forge_core::function::{AuthContext, MutationContext, QueryContext};
+use forge_core::function::AuthContext;
 use forge_core::job::JobStatus;
 use forge_core::workflow::WorkflowStatus;
 
@@ -22,16 +21,10 @@ use super::mock::{MockHttp, MockRequest, MockResponse};
 pub struct TestContext {
     /// Database pool (if connected).
     pool: Option<sqlx::PgPool>,
-    /// Transaction for isolation.
-    #[allow(dead_code)]
-    tx: Option<sqlx::Transaction<'static, sqlx::Postgres>>,
     /// HTTP mock.
     mock_http: MockHttp,
     /// Auth context.
     auth: AuthContext,
-    /// Test configuration.
-    #[allow(dead_code)]
-    config: TestConfig,
     /// Dispatched jobs for verification.
     dispatched_jobs: Vec<DispatchedJob>,
     /// Started workflows for verification.
@@ -75,10 +68,8 @@ impl TestContext {
     pub fn new_without_db() -> Self {
         Self {
             pool: None,
-            tx: None,
             mock_http: MockHttp::new(),
             auth: AuthContext::unauthenticated(),
-            config: TestConfig::default(),
             dispatched_jobs: Vec::new(),
             started_workflows: Vec::new(),
         }
@@ -107,10 +98,8 @@ impl TestContext {
 
         Ok(Self {
             pool,
-            tx: None,
             mock_http: MockHttp::new(),
             auth: AuthContext::unauthenticated(),
-            config,
             dispatched_jobs: Vec::new(),
             started_workflows: Vec::new(),
         })
@@ -153,38 +142,6 @@ impl TestContext {
     /// Get mutable mock HTTP.
     pub fn mock_http_mut(&mut self) -> &mut MockHttp {
         &mut self.mock_http
-    }
-
-    /// Execute a query function.
-    pub async fn query<F, I, O>(&self, _func: F, _input: I) -> Result<O>
-    where
-        F: Fn(
-            QueryContext,
-            I,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<O>> + Send>>,
-        I: Serialize,
-        O: DeserializeOwned,
-    {
-        // In a real implementation, this would call the function with a proper context
-        Err(ForgeError::Internal(
-            "Query execution requires database connection".to_string(),
-        ))
-    }
-
-    /// Execute a mutation function.
-    pub async fn mutate<F, I, O>(&self, _func: F, _input: I) -> Result<O>
-    where
-        F: Fn(
-            MutationContext,
-            I,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<O>> + Send>>,
-        I: Serialize,
-        O: DeserializeOwned,
-    {
-        // In a real implementation, this would call the function with a proper context
-        Err(ForgeError::Internal(
-            "Mutation execution requires database connection".to_string(),
-        ))
     }
 
     /// Dispatch a job for testing.

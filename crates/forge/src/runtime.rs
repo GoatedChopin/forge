@@ -311,7 +311,7 @@ impl Forge {
         {
             let heartbeat_pool = pool.clone();
             let heartbeat_node_id = node_id;
-            let config = HeartbeatConfig::default();
+            let config = HeartbeatConfig::from_cluster_config(&self.config.cluster);
             handles.push(tokio::spawn(async move {
                 let heartbeat = HeartbeatLoop::new(heartbeat_pool, heartbeat_node_id, config);
                 heartbeat.run().await;

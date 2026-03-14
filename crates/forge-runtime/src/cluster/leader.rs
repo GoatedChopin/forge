@@ -112,6 +112,8 @@ impl LeaderElection {
 
         let acquired = result.map(|(v,)| v).unwrap_or(false);
 
+        super::metrics::record_leader_election_attempt(self.role.as_str(), acquired);
+
         if acquired {
             // Record leadership in database for visibility
             let lease_until =
@@ -135,6 +137,7 @@ impl LeaderElection {
             .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
 
             self.is_leader.store(true, Ordering::SeqCst);
+            super::metrics::set_is_leader(self.role.as_str(), true);
             *self.lock_connection.lock().await = Some(conn);
             tracing::info!(role = self.role.as_str(), "Acquired leadership");
         }
@@ -204,6 +207,7 @@ impl LeaderElection {
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
 
         self.is_leader.store(false, Ordering::SeqCst);
+        super::metrics::set_is_leader(self.role.as_str(), false);
         tracing::info!(role = self.role.as_str(), "Released leadership");
 
         Ok(())

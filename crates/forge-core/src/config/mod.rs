@@ -1,4 +1,4 @@
-mod cluster;
+pub mod cluster;
 mod database;
 
 pub use cluster::ClusterConfig;

@@ -13,7 +13,7 @@ pub use auth::{AuthConfig, AuthMiddleware, HmacTokenIssuer, build_auth_context_f
 pub use jwks::{JwksClient, JwksError};
 pub use mcp::{McpState, mcp_get_handler, mcp_post_handler};
 pub use multipart::rpc_multipart_handler;
-pub use request::RpcRequest;
+pub use request::{BatchRpcRequest, BatchRpcResponse, RpcRequest};
 pub use response::{RpcError, RpcResponse};
 pub use rpc::RpcHandler;
 pub use server::{GatewayConfig, GatewayServer};

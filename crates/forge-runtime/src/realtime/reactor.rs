@@ -46,26 +46,20 @@ impl Default for ReactorConfig {
 }
 
 /// Job subscription tracking.
+/// The job_id is the HashMap key, not stored here.
 #[derive(Debug, Clone)]
 pub struct JobSubscription {
-    #[allow(dead_code)]
-    pub subscription_id: SubscriptionId,
     pub session_id: SessionId,
     pub client_sub_id: String,
-    #[allow(dead_code)]
-    pub job_id: Uuid,
     pub auth_context: forge_core::function::AuthContext,
 }
 
 /// Workflow subscription tracking.
+/// The workflow_id is the HashMap key, not stored here.
 #[derive(Debug, Clone)]
 pub struct WorkflowSubscription {
-    #[allow(dead_code)]
-    pub subscription_id: SubscriptionId,
     pub session_id: SessionId,
     pub client_sub_id: String,
-    #[allow(dead_code)]
-    pub workflow_id: Uuid,
     pub auth_context: forge_core::function::AuthContext,
 }
 
@@ -269,22 +263,19 @@ impl Reactor {
         job_id: Uuid,
         auth_context: &forge_core::function::AuthContext,
     ) -> forge_core::Result<JobData> {
-        let subscription_id = SubscriptionId::new();
         Self::ensure_job_access(&self.db_pool, job_id, auth_context).await?;
         let job_data = self.fetch_job_data(job_id).await?;
 
         let subscription = JobSubscription {
-            subscription_id,
             session_id,
             client_sub_id,
-            job_id,
             auth_context: auth_context.clone(),
         };
 
         let mut subs = self.job_subscriptions.write().await;
         subs.entry(job_id).or_default().push(subscription);
 
-        tracing::trace!(?subscription_id, %job_id, "Job subscription created");
+        tracing::trace!(%job_id, %session_id, "Job subscription created");
         Ok(job_data)
     }
 
@@ -306,22 +297,19 @@ impl Reactor {
         workflow_id: Uuid,
         auth_context: &forge_core::function::AuthContext,
     ) -> forge_core::Result<WorkflowData> {
-        let subscription_id = SubscriptionId::new();
         Self::ensure_workflow_access(&self.db_pool, workflow_id, auth_context).await?;
         let workflow_data = self.fetch_workflow_data(workflow_id).await?;
 
         let subscription = WorkflowSubscription {
-            subscription_id,
             session_id,
             client_sub_id,
-            workflow_id,
             auth_context: auth_context.clone(),
         };
 
         let mut subs = self.workflow_subscriptions.write().await;
         subs.entry(workflow_id).or_default().push(subscription);
 
-        tracing::trace!(?subscription_id, %workflow_id, "Workflow subscription created");
+        tracing::trace!(%workflow_id, %session_id, "Workflow subscription created");
         Ok(workflow_data)
     }
 

@@ -89,9 +89,12 @@ impl ChangeListener {
                 notification = listener.recv() => {
                     match notification {
                         Ok(notification) => {
+                            let recv_time = std::time::Instant::now();
                             if let Some(change) = self.parse_notification(notification.payload()) {
                                 tracing::trace!(table = %change.table, op = ?change.operation, "Change received");
+                                crate::cluster::metrics::record_notification_processed(&change.table);
                                 let _ = self.change_tx.send(change);
+                                crate::cluster::metrics::record_notification_latency(recv_time.elapsed().as_secs_f64());
                             } else {
                                 tracing::debug!(payload = %notification.payload(), "Failed to parse notification");
                             }

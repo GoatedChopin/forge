@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
 use forge_core::cluster::NodeId;
+use forge_core::config::cluster::ClusterConfig;
 use tokio::sync::watch;
 
 /// Heartbeat loop configuration.
@@ -25,6 +26,27 @@ impl Default for HeartbeatConfig {
             dead_threshold: Duration::from_secs(15),
             mark_dead_nodes: true,
             max_interval: Duration::from_secs(60),
+        }
+    }
+}
+
+impl HeartbeatConfig {
+    /// Create a HeartbeatConfig from the user-facing ClusterConfig.
+    pub fn from_cluster_config(cluster: &ClusterConfig) -> Self {
+        use forge_core::config::cluster::DiscoveryMethod;
+
+        if cluster.discovery != DiscoveryMethod::Postgres {
+            tracing::warn!(
+                discovery = ?cluster.discovery,
+                "Only Postgres discovery is currently supported; ignoring configured discovery method"
+            );
+        }
+
+        Self {
+            interval: Duration::from_secs(cluster.heartbeat_interval_secs),
+            dead_threshold: Duration::from_secs(cluster.dead_threshold_secs),
+            mark_dead_nodes: true,
+            max_interval: Duration::from_secs(cluster.heartbeat_interval_secs * 12),
         }
     }
 }
@@ -86,9 +108,11 @@ impl HeartbeatLoop {
             tokio::select! {
                 _ = tokio::time::sleep(interval) => {
                     // Update our heartbeat
+                    let hb_start = std::time::Instant::now();
                     if let Err(e) = self.send_heartbeat().await {
                         tracing::debug!(error = %e, "Failed to send heartbeat");
                     }
+                    super::metrics::record_heartbeat_latency(hb_start.elapsed().as_secs_f64());
 
                     // Adjust interval based on cluster stability
                     self.adjust_interval().await;
@@ -137,6 +161,8 @@ impl HeartbeatLoop {
                 return;
             }
         };
+
+        super::metrics::set_node_counts(count as i64, 0);
 
         let last = self.last_active_count.load(Ordering::Relaxed);
         if last != 0 && count == last {
@@ -197,6 +223,11 @@ impl HeartbeatLoop {
         let count = result.rows_affected();
         if count > 0 {
             tracing::warn!(count, "Marked nodes as dead");
+            // Update dead node count in metrics (we know `count` nodes just became dead)
+            super::metrics::set_node_counts(
+                self.last_active_count.load(Ordering::Relaxed) as i64,
+                count as i64,
+            );
         }
 
         Ok(count)
@@ -245,5 +276,20 @@ mod tests {
         assert_eq!(config.dead_threshold, Duration::from_secs(15));
         assert!(config.mark_dead_nodes);
         assert_eq!(config.max_interval, Duration::from_secs(60));
+    }
+
+    #[test]
+    fn test_heartbeat_config_from_cluster_config() {
+        let cluster = ClusterConfig {
+            heartbeat_interval_secs: 10,
+            dead_threshold_secs: 30,
+            ..ClusterConfig::default()
+        };
+
+        let config = HeartbeatConfig::from_cluster_config(&cluster);
+        assert_eq!(config.interval, Duration::from_secs(10));
+        assert_eq!(config.dead_threshold, Duration::from_secs(30));
+        assert!(config.mark_dead_nodes);
+        assert_eq!(config.max_interval, Duration::from_secs(120));
     }
 }
