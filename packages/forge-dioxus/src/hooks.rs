@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use dioxus::dioxus_core::use_drop;
 use dioxus::prelude::*;
-use futures_timer::Delay;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -13,6 +12,18 @@ use crate::{
     ConnectionState, JobExecutionState, QueryState, StreamEvent, SubscriptionHandle, SubscriptionState,
     WorkflowExecutionState, use_forge_client,
 };
+
+async fn sleep(duration: Duration) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        gloo_timers::future::sleep(duration).await;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        tokio::time::sleep(duration).await;
+    }
+}
 
 #[derive(Debug, Clone, serde::Deserialize)]
 struct JobStartResponse {
@@ -114,7 +125,7 @@ where
                 {
                     let mut reconnect_nonce = reconnect_nonce;
                     spawn(async move {
-                        Delay::new(Duration::from_millis(350)).await;
+                        sleep(Duration::from_millis(350)).await;
                         reconnect_nonce += 1;
                     });
                 }

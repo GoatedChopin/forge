@@ -305,15 +305,27 @@ impl TestCommand {
     }
 }
 
+fn backend_base_url_from_env(get_env: impl Fn(&str) -> Option<String>) -> String {
+    get_env("VITE_API_URL")
+        .or_else(|| get_env("PUBLIC_API_URL"))
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "http://localhost:8080".to_string())
+}
+
+fn backend_base_url() -> String {
+    backend_base_url_from_env(|key| std::env::var(key).ok())
+}
+
 async fn check_backend_health() -> bool {
+    let base_url = backend_base_url();
     let urls = [
-        "http://localhost:8080/_api/health",
-        "http://localhost:8080/_api/ready",
+        format!("{base_url}/_api/health"),
+        format!("{base_url}/_api/ready"),
     ];
 
     for url in &urls {
         let result = Command::new("curl")
-            .args(["-sf", "--max-time", "2", url])
+            .args(["-sf", "--max-time", "2", url.as_str()])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
@@ -421,5 +433,33 @@ mod tests {
             ..default_cmd()
         };
         assert!(cmd.headed);
+    }
+
+    #[test]
+    fn test_backend_base_url_prefers_vite_api_url() {
+        let url = backend_base_url_from_env(|key| match key {
+            "VITE_API_URL" => Some("http://localhost:19080".into()),
+            "PUBLIC_API_URL" => Some("http://localhost:18080".into()),
+            _ => None,
+        });
+
+        assert_eq!(url, "http://localhost:19080");
+    }
+
+    #[test]
+    fn test_backend_base_url_falls_back_to_public_api_url() {
+        let url = backend_base_url_from_env(|key| match key {
+            "PUBLIC_API_URL" => Some("http://localhost:18080".into()),
+            _ => None,
+        });
+
+        assert_eq!(url, "http://localhost:18080");
+    }
+
+    #[test]
+    fn test_backend_base_url_defaults_to_localhost() {
+        let url = backend_base_url_from_env(|_| None);
+
+        assert_eq!(url, "http://localhost:8080");
     }
 }
