@@ -216,7 +216,7 @@ jobs:
           sleep 30 && cd packages/forge-dioxus && cargo publish --allow-dirty --token $TOKEN 2>&1 || echo "forge-dioxus already published"
           cd "$GITHUB_WORKSPACE"
           bash scripts/build-template-archive.sh
-          sleep 30 && cargo publish -p forgex --token $TOKEN 2>&1 || echo "forgex already published"
+          sleep 30 && cargo publish -p forgex --allow-dirty --token $TOKEN 2>&1 || echo "forgex already published"
 
   publish-npm:
     name: Publish npm

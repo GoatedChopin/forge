@@ -1045,7 +1045,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "forge-dioxus-minimal-template-frontend"
+name = "forge-dioxus-demo-template-frontend"
 version = "0.1.0"
 dependencies = [
  "dioxus",

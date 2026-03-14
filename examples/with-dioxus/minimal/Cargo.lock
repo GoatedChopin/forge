@@ -779,6 +779,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
 
 [[package]]
+name = "filetime"
+version = "0.2.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f98844151eee8917efc50bd9e8318cb963ae8b297431495d3f758616ea5c57db"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "libredox",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -834,9 +845,9 @@ checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 
 [[package]]
 name = "forge-codegen"
-version = "0.7.0"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "147ff6df3f15c76144f8a0a6787705e9853c6b8a45cb349fa16e3420823d4772"
+checksum = "9a6d5d7568d79f76b12aa52aab24b8263f79c32d53c0250a419628f04a782529"
 dependencies = [
  "forge-core",
  "quote",
@@ -849,9 +860,9 @@ dependencies = [
 
 [[package]]
 name = "forge-core"
-version = "0.7.0"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6487e02e89cdc044d2840b46a23b84560b55277e376b3ce80f1fe0161720948f"
+checksum = "52c2420ada99909e80939af26d770073db9bb14e0ded51122ccc59e023f07c7d"
 dependencies = [
  "base64",
  "bytes",
@@ -874,7 +885,7 @@ dependencies = [
 
 [[package]]
 name = "forge-dioxus-minimal-template"
-version = "0.1.0"
+version = "0.7.1"
 dependencies = [
  "axum",
  "bcrypt",
@@ -895,9 +906,9 @@ dependencies = [
 
 [[package]]
 name = "forge-macros"
-version = "0.7.0"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d13d49e31033587c637787d2b49e3346188e1a948f8d4101ba076c5673dfcdb7"
+checksum = "7c7b7f9825564502fe676de7937d485e090d449e83009635042a0882347bf3ed"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -907,9 +918,9 @@ dependencies = [
 
 [[package]]
 name = "forge-runtime"
-version = "0.7.0"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1bc7ca0fa078e90c15433e33093a4cedcab0cf433b510607faa2283572f636d"
+checksum = "378ed52236c58dfbdd1f2a3e865ba4fc651473b1d0f4f10c12c307e45f687171"
 dependencies = [
  "anyhow",
  "axum",
@@ -945,9 +956,9 @@ dependencies = [
 
 [[package]]
 name = "forgex"
-version = "0.7.0"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee4b73366750c4a65584783e9999f5b61894fcea300b4ab0bbda1092ec6287d9"
+checksum = "825110aaccad0dbe5b7f82b6064c3df9e6a8c6cbc6f9c00785bfb154ecae2acc"
 dependencies = [
  "anyhow",
  "axum",
@@ -959,6 +970,7 @@ dependencies = [
  "forge-core",
  "forge-macros",
  "forge-runtime",
+ "include_dir",
  "nix",
  "opentelemetry",
  "opentelemetry-otlp",
@@ -967,6 +979,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "tar",
  "tokio",
  "tokio-util",
  "toml",
@@ -1484,6 +1497,25 @@ checksum = "3acae9609540aa318d1bc588455225fb2085b9ed0c4f6bd0d9d5bcd86f1a0344"
 dependencies = [
  "icu_normalizer",
  "icu_properties",
+]
+
+[[package]]
+name = "include_dir"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "923d117408f1e49d914f1a379a309cffe4f18c05cf4e3d12e613a15fc81bd0dd"
+dependencies = [
+ "include_dir_macros",
+]
+
+[[package]]
+name = "include_dir_macros"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7cab85a7ed0bd5f0e76d93846e0147172bed2e2d3f859bcc33a8d9699cad1a75"
+dependencies = [
+ "proc-macro2",
+ "quote",
 ]
 
 [[package]]
@@ -3264,6 +3296,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tar"
+version = "0.4.44"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d863878d212c87a19c1a610eb53bb01fe12951c0501cf5a0d65f724914a667a"
+dependencies = [
+ "filetime",
+ "libc",
+ "xattr",
+]
+
+[[package]]
 name = "tempfile"
 version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4427,6 +4470,16 @@ name = "writeable"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9edde0db4769d2dc68579893f2306b26c6ecfbe0ef499b013d731b7b9247e0b9"
+
+[[package]]
+name = "xattr"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
+dependencies = [
+ "libc",
+ "rustix",
+]
 
 [[package]]
 name = "yoke"

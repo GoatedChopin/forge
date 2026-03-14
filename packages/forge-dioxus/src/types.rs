@@ -248,15 +248,10 @@ pub(crate) struct ConnectedEvent {
 
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct SseEnvelopeRaw {
-    pub target: Option<String>,
     #[serde(default)]
     pub payload: Option<serde_json::Value>,
     #[serde(default)]
     pub code: Option<String>,
     #[serde(default)]
     pub message: Option<String>,
-    #[serde(default)]
-    pub session_id: Option<String>,
-    #[serde(default)]
-    pub session_secret: Option<String>,
 }
