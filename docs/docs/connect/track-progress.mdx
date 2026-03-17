@@ -15,7 +15,7 @@ $: if ($job.status === "completed") {
 }
 ```
 
-The store starts the job, subscribes to status updates, and unsubscribes when the component unmounts.
+The store starts the job, subscribes to status updates, and exposes `unsubscribe()` so you can stop local updates when the component unmounts.
 
 ## What Happens
 
@@ -25,7 +25,7 @@ Calling `trackExportUsers()` does three things:
 2. **Registers for SSE updates** with the gateway
 3. **Returns a reactive store** that updates as the job progresses
 
-The subscription uses the same SSE connection as query subscriptions. When your component unmounts (Svelte's `$:` reactive block cleanup), the store automatically unsubscribes.
+The subscription uses the same SSE connection as query subscriptions. When your component unmounts, Svelte detaches the store subscription for that component automatically.
 
 ## Job State
 
@@ -33,33 +33,33 @@ The subscription uses the same SSE connection as query subscriptions. When your 
 interface JobState<TOutput> {
   jobId: string;
   status: JobStatus;
-  progress: number | null;     // 0-100
-  message: string | null;      // "Processing row 500..."
-  output: TOutput | null;      // Result when completed
+  progress: number | null; // 0-100
+  message: string | null; // "Processing row 500..."
+  output: TOutput | null; // Result when completed
   error: string | null;
 }
 
-  type JobStatus =
-    | "pending"
-    | "claimed"
-    | "running"
-    | "completed"
-    | "retry"
-    | "failed"
-    | "dead_letter"
-    | "cancel_requested"
-    | "cancelled"
-    | "not_found";
+type JobStatus =
+  | "pending"
+  | "claimed"
+  | "running"
+  | "completed"
+  | "retry"
+  | "failed"
+  | "dead_letter"
+  | "cancel_requested"
+  | "cancelled"
+  | "not_found";
 ```
 
-| Field | Description |
-|-------|-------------|
-| `jobId` | Unique job identifier |
-| `status` | Current job status |
-| `progress` | Percentage complete (0-100), reported by `ctx.progress()` |
-| `message` | Status message from `ctx.progress(percent, message)` |
-| `output` | Job return value when status is `completed` |
-| `error` | Error message when status is `failed`, `dead_letter`, or `cancelled` |
+| Field      | Description                                                          |
+| ---------- | -------------------------------------------------------------------- |
+| `jobId`    | Unique job identifier                                                |
+| `status`   | Current job status                                                   |
+| `progress` | Percentage complete (0-100), reported by `ctx.progress()`            |
+| `message`  | Status message from `ctx.progress(percent, message)`                 |
+| `output`   | Job return value when status is `completed`                          |
+| `error`    | Error message when status is `failed`, `dead_letter`, or `cancelled` |
 
 ## Workflow State
 
@@ -69,16 +69,22 @@ Workflows expose additional fields for step-by-step tracking:
 interface WorkflowState<TOutput> {
   workflowId: string;
   status: WorkflowStatus;
-  step: string | null;           // Current step name
-  waitingFor: string | null;     // Event being awaited
-  steps: WorkflowStepState[];    // All steps with status
+  step: string | null; // Current step name
+  waitingFor: string | null; // Reserved for future event details; currently null
+  steps: WorkflowStepState[]; // All steps with status
   output: TOutput | null;
   error: string | null;
 }
 
 interface WorkflowStepState {
   name: string;
-  status: "pending" | "running" | "completed" | "failed" | "compensated" | "skipped";
+  status:
+    | "pending"
+    | "running"
+    | "completed"
+    | "failed"
+    | "compensated"
+    | "skipped";
   error: string | null;
 }
 
@@ -192,7 +198,9 @@ job.unsubscribe();
 
 ```typescript
 interface JobStore<TOutput> {
-  subscribe: (run: (value: JobState<TOutput> & { loading: boolean }) => void) => () => void;
+  subscribe: (
+    run: (value: JobState<TOutput> & { loading: boolean }) => void,
+  ) => () => void;
   unsubscribe: () => void;
 }
 ```
@@ -201,7 +209,9 @@ interface JobStore<TOutput> {
 
 ```typescript
 interface WorkflowStore<TOutput> {
-  subscribe: (run: (value: WorkflowState<TOutput> & { loading: boolean }) => void) => () => void;
+  subscribe: (
+    run: (value: WorkflowState<TOutput> & { loading: boolean }) => void,
+  ) => () => void;
   unsubscribe: () => void;
 }
 ```
@@ -250,9 +260,9 @@ export const trackAccountVerification = (args: { userId: string }) =>
 await client._registerJob(clientSubId, jobId);
 ```
 
-**Connection lifecycle**: If the SSE connection drops, the client reconnects with exponential backoff. Job subscriptions are re-registered automatically on reconnection.
+**Connection lifecycle**: If the SSE connection drops, the client reconnects with exponential backoff. Query subscriptions are re-registered automatically; recreate job and workflow stores after reconnect if you need fresh tracking on the new session.
 
-**Automatic cleanup**: Svelte's store contract means the unsubscribe callback runs when the last subscriber unsubscribes. For `$job` syntax, this happens when the component is destroyed.
+**Automatic cleanup**: Svelte's store contract means the unsubscribe callback runs when the last subscriber unsubscribes. For job and workflow stores, `unsubscribe()` stops local updates for that store instance.
 
 **Server-side updates**: Progress updates are pushed via PostgreSQL LISTEN/NOTIFY. The gateway receives notifications and broadcasts to relevant SSE connections:
 

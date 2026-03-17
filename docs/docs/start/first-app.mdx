@@ -20,13 +20,14 @@ forge dev
 
 This template starts with a SvelteKit frontend. To start with Dioxus instead, use `forge new my-app --template with-dioxus/minimal`.
 
-This runs Docker Compose with three services:
+This runs Docker Compose with the frontend and backend exposed on your host:
 
-| Service | URL |
-|---------|-----|
+| Service  | URL                   |
+| -------- | --------------------- |
 | Frontend | http://localhost:5173 |
-| Backend | http://localhost:8080 |
-| PostgreSQL | localhost:5432 |
+| Backend  | http://localhost:8080 |
+
+PostgreSQL runs inside the Docker network by default and is not published on `localhost:5432`. Use `docker compose exec db psql ...` if you want to inspect it directly.
 
 Backend restarts are scoped to backend files (`src/`, `migrations/`, `Cargo.toml`, `Cargo.lock`, `build.rs`, `.env`, `forge.toml`) via an `.ignore` allowlist so unrelated files do not trigger rebuilds.
 
@@ -106,7 +107,9 @@ DROP TABLE IF EXISTS todos;
 ## Test It
 
 ```bash
-curl http://localhost:8080/_api/rpc/list_todos
+curl -X POST http://localhost:8080/_api/rpc/list_todos \
+  -H "Content-Type: application/json" \
+  -d '{}'
 ```
 
 Returns `[]`. The query works.
@@ -147,7 +150,7 @@ Test it:
 ```bash
 curl -X POST http://localhost:8080/_api/rpc/create_todo \
   -H "Content-Type: application/json" \
-  -d '{"title": "Learn Forge"}'
+  -d '{"args": {"title": "Learn Forge"}}'
 ```
 
 ## Make It Real-Time

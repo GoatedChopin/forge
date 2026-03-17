@@ -8,12 +8,12 @@ Create a new project.
 forge new [project-name] --template <id> [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--template <id>` | Required template id copied from the embedded example catalog |
-| `--output, -o <dir>` | Output directory (defaults to project name) |
-| `--no-lock` | Skip generating bun.lock before initial commit |
-| `--include-skill` | Include the skill installer prompt during project creation |
+| Option               | Description                                                      |
+| -------------------- | ---------------------------------------------------------------- |
+| `--template <id>`    | Required template id copied from the embedded example catalog    |
+| `--output, -o <dir>` | Output directory (defaults to project name)                      |
+| `--no-lock`          | Skip generating `Cargo.lock` before the initial commit           |
+| `--include-skill`    | Run the skill installer non-interactively after project creation |
 
 Supported template ids:
 
@@ -51,11 +51,11 @@ forge dev [action]
 
 ### Actions
 
-| Action | Description |
-|--------|-------------|
-| (none) | Run `docker compose up --build` with backend, frontend, and PostgreSQL |
-| `down` | Stop the development environment |
-| `down --clear` | Stop, remove volumes, and delete `target/` directory |
+| Action         | Description                                                            |
+| -------------- | ---------------------------------------------------------------------- |
+| (none)         | Run `docker compose up --build` with backend, frontend, and PostgreSQL |
+| `down`         | Stop the development environment                                       |
+| `down --clear` | Stop, remove volumes, and delete `target/` directory                   |
 
 ```bash
 # Start development environment
@@ -70,18 +70,18 @@ forge dev down --clear
 
 ### Requirements
 
-| Tool | Minimum Version |
-|------|-----------------|
+| Tool   | Minimum Version       |
+| ------ | --------------------- |
 | Docker | 24+ (with Compose v2) |
 
 ### Services
 
 When running, the following services are available:
 
-| Service | URL |
-|---------|-----|
+| Service  | URL                   |
+| -------- | --------------------- |
 | Frontend | http://localhost:5173 |
-| Backend | http://localhost:8080 |
+| Backend  | http://localhost:8080 |
 
 PostgreSQL runs inside the Docker network and is not exposed to the host. The backend connects to it via the internal `db` hostname. To access the database directly, use `docker compose exec`:
 
@@ -112,8 +112,8 @@ Validate project configuration and dependencies.
 forge check [options]
 ```
 
-| Option | Description |
-|--------|-------------|
+| Option                | Description                                |
+| --------------------- | ------------------------------------------ |
 | `--config, -c <path>` | Path to forge.toml (default: ./forge.toml) |
 
 ### Checks Performed
@@ -147,33 +147,35 @@ Generate frontend/runtime bindings from backend source code.
 forge generate [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--force` | Force regeneration even if files exist |
-| `--output, -o <dir>` | Output directory (defaults to the detected target path) |
-| `--target <framework>` | Frontend target (`sveltekit` or `dioxus`) |
-| `--src, -s <dir>` | Source directory to scan (default: src) |
-| `--yes, -y` | Auto-accept prompts (useful for CI) |
+| Option                 | Description                                             |
+| ---------------------- | ------------------------------------------------------- |
+| `--force`              | Force regeneration even if files exist                  |
+| `--output, -o <dir>`   | Output directory (defaults to the detected target path) |
+| `--target <framework>` | Frontend target (`sveltekit` or `dioxus`)               |
+| `--src, -s <dir>`      | Source directory to scan (default: src)                 |
+| `--yes, -y`            | Auto-accept prompts (useful for CI)                     |
 
 ### Generated Files
 
 SvelteKit target:
 
-| File | Description |
-|------|-------------|
-| types.ts | TypeScript interfaces from Rust models |
-| api.ts | Function bindings (queries, mutations) |
-| stores.ts | Svelte store exports |
-| runes.svelte.ts | Svelte 5 runes helpers |
-| index.ts | Re-exports all modules |
+| File               | Description                                                      |
+| ------------------ | ---------------------------------------------------------------- |
+| types.ts           | TypeScript interfaces from Rust models and input DTOs            |
+| api.ts             | Function bindings for queries, mutations, jobs, and workflows    |
+| stores.ts          | Svelte store exports                                             |
+| runes.svelte.ts    | Svelte 5 runes helpers                                           |
+| reactive.svelte.ts | Generated when queries exist; runes-based subscription functions |
+| auth.svelte.ts     | Generated when auth is configured                                |
+| index.ts           | Re-exports all modules                                           |
 
 Dioxus target:
 
-| File | Description |
-|------|-------------|
-| types.rs | Rust types generated from Rust models |
-| api.rs | Typed RPC functions and hooks |
-| mod.rs | Re-exports of generated modules plus `forge-dioxus` runtime items |
+| File     | Description                                                       |
+| -------- | ----------------------------------------------------------------- |
+| types.rs | Rust types generated from models and input DTOs                   |
+| api.rs   | Typed RPC functions and hooks                                     |
+| mod.rs   | Re-exports of generated modules plus `forge-dioxus` runtime items |
 
 Backend handler/model files are authored in `src/functions/` and `src/schema/`. `forge generate` then syncs generated frontend/runtime artifacts from that backend source of truth.
 
@@ -204,19 +206,19 @@ Manage database migrations.
 forge migrate [action] [options]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--config, -c <path>` | Configuration file path (default: forge.toml) |
-| `--migrations-dir, -m <dir>` | Migrations directory (default: migrations) |
+| Option                       | Description                                   |
+| ---------------------------- | --------------------------------------------- |
+| `--config, -c <path>`        | Configuration file path (default: forge.toml) |
+| `--migrations-dir, -m <dir>` | Migrations directory (default: migrations)    |
 
 ### Actions
 
-| Action | Description |
-|--------|-------------|
-| `up` | Run all pending migrations |
-| `down [count]` | Rollback the last N migrations (default: 1) |
-| `status` | Show migration status |
-| `prepare` | Run pending migrations, then refresh the `.sqlx/` offline cache |
+| Action         | Description                                                     |
+| -------------- | --------------------------------------------------------------- |
+| `up`           | Run all pending migrations                                      |
+| `down [count]` | Rollback the last N migrations (default: 1)                     |
+| `status`       | Show migration status                                           |
+| `prepare`      | Run pending migrations, then refresh the `.sqlx/` offline cache |
 
 ### Automatic migrations
 
@@ -261,18 +263,18 @@ DROP TABLE users;
 
 ## Environment Variables
 
-| Variable | Description | Used By |
-|----------|-------------|---------|
+| Variable       | Description                                                                   | Used By                |
+| -------------- | ----------------------------------------------------------------------------- | ---------------------- |
 | `DATABASE_URL` | PostgreSQL connection string (set automatically by docker-compose during dev) | forge migrate, runtime |
-| `RUST_LOG` | Log level (e.g., info, debug, trace) | forge dev |
-| `HOST` | Backend host (default: 0.0.0.0) | forge dev |
-| `PORT` | Backend port (default: 8080) | forge dev |
+| `RUST_LOG`     | Log level (e.g., info, debug, trace)                                          | forge dev              |
+| `HOST`         | Backend host (default: 0.0.0.0)                                               | forge dev              |
+| `PORT`         | Backend port (default: 8080)                                                  | forge dev              |
 
 ---
 
 ## Exit Codes
 
-| Code | Description |
-|------|-------------|
-| 0 | Success |
-| 1 | Error (configuration, validation, or runtime failure) |
+| Code | Description                                           |
+| ---- | ----------------------------------------------------- |
+| 0    | Success                                               |
+| 1    | Error (configuration, validation, or runtime failure) |

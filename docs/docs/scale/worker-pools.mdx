@@ -44,8 +44,8 @@ pub async fn transcode_video(ctx: &JobContext, args: TranscodeArgs) -> Result<Vi
 worker_capabilities = ["media", "general"]
 ```
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
+| Field                 | Type       | Default       | Description                       |
+| --------------------- | ---------- | ------------- | --------------------------------- |
 | `worker_capabilities` | `string[]` | `["general"]` | Capabilities this node advertises |
 
 ## Patterns
@@ -229,11 +229,11 @@ worker_capabilities = ["general"]
 ```
 
 ```bash
-# Start with specific config
-./my-app --config gpu-worker.toml
+# Start a worker deployment with gpu-worker.toml mounted or copied as forge.toml
+./my-app
 ```
 
-Kubernetes can scale deployments per capability using separate node pools or taints/tolerations with different `forge.toml` configs mounted via ConfigMaps.
+The runtime binary does not provide a built-in `--config` flag. Kubernetes can scale deployments per capability using separate node pools or taints/tolerations with different `forge.toml` configs mounted via ConfigMaps.
 
 ## Testing
 

@@ -40,21 +40,21 @@ Environment variables use `${VAR_NAME}` syntax (uppercase letters, numbers, unde
 
 ### [project]
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `name` | string | `"forge-app"` | Project identifier |
-| `version` | string | `"0.1.0"` | Project version |
+| Option    | Type   | Default       | Description        |
+| --------- | ------ | ------------- | ------------------ |
+| `name`    | string | `"forge-app"` | Project identifier |
+| `version` | string | `"0.1.0"`     | Project version    |
 
 ### [database]
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `url` | string | - | PostgreSQL connection URL |
-| `pool_size` | u32 | `50` | Connection pool size |
-| `pool_timeout_secs` | u64 | `30` | Pool checkout timeout |
-| `statement_timeout_secs` | u64 | `30` | Query timeout |
-| `replica_urls` | string[] | `[]` | Read replica URLs |
-| `read_from_replica` | bool | `false` | Route reads to replicas |
+| Option                   | Type     | Default | Description               |
+| ------------------------ | -------- | ------- | ------------------------- |
+| `url`                    | string   | -       | PostgreSQL connection URL |
+| `pool_size`              | u32      | `50`    | Connection pool size      |
+| `pool_timeout_secs`      | u64      | `30`    | Pool checkout timeout     |
+| `statement_timeout_secs` | u64      | `30`    | Query timeout             |
+| `replica_urls`           | string[] | `[]`    | Read replica URLs         |
+| `read_from_replica`      | bool     | `false` | Route reads to replicas   |
 
 ```toml
 [database]
@@ -110,36 +110,36 @@ statement_timeout_secs = 10
 
 Available pool names and what uses them:
 
-| Pool | Used By |
-|------|---------|
-| `default` | Queries, mutations, rate limiter, reactor, cluster coordination |
-| `jobs` | Job workers, cron runners, daemon processes, workflow executors |
-| `analytics` | Available via `db.analytics_pool()` for user code |
+| Pool            | Used By                                                             |
+| --------------- | ------------------------------------------------------------------- |
+| `default`       | Queries, mutations, rate limiter, reactor, cluster coordination     |
+| `jobs`          | Job workers, cron runners, daemon processes, workflow executors     |
+| `analytics`     | Available via `db.analytics_pool()` for user code                   |
 | `observability` | Internal metrics collection (pool utilization, slow query tracking) |
 
 Without pool isolation configured, everything shares the primary pool. With it configured, a spike in background job processing cannot starve user-facing query connections. Each pool enforces independent connection limits, checkout timeouts, and statement timeouts.
 
 ### [gateway]
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `port` | u16 | `8080` | HTTP port |
-| `grpc_port` | u16 | `9000` | Inter-node communication port |
-| `max_connections` | usize | `512` | Maximum concurrent connections |
-| `request_timeout_secs` | u64 | `30` | Request timeout |
-| `cors_enabled` | bool | `false` | Enable CORS handling |
-| `cors_origins` | string[] | `[]` | Allowed CORS origins (use `["*"]` for any) |
-| `quiet_routes` | string[] | `["/_api/health", "/_api/ready"]` | Routes excluded from traces, metrics, and logs |
+| Option                 | Type     | Default                           | Description                                    |
+| ---------------------- | -------- | --------------------------------- | ---------------------------------------------- |
+| `port`                 | u16      | `8080`                            | HTTP port                                      |
+| `grpc_port`            | u16      | `9000`                            | Inter-node communication port                  |
+| `max_connections`      | usize    | `4096`                            | Maximum concurrent connections                 |
+| `request_timeout_secs` | u64      | `30`                              | Request timeout                                |
+| `cors_enabled`         | bool     | `false`                           | Enable CORS handling                           |
+| `cors_origins`         | string[] | `[]`                              | Allowed CORS origins (use `["*"]` for any)     |
+| `quiet_routes`         | string[] | `["/_api/health", "/_api/ready"]` | Routes excluded from traces, metrics, and logs |
 
 ### [function]
 
 Controls query and mutation execution limits.
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `max_concurrent` | usize | `1000` | Maximum concurrent function executions |
-| `timeout_secs` | u64 | `30` | Function execution timeout |
-| `memory_limit` | usize | `536870912` | Memory limit per function (bytes, 512 MiB) |
+| Option           | Type  | Default     | Description                                |
+| ---------------- | ----- | ----------- | ------------------------------------------ |
+| `max_concurrent` | usize | `1000`      | Maximum concurrent function executions     |
+| `timeout_secs`   | u64   | `30`        | Function execution timeout                 |
+| `memory_limit`   | usize | `536870912` | Memory limit per function (bytes, 512 MiB) |
 
 ```toml
 [function]
@@ -152,23 +152,18 @@ The memory limit is advisory. Functions exceeding this limit may be terminated. 
 
 ### [security]
 
-Security settings for signing and encryption.
+Reserved security settings parsed from config for forward compatibility.
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `secret_key` | string | - | Secret key for signing internal tokens |
+| Option       | Type   | Default | Description                                 |
+| ------------ | ------ | ------- | ------------------------------------------- |
+| `secret_key` | string | -       | Reserved; currently not used by the runtime |
 
 ```toml
 [security]
 secret_key = "${FORGE_SECRET_KEY}"
 ```
 
-The secret key is used for:
-- Signing internal session tokens
-- Encrypting sensitive job arguments
-- CSRF token generation
-
-Generate a secure key:
+Generate a secure key if you want to populate this value ahead of future runtime support:
 
 ```bash
 openssl rand -base64 32
@@ -176,16 +171,16 @@ openssl rand -base64 32
 
 ### [auth]
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `jwt_algorithm` | string | `"HS256"` | Signing algorithm |
-| `jwt_secret` | string | - | Secret for HMAC algorithms |
-| `jwks_url` | string | - | JWKS endpoint for RSA algorithms |
-| `jwks_cache_ttl_secs` | u64 | `3600` | Public key cache duration |
-| `jwt_issuer` | string | - | Expected issuer (optional) |
-| `jwt_audience` | string | - | Expected audience (optional) |
-| `token_expiry` | string | - | Token lifetime (e.g., `"15m"`, `"7d"`) |
-| `session_ttl_secs` | u64 | `604800` | Session TTL (7 days) |
+| Option                | Type   | Default   | Description                                                                     |
+| --------------------- | ------ | --------- | ------------------------------------------------------------------------------- |
+| `jwt_algorithm`       | string | `"HS256"` | Signing algorithm                                                               |
+| `jwt_secret`          | string | -         | Secret for HMAC algorithms                                                      |
+| `jwks_url`            | string | -         | JWKS endpoint for RSA algorithms                                                |
+| `jwks_cache_ttl_secs` | u64    | `3600`    | Public key cache duration                                                       |
+| `jwt_issuer`          | string | -         | Expected issuer (optional)                                                      |
+| `jwt_audience`        | string | -         | Expected audience (optional)                                                    |
+| `token_expiry`        | string | -         | Optional app-level convention; not applied automatically by `ctx.issue_token()` |
+| `session_ttl_secs`    | u64    | `604800`  | Session TTL (7 days)                                                            |
 
 #### HMAC (Symmetric)
 
@@ -207,24 +202,24 @@ jwt_audience = "your-app-id"
 
 Common JWKS URLs:
 
-| Provider | JWKS URL |
-|----------|----------|
+| Provider | JWKS URL                                                                                    |
+| -------- | ------------------------------------------------------------------------------------------- |
 | Firebase | `https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com` |
-| Auth0 | `https://YOUR_DOMAIN.auth0.com/.well-known/jwks.json` |
-| Clerk | `https://YOUR_DOMAIN.clerk.accounts.dev/.well-known/jwks.json` |
-| Supabase | `https://YOUR_PROJECT.supabase.co/auth/v1/jwks` |
+| Auth0    | `https://YOUR_DOMAIN.auth0.com/.well-known/jwks.json`                                       |
+| Clerk    | `https://YOUR_DOMAIN.clerk.accounts.dev/.well-known/jwks.json`                              |
+| Supabase | `https://YOUR_PROJECT.supabase.co/auth/v1/jwks`                                             |
 
 ### [mcp]
 
 Controls Forge MCP server exposure on Streamable HTTP.
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `enabled` | bool | `false` | Enable MCP endpoint |
-| `path` | string | `"/mcp"` | MCP endpoint path under `/_api` |
-| `session_ttl_secs` | u64 | `3600` | MCP session lifetime |
-| `allowed_origins` | string[] | `[]` | Allowed `Origin` values |
-| `require_protocol_version_header` | bool | `true` | Require `MCP-Protocol-Version` header after initialize |
+| Option                            | Type     | Default  | Description                                            |
+| --------------------------------- | -------- | -------- | ------------------------------------------------------ |
+| `enabled`                         | bool     | `false`  | Enable MCP endpoint                                    |
+| `path`                            | string   | `"/mcp"` | MCP endpoint path under `/_api`                        |
+| `session_ttl_secs`                | u64      | `3600`   | MCP session lifetime                                   |
+| `allowed_origins`                 | string[] | `[]`     | Allowed `Origin` values                                |
+| `require_protocol_version_header` | bool     | `true`   | Require `MCP-Protocol-Version` header after initialize |
 
 ```toml
 [mcp]
@@ -239,28 +234,28 @@ With default API routing, `path = "/mcp"` resolves to `/_api/mcp`.
 
 ### [worker]
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `max_concurrent_jobs` | usize | `50` | Concurrent job limit per worker |
-| `job_timeout_secs` | u64 | `3600` | Default job timeout (1 hour) |
-| `poll_interval_ms` | u64 | `100` | Queue polling interval |
+| Option                | Type  | Default | Description                     |
+| --------------------- | ----- | ------- | ------------------------------- |
+| `max_concurrent_jobs` | usize | `50`    | Concurrent job limit per worker |
+| `job_timeout_secs`    | u64   | `3600`  | Default job timeout (1 hour)    |
+| `poll_interval_ms`    | u64   | `100`   | Queue polling interval          |
 
 Workers maintain a semaphore sized to `max_concurrent_jobs`. They only poll when permits are available. Backpressure propagates naturally.
 
 ### [cluster]
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `name` | string | `"default"` | Cluster identifier |
-| `discovery` | string | `"postgres"` | Discovery method: `postgres`, `dns`, `kubernetes`, `static` |
-| `heartbeat_interval_secs` | u64 | `5` | Heartbeat frequency |
-| `dead_threshold_secs` | u64 | `15` | Missing heartbeats before dead |
-| `seed_nodes` | string[] | `[]` | Static seed node addresses (for `static` discovery) |
-| `dns_name` | string | - | DNS name for service discovery (for `dns` discovery) |
+| Option                    | Type     | Default      | Description                                                      |
+| ------------------------- | -------- | ------------ | ---------------------------------------------------------------- |
+| `name`                    | string   | `"default"`  | Cluster identifier                                               |
+| `discovery`               | string   | `"postgres"` | Discovery method; the current runtime only implements `postgres` |
+| `heartbeat_interval_secs` | u64      | `5`          | Heartbeat frequency                                              |
+| `dead_threshold_secs`     | u64      | `15`         | Missing heartbeats before dead                                   |
+| `seed_nodes`              | string[] | `[]`         | Static seed node addresses (for `static` discovery)              |
+| `dns_name`                | string   | -            | DNS name for service discovery (for `dns` discovery)             |
 
 #### Discovery
 
-Nodes register in the `forge_nodes` database table by default, so an external service is not required. Alternative discovery methods are available for DNS-based, Kubernetes, or static configurations.
+Nodes register in the `forge_nodes` database table by default, so an external service is not required. The current runtime only implements Postgres-backed discovery; other configured discovery values are parsed but ignored with a warning.
 
 ```toml
 [cluster]
@@ -269,19 +264,19 @@ discovery = "postgres"
 
 ### [node]
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `roles` | string[] | all roles | Roles this node assumes |
+| Option                | Type     | Default       | Description              |
+| --------------------- | -------- | ------------- | ------------------------ |
+| `roles`               | string[] | all roles     | Roles this node assumes  |
 | `worker_capabilities` | string[] | `["general"]` | Job routing capabilities |
 
 #### Node Roles
 
-| Role | Responsibility |
-|------|----------------|
-| `gateway` | HTTP/gRPC endpoints, SSE subscriptions |
-| `function` | Query and mutation execution |
-| `worker` | Background job processing |
-| `scheduler` | Cron scheduling, leader election |
+| Role        | Responsibility                         |
+| ----------- | -------------------------------------- |
+| `gateway`   | HTTP/gRPC endpoints, SSE subscriptions |
+| `function`  | Query and mutation execution           |
+| `worker`    | Background job processing              |
+| `scheduler` | Cron scheduling, leader election       |
 
 Single-node deployment (default):
 
@@ -336,16 +331,16 @@ Jobs requiring `worker_capability = "gpu"` only run on workers with that capabil
 
 OTLP-based telemetry for traces, metrics, and logs. Disabled by default. When enabled, Forge auto-instruments HTTP requests, function calls, job execution, and database queries without any application code changes.
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `enabled` | bool | `false` | Enable OTLP telemetry export |
-| `otlp_endpoint` | string | `"http://localhost:4318"` | OTLP collector endpoint (HTTP) |
-| `service_name` | string | project name | Service name in telemetry data |
-| `enable_traces` | bool | `true` | Export distributed traces |
-| `enable_metrics` | bool | `true` | Export metrics |
-| `enable_logs` | bool | `true` | Export logs via OTLP |
-| `sampling_ratio` | f64 | `1.0` | Trace sampling ratio (0.0 to 1.0) |
-| `log_level` | string | `"info"` | Log level for the tracing subscriber |
+| Option           | Type   | Default                   | Description                          |
+| ---------------- | ------ | ------------------------- | ------------------------------------ |
+| `enabled`        | bool   | `false`                   | Enable OTLP telemetry export         |
+| `otlp_endpoint`  | string | `"http://localhost:4318"` | OTLP collector endpoint (HTTP)       |
+| `service_name`   | string | project name              | Service name in telemetry data       |
+| `enable_traces`  | bool   | `true`                    | Export distributed traces            |
+| `enable_metrics` | bool   | `true`                    | Export metrics                       |
+| `enable_logs`    | bool   | `true`                    | Export logs via OTLP                 |
+| `sampling_ratio` | f64    | `1.0`                     | Trace sampling ratio (0.0 to 1.0)    |
+| `log_level`      | string | `"info"`                  | Log level for the tracing subscriber |
 
 ```toml
 [observability]

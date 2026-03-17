@@ -6,16 +6,16 @@ All macro attributes for Forge function decorators.
 
 Read-only database operations with caching and subscriptions.
 
-| Attribute | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `public` | flag | `false` | Bypass authentication requirement |
-| `require_role("name")` | `string` | none | Require specific role (returns 403 if missing) |
-| `consistent` | flag | `false` | Force reads from primary (skip replicas) |
-| `cache` | `"duration"` | none | Cache TTL (`"30s"`, `"5m"`, `"1h"`) |
-| `timeout` | `u64` | none | Statement timeout in seconds |
-| `tables` | `["t1", "t2"]` | auto | Explicit table dependencies for subscriptions |
-| `log` | `"level"` | none | Log level (`trace`, `debug`, `info`, `warn`, `error`, `off`) |
-| `rate_limit(...)` | config | none | Rate limiting configuration |
+| Attribute              | Type           | Default | Description                                                  |
+| ---------------------- | -------------- | ------- | ------------------------------------------------------------ |
+| `public`               | flag           | `false` | Bypass authentication requirement                            |
+| `require_role("name")` | `string`       | none    | Require specific role (returns 403 if missing)               |
+| `consistent`           | flag           | `false` | Force reads from primary (skip replicas)                     |
+| `cache`                | `"duration"`   | none    | Cache TTL (`"30s"`, `"5m"`, `"1h"`)                          |
+| `timeout`              | `u64`          | none    | Statement timeout in seconds                                 |
+| `tables`               | `["t1", "t2"]` | auto    | Explicit table dependencies for subscriptions                |
+| `log`                  | `"level"`      | none    | Log level (`trace`, `debug`, `info`, `warn`, `error`, `off`) |
+| `rate_limit(...)`      | config         | none    | Rate limiting configuration                                  |
 
 ### Rate Limit Config
 
@@ -23,11 +23,11 @@ Read-only database operations with caching and subscriptions.
 rate_limit(requests = 100, per = "1m", key = "user")
 ```
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `requests` | `u32` | Requests allowed per window |
-| `per` | `"duration"` | Time window (`"30s"`, `"1m"`, `"1h"`) |
-| `key` | `string` | Bucket key: `"user"`, `"ip"`, `"tenant"`, `"global"` |
+| Parameter  | Type         | Description                                          |
+| ---------- | ------------ | ---------------------------------------------------- |
+| `requests` | `u32`        | Requests allowed per window                          |
+| `per`      | `"duration"` | Time window (`"30s"`, `"1m"`, `"1h"`)                |
+| `key`      | `string`     | Bucket key: `"user"`, `"ip"`, `"tenant"`, `"global"` |
 
 ### Example
 
@@ -58,6 +58,7 @@ pub async fn get_order_confirmation(ctx: &QueryContext, order_id: Uuid) -> Resul
 ```
 
 This always reads from the primary database, avoiding replication lag. Only use when stale data would cause visible problems (confirmation screens, permission checks against just-written state). Most queries can tolerate eventual consistency and should use the default replica routing.
+
 ```
 
 ---
@@ -80,8 +81,10 @@ Transactional write operations.
 Mutations that call `dispatch_job()` or `start_workflow()` must use `transactional`. The macro will error if you forget:
 
 ```
+
 error: Mutations that call `dispatch_job()` must use #[forge::mutation(transactional)]
-```
+
+````
 
 ### Example
 
@@ -92,7 +95,7 @@ pub async fn create_order(ctx: &MutationContext, input: OrderInput) -> Result<Or
     ctx.dispatch_job("send_confirmation", json!({ "order_id": order.id })).await?;
     Ok(order)
 }
-```
+````
 
 ---
 
@@ -100,19 +103,19 @@ pub async fn create_order(ctx: &MutationContext, input: OrderInput) -> Result<Or
 
 Explicitly exposes a function as an MCP tool (Streamable HTTP endpoint).
 
-| Attribute | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `name = "tool_name"` | `string` | fn name | Override exposed MCP tool name |
-| `title = "..."` | `string` | none | Human-friendly display title |
-| `description = "..."` | `string` | none | Tool description for MCP clients |
-| `public` | flag | `false` | Bypass authentication requirement |
-| `require_role("name")` | `string` | none | Require specific role |
-| `timeout` | `u64` | none | Timeout in seconds |
-| `rate_limit(...)` | config | none | Rate limiting (`requests`, `per`, `key`) |
-| `read_only` | flag | none | No side effects, safe to call speculatively |
-| `destructive` | flag | none | Modifies external state irreversibly |
-| `idempotent` | flag | none | Repeated calls with same args produce same result |
-| `open_world` | flag | none | Interacts with entities beyond its dataset |
+| Attribute              | Type     | Default | Description                                       |
+| ---------------------- | -------- | ------- | ------------------------------------------------- |
+| `name = "tool_name"`   | `string` | fn name | Override exposed MCP tool name                    |
+| `title = "..."`        | `string` | none    | Human-friendly display title                      |
+| `description = "..."`  | `string` | none    | Tool description for MCP clients                  |
+| `public`               | flag     | `false` | Bypass authentication requirement                 |
+| `require_role("name")` | `string` | none    | Require specific role                             |
+| `timeout`              | `u64`    | none    | Timeout in seconds                                |
+| `rate_limit(...)`      | config   | none    | Rate limiting (`requests`, `per`, `key`)          |
+| `read_only`            | flag     | none    | No side effects, safe to call speculatively       |
+| `destructive`          | flag     | none    | Modifies external state irreversibly              |
+| `idempotent`           | flag     | none    | Repeated calls with same args produce same result |
+| `open_world`           | flag     | none    | Interacts with entities beyond its dataset        |
 
 ### Example
 
@@ -189,21 +192,21 @@ pub async fn export_project_tool(
 
 Background tasks with retries and worker routing.
 
-| Attribute | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `public` | flag | `false` | Allow dispatch without authentication |
-| `require_role("name")` | `string` | none | Require role to dispatch |
-| `name` | `"string"` | fn name | Override job name |
-| `timeout` | `"duration"` | `"1h"` | Job timeout (`"30s"`, `"10m"`, `"2h"`) |
-| `priority` | `"level"` | `"normal"` | `background`, `low`, `normal`, `high`, `critical` |
-| `max_attempts` | `u32` | `3` | Maximum retry attempts |
-| `backoff` | `"strategy"` | `"exponential"` | `fixed`, `linear`, `exponential` |
-| `max_backoff` | `"duration"` | `"5m"` | Maximum backoff delay |
-| `worker_capability` | `"string"` | none | Required worker capability (e.g., `"gpu"`, `"media"`) |
-| `idempotent` | flag | `false` | Mark job as idempotent |
-| `idempotent(key = "...")` | config | none | Idempotent with custom key field |
-| `compensate` | `"handler"` | none | Cancellation compensation handler |
-| `ttl` | `"duration"` | none | Auto-cleanup after completion (e.g., `"7d"`) |
+| Attribute                 | Type         | Default         | Description                                           |
+| ------------------------- | ------------ | --------------- | ----------------------------------------------------- |
+| `public`                  | flag         | `false`         | Allow dispatch without authentication                 |
+| `require_role("name")`    | `string`     | none            | Require role to dispatch                              |
+| `name`                    | `"string"`   | fn name         | Override job name                                     |
+| `timeout`                 | `"duration"` | `"1h"`          | Job timeout (`"30s"`, `"10m"`, `"2h"`)                |
+| `priority`                | `"level"`    | `"normal"`      | `background`, `low`, `normal`, `high`, `critical`     |
+| `max_attempts`            | `u32`        | `3`             | Maximum retry attempts                                |
+| `backoff`                 | `"strategy"` | `"exponential"` | `fixed`, `linear`, `exponential`                      |
+| `max_backoff`             | `"duration"` | `"5m"`          | Maximum backoff delay                                 |
+| `worker_capability`       | `"string"`   | none            | Required worker capability (e.g., `"gpu"`, `"media"`) |
+| `idempotent`              | flag         | `false`         | Mark job as idempotent                                |
+| `idempotent(key = "...")` | config       | none            | Idempotent with custom key field                      |
+| `compensate`              | `"handler"`  | none            | Cancellation compensation handler                     |
+| `ttl`                     | `"duration"` | none            | Auto-cleanup after completion (e.g., `"7d"`)          |
 
 ### Retry Configuration (Grouped)
 
@@ -215,13 +218,13 @@ Equivalent to specifying `max_attempts`, `backoff`, and `max_backoff` separately
 
 ### Priority Levels
 
-| Level | Description |
-|-------|-------------|
-| `background` | Lowest priority, runs when idle |
-| `low` | Below normal priority |
-| `normal` | Default priority |
-| `high` | Above normal priority |
-| `critical` | Highest priority, preempts other work |
+| Level        | Description                           |
+| ------------ | ------------------------------------- |
+| `background` | Lowest priority, runs when idle       |
+| `low`        | Below normal priority                 |
+| `normal`     | Default priority                      |
+| `high`       | Above normal priority                 |
+| `critical`   | Highest priority, preempts other work |
 
 ### Example
 
@@ -275,14 +278,14 @@ Scheduled tasks with exactly-once execution.
 #[forge::cron("schedule", ...attributes)]
 ```
 
-| Attribute | Type | Default | Description |
-|-----------|------|---------|-------------|
-| (first arg) | `"cron expr"` | required | Cron schedule (5-part: `"0 9 * * *"`) |
-| `timezone` | `"string"` | `"UTC"` | IANA timezone (e.g., `"America/New_York"`) |
-| `timeout` | `"duration"` | `"1h"` | Execution timeout |
-| `catch_up` | flag | `false` | Run missed executions after downtime |
-| `catch_up_limit` | `u32` | `10` | Maximum catch-up runs |
-| `group` | `"string"` | `"default"` | Sharded leader election group |
+| Attribute        | Type          | Default     | Description                                |
+| ---------------- | ------------- | ----------- | ------------------------------------------ |
+| (first arg)      | `"cron expr"` | required    | Cron schedule (5-part: `"0 9 * * *"`)      |
+| `timezone`       | `"string"`    | `"UTC"`     | IANA timezone (e.g., `"America/New_York"`) |
+| `timeout`        | `"duration"`  | `"1h"`      | Execution timeout                          |
+| `catch_up`       | flag          | `false`     | Run missed executions after downtime       |
+| `catch_up_limit` | `u32`         | `10`        | Maximum catch-up runs                      |
+| `group`          | `"string"`    | `"default"` | Sharded leader election group              |
 
 ### Cron Expression
 
@@ -298,12 +301,12 @@ Standard 5-part cron format:
 * * * * *
 ```
 
-| Expression | Description |
-|------------|-------------|
-| `0 9 * * *` | Daily at 9:00 AM |
-| `*/15 * * * *` | Every 15 minutes |
-| `0 0 1 * *` | First day of month at midnight |
-| `0 0 * * 0` | Every Sunday at midnight |
+| Expression     | Description                    |
+| -------------- | ------------------------------ |
+| `0 9 * * *`    | Daily at 9:00 AM               |
+| `*/15 * * * *` | Every 15 minutes               |
+| `0 0 1 * *`    | First day of month at midnight |
+| `0 0 * * 0`    | Every Sunday at midnight       |
 
 ### Example
 
@@ -325,22 +328,22 @@ pub async fn daily_report(ctx: &CronContext) -> Result<()> {
 
 Multi-step durable processes with compensation.
 
-| Attribute | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `public` | flag | `false` | Allow start without authentication |
-| `require_role("name")` | `string` | none | Require role to start |
-| `version` | `u32` | `1` | Workflow version (increment for breaking changes) |
-| `timeout` | `"duration"` | `"24h"` | Maximum workflow duration (`"1h"`, `"7d"`, `"30d"`) |
-| `deprecated` | flag | `false` | Mark workflow as deprecated |
+| Attribute              | Type         | Default | Description                                         |
+| ---------------------- | ------------ | ------- | --------------------------------------------------- |
+| `public`               | flag         | `false` | Allow start without authentication                  |
+| `require_role("name")` | `string`     | none    | Require role to start                               |
+| `version`              | `u32`        | `1`     | Workflow version (increment for breaking changes)   |
+| `timeout`              | `"duration"` | `"24h"` | Maximum workflow duration (`"1h"`, `"7d"`, `"30d"`) |
+| `deprecated`           | flag         | `false` | Mark workflow as deprecated                         |
 
 ### Duration Format
 
-| Suffix | Unit |
-|--------|------|
-| `s` | seconds |
-| `m` | minutes |
-| `h` | hours |
-| `d` | days |
+| Suffix | Unit    |
+| ------ | ------- |
+| `s`    | seconds |
+| `m`    | minutes |
+| `h`    | hours   |
+| `d`    | days    |
 
 ### Compile-Time Enforcement
 
@@ -384,23 +387,25 @@ pub async fn order_fulfillment(ctx: &WorkflowContext, order: Order) -> Result<Fu
 
 Long-running singleton services with leader election.
 
-| Attribute | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `leader_elected` | `bool` | `true` | Single leader instance runs across cluster |
-| `restart_on_panic` | `bool` | `true` | Restart daemon if it panics |
-| `restart_delay` | `"duration"` | `"5s"` | Delay before restart after failure |
-| `startup_delay` | `"duration"` | `"0s"` | Delay before first execution |
-| `max_restarts` | `u32` | unlimited | Maximum restart attempts |
+| Attribute          | Type         | Default   | Description                                |
+| ------------------ | ------------ | --------- | ------------------------------------------ |
+| `leader_elected`   | `bool`       | `true`    | Single leader instance runs across cluster |
+| `restart_on_panic` | `bool`       | `true`    | Restart daemon if it panics                |
+| `restart_delay`    | `"duration"` | `"5s"`    | Delay before restart after failure         |
+| `startup_delay`    | `"duration"` | `"0s"`    | Delay before first execution               |
+| `max_restarts`     | `u32`        | unlimited | Maximum restart attempts                   |
 
 ### Leadership
 
 When `leader_elected = true` (default):
+
 - Exactly one instance runs across all nodes
 - Uses PostgreSQL advisory locks for election
 - Lock is session-bound; automatic failover on connection drop
 - Other nodes wait in standby
 
 When `leader_elected = false`:
+
 - Daemon runs on every node
 - Instances run independently without coordination
 
@@ -433,13 +438,13 @@ pub async fn metrics_aggregator(ctx: &DaemonContext) -> Result<()> {
 
 HTTP endpoints for external events with signature verification.
 
-| Attribute | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `path` | `"string"` | required | URL path (e.g., `"/webhooks/stripe"`) |
-| `timeout` | `"duration"` | `"30s"` | Request timeout |
-| `signature` | `WebhookSignature::...` | none | Signature verification config |
-| `idempotency` | `"source:key"` | none | Idempotency key source |
-| `allow_unsigned` | flag | `false` | Accept requests without valid signature |
+| Attribute        | Type                    | Default  | Description                             |
+| ---------------- | ----------------------- | -------- | --------------------------------------- |
+| `path`           | `"string"`              | required | URL path (e.g., `"/webhooks/stripe"`)   |
+| `timeout`        | `"duration"`            | `"30s"`  | Request timeout                         |
+| `signature`      | `WebhookSignature::...` | none     | Signature verification config           |
+| `idempotency`    | `"source:key"`          | none     | Idempotency key source                  |
+| `allow_unsigned` | flag                    | `false`  | Accept requests without valid signature |
 
 ### Signature Verification
 
@@ -447,22 +452,22 @@ HTTP endpoints for external events with signature verification.
 signature = WebhookSignature::hmac_sha256("Header-Name", "SECRET_ENV_VAR")
 ```
 
-| Algorithm | Function |
-|-----------|----------|
+| Algorithm   | Function                                            |
+| ----------- | --------------------------------------------------- |
 | HMAC-SHA256 | `WebhookSignature::hmac_sha256(header, secret_env)` |
-| HMAC-SHA1 | `WebhookSignature::hmac_sha1(header, secret_env)` |
+| HMAC-SHA1   | `WebhookSignature::hmac_sha1(header, secret_env)`   |
 | HMAC-SHA512 | `WebhookSignature::hmac_sha512(header, secret_env)` |
 
 The secret is read from the environment variable at runtime.
 
 ### Idempotency
 
-| Source | Format | Example |
-|--------|--------|---------|
+| Source | Format                 | Example                 |
+| ------ | ---------------------- | ----------------------- |
 | Header | `"header:Header-Name"` | `"header:X-Request-Id"` |
-| Body | `"body:$.json.path"` | `"body:$.id"` |
+| Body   | `"body:$.json.path"`   | `"body:$.id"`           |
 
-Idempotency keys are stored for 24 hours by default. Duplicate requests return the cached response.
+Idempotency keys are stored for 24 hours by default. Duplicate requests return `200 OK` with `{"status":"already_processed"}` instead of re-running the handler.
 
 ### Common Integrations
 
@@ -513,12 +518,12 @@ pub async fn github_events(ctx: &WebhookContext, payload: Value) -> Result<Webho
 
 All duration attributes accept strings with these suffixes:
 
-| Suffix | Unit | Example |
-|--------|------|---------|
-| `ms` | milliseconds | `"500ms"` |
-| `s` | seconds | `"30s"` |
-| `m` | minutes | `"5m"` |
-| `h` | hours | `"2h"` |
-| `d` | days | `"7d"` |
+| Suffix | Unit         | Example   |
+| ------ | ------------ | --------- |
+| `ms`   | milliseconds | `"500ms"` |
+| `s`    | seconds      | `"30s"`   |
+| `m`    | minutes      | `"5m"`    |
+| `h`    | hours        | `"2h"`    |
+| `d`    | days         | `"7d"`    |
 
 Raw numbers without suffix are interpreted as seconds.

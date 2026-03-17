@@ -59,7 +59,7 @@ pub async fn get_user(ctx: &QueryContext, id: Uuid) -> Result<User> {
         .map_err(Into::into)
 }
 
-#[forge::mutation]
+#[forge::mutation(transactional)]
 pub async fn create_user(ctx: &MutationContext, input: CreateUser) -> Result<User> {
     let mut conn = ctx.conn().await?;
     let user = sqlx::query_as!(User, "INSERT INTO users (email) VALUES ($1) RETURNING *", &input.email)
@@ -74,13 +74,12 @@ pub async fn create_user(ctx: &MutationContext, input: CreateUser) -> Result<Use
 
 These become typed RPC endpoints automatically. Forge generates framework bindings from the same Rust source of truth. Today that means TypeScript bindings for SvelteKit and Rust bindings plus hooks for Dioxus. No routing files, no fetch wrappers, no manual type definitions.
 
-Mutations run inside a database transaction. The `dispatch_job` call gets buffered and inserted atomically when the transaction commits. If the mutation fails, the job never exists.
+Transactional mutations buffer `dispatch_job` calls and insert them atomically when the transaction commits. If the mutation fails, the job never exists.
 
 ### Background Jobs
 
 ```rust
-#[forge::job]
-#[retry(max_attempts = 3, backoff = "exponential")]
+#[forge::job(retry(max_attempts = 3, backoff = "exponential"))]
 pub async fn send_welcome_email(ctx: &JobContext, input: EmailInput) -> Result<()> {
     ctx.progress(0, "Starting...")?;
 
@@ -142,9 +141,9 @@ Sleep for 45 days, deploy new code, restart servers, scale up. The workflow pick
 
 ```svelte
 <script lang="ts">
-  import { subscribe } from '$lib/forge';
+  import { listUsersStore$ } from '$lib/forge';
 
-  const users = subscribe('list_users', {});
+  const users = listUsersStore$();
 </script>
 
 {#each $users.data ?? [] as user}
@@ -236,10 +235,10 @@ export interface User {
   created_at: string;
 }
 
-export type UserRole = 'Admin' | 'Member' | 'Guest';
+export type UserRole = "Admin" | "Member" | "Guest";
 
-import { api } from '$lib/forge';
-const user = await api.get_user({ id: '...' });  // Fully typed
+import { api } from "$lib/forge";
+const user = await api.get_user({ id: "..." }); // Fully typed
 ```
 
 If your Rust code compiles, your frontend types are correct.
@@ -294,20 +293,20 @@ forge              → Public API, Forge::builder(), prelude, CLI
 
 ## Why Not Just Use...
 
-| | FORGE | Supabase | Firebase | PocketBase |
-|--|:-----:|:--------:|:--------:|:----------:|
-| **Background Jobs** | Built-in | External | Cloud Functions | - |
-| **Durable Workflows** | Built-in | - | - | - |
-| **Cron Scheduling** | Built-in | External | Cloud Scheduler | - |
-| **Query Caching** | Built-in | - | - | - |
-| **Rate Limiting** | Built-in | - | - | - |
-| **Real-time** | Built-in | Built-in | Built-in | - |
-| **Webhooks** | Built-in | - | Cloud Functions | - |
-| **MCP Tools** | Built-in | - | - | - |
-| **Full Type Safety** | Rust to TS | Partial | - | - |
-| **Self-Hosted** | One binary | Complex | - | One binary |
-| **Vendor Lock-in** | None | Low | High | None |
-| **Database** | PostgreSQL | PostgreSQL | Firestore | SQLite |
+|                       |   FORGE    |  Supabase  |    Firebase     | PocketBase |
+| --------------------- | :--------: | :--------: | :-------------: | :--------: |
+| **Background Jobs**   |  Built-in  |  External  | Cloud Functions |     -      |
+| **Durable Workflows** |  Built-in  |     -      |        -        |     -      |
+| **Cron Scheduling**   |  Built-in  |  External  | Cloud Scheduler |     -      |
+| **Query Caching**     |  Built-in  |     -      |        -        |     -      |
+| **Rate Limiting**     |  Built-in  |     -      |        -        |     -      |
+| **Real-time**         |  Built-in  |  Built-in  |    Built-in     |     -      |
+| **Webhooks**          |  Built-in  |     -      | Cloud Functions |     -      |
+| **MCP Tools**         |  Built-in  |     -      |        -        |     -      |
+| **Full Type Safety**  | Rust to TS |  Partial   |        -        |     -      |
+| **Self-Hosted**       | One binary |  Complex   |        -        | One binary |
+| **Vendor Lock-in**    |    None    |    Low     |      High       |    None    |
+| **Database**          | PostgreSQL | PostgreSQL |    Firestore    |   SQLite   |
 
 **vs. Temporal/Inngest**: FORGE workflows run in-process with no separate orchestration service. If you need child workflows, signals, or advanced versioning, use Temporal. If you need durable multi-step processes without the ops overhead, FORGE handles it.
 
@@ -415,19 +414,19 @@ If subscriptions aren't updating after mutations:
 
 All FORGE state lives in PostgreSQL. The full set of system tables:
 
-| Table | What it tracks |
-|-------|---------------|
-| `forge_jobs` | Job queue, status, errors, progress |
-| `forge_cron_runs` | Cron execution history |
-| `forge_workflow_runs` | Workflow instances and state |
-| `forge_workflow_steps` | Individual step results |
-| `forge_nodes` | Cluster node registry |
-| `forge_leaders` | Leader election state |
-| `forge_daemons` | Long-running process status |
-| `forge_sessions` | Active SSE connections |
-| `forge_subscriptions` | Live query subscriptions |
-| `forge_rate_limits` | Token bucket state |
-| `forge_webhook_events` | Webhook idempotency tracking |
+| Table                  | What it tracks                      |
+| ---------------------- | ----------------------------------- |
+| `forge_jobs`           | Job queue, status, errors, progress |
+| `forge_cron_runs`      | Cron execution history              |
+| `forge_workflow_runs`  | Workflow instances and state        |
+| `forge_workflow_steps` | Individual step results             |
+| `forge_nodes`          | Cluster node registry               |
+| `forge_leaders`        | Leader election state               |
+| `forge_daemons`        | Long-running process status         |
+| `forge_sessions`       | Active SSE connections              |
+| `forge_subscriptions`  | Live query subscriptions            |
+| `forge_rate_limits`    | Token bucket state                  |
+| `forge_webhook_events` | Webhook idempotency tracking        |
 
 ---
 

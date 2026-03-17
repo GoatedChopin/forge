@@ -44,14 +44,14 @@ When the generated client detects a `File` or `Blob` in your arguments, it autom
 
 ## Upload Properties
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `name()` | `&str` | Original filename from the client |
-| `content_type()` | `&str` | MIME type (e.g., `image/png`) |
-| `bytes()` | `&Bytes` | File content as bytes reference |
-| `into_bytes()` | `Bytes` | Consume and return owned bytes |
-| `len()` | `usize` | File size in bytes |
-| `is_empty()` | `bool` | True if zero bytes |
+| Property         | Type     | Description                       |
+| ---------------- | -------- | --------------------------------- |
+| `name()`         | `&str`   | Original filename from the client |
+| `content_type()` | `&str`   | MIME type (e.g., `image/png`)     |
+| `bytes()`        | `&Bytes` | File content as bytes reference   |
+| `into_bytes()`   | `Bytes`  | Consume and return owned bytes    |
+| `len()`          | `usize`  | File size in bytes                |
+| `is_empty()`     | `bool`   | True if zero bytes                |
 
 ## Patterns
 
@@ -154,7 +154,7 @@ For large uploads, use `XMLHttpRequest` to track progress:
 ```typescript
 function uploadWithProgress(
   file: File,
-  onProgress: (percent: number) => void
+  onProgress: (percent: number) => void,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -189,17 +189,17 @@ function uploadWithProgress(
 
 ## Context Methods
 
-| Method | Return Type | Description |
-|--------|-------------|-------------|
-| `ctx.db()` | `&PgPool` | Database connection pool |
-| `ctx.db_conn()` | `DbConn<'_>` | Database connection as `DbConn` for shared helpers |
-| `ctx.http()` | `HttpClient` | HTTP client for external calls |
-| `ctx.auth` | `AuthContext` | Current user authentication |
-| `ctx.env(key)` | `Option<String>` | Environment variable lookup |
+| Method          | Return Type       | Description                                        |
+| --------------- | ----------------- | -------------------------------------------------- |
+| `ctx.db()`      | `&PgPool`         | Database connection pool                           |
+| `ctx.db_conn()` | `DbConn<'_>`      | Database connection as `DbConn` for shared helpers |
+| `ctx.http()`    | `reqwest::Client` | HTTP client for external calls                     |
+| `ctx.auth`      | `AuthContext`     | Current user authentication                        |
+| `ctx.env(key)`  | `Option<String>`  | Environment variable lookup                        |
 
 ## Under the Hood
 
-**Streaming upload**: The gateway processes multipart data in chunks using `axum::extract::Multipart`. Each field is read incrementally, preventing memory exhaustion from large files.
+**Multipart processing**: The gateway reads multipart fields in chunks using `axum::extract::Multipart` while enforcing per-file, total-payload, and field-count limits. Accepted uploads are buffered in memory up to those limits.
 
 **Size limits**: The gateway enforces a 10MB per-file limit, 20MB total payload limit, and 20 maximum upload fields. Multipart requests are also capped at 32 concurrent in-flight uploads to prevent memory exhaustion.
 
@@ -237,8 +237,7 @@ async fn test_upload_avatar() {
         .mock_http("storage.example.com/*", |_req| {
             HttpResponse::ok().body("https://storage.example.com/avatar.png")
         })
-        .build()
-        .await;
+        .build();
 
     let file = Upload::new(
         "avatar.png",

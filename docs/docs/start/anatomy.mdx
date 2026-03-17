@@ -90,7 +90,7 @@ pub async fn stripe_webhook(ctx: &WebhookContext) -> Result<WebhookResult> { ...
 
 ### src/schema/
 
-Data models with `#[forge::model]` generate TypeScript types automatically.
+Data models with `#[forge::model]` generate frontend types automatically: TypeScript for SvelteKit targets and Rust types for Dioxus targets.
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -142,8 +142,8 @@ Run `forge generate` after adding or modifying functions.
 
 ```typescript
 // SvelteKit target: frontend/src/lib/forge
-import { listTodos$, createTodo, updateTodo, deleteTodo } from '$lib/forge';
-import type { Todo, CreateTodoInput } from '$lib/forge';
+import { listTodos$, createTodo, updateTodo, deleteTodo } from "$lib/forge";
+import type { Todo, CreateTodoInput } from "$lib/forge";
 ```
 
 ```rust
