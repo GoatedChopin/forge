@@ -5,8 +5,8 @@ mod schema;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    dotenvy::dotenv().ok();
-    let config_path = std::env::var("FORGE_CONFIG").unwrap_or_else(|_| "forge.toml".into());
+    let config_path = std::env::var("FORGE_CONFIG")
+        .map_err(|_| ForgeError::Config("FORGE_CONFIG is required for benchmark app".into()))?;
     let config = ForgeConfig::from_file(&config_path)?;
 
     Forge::builder()

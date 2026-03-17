@@ -449,6 +449,7 @@ impl Forge {
             let gateway_config = RuntimeGatewayConfig {
                 port: self.config.gateway.port,
                 max_connections: self.config.gateway.max_connections,
+                sse_max_sessions: self.config.gateway.sse_max_sessions,
                 request_timeout_secs: self.config.gateway.request_timeout_secs,
                 cors_enabled: self.config.gateway.cors_enabled
                     || !self.config.gateway.cors_origins.is_empty(),

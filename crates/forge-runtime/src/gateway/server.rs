@@ -51,6 +51,8 @@ pub struct GatewayConfig {
     pub port: u16,
     /// Maximum number of connections.
     pub max_connections: usize,
+    /// Maximum number of active SSE sessions.
+    pub sse_max_sessions: usize,
     /// Request timeout in seconds.
     pub request_timeout_secs: u64,
     /// Enable CORS.
@@ -70,6 +72,7 @@ impl Default for GatewayConfig {
         Self {
             port: 8080,
             max_connections: 512,
+            sse_max_sessions: 10_000,
             request_timeout_secs: 30,
             cors_enabled: false,
             cors_origins: Vec::new(),
@@ -120,7 +123,7 @@ impl GatewayServer {
         let node_id = NodeId::new();
         let reactor = Arc::new(Reactor::new(
             node_id,
-            db.read_pool().clone(),
+            db.primary().clone(),
             registry.clone(),
             ReactorConfig::default(),
         ));
@@ -198,9 +201,13 @@ impl GatewayServer {
         };
 
         // SSE state for Server-Sent Events
-        let sse_state = Arc::new(SseState::new(
+        let sse_state = Arc::new(SseState::with_config(
             self.reactor.clone(),
             auth_middleware_state.clone(),
+            super::sse::SseConfig {
+                max_sessions: self.config.sse_max_sessions,
+                ..Default::default()
+            },
         ));
 
         // Readiness state for DB + reactor health check

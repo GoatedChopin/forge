@@ -191,6 +191,10 @@ pub struct GatewayConfig {
     #[serde(default = "default_max_connections")]
     pub max_connections: usize,
 
+    /// Maximum active SSE sessions.
+    #[serde(default = "default_sse_max_sessions")]
+    pub sse_max_sessions: usize,
+
     /// Request timeout in seconds.
     #[serde(default = "default_request_timeout")]
     pub request_timeout_secs: u64,
@@ -215,6 +219,7 @@ impl Default for GatewayConfig {
             port: default_http_port(),
             grpc_port: default_grpc_port(),
             max_connections: default_max_connections(),
+            sse_max_sessions: default_sse_max_sessions(),
             request_timeout_secs: default_request_timeout(),
             cors_enabled: default_cors_enabled(),
             cors_origins: default_cors_origins(),
@@ -233,6 +238,10 @@ fn default_grpc_port() -> u16 {
 
 fn default_max_connections() -> usize {
     4096
+}
+
+fn default_sse_max_sessions() -> usize {
+    10_000
 }
 
 fn default_request_timeout() -> u64 {

@@ -27,10 +27,7 @@ pub struct ListCountersInput {
 }
 
 #[forge::mutation(public)]
-pub async fn create_counter(
-    ctx: &MutationContext,
-    input: CreateCounterInput,
-) -> Result<Counter> {
+pub async fn create_counter(ctx: &MutationContext, input: CreateCounterInput) -> Result<Counter> {
     let mut conn = ctx.conn().await?;
 
     sqlx::query_as!(
@@ -73,14 +70,10 @@ pub async fn get_counter(ctx: &QueryContext, input: GetCounterInput) -> Result<C
         return Err(ForgeError::Forbidden("User scope mismatch".into()));
     }
 
-    sqlx::query_as!(
-        Counter,
-        "SELECT * FROM counters WHERE id = $1",
-        input.id
-    )
-    .fetch_optional(ctx.db())
-    .await?
-    .ok_or_else(|| ForgeError::NotFound("Counter not found".into()))
+    sqlx::query_as!(Counter, "SELECT * FROM counters WHERE id = $1", input.id)
+        .fetch_optional(ctx.db())
+        .await?
+        .ok_or_else(|| ForgeError::NotFound("Counter not found".into()))
 }
 
 /// List all counters. Subscribed by watchers.

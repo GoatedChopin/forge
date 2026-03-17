@@ -1,33 +1,45 @@
 # Benchmarks
 
-Adaptive load testing that finds the sustainable throughput ceiling.
+Adaptive load testing that finds the practical ceiling for real-time users.
 
-The controller ramps concurrent users until latency exceeds 1.5s or error rate is too high, then stops. This finds the real ceiling, not just where things start to wobble.
+The benchmark treats a "concurrent user" as an active SSE session with a live query subscription. Each user keeps `/_api/events` open, subscribes, and continues making RPC calls while the controller ramps slowly. Each load level is held for `60s`, then the run checks `p90` latency for that level. By default the run is unlimited and stops automatically when `p90` exceeds `2000ms` or error rate exceeds `2%`. You can optionally add a max duration.
 
-## Results
+## Default Topology
 
-| Date | Version | Setup | Concurrent Users | Peak Throughput | Latency | Error Rate | Notes |
-|------|---------|-------|-----------------|-----------------|---------|------------|-------|
-| 2026-03-16 | 0.7.1 | M3 Pro 18GB, PG 18 tuned, pool=30 | 8,510 | 21,728 req/s | 553ms | 0.00% | Pool saturated at ceiling, 0% errors throughout |
+Local runs start:
 
-Config: `pool_size=30`, `test_before_acquire=false`, `log_statements=Off`, `synchronous_commit=off`, `max_connections=200`, release binary with LTO + codegen-units=1.
+- 1 PostgreSQL primary
+- 2 PostgreSQL read replicas
+- 3 Forge instances
 
-30% of traffic is writes that trigger PG NOTIFY for reactivity. Sustained 0.00% error rate throughout.
+The Forge instances read from replicas for query traffic, while writes still go to the primary.
 
 ## Benchmark app
 
-The `benchmarks/app/` directory contains a small app that hammers a single `counters` table with concurrent reads and writes while reactivity (PG NOTIFY) is active. It spins up a Dockerized Postgres cluster (1 primary, 2 replicas) so the test is self-contained.
+The `benchmarks/app/` directory contains a small Forge app plus one Rust load generator and one shell launcher.
 
 ```bash
-# full run: builds release binary, starts PG cluster, runs adaptive load test
-./benchmarks/app/run.sh 8m
+# full local run: 1 primary, 2 replicas, 3 Forge instances
+./benchmarks/app/run.sh
 
-# custom duration and params
-./benchmarks/app/run.sh 5m --ramp-step 100 --max-vus 5000
+# same run, but stop after 30 minutes if thresholds do not trigger first
+./benchmarks/app/run.sh --max-duration 30m
+
+# external database run, e.g. AlloyDB primary + 2 read replicas
+./benchmarks/app/run.sh \
+  --database-url 'postgres://primary/app?sslmode=require' \
+  --replica-url 'postgres://replica-1/app?sslmode=require' \
+  --replica-url 'postgres://replica-2/app?sslmode=require'
+
+# external Forge run, e.g. a GCP load balancer or explicit Forge VM URLs
+./benchmarks/app/run.sh --forge-url 'https://forge-bench.example.com'
+./benchmarks/app/run.sh \
+  --forge-url 'http://vm-1:8080' \
+  --forge-url 'http://vm-2:8080' \
+  --forge-url 'http://vm-3:8080'
 ```
 
 ## Prerequisites
 
-- [k6](https://grafana.com/docs/k6/latest/set-up/install-k6/) for RPC load testing
-- Python 3 (stdlib only, no pip installs)
-- Docker (for the benchmark app's PG cluster)
+- Rust toolchain
+- Docker for local PostgreSQL runs
