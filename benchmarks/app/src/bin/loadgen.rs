@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments, clippy::indexing_slicing)]
+
 use std::env;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -720,14 +722,9 @@ async fn open_sse(client: &Client, base_url: &str, token: &str) -> DynResult<Sse
 
     let drain_handle = tokio::spawn(async move {
         let mut local_buffer = buffer;
-        loop {
-            match response.chunk().await {
-                Ok(Some(chunk)) => {
-                    local_buffer.push_str(&String::from_utf8_lossy(&chunk).replace('\r', ""));
-                    let _ = pop_events(&mut local_buffer);
-                }
-                Ok(None) | Err(_) => break,
-            }
+        while let Ok(Some(chunk)) = response.chunk().await {
+            local_buffer.push_str(&String::from_utf8_lossy(&chunk).replace('\r', ""));
+            let _ = pop_events(&mut local_buffer);
         }
     });
 

@@ -124,16 +124,12 @@ impl ForgeDb {
 
 fn sql_operation(sql: &str) -> &'static str {
     let bytes = sql.trim_start().as_bytes();
-    if bytes.len() >= 6 && bytes[..6].eq_ignore_ascii_case(b"select") {
-        "SELECT"
-    } else if bytes.len() >= 6 && bytes[..6].eq_ignore_ascii_case(b"insert") {
-        "INSERT"
-    } else if bytes.len() >= 6 && bytes[..6].eq_ignore_ascii_case(b"update") {
-        "UPDATE"
-    } else if bytes.len() >= 6 && bytes[..6].eq_ignore_ascii_case(b"delete") {
-        "DELETE"
-    } else {
-        "OTHER"
+    match bytes.get(..6) {
+        Some(prefix) if prefix.eq_ignore_ascii_case(b"select") => "SELECT",
+        Some(prefix) if prefix.eq_ignore_ascii_case(b"insert") => "INSERT",
+        Some(prefix) if prefix.eq_ignore_ascii_case(b"update") => "UPDATE",
+        Some(prefix) if prefix.eq_ignore_ascii_case(b"delete") => "DELETE",
+        _ => "OTHER",
     }
 }
 
@@ -158,61 +154,40 @@ impl sqlx::Executor<'static> for ForgeDb {
         E: sqlx::Execute<'q, Postgres> + 'q,
     {
         let op = sql_operation(query.sql());
-        let span = tracing::info_span!(
-            "db.query",
-            db.system = "postgresql",
-            db.operation.name = op,
-        );
+        let span =
+            tracing::info_span!("db.query", db.system = "postgresql", db.operation.name = op,);
         Box::pin(
             async move { sqlx::Executor::fetch_optional(&self.0, query).await }.instrument(span),
         )
     }
 
-    fn execute<'e, 'q: 'e, E>(
-        self,
-        query: E,
-    ) -> BoxFuture<'e, Result<PgQueryResult, sqlx::Error>>
+    fn execute<'e, 'q: 'e, E>(self, query: E) -> BoxFuture<'e, Result<PgQueryResult, sqlx::Error>>
     where
         E: sqlx::Execute<'q, Postgres> + 'q,
     {
         let op = sql_operation(query.sql());
-        let span = tracing::info_span!(
-            "db.query",
-            db.system = "postgresql",
-            db.operation.name = op,
-        );
+        let span =
+            tracing::info_span!("db.query", db.system = "postgresql", db.operation.name = op,);
         Box::pin(async move { sqlx::Executor::execute(&self.0, query).await }.instrument(span))
     }
 
-    fn fetch_all<'e, 'q: 'e, E>(
-        self,
-        query: E,
-    ) -> BoxFuture<'e, Result<Vec<PgRow>, sqlx::Error>>
+    fn fetch_all<'e, 'q: 'e, E>(self, query: E) -> BoxFuture<'e, Result<Vec<PgRow>, sqlx::Error>>
     where
         E: sqlx::Execute<'q, Postgres> + 'q,
     {
         let op = sql_operation(query.sql());
-        let span = tracing::info_span!(
-            "db.query",
-            db.system = "postgresql",
-            db.operation.name = op,
-        );
+        let span =
+            tracing::info_span!("db.query", db.system = "postgresql", db.operation.name = op,);
         Box::pin(async move { sqlx::Executor::fetch_all(&self.0, query).await }.instrument(span))
     }
 
-    fn fetch_one<'e, 'q: 'e, E>(
-        self,
-        query: E,
-    ) -> BoxFuture<'e, Result<PgRow, sqlx::Error>>
+    fn fetch_one<'e, 'q: 'e, E>(self, query: E) -> BoxFuture<'e, Result<PgRow, sqlx::Error>>
     where
         E: sqlx::Execute<'q, Postgres> + 'q,
     {
         let op = sql_operation(query.sql());
-        let span = tracing::info_span!(
-            "db.query",
-            db.system = "postgresql",
-            db.operation.name = op,
-        );
+        let span =
+            tracing::info_span!("db.query", db.system = "postgresql", db.operation.name = op,);
         Box::pin(async move { sqlx::Executor::fetch_one(&self.0, query).await }.instrument(span))
     }
 
@@ -221,9 +196,7 @@ impl sqlx::Executor<'static> for ForgeDb {
         sql: &'q str,
         parameters: &'e [<Postgres as sqlx::Database>::TypeInfo],
     ) -> BoxFuture<'e, Result<<Postgres as sqlx::Database>::Statement<'q>, sqlx::Error>> {
-        Box::pin(async move {
-            sqlx::Executor::prepare_with(&self.0, sql, parameters).await
-        })
+        Box::pin(async move { sqlx::Executor::prepare_with(&self.0, sql, parameters).await })
     }
 
     fn describe<'e, 'q: 'e>(
@@ -267,65 +240,44 @@ impl<'c> sqlx::Executor<'c> for &'c mut ForgeConn<'_> {
         E: sqlx::Execute<'q, Postgres> + 'q,
     {
         let op = sql_operation(query.sql());
-        let span = tracing::info_span!(
-            "db.query",
-            db.system = "postgresql",
-            db.operation.name = op,
-        );
+        let span =
+            tracing::info_span!("db.query", db.system = "postgresql", db.operation.name = op,);
         let conn: &'e mut PgConnection = &mut *self;
         Box::pin(conn.fetch_optional(query).instrument(span))
     }
 
-    fn execute<'e, 'q: 'e, E>(
-        self,
-        query: E,
-    ) -> BoxFuture<'e, Result<PgQueryResult, sqlx::Error>>
+    fn execute<'e, 'q: 'e, E>(self, query: E) -> BoxFuture<'e, Result<PgQueryResult, sqlx::Error>>
     where
         'c: 'e,
         E: sqlx::Execute<'q, Postgres> + 'q,
     {
         let op = sql_operation(query.sql());
-        let span = tracing::info_span!(
-            "db.query",
-            db.system = "postgresql",
-            db.operation.name = op,
-        );
+        let span =
+            tracing::info_span!("db.query", db.system = "postgresql", db.operation.name = op,);
         let conn: &'e mut PgConnection = &mut *self;
         Box::pin(conn.execute(query).instrument(span))
     }
 
-    fn fetch_all<'e, 'q: 'e, E>(
-        self,
-        query: E,
-    ) -> BoxFuture<'e, Result<Vec<PgRow>, sqlx::Error>>
+    fn fetch_all<'e, 'q: 'e, E>(self, query: E) -> BoxFuture<'e, Result<Vec<PgRow>, sqlx::Error>>
     where
         'c: 'e,
         E: sqlx::Execute<'q, Postgres> + 'q,
     {
         let op = sql_operation(query.sql());
-        let span = tracing::info_span!(
-            "db.query",
-            db.system = "postgresql",
-            db.operation.name = op,
-        );
+        let span =
+            tracing::info_span!("db.query", db.system = "postgresql", db.operation.name = op,);
         let conn: &'e mut PgConnection = &mut *self;
         Box::pin(conn.fetch_all(query).instrument(span))
     }
 
-    fn fetch_one<'e, 'q: 'e, E>(
-        self,
-        query: E,
-    ) -> BoxFuture<'e, Result<PgRow, sqlx::Error>>
+    fn fetch_one<'e, 'q: 'e, E>(self, query: E) -> BoxFuture<'e, Result<PgRow, sqlx::Error>>
     where
         'c: 'e,
         E: sqlx::Execute<'q, Postgres> + 'q,
     {
         let op = sql_operation(query.sql());
-        let span = tracing::info_span!(
-            "db.query",
-            db.system = "postgresql",
-            db.operation.name = op,
-        );
+        let span =
+            tracing::info_span!("db.query", db.system = "postgresql", db.operation.name = op,);
         let conn: &'e mut PgConnection = &mut *self;
         Box::pin(conn.fetch_one(query).instrument(span))
     }
@@ -885,7 +837,6 @@ impl MutationContext {
     pub fn is_transactional(&self) -> bool {
         self.tx.is_some()
     }
-
 
     /// Acquire a connection compatible with sqlx compile-time checked macros.
     ///
