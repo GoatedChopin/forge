@@ -1,27 +1,24 @@
 use dioxus::prelude::*;
 
-use crate::forge::{
-    Todo, UpdateTodoInput, delete_todo, update_todo, use_forge_client,
-};
+use crate::forge::{DeleteTodoParams, Todo, UpdateTodoInput, use_delete_todo, use_update_todo};
 
 #[component]
 pub fn TodoItem(todo: Todo, mut error: Signal<Option<String>>) -> Element {
-    let client = use_forge_client();
+    let update_todo = use_update_todo();
+    let delete_todo = use_delete_todo();
     let completed = todo.completed;
     let id = todo.id.clone();
 
     let toggle = {
-        let client = client.clone();
+        let update_todo = update_todo.clone();
         let id = id.clone();
         move |_| {
             error.set(None);
-            let client = client.clone();
+            let update_todo = update_todo.clone();
             let id = id.clone();
             spawn(async move {
-                if let Err(err) = update_todo(
-                    &client,
-                    UpdateTodoInput { id, title: None, completed: Some(!completed) },
-                ).await {
+                if let Err(err) = update_todo.call(UpdateTodoInput::new(id).completed(!completed)).await
+                {
                     error.set(Some(err.message));
                 }
             });
@@ -30,10 +27,10 @@ pub fn TodoItem(todo: Todo, mut error: Signal<Option<String>>) -> Element {
 
     let remove = move |_| {
         error.set(None);
-        let client = client.clone();
+        let delete_todo = delete_todo.clone();
         let id = id.clone();
         spawn(async move {
-            if let Err(err) = delete_todo(&client, id).await {
+            if let Err(err) = delete_todo.call(DeleteTodoParams::new(id)).await {
                 error.set(Some(err.message));
             }
         });

@@ -1,5 +1,10 @@
 
+use std::marker::PhantomData;
+
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+
+use crate::ForgeClient;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ForgeError {
@@ -221,6 +226,33 @@ impl<TOutput> Default for WorkflowExecutionState<TOutput> {
             connection_state: ConnectionState::Disconnected,
             state: WorkflowState::default(),
         }
+    }
+}
+
+/// Mutation handle returned by `use_forge_mutation`. Clone into event handlers,
+/// call `.call(args)` to execute.
+#[derive(Clone)]
+pub struct Mutation<A, R> {
+    client: ForgeClient,
+    function_name: &'static str,
+    _phantom: PhantomData<fn(A) -> R>,
+}
+
+impl<A, R> Mutation<A, R>
+where
+    A: Serialize + 'static,
+    R: DeserializeOwned + 'static,
+{
+    pub(crate) fn new(client: ForgeClient, function_name: &'static str) -> Self {
+        Self {
+            client,
+            function_name,
+            _phantom: PhantomData,
+        }
+    }
+
+    pub async fn call(&self, args: A) -> Result<R, ForgeClientError> {
+        self.client.call(self.function_name, args).await
     }
 }
 

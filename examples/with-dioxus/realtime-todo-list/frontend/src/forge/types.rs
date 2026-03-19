@@ -8,6 +8,14 @@ pub struct CreateTodoInput {
     pub title: String,
 }
 
+impl CreateTodoInput {
+    pub fn new(title: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Todo {
     pub id: String,
@@ -21,4 +29,24 @@ pub struct UpdateTodoInput {
     pub id: String,
     pub title: Option<String>,
     pub completed: Option<bool>,
+}
+
+impl UpdateTodoInput {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            title: None,
+            completed: None,
+        }
+    }
+
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    pub fn completed(mut self, completed: bool) -> Self {
+        self.completed = Some(completed);
+        self
+    }
 }

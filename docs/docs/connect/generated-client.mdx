@@ -56,16 +56,42 @@ For Dioxus projects, Forge generates Rust bindings under `frontend/src/forge/`:
 
 ```rust
 // api.rs - generated from #[forge::query] and #[forge::mutation]
-pub async fn get_user(client: &ForgeClient, id: String) -> Result<User, ForgeClientError> {
-    client.call("get_user", serde_json::json!({ "id": id })).await
+pub struct GetUserParams {
+    pub id: String,
 }
 
-pub fn use_get_user_subscription(id: String) -> dioxus::prelude::Signal<SubscriptionState<User>> {
-    use_forge_subscription("get_user", serde_json::json!({ "id": id }))
+impl GetUserParams {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self { id: id.into() }
+    }
+}
+
+pub async fn get_user(client: &ForgeClient, args: GetUserParams) -> Result<User, ForgeClientError> {
+    client.call("get_user", args).await
+}
+
+// Default: one-shot query
+pub fn use_get_user(args: GetUserParams) -> QueryState<User> {
+    use_forge_query("get_user", args)
+}
+
+// Opt-in: real-time subscription
+pub fn use_get_user_live(args: GetUserParams) -> SubscriptionState<User> {
+    use_forge_subscription("get_user", args)
+}
+
+// Mutations return a typed Mutation handle
+pub fn use_create_user() -> Mutation<CreateUserParams, User> {
+    use_forge_mutation("create_user")
 }
 ```
 
 The generated `mod.rs` also re-exports `ForgeProvider`, `ForgeClient`, error types, and the Dioxus hooks from `forge-dioxus`.
+
+`use_<name>()` is a one-shot query. Append `_live` for real-time subscriptions.
+Mutations return a `Mutation<Args, Result>` with a `.call(args)` method.
+Generated params and DTO structs include `new(...)` constructors plus builder methods for
+optional fields, so common calls avoid verbose Rust struct literals.
 
 ## Type Mapping
 
@@ -306,7 +332,7 @@ After `forge generate --target dioxus`, a Dioxus target gets:
 | File       | Contents                                                                       |
 | ---------- | ------------------------------------------------------------------------------ |
 | `types.rs` | Rust structs for models and input DTOs, plus enums from `#[forge::forge_enum]` |
-| `api.rs`   | Typed RPC functions and subscription/job/workflow hooks                        |
+| `api.rs`   | Query hooks, `_live` subscription hooks, `Mutation` handles, job/workflow hooks |
 | `mod.rs`   | Re-exports generated modules plus `forge-dioxus` runtime types                 |
 
 ## CLI Options
@@ -366,31 +392,26 @@ For Dioxus, the same backend contract is consumed through generated Rust hooks:
 ```rust
 use dioxus::prelude::*;
 
-use crate::forge::{create_todo, use_forge_client, use_list_todos_subscription, CreateTodoInput};
+use crate::forge::{CreateTodoInput, use_create_todo, use_list_todos_live};
 
 #[component]
 fn TodoList() -> Element {
-    let client = use_forge_client();
-    let todos = use_list_todos_subscription();
+    let create_todo = use_create_todo();
+    let todos = use_list_todos_live();
 
     rsx! {
         button {
             onclick: move |_| {
-                let client = client.clone();
+                let create_todo = create_todo.clone();
                 spawn(async move {
-                    let _ = create_todo(
-                        &client,
-                        CreateTodoInput {
-                            title: "Ship it".to_string(),
-                        },
-                    ).await;
+                    let _ = create_todo.call(CreateTodoInput::new("Ship it")).await;
                 });
             },
             "Add"
         }
 
         ul {
-            for todo in todos.read().data.clone().unwrap_or_default() {
+            for todo in todos.data.clone().unwrap_or_default() {
                 li { "{todo.title}" }
             }
         }

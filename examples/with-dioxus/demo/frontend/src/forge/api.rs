@@ -3,115 +3,196 @@
 #![allow(dead_code, unused_imports)]
 
 use forge_dioxus::{
-    ForgeClient, ForgeClientError, JobExecutionState, QueryState, SubscriptionState,
-    WorkflowExecutionState,
+    ForgeClient, ForgeClientError, Mutation, QueryState,
+    SubscriptionState, JobExecutionState, WorkflowExecutionState,
 };
-use serde_json::json;
 
 use super::types::*;
-use super::{use_forge_job, use_forge_query, use_forge_subscription, use_forge_workflow};
+use super::{
+    use_forge_query, use_forge_subscription,
+    use_forge_mutation, use_forge_job, use_forge_workflow,
+};
 
-pub fn use_track_account_verification(
-    input: VerificationInput,
-) -> dioxus::prelude::Signal<WorkflowExecutionState<VerificationOutput>> {
-    use_forge_workflow("account_verification", input)
-}
-pub async fn create_user(
-    client: &ForgeClient,
-    email: String,
-    name: String,
-    role: Option<UserRole>,
-) -> Result<User, ForgeClientError> {
-    client
-        .call(
-            "create_user",
-            json!({ "email": email, "name": name, "role": role }),
-        )
-        .await
-}
-pub async fn delete_user(client: &ForgeClient, id: String) -> Result<bool, ForgeClientError> {
-    client.call("delete_user", json!({ "id": id })).await
-}
-pub fn use_track_export_users(
-    input: ExportInput,
-) -> dioxus::prelude::Signal<JobExecutionState<ExportOutput>> {
-    use_forge_job("export_users", input)
-}
 pub async fn get_iss_location(
     client: &ForgeClient,
 ) -> Result<Option<IssLocation>, ForgeClientError> {
     client.call("get_iss_location", ()).await
 }
 
-pub fn use_get_iss_location() -> dioxus::prelude::Signal<QueryState<Option<IssLocation>>> {
+pub fn use_get_iss_location() -> QueryState<Option<IssLocation>> {
     use_forge_query("get_iss_location", ())
 }
 
-pub fn use_get_iss_location_subscription()
--> dioxus::prelude::Signal<SubscriptionState<Option<IssLocation>>> {
+pub fn use_get_iss_location_live() -> SubscriptionState<Option<IssLocation>> {
     use_forge_subscription("get_iss_location", ())
 }
+
 pub async fn get_trades(client: &ForgeClient) -> Result<Vec<Trade>, ForgeClientError> {
     client.call("get_trades", ()).await
 }
 
-pub fn use_get_trades() -> dioxus::prelude::Signal<QueryState<Vec<Trade>>> {
+pub fn use_get_trades() -> QueryState<Vec<Trade>> {
     use_forge_query("get_trades", ())
 }
 
-pub fn use_get_trades_subscription() -> dioxus::prelude::Signal<SubscriptionState<Vec<Trade>>> {
+pub fn use_get_trades_live() -> SubscriptionState<Vec<Trade>> {
     use_forge_subscription("get_trades", ())
 }
-pub async fn get_user(client: &ForgeClient, id: String) -> Result<Option<User>, ForgeClientError> {
-    client.call("get_user", json!({ "id": id })).await
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct GetUserParams {
+    pub id: String,
+}
+impl GetUserParams {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self { id: id.into() }
+    }
 }
 
-pub fn use_get_user(id: String) -> dioxus::prelude::Signal<QueryState<Option<User>>> {
-    use_forge_query("get_user", json!({ "id": id }))
+pub async fn get_user(
+    client: &ForgeClient,
+    args: GetUserParams,
+) -> Result<Option<User>, ForgeClientError> {
+    client.call("get_user", args).await
 }
 
-pub fn use_get_user_subscription(
-    id: String,
-) -> dioxus::prelude::Signal<SubscriptionState<Option<User>>> {
-    use_forge_subscription("get_user", json!({ "id": id }))
+pub fn use_get_user(args: GetUserParams) -> QueryState<Option<User>> {
+    use_forge_query("get_user", args)
 }
+
+pub fn use_get_user_live(args: GetUserParams) -> SubscriptionState<Option<User>> {
+    use_forge_subscription("get_user", args)
+}
+
 pub async fn get_users(client: &ForgeClient) -> Result<Vec<User>, ForgeClientError> {
     client.call("get_users", ()).await
 }
 
-pub fn use_get_users() -> dioxus::prelude::Signal<QueryState<Vec<User>>> {
+pub fn use_get_users() -> QueryState<Vec<User>> {
     use_forge_query("get_users", ())
 }
 
-pub fn use_get_users_subscription() -> dioxus::prelude::Signal<SubscriptionState<Vec<User>>> {
+pub fn use_get_users_live() -> SubscriptionState<Vec<User>> {
     use_forge_subscription("get_users", ())
 }
+
 pub async fn get_webhook_events(
     client: &ForgeClient,
 ) -> Result<Vec<WebhookEvent>, ForgeClientError> {
     client.call("get_webhook_events", ()).await
 }
 
-pub fn use_get_webhook_events() -> dioxus::prelude::Signal<QueryState<Vec<WebhookEvent>>> {
+pub fn use_get_webhook_events() -> QueryState<Vec<WebhookEvent>> {
     use_forge_query("get_webhook_events", ())
 }
 
-pub fn use_get_webhook_events_subscription()
--> dioxus::prelude::Signal<SubscriptionState<Vec<WebhookEvent>>> {
+pub fn use_get_webhook_events_live() -> SubscriptionState<Vec<WebhookEvent>> {
     use_forge_subscription("get_webhook_events", ())
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct CreateUserParams {
+    pub email: String,
+    pub name: String,
+    pub role: Option<UserRole>,
+}
+impl CreateUserParams {
+    pub fn new(email: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            email: email.into(),
+            name: name.into(),
+            role: None,
+        }
+    }
+
+    pub fn role(mut self, role: UserRole) -> Self {
+        self.role = Some(role);
+        self
+    }
+}
+
+pub async fn create_user(
+    client: &ForgeClient,
+    args: CreateUserParams,
+) -> Result<User, ForgeClientError> {
+    client.call("create_user", args).await
+}
+
+pub fn use_create_user() -> Mutation<CreateUserParams, User> {
+    use_forge_mutation("create_user")
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct DeleteUserParams {
+    pub id: String,
+}
+impl DeleteUserParams {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self { id: id.into() }
+    }
+}
+
+pub async fn delete_user(
+    client: &ForgeClient,
+    args: DeleteUserParams,
+) -> Result<bool, ForgeClientError> {
+    client.call("delete_user", args).await
+}
+
+pub fn use_delete_user() -> Mutation<DeleteUserParams, bool> {
+    use_forge_mutation("delete_user")
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct UpdateUserParams {
+    pub id: String,
+    pub email: Option<String>,
+    pub name: Option<String>,
+    pub role: Option<UserRole>,
+}
+impl UpdateUserParams {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            email: None,
+            name: None,
+            role: None,
+        }
+    }
+
+    pub fn email(mut self, email: impl Into<String>) -> Self {
+        self.email = Some(email.into());
+        self
+    }
+
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    pub fn role(mut self, role: UserRole) -> Self {
+        self.role = Some(role);
+        self
+    }
 }
 
 pub async fn update_user(
     client: &ForgeClient,
-    id: String,
-    email: Option<String>,
-    name: Option<String>,
-    role: Option<UserRole>,
+    args: UpdateUserParams,
 ) -> Result<User, ForgeClientError> {
-    client
-        .call(
-            "update_user",
-            json!({ "id": id, "email": email, "name": name, "role": role }),
-        )
-        .await
+    client.call("update_user", args).await
+}
+
+pub fn use_update_user() -> Mutation<UpdateUserParams, User> {
+    use_forge_mutation("update_user")
+}
+
+pub fn use_export_users(args: ExportInput) -> JobExecutionState<ExportOutput> {
+    use_forge_job("export_users", args)
+}
+
+pub fn use_account_verification(
+    args: VerificationInput,
+) -> WorkflowExecutionState<VerificationOutput> {
+    use_forge_workflow("account_verification", args)
 }

@@ -89,34 +89,36 @@ fn App() -> Element {
 Generated query bindings typically expose:
 
 - `list_todos(&ForgeClient, ...)` for one-shot calls
-- `use_list_todos(...)` for query state
-- `use_list_todos_subscription(...)` for reactive subscriptions
+- `use_list_todos(...)` for the default live subscription state
+- `use_list_todos_signal(...)` when you need the live subscription signal
+- `use_list_todos_query(...)` for an explicit one-shot hook
+- `use_create_todo()` style hooks for client-bound mutations
 
 Example:
 
 ```rust
 use dioxus::prelude::*;
 
-use crate::forge::{create_todo, use_forge_client, use_list_todos_subscription};
+use crate::forge::{CreateTodoInput, use_create_todo, use_list_todos};
 
 #[component]
 fn TodoScreen() -> Element {
-    let client = use_forge_client();
-    let todos = use_list_todos_subscription();
+    let create_todo = use_create_todo();
+    let todos = use_list_todos();
 
     rsx! {
         button {
             onclick: move |_| {
-                let client = client.clone();
+                let create_todo = create_todo.clone();
                 spawn(async move {
-                    let _ = create_todo(&client, "Learn Forge".to_string()).await;
+                    let _ = create_todo(CreateTodoInput::new("Learn Forge")).await;
                 });
             },
             "Add todo"
         }
 
         ul {
-            for todo in todos.read().data.clone().unwrap_or_default() {
+            for todo in todos.data.clone().unwrap_or_default() {
                 li { "{todo.title}" }
             }
         }

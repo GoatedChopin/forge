@@ -9,3 +9,10 @@ title = "demo"
 
 [web.wasm_opt]
 level = "s"
+
+[bundle]
+identifier = "com.forge.demo"
+publisher = "Forge"
+
+[desktop]
+enable_default_menu_bar = true

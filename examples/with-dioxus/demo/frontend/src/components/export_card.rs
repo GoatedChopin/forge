@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use forge_dioxus::JobStatus;
 
-use crate::forge::{ExportInput, use_track_export_users};
+use crate::forge::{ExportInput, use_export_users};
 
 #[component]
 pub fn ExportCard() -> Element {
@@ -22,7 +22,7 @@ pub fn ExportCard() -> Element {
 
 #[component]
 fn ExportRun(on_restart: EventHandler<MouseEvent>) -> Element {
-    let job = use_track_export_users(ExportInput { format: "csv".into() })();
+    let job = use_export_users(ExportInput::new("csv"));
     let progress = job.state.progress.unwrap_or(0.0).clamp(0.0, 100.0);
     let message = job
         .state

@@ -1,17 +1,14 @@
 use dioxus::prelude::*;
 use forge_dioxus::WorkflowStatus;
 
-use crate::forge::{User, VerificationInput, use_track_account_verification};
+use crate::forge::{User, VerificationInput, use_account_verification};
 
 #[component]
 pub fn VerificationCard(selected_user: Signal<Option<User>>) -> Element {
     let mut run_request = use_signal(|| None::<(u64, String, String)>);
 
     let start = move |_| {
-        let nonce = run_request()
-            .as_ref()
-            .map(|(n, _, _)| n + 1)
-            .unwrap_or(1);
+        let nonce = run_request().as_ref().map(|(n, _, _)| n + 1).unwrap_or(1);
         let (account_id, email) = match selected_user() {
             Some(u) => (u.id.clone(), u.email.clone()),
             None => ("demo-user".into(), "demo@example.com".into()),
@@ -38,7 +35,7 @@ fn VerificationRun(
     email: String,
     on_restart: EventHandler<MouseEvent>,
 ) -> Element {
-    let wf = use_track_account_verification(VerificationInput { account_id, email })();
+    let wf = use_account_verification(VerificationInput::new(account_id, email));
     let can_restart = matches!(
         wf.state.status,
         WorkflowStatus::Completed | WorkflowStatus::Failed | WorkflowStatus::Compensated

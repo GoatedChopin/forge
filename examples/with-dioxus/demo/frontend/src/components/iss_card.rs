@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-use crate::forge::use_get_iss_location;
+use crate::forge::use_get_iss_location_live;
 
 fn format_coord(value: f64, is_lat: bool) -> String {
     let dir = if is_lat {
@@ -10,12 +10,12 @@ fn format_coord(value: f64, is_lat: bool) -> String {
     } else {
         "W"
     };
-    format!("{:.4} {dir}", value.abs())
+    format!("{:.4}\u{a0}{dir}", value.abs())
 }
 
 #[component]
 pub fn IssCard() -> Element {
-    let state = use_get_iss_location()();
+    let state = use_get_iss_location_live();
     let location = state.data.as_ref().and_then(|l| l.as_ref());
 
     rsx! {

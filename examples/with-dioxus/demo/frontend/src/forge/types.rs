@@ -12,9 +12,35 @@ pub struct BinanceTrade {
     pub is_buyer_maker: bool,
 }
 
+impl BinanceTrade {
+    pub fn new(
+        symbol: impl Into<String>,
+        price: impl Into<String>,
+        quantity: impl Into<String>,
+        trade_time: i64,
+        is_buyer_maker: bool,
+    ) -> Self {
+        Self {
+            symbol: symbol.into(),
+            price: price.into(),
+            quantity: quantity.into(),
+            trade_time: trade_time,
+            is_buyer_maker: is_buyer_maker,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExportInput {
     pub format: String,
+}
+
+impl ExportInput {
+    pub fn new(format: impl Into<String>) -> Self {
+        Self {
+            format: format.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -24,11 +50,31 @@ pub struct ExportOutput {
     pub format: String,
 }
 
+impl ExportOutput {
+    pub fn new(count: usize, data: impl Into<String>, format: impl Into<String>) -> Self {
+        Self {
+            count: count,
+            data: data.into(),
+            format: format.into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IssApiResponse {
     pub iss_position: IssPosition,
     pub timestamp: i64,
     pub message: String,
+}
+
+impl IssApiResponse {
+    pub fn new(iss_position: IssPosition, timestamp: i64, message: impl Into<String>) -> Self {
+        Self {
+            iss_position: iss_position,
+            timestamp: timestamp,
+            message: message.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -40,10 +86,37 @@ pub struct IssLocation {
     pub created_at: String,
 }
 
+impl IssLocation {
+    pub fn new(
+        id: impl Into<String>,
+        latitude: f64,
+        longitude: f64,
+        api_timestamp: impl Into<String>,
+        created_at: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            latitude: latitude,
+            longitude: longitude,
+            api_timestamp: api_timestamp.into(),
+            created_at: created_at.into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IssPosition {
     pub latitude: String,
     pub longitude: String,
+}
+
+impl IssPosition {
+    pub fn new(latitude: impl Into<String>, longitude: impl Into<String>) -> Self {
+        Self {
+            latitude: latitude.into(),
+            longitude: longitude.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -57,6 +130,28 @@ pub struct Trade {
     pub created_at: String,
 }
 
+impl Trade {
+    pub fn new(
+        id: impl Into<String>,
+        symbol: impl Into<String>,
+        price: f64,
+        quantity: f64,
+        trade_time: impl Into<String>,
+        is_buyer_maker: bool,
+        created_at: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            symbol: symbol.into(),
+            price: price,
+            quantity: quantity,
+            trade_time: trade_time.into(),
+            is_buyer_maker: is_buyer_maker,
+            created_at: created_at.into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct User {
     pub id: String,
@@ -67,10 +162,39 @@ pub struct User {
     pub updated_at: String,
 }
 
+impl User {
+    pub fn new(
+        id: impl Into<String>,
+        email: impl Into<String>,
+        name: impl Into<String>,
+        role: UserRole,
+        created_at: impl Into<String>,
+        updated_at: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            email: email.into(),
+            name: name.into(),
+            role: role,
+            created_at: created_at.into(),
+            updated_at: updated_at.into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VerificationInput {
     pub account_id: String,
     pub email: String,
+}
+
+impl VerificationInput {
+    pub fn new(account_id: impl Into<String>, email: impl Into<String>) -> Self {
+        Self {
+            account_id: account_id.into(),
+            email: email.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -79,12 +203,37 @@ pub struct VerificationOutput {
     pub token: String,
 }
 
+impl VerificationOutput {
+    pub fn new(verified: bool, token: impl Into<String>) -> Self {
+        Self {
+            verified: verified,
+            token: token.into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WebhookEvent {
     pub id: String,
     pub idempotency_key: String,
     pub webhook_name: String,
     pub processed_at: String,
+}
+
+impl WebhookEvent {
+    pub fn new(
+        id: impl Into<String>,
+        idempotency_key: impl Into<String>,
+        webhook_name: impl Into<String>,
+        processed_at: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            idempotency_key: idempotency_key.into(),
+            webhook_name: webhook_name.into(),
+            processed_at: processed_at.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

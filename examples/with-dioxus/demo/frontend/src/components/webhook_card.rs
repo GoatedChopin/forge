@@ -3,11 +3,11 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
 use super::{format_time, generate_key};
-use crate::forge::use_get_webhook_events_subscription;
+use crate::forge::use_get_webhook_events_live;
 
 #[component]
 pub fn WebhookCard(api_url: String) -> Element {
-    let state = use_get_webhook_events_subscription()();
+    let state = use_get_webhook_events_live();
     let events = state.data.clone().unwrap_or_default();
 
     let mut idempotency_key = use_signal(generate_key);
@@ -74,10 +74,16 @@ pub fn WebhookCard(api_url: String) -> Element {
 }
 
 async fn trigger_webhook(api_url: &str, idempotency_key: &str) -> Result<(), String> {
-    let payload = serde_json::json!({ "action": "test", "ts": js_sys::Date::now() }).to_string();
+    #[cfg(target_arch = "wasm32")]
+    let now = js_sys::Date::now();
+    #[cfg(not(target_arch = "wasm32"))]
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as f64;
+    let payload = serde_json::json!({ "action": "test", "ts": now }).to_string();
 
-    let mut mac =
-        Hmac::<Sha256>::new_from_slice(b"demo-secret").map_err(|e| e.to_string())?;
+    let mut mac = Hmac::<Sha256>::new_from_slice(b"demo-secret").map_err(|e| e.to_string())?;
     mac.update(payload.as_bytes());
     let signature = hex::encode(mac.finalize().into_bytes());
 

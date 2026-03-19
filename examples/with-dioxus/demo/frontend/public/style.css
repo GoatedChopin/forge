@@ -9,12 +9,16 @@ body {
     "Segoe UI",
     sans-serif;
   min-height: 100vh;
+  -webkit-text-size-adjust: 100%;
 }
 
 main {
   max-width: 56rem;
   margin: 0 auto;
   padding: 2rem;
+  padding: 2rem max(2rem, env(safe-area-inset-left)) 2rem max(2rem, env(safe-area-inset-right));
+  padding-top: max(2rem, env(safe-area-inset-top));
+  padding-bottom: max(2rem, env(safe-area-inset-bottom));
 }
 
 h1 {
@@ -108,6 +112,7 @@ h2 {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 1.1rem;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .value.placeholder {
@@ -389,13 +394,51 @@ th {
 }
 
 @media (max-width: 700px) {
+  main {
+    padding: 1rem;
+    padding-top: max(1rem, env(safe-area-inset-top));
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+    padding-left: max(1rem, env(safe-area-inset-left));
+    padding-right: max(1rem, env(safe-area-inset-right));
+  }
+
+  h1 {
+    font-size: 1.5rem;
+    margin-bottom: 1rem;
+  }
+
   .grid {
     grid-template-columns: 1fr;
+    gap: 1rem;
+    margin-bottom: 1rem;
   }
 
   .grid > .stack {
     min-height: auto;
     justify-content: flex-start;
+    gap: 1rem;
+  }
+
+  .card {
+    padding: 1rem;
+  }
+
+  .stats {
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .value {
+    font-size: 0.95rem;
+  }
+
+  .webhook-row {
+    flex-wrap: wrap;
+  }
+
+  .key-input {
+    flex: 1 1 100%;
+    font-size: 0.8rem;
   }
 
   .form-row {

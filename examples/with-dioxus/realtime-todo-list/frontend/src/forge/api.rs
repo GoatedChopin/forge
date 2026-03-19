@@ -3,37 +3,67 @@
 #![allow(dead_code, unused_imports)]
 
 use forge_dioxus::{
-    ForgeClient, ForgeClientError, JobExecutionState, QueryState, SubscriptionState,
-    WorkflowExecutionState,
+    ForgeClient, ForgeClientError, Mutation, QueryState,
+    SubscriptionState, JobExecutionState, WorkflowExecutionState,
 };
-use serde_json::json;
 
 use super::types::*;
-use super::{use_forge_job, use_forge_query, use_forge_subscription, use_forge_workflow};
+use super::{
+    use_forge_query, use_forge_subscription,
+    use_forge_mutation, use_forge_job, use_forge_workflow,
+};
 
-pub async fn create_todo(
-    client: &ForgeClient,
-    input: CreateTodoInput,
-) -> Result<Todo, ForgeClientError> {
-    client.call("create_todo", input).await
-}
-pub async fn delete_todo(client: &ForgeClient, id: String) -> Result<bool, ForgeClientError> {
-    client.call("delete_todo", json!({ "id": id })).await
-}
 pub async fn list_todos(client: &ForgeClient) -> Result<Vec<Todo>, ForgeClientError> {
     client.call("list_todos", ()).await
 }
 
-pub fn use_list_todos() -> dioxus::prelude::Signal<QueryState<Vec<Todo>>> {
+pub fn use_list_todos() -> QueryState<Vec<Todo>> {
     use_forge_query("list_todos", ())
 }
 
-pub fn use_list_todos_subscription() -> dioxus::prelude::Signal<SubscriptionState<Vec<Todo>>> {
+pub fn use_list_todos_live() -> SubscriptionState<Vec<Todo>> {
     use_forge_subscription("list_todos", ())
 }
+
+pub async fn create_todo(
+    client: &ForgeClient,
+    args: CreateTodoInput,
+) -> Result<Todo, ForgeClientError> {
+    client.call("create_todo", args).await
+}
+
+pub fn use_create_todo() -> Mutation<CreateTodoInput, Todo> {
+    use_forge_mutation("create_todo")
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct DeleteTodoParams {
+    pub id: String,
+}
+impl DeleteTodoParams {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self { id: id.into() }
+    }
+}
+
+pub async fn delete_todo(
+    client: &ForgeClient,
+    args: DeleteTodoParams,
+) -> Result<bool, ForgeClientError> {
+    client.call("delete_todo", args).await
+}
+
+pub fn use_delete_todo() -> Mutation<DeleteTodoParams, bool> {
+    use_forge_mutation("delete_todo")
+}
+
 pub async fn update_todo(
     client: &ForgeClient,
-    input: UpdateTodoInput,
+    args: UpdateTodoInput,
 ) -> Result<Todo, ForgeClientError> {
-    client.call("update_todo", input).await
+    client.call("update_todo", args).await
+}
+
+pub fn use_update_todo() -> Mutation<UpdateTodoInput, Todo> {
+    use_forge_mutation("update_todo")
 }

@@ -1,4 +1,3 @@
-
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
@@ -9,8 +8,8 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::{
-    ConnectionState, JobExecutionState, QueryState, StreamEvent, SubscriptionHandle, SubscriptionState,
-    WorkflowExecutionState, use_forge_client,
+    ConnectionState, JobExecutionState, Mutation, QueryState, StreamEvent, SubscriptionHandle,
+    SubscriptionState, WorkflowExecutionState, use_forge_client,
 };
 
 async fn sleep(duration: Duration) {
@@ -35,7 +34,7 @@ struct WorkflowStartResponse {
     workflow_id: String,
 }
 
-pub fn use_forge_query<TArgs, TResult>(
+pub fn use_forge_query_signal<TArgs, TResult>(
     function_name: &'static str,
     args: TArgs,
 ) -> Signal<QueryState<TResult>>
@@ -84,7 +83,18 @@ where
     state
 }
 
-pub fn use_forge_subscription<TArgs, TResult>(
+pub fn use_forge_query<TArgs, TResult>(
+    function_name: &'static str,
+    args: TArgs,
+) -> QueryState<TResult>
+where
+    TArgs: Serialize + Clone + PartialEq + 'static,
+    TResult: DeserializeOwned + Clone + 'static,
+{
+    use_forge_query_signal(function_name, args)()
+}
+
+pub fn use_forge_subscription_signal<TArgs, TResult>(
     function_name: &'static str,
     args: TArgs,
 ) -> Signal<SubscriptionState<TResult>>
@@ -105,7 +115,7 @@ where
     let reconnect_key = reconnect_nonce();
 
     use_effect(use_reactive!(|(args, reconnect_key)| {
-        let _ = reconnect_key;
+        let is_reconnect = reconnect_key > 0;
         let current_generation = generation.get() + 1;
         generation.set(current_generation);
 
@@ -119,29 +129,36 @@ where
         flush_scheduled.set(false);
         let had_data = previous.data.is_some();
         has_received_data.set(had_data);
-        state.set(SubscriptionState {
-            loading: !had_data,
-            data: previous.data,
-            error: None,
-            stale: had_data,
-            connection_state: ConnectionState::Connecting,
-        });
+
+        // Only update visible state on the initial connection, not retries.
+        // Retries happen silently to avoid re-render storms in desktop WebViews.
+        if !is_reconnect {
+            state.set(SubscriptionState {
+                loading: !had_data,
+                data: previous.data,
+                error: None,
+                stale: had_data,
+                connection_state: ConnectionState::Connecting,
+            });
+        }
+
         let reconnect_generation = generation.clone();
         let reconnect_attempts = reconnect_attempts.clone();
-        reconnect_attempts.set(0);
+        if !is_reconnect {
+            reconnect_attempts.set(0);
+        }
         let pending_data = pending_data.clone();
         let flush_scheduled = flush_scheduled.clone();
         let has_received_data = has_received_data.clone();
 
         let subscription = client.subscribe_query(function_name, args, move |event| match event {
             StreamEvent::Connection(connection_state) => {
-                let mut next = state.peek().clone();
-                next.connection_state = connection_state;
-                next.stale = connection_state != ConnectionState::Connected;
-                state.set(next);
-
                 if connection_state == ConnectionState::Connected {
                     reconnect_attempts.set(0);
+                    let mut next = state.peek().clone();
+                    next.connection_state = ConnectionState::Connected;
+                    next.stale = false;
+                    state.set(next);
                 }
 
                 if connection_state == ConnectionState::Disconnected
@@ -149,6 +166,12 @@ where
                 {
                     let attempts = reconnect_attempts.get();
                     if attempts >= 10 {
+                        // Exhausted retries, now surface the error
+                        let mut next = state.peek().clone();
+                        next.loading = false;
+                        next.connection_state = ConnectionState::Disconnected;
+                        next.stale = true;
+                        state.set(next);
                         return;
                     }
                     reconnect_attempts.set(attempts + 1);
@@ -200,6 +223,12 @@ where
                 });
             }
             StreamEvent::Error(err) => {
+                // During reconnect attempts, suppress errors to avoid UI churn.
+                // Only surface errors on the initial connection or after retries exhaust.
+                let attempts = reconnect_attempts.get();
+                if attempts > 0 && attempts < 10 {
+                    return;
+                }
                 let mut next = state.peek().clone();
                 next.loading = false;
                 next.error = Some(err.as_forge_error());
@@ -223,7 +252,29 @@ where
     state
 }
 
-pub fn use_forge_job<TArgs, TResult>(
+pub fn use_forge_subscription<TArgs, TResult>(
+    function_name: &'static str,
+    args: TArgs,
+) -> SubscriptionState<TResult>
+where
+    TArgs: Serialize + Clone + PartialEq + 'static,
+    TResult: DeserializeOwned + Clone + 'static,
+{
+    use_forge_subscription_signal(function_name, args)()
+}
+
+pub fn use_forge_mutation<TArgs, TResult>(
+    function_name: &'static str,
+) -> Mutation<TArgs, TResult>
+where
+    TArgs: Serialize + 'static,
+    TResult: DeserializeOwned + 'static,
+{
+    let client = use_forge_client();
+    Mutation::new(client, function_name)
+}
+
+pub fn use_forge_job_signal<TArgs, TResult>(
     function_name: &'static str,
     args: TArgs,
 ) -> Signal<JobExecutionState<TResult>>
@@ -247,10 +298,13 @@ where
         state.set(JobExecutionState::default());
 
         spawn(async move {
-            match client.call::<_, JobStartResponse>(function_name, args).await {
+            match client
+                .call::<_, JobStartResponse>(function_name, args)
+                .await
+            {
                 Ok(started) => {
-                    let subscription = client.subscribe_job(started.job_id.clone(), move |event| {
-                        match event {
+                    let subscription =
+                        client.subscribe_job(started.job_id.clone(), move |event| match event {
                             StreamEvent::Connection(connection_state) => {
                                 let mut next = state.peek().clone();
                                 next.connection_state = connection_state;
@@ -270,8 +324,7 @@ where
                                 next.state.error = Some(err.message);
                                 state.set(next);
                             }
-                        }
-                    });
+                        });
                     *handle.borrow_mut() = Some(subscription);
                 }
                 Err(err) => {
@@ -296,7 +349,18 @@ where
     state
 }
 
-pub fn use_forge_workflow<TArgs, TResult>(
+pub fn use_forge_job<TArgs, TResult>(
+    function_name: &'static str,
+    args: TArgs,
+) -> JobExecutionState<TResult>
+where
+    TArgs: Serialize + Clone + PartialEq + 'static,
+    TResult: DeserializeOwned + Clone + 'static,
+{
+    use_forge_job_signal(function_name, args)()
+}
+
+pub fn use_forge_workflow_signal<TArgs, TResult>(
     function_name: &'static str,
     args: TArgs,
 ) -> Signal<WorkflowExecutionState<TResult>>
@@ -372,3 +436,15 @@ where
 
     state
 }
+
+pub fn use_forge_workflow<TArgs, TResult>(
+    function_name: &'static str,
+    args: TArgs,
+) -> WorkflowExecutionState<TResult>
+where
+    TArgs: Serialize + Clone + PartialEq + 'static,
+    TResult: DeserializeOwned + Clone + 'static,
+{
+    use_forge_workflow_signal(function_name, args)()
+}
+

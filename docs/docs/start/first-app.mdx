@@ -236,21 +236,23 @@ With `--target dioxus`, Forge generates Rust bindings and hooks instead:
 
 ```rust
 use dioxus::prelude::*;
-use crate::forge::use_list_todos_subscription;
+use crate::forge::use_list_todos_live;
 
 #[component]
 fn TodoList() -> Element {
-    let todos = use_list_todos_subscription();
+    let todos = use_list_todos_live();
 
     rsx! {
         ul {
-            for todo in todos.read().data.clone().unwrap_or_default() {
+            for todo in todos.data.clone().unwrap_or_default() {
                 li { "{todo.title}" }
             }
         }
     }
 }
 ```
+
+`use_list_todos()` fetches once. `use_list_todos_live()` subscribes to real-time changes.
 
 ## What You Built
 

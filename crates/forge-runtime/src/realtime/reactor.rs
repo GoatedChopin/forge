@@ -1159,8 +1159,7 @@ mod tests {
             )]),
         );
 
-        let result =
-            auth.check_identity_args("list_orders", &serde_json::json!({}), true);
+        let result = auth.check_identity_args("list_orders", &serde_json::json!({}), true);
         assert!(matches!(result, Err(forge_core::ForgeError::Forbidden(_))));
     }
 

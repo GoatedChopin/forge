@@ -16,14 +16,29 @@ pub fn format_time(ts: &str) -> String {
     if ts.is_empty() {
         return "-".into();
     }
-    let date = js_sys::Date::new(&wasm_bindgen::JsValue::from_str(ts));
-    date.to_locale_time_string("en-US")
-        .as_string()
-        .unwrap_or_else(|| ts.to_string())
+    #[cfg(target_arch = "wasm32")]
+    {
+        let date = js_sys::Date::new(&wasm_bindgen::JsValue::from_str(ts));
+        date.to_locale_time_string("en-US")
+            .as_string()
+            .unwrap_or_else(|| ts.to_string())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        chrono::DateTime::parse_from_rfc3339(ts)
+            .map(|dt| dt.format("%I:%M:%S %p").to_string())
+            .unwrap_or_else(|_| ts.to_string())
+    }
 }
 
 pub fn generate_key() -> String {
+    #[cfg(target_arch = "wasm32")]
     let ms = js_sys::Date::now() as u64;
-    let suffix = format!("{:06x}", (js_sys::Math::random() * 16_777_215.0) as u32);
+    #[cfg(not(target_arch = "wasm32"))]
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let suffix = format!("{:06x}", rand::random::<u32>() & 0xFF_FFFF);
     format!("{ms}-{suffix}")
 }

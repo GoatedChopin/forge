@@ -1,40 +1,16 @@
 use dioxus::prelude::*;
 
-use crate::forge::{
-    CreateTodoInput, create_todo, use_forge_client, use_list_todos_subscription,
-};
+use crate::forge::{CreateTodoInput, use_create_todo, use_list_todos_live};
 use crate::todo_item::TodoItem;
-
-fn submit_todo(
-    client: crate::forge::ForgeClient,
-    mut new_title: Signal<String>,
-    mut error: Signal<Option<String>>,
-    mut adding: Signal<bool>,
-) {
-    let title = new_title().trim().to_string();
-    if title.is_empty() || adding() {
-        return;
-    }
-    error.set(None);
-    adding.set(true);
-    spawn(async move {
-        match create_todo(&client, CreateTodoInput { title }).await {
-            Ok(_) => new_title.set(String::new()),
-            Err(err) => error.set(Some(err.message)),
-        }
-        adding.set(false);
-    });
-}
 
 #[component]
 pub fn TodoApp() -> Element {
-    let client = use_forge_client();
-    let todos = use_list_todos_subscription();
+    let create_todo = use_create_todo();
+    let todo_state = use_list_todos_live();
     let mut new_title = use_signal(String::new);
     let mut error = use_signal(|| None::<String>);
     let mut adding = use_signal(|| false);
 
-    let todo_state = todos();
     let todo_items = todo_state.data.clone().unwrap_or_default();
     let remaining_count = todo_items.iter().filter(|t| !t.completed).count();
 
@@ -58,10 +34,23 @@ pub fn TodoApp() -> Element {
                             disabled: adding(),
                             oninput: move |event| new_title.set(event.value()),
                             onkeydown: {
-                                let client = client.clone();
+                                let create_todo = create_todo.clone();
                                 move |event: KeyboardEvent| {
                                     if event.key().to_string() == "Enter" {
-                                        submit_todo(client.clone(), new_title, error, adding);
+                                        let title = new_title().trim().to_string();
+                                        if title.is_empty() || adding() {
+                                            return;
+                                        }
+                                        error.set(None);
+                                        adding.set(true);
+                                        let create_todo = create_todo.clone();
+                                        spawn(async move {
+                                            match create_todo.call(CreateTodoInput::new(title)).await {
+                                                Ok(_) => new_title.set(String::new()),
+                                                Err(err) => error.set(Some(err.message)),
+                                            }
+                                            adding.set(false);
+                                        });
                                     }
                                 }
                             },
@@ -69,8 +58,23 @@ pub fn TodoApp() -> Element {
                         button {
                             disabled: adding() || new_title().trim().is_empty(),
                             onclick: {
-                                let client = client.clone();
-                                move |_| submit_todo(client.clone(), new_title, error, adding)
+                                let create_todo = create_todo.clone();
+                                move |_| {
+                                    let title = new_title().trim().to_string();
+                                    if title.is_empty() || adding() {
+                                        return;
+                                    }
+                                    error.set(None);
+                                    adding.set(true);
+                                    let create_todo = create_todo.clone();
+                                    spawn(async move {
+                                        match create_todo.call(CreateTodoInput::new(title)).await {
+                                            Ok(_) => new_title.set(String::new()),
+                                            Err(err) => error.set(Some(err.message)),
+                                        }
+                                        adding.set(false);
+                                    });
+                                }
                             },
                             if adding() { "Adding..." } else { "Add" }
                         }

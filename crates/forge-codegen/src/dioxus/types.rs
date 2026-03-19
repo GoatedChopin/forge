@@ -3,7 +3,7 @@
 //! Generates `types.rs` with Rust structs and enums for the frontend,
 //! using the shared `emit` module for all type mapping.
 
-use forge_core::schema::{SchemaRegistry, TableDef};
+use forge_core::schema::{FieldDef, RustType, SchemaRegistry, TableDef};
 
 use crate::Error;
 use crate::emit::{self, contains_json, contains_upload};
@@ -77,7 +77,86 @@ fn render_struct(table: &TableDef) -> String {
         ));
     }
     output.push_str("}\n");
+    if table.is_dto {
+        output.push_str(&render_struct_impl(&table.struct_name, &table.fields));
+    }
     output
+}
+
+fn render_struct_impl(struct_name: &str, fields: &[FieldDef]) -> String {
+    if fields.is_empty() {
+        return String::new();
+    }
+
+    let required_fields: Vec<_> = fields
+        .iter()
+        .filter(|field| !matches!(field.rust_type, RustType::Option(_)))
+        .collect();
+    let optional_fields: Vec<_> = fields
+        .iter()
+        .filter(|field| matches!(field.rust_type, RustType::Option(_)))
+        .collect();
+
+    let constructor_params = required_fields
+        .iter()
+        .map(|field| format!("{}: {}", field.name, builder_param_type(&field.rust_type)))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let mut constructor_body = String::new();
+    for field in &required_fields {
+        constructor_body.push_str(&format!(
+            "            {}: {},\n",
+            field.name,
+            builder_value_expr(&field.name, &field.rust_type)
+        ));
+    }
+    for field in &optional_fields {
+        constructor_body.push_str(&format!("            {}: None,\n", field.name));
+    }
+
+    let constructor = if constructor_params.is_empty() {
+        format!(
+            "    pub fn new() -> Self {{\n        Self {{\n{constructor_body}        }}\n    }}\n"
+        )
+    } else {
+        format!(
+            "    pub fn new({constructor_params}) -> Self {{\n        Self {{\n{constructor_body}        }}\n    }}\n"
+        )
+    };
+
+    let mut setters = String::new();
+    for field in optional_fields {
+        let RustType::Option(inner) = &field.rust_type else {
+            continue;
+        };
+
+        setters.push_str(&format!(
+            "\n    pub fn {field_name}(mut self, {field_name}: {param_type}) -> Self {{\n        self.{field_name} = Some({value_expr});\n        self\n    }}\n",
+            field_name = field.name,
+            param_type = builder_param_type(inner),
+            value_expr = builder_value_expr(&field.name, inner),
+        ));
+    }
+
+    format!("\nimpl {struct_name} {{\n{constructor}{setters}}}\n")
+}
+
+fn builder_param_type(rust_type: &RustType) -> String {
+    let ty = emit::dioxus_type(rust_type);
+    if ty == "String" {
+        "impl Into<String>".into()
+    } else {
+        ty
+    }
+}
+
+fn builder_value_expr(name: &str, rust_type: &RustType) -> String {
+    if emit::dioxus_type(rust_type) == "String" {
+        format!("{name}.into()")
+    } else {
+        name.to_string()
+    }
 }
 
 #[cfg(test)]
@@ -138,5 +217,24 @@ mod tests {
         assert!(output.contains("    Active,"));
         assert!(output.contains("    Inactive,"));
         assert!(output.contains("serde(rename_all = \"snake_case\")"));
+    }
+
+    #[test]
+    fn generates_dto_constructor_and_optional_builders() {
+        let registry = SchemaRegistry::new();
+        let mut dto = TableDef::new("update_user_input", "UpdateUserInput");
+        dto.is_dto = true;
+        dto.fields.push(FieldDef::new("id", RustType::Uuid));
+        dto.fields.push(FieldDef::new(
+            "email",
+            RustType::Option(Box::new(RustType::String)),
+        ));
+        registry.register_table(dto);
+
+        let output = generate(&registry).expect("dto helpers should generate");
+        assert!(output.contains("impl UpdateUserInput {"));
+        assert!(output.contains("pub fn new(id: impl Into<String>) -> Self"));
+        assert!(output.contains("email: None"));
+        assert!(output.contains("pub fn email(mut self, email: impl Into<String>) -> Self"));
     }
 }
