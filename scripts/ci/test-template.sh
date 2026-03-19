@@ -52,7 +52,7 @@ cd "$DIR"
 echo "=== Auto-format generated code ==="
 cargo fmt 2>/dev/null || true
 # rustfmt directly (cargo fmt may fail if deps don't resolve for standalone frontends)
-find "$DIR/frontend" -name '*.rs' -exec rustfmt {} + 2>/dev/null || true
+find "$DIR/frontend" -name '*.rs' -exec rustfmt --edition 2024 {} + 2>/dev/null || true
 if [ -d "$DIR/frontend" ] && [ -f "$DIR/frontend/package.json" ]; then
   cd "$DIR/frontend" && bun install --no-save 2>/dev/null && bunx prettier --write . 2>/dev/null || true && cd "$DIR"
 fi
