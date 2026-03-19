@@ -884,23 +884,32 @@ impl CheckCommand {
         println!();
 
         if target == FrontendTarget::Dioxus {
-            let cargo_fmt = TokioCommand::new("cargo")
-                .args(["fmt", "--check", "--manifest-path", "frontend/Cargo.toml"])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .await;
+            // Use rustfmt directly to avoid cargo fmt dependency resolution issues
+            let mut rs_files = Vec::new();
+            if let Ok(entries) = std::fs::read_dir(frontend_dir.join("src")) {
+                collect_rs_files(entries, &mut rs_files);
+            }
 
-            match cargo_fmt {
-                Ok(status) if status.success() => result.pass("Dioxus cargo fmt check passed"),
-                Ok(_) => result.fail(
-                    "Dioxus frontend formatting issues found",
-                    "Run 'cargo fmt --manifest-path frontend/Cargo.toml'",
-                ),
-                Err(_) => result.warn(
-                    "Could not run Dioxus cargo fmt",
-                    "Ensure rustfmt is installed",
-                ),
+            if !rs_files.is_empty() {
+                let mut cmd = TokioCommand::new("rustfmt");
+                cmd.args(["--check", "--edition", "2024"]);
+                for f in &rs_files {
+                    cmd.arg(f);
+                }
+                let fmt_result = cmd
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status()
+                    .await;
+
+                match fmt_result {
+                    Ok(status) if status.success() => result.pass("Dioxus rustfmt check passed"),
+                    Ok(_) => result.fail(
+                        "Dioxus frontend formatting issues found",
+                        "Run 'rustfmt --edition 2024 frontend/src/**/*.rs'",
+                    ),
+                    Err(_) => result.warn("Could not run rustfmt", "Ensure rustfmt is installed"),
+                }
             }
         }
 
@@ -1084,6 +1093,19 @@ fn generated_bindings_are_prettier_ignored(
     }
 
     Ok(false)
+}
+
+fn collect_rs_files(entries: std::fs::ReadDir, out: &mut Vec<std::path::PathBuf>) {
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Ok(sub) = std::fs::read_dir(&path) {
+                collect_rs_files(sub, out);
+            }
+        } else if path.extension().is_some_and(|ext| ext == "rs") {
+            out.push(path);
+        }
+    }
 }
 
 #[cfg(test)]
