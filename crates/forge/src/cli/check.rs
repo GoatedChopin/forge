@@ -844,22 +844,26 @@ impl CheckCommand {
         }
 
         // Check cargo clippy
-        let clippy_result = TokioCommand::new("cargo")
+        let clippy_output = TokioCommand::new("cargo")
             .args(["clippy", "--", "-D", "warnings"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
             .await;
 
-        match clippy_result {
-            Ok(status) if status.success() => {
+        match clippy_output {
+            Ok(output) if output.status.success() => {
                 result.pass("cargo clippy check passed");
             }
-            Ok(_) => {
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
                 result.fail(
                     "Clippy warnings found",
                     "Run 'cargo clippy' to see warnings",
                 );
+                if !stderr.is_empty() {
+                    eprintln!("{}", stderr);
+                }
             }
             Err(_) => {
                 result.warn(
