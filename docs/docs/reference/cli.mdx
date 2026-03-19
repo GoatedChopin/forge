@@ -104,6 +104,39 @@ The backend container uses cargo-watch with an `.ignore` file (deny-all `*` with
 
 ---
 
+## forge test
+
+Run backend and frontend tests.
+
+```bash
+forge test [options] [-- test-args...]
+```
+
+| Option             | Description                               |
+| ------------------ | ----------------------------------------- |
+| `--skip-backend`   | Skip Rust backend tests                   |
+| `--skip-frontend`  | Skip Playwright frontend tests            |
+| `--ui`             | Run Playwright in interactive UI mode     |
+| `--headed`         | Run in a visible browser window           |
+
+Trailing arguments after `--` are forwarded to the test runner.
+
+```bash
+# Run all tests
+forge test
+
+# Backend only
+forge test --skip-frontend
+
+# Frontend only with visible browser
+forge test --skip-backend --headed
+
+# Pass args to cargo test
+forge test -- --test my_specific_test
+```
+
+---
+
 ## forge check
 
 Validate project configuration and dependencies.

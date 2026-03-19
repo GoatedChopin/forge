@@ -182,7 +182,7 @@ pub async fn expensive_report(ctx: &QueryContext) -> Result<Report> {
 | `ctx.env_or(key, default)` | `String` | Get env var with default |
 | `ctx.env_require(key)` | `Result<String>` | Get required env var |
 | `ctx.env_parse::<T>(key)` | `Result<T>` | Parse env var to type |
-| `ctx.env_parse_or(key, default)` | `T` | Parse env var with default |
+| `ctx.env_parse_or(key, default)` | `Result<T>` | Parse env var with default (errors if set but unparseable) |
 | `ctx.env_contains(key)` | `bool` | Check if env var is set |
 
 ### AuthContext Methods
@@ -198,6 +198,9 @@ Access via `ctx.auth`:
 | `claim(key)` | `Option<&Value>` | Get custom JWT claim |
 | `roles()` | `&[String]` | Get all user roles |
 | `subject()` | `Option<&str>` | Get raw subject claim |
+| `claims()` | `&HashMap<String, Value>` | Get all custom JWT claims |
+| `principal_id()` | `Option<String>` | Stable identifier (prefers subject over user_id) |
+| `is_admin()` | `bool` | Check if user has "admin" role |
 
 ### RequestMetadata Fields
 
@@ -218,10 +221,10 @@ Access via `ctx.request`:
 Cache keys combine function name and argument hash:
 
 ```
-cache_key = hash(function_name + serialize(args))
+cache_key = hash(function_name + serialize(args) + auth_scope)
 ```
 
-`get_user(id: "abc")` and `get_user(id: "xyz")` have separate cache entries. Cache pollution from argument variations is impossible.
+`get_user(id: "abc")` and `get_user(id: "xyz")` have separate cache entries. Different authenticated users also get separate entries via the auth scope hash. Cache pollution from argument variations is impossible.
 
 ### Table Dependency Extraction
 

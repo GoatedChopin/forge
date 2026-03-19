@@ -114,9 +114,9 @@ pub async fn create_order(ctx: &MutationContext, input: CreateOrderInput) -> Res
 }
 ```
 
-The `transactional` attribute enables the outbox pattern: jobs are inserted into the same transaction as your database changes. If the mutation fails, no jobs are dispatched.
+The `transactional` attribute enables the outbox pattern: jobs are buffered in memory during the mutation and only inserted into the database after the transaction commits successfully. If the mutation fails, no jobs are dispatched.
 
-**Compile-time enforcement**: If your mutation calls `dispatch_job()` or `start_workflow()` without `transactional`, the macro produces a compile error:
+**Runtime enforcement**: If your mutation calls `dispatch_job()` or `start_workflow()` without `transactional`, you get an error at runtime:
 
 ```
 error: Mutations that call `dispatch_job()` or `start_workflow()` must use
@@ -198,7 +198,7 @@ pub async fn submit_comment(ctx: &MutationContext, input: CommentInput) -> Resul
 }
 ```
 
-Rate limit keys: `user` (per authenticated user), `ip` (per client IP), `tenant` (per tenant claim), `global` (all requests).
+Rate limit keys: `user` (per authenticated user), `ip` (per client IP), `tenant` (per tenant claim), `user_action` (per user per function), `global` (all requests).
 
 ## Context Methods
 
@@ -219,7 +219,7 @@ Rate limit keys: `user` (per authenticated user), `ip` (per client IP), `tenant`
 | `ctx.env_or(key, default)` | `String` | Environment variable with default |
 | `ctx.env_require(key)` | `Result<String>` | Required environment variable |
 | `ctx.env_parse::<T>(key)` | `Result<T>` | Parse environment variable |
-| `ctx.env_parse_or(key, default)` | `T` | Parse environment variable with default |
+| `ctx.env_parse_or(key, default)` | `Result<T>` | Parse environment variable with default |
 | `ctx.env_contains(key)` | `bool` | Check if environment variable is set |
 
 ## Context Fields
@@ -243,22 +243,20 @@ Rate limit keys: `user` (per authenticated user), `ip` (per client IP), `tenant`
 When you use `#[forge::mutation(transactional)]` with job dispatch:
 
 ```sql
+-- Step 1: Your mutation runs inside a transaction
 BEGIN;
-  -- Your mutation SQL
   INSERT INTO orders (product_id, user_id) VALUES (...);
-
-  -- Job dispatch (same transaction)
-  INSERT INTO forge_jobs (name, args, status) VALUES ('process_order', '{"order_id": "..."}', 'pending');
 COMMIT;
+
+-- Step 2: Only after successful commit, buffered jobs are inserted
+INSERT INTO forge_jobs (name, args, status) VALUES ('process_order', '{"order_id": "..."}', 'pending');
 ```
 
-If the mutation fails anywhere, both the order and the job are rolled back. This avoids orphaned jobs or missing data, and the job worker picks up pending jobs after commit.
-
-This pattern guarantees exactly-once semantics for the mutation + job combination without distributed transactions.
+If the mutation fails, the transaction rolls back and no jobs are inserted. Jobs are buffered in memory during the transaction and flushed to the database only after a successful commit. This avoids orphaned jobs without requiring distributed transactions.
 
 ### Circuit Breaker for HTTP
 
-The HTTP client (`ctx.http()`) includes circuit breaker protection that tracks failure rates per host. After repeated failures (default: 5), requests fail fast rather than waiting for timeouts. This prevents cascade failures when downstream services are unhealthy.
+The `ctx.http()` method returns a raw `reqwest::Client` for external calls. For circuit breaker protection, use `ctx.http_with_circuit_breaker()` which tracks failure rates per host. After repeated failures (default: 5), requests fail fast rather than waiting for timeouts. This prevents cascade failures when downstream services are unhealthy.
 
 The circuit breaker has three states:
 - **Closed**: Normal operation, requests pass through

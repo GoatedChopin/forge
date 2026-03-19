@@ -158,13 +158,13 @@ WITH claimable AS (
     FROM forge_jobs
     WHERE status = 'pending'
       AND scheduled_at <= NOW()
-      AND (worker_capability = ANY($1) OR worker_capability IS NULL)
+      AND (worker_capability = ANY($2) OR worker_capability IS NULL)
     ORDER BY priority DESC, scheduled_at ASC
-    LIMIT $2
+    LIMIT $3
     FOR UPDATE SKIP LOCKED
 )
 UPDATE forge_jobs
-SET status = 'claimed', worker_id = $3, claimed_at = NOW()
+SET status = 'claimed', worker_id = $1, claimed_at = NOW()
 WHERE id IN (SELECT id FROM claimable)
 RETURNING *
 ```

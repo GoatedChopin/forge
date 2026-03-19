@@ -30,19 +30,7 @@ Before editing, read only what defines the task surface:
 5. `frontend/package.json` for SvelteKit work or `frontend/Cargo.toml` for Dioxus work
 6. `migrations/` only if schema or DB work is in scope
 
-Resolve the real Forge CLI entrypoint, then start working.
-
-Stop exploring once you know:
-
-- which files need changes
-- which command should verify them
-
-Avoid overanalysis. Do not:
-
-- tour unrelated parts of the codebase
-- generate a demo app just to infer patterns already visible here
-- spelunk crate internals before checking local code and `forge --help`
-- stack fallback after fallback once a blocker is already clear
+Stop exploring once you know which files need changes and which command should verify them.
 
 ## Build order
 
@@ -59,146 +47,99 @@ Do not start with the polished version.
 
 ## UI default
 
-If the user asks for UI work but not for visual exploration, default to a simple UI:
-
-- clear labels
-- obvious states
-- minimal motion
-- no invented brand system
-- no dashboard complexity unless the task needs it
-
-Do not go above and beyond on visuals without user buy-in.
+If the user asks for UI work but not for visual exploration, default to a simple UI: clear labels, obvious states, minimal motion, no invented brand system, no dashboard complexity unless the task needs it.
 
 ## Test style
 
-Tests are part of the implementation.
-
-Keep them close to the code they prove:
+Tests are part of the implementation. Keep them close to the code they prove:
 
 - handlers: same file, `#[cfg(test)] mod tests` at the bottom
 - pure helpers: same file, near the helper
 - test-only helpers: inside that module's test block unless multiple modules truly need them
 
-Good test code keeps special cases visible. Name and test the weird cases directly instead of hiding them behind clever fixtures or giant tables. The goal is not “clean-looking” tests. The goal is that a future change breaks loudly when behavior changes.
+Good test code keeps special cases visible. Name and test the weird cases directly.
 
-For Playwright tests, always import `test` from the generated `tests/fixtures.ts` instead of `@playwright/test`. The fixtures provide `rpc`, `gotoReady`, `uniqueId`, and `ACTION_TIMEOUT` so tests stay focused on behavior, not setup boilerplate.
+For Playwright tests, always import `test` from the generated `tests/fixtures.ts`.
 
-Minimum bar:
-
-- backend behavior change => add backend tests
-- bug fix => add a regression test
-- UI change => add or update Playwright coverage
-
-Pure helper tests do not replace handler-level tests when handler behavior changed.
+Minimum bar: backend behavior change => add backend tests. Bug fix => regression test. UI change => Playwright coverage.
 
 ## Runtime blockers
 
-Treat clear environment blockers as blockers.
-
-Before runtime verification, check the configured port from `forge.toml` or env files:
+Before runtime verification, check the configured port:
 
 ```bash
 lsof -iTCP:<port> -sTCP:LISTEN -n -P
 ```
 
-If the port is occupied:
-
-- tell the user which port is blocked and by what
-- stop runtime verification there
-- do not kill the other process
-- do not silently move the app to another port
-- do not continue to Playwright against a guessed alternative
-
-Apply the same principle to missing database access, missing package managers, missing Playwright browsers, or an unresolved Forge CLI.
+If the port is occupied: tell the user, stop runtime verification there. Do not kill the process, silently change ports, or continue against a guessed alternative. Same for missing DB access, missing package managers, missing Playwright browsers, or unresolved Forge CLI.
 
 ## Forge rules
 
 ### Use the real toolchain
 
-Resolve and use the actual:
-
-- Forge CLI command
-- frontend package manager
-- test commands
-- local database workflow
-
-Do not invent subcommands on the app binary. Do not guess generated paths.
+Resolve and use the actual Forge CLI command, frontend package manager, test commands, and local database workflow. Do not invent subcommands on the app binary or guess generated paths.
 
 ### Backend before generated frontend
 
-Finish the backend behavior and its tests first. Then run `forge generate`. Then wire the frontend against the generated contract.
-
-Never hand-edit generated files:
-
-- `frontend/src/lib/forge/*`
-- `frontend/src/forge/*`
+Finish the backend behavior and its tests first. Then run `forge generate`. Then wire the frontend against the generated contract. Never hand-edit generated files (`frontend/src/lib/forge/*` or `frontend/src/forge/*`).
 
 ### Handler registration matters
 
-After adding handlers, verify they are actually wired through `src/main.rs` and the local module exports. Do not assume macros alone made them reachable.
+Macros alone do not make handlers reachable. Each must be registered in `src/main.rs`:
 
-### Migrations must match the repo
+| Function | Generated struct | Register call |
+|---|---|---|
+| `list_todos` | `ListTodosQuery` | `.register_query::<f::ListTodosQuery>()` |
+| `create_order` | `CreateOrderMutation` | `.register_mutation::<f::CreateOrderMutation>()` |
+| `send_email` | `SendEmailJob` | `.register_job::<f::SendEmailJob>()` |
+| `daily_cleanup` | `DailyCleanupCron` | `.register_cron::<f::DailyCleanupCron>()` |
+| `onboarding` | `OnboardingWorkflow` | `.register_workflow::<f::OnboardingWorkflow>()` |
+| `heartbeat` | `HeartbeatDaemon` | `.register_daemon::<f::HeartbeatDaemon>()` |
+| `stripe` | `StripeWebhook` | `.register_webhook::<f::StripeWebhook>()` |
+| `export_data` | `ExportDataMcpTool` | `.register_mcp_tool::<f::ExportDataMcpTool>()` |
 
-Before editing migrations, inspect the local format and preserve required markers such as `-- @up` and `-- @down`.
+Naming: PascalCase(fn_name) + type suffix. Avoid naming functions with the suffix (e.g. `heartbeat_daemon` → `HeartbeatDaemonDaemon`).
 
-Do not manually reconcile Forge migration state in the database.
+### Migrations
+
+Use `-- @up` / `-- @down` markers. Do not edit `forge_migrations` directly. Access DB via `docker compose exec db psql`.
 
 ### Auth and ownership
 
-For user-owned data, default to secure behavior unless the user explicitly asked for no auth.
-
-- derive acting identity from context
-- never trust client-supplied ownership fields as authority
-- validate ownership on the backend
-- treat frontend payloads as hints, not truth
+Derive identity from context, never trust client-supplied ownership fields. Forge's scope enforcement validates keys (`user_id`, `owner_id`, `subject`, `tenant_id` and camelCase variants) at runtime. Do not manually compare.
 
 ### No fake inputs
 
-If a query or mutation has no real business input, omit the input parameter entirely. Do not use `Option<()>`, `()`, dummy structs, or underscore-prefixed unused inputs.
+If a handler has no business input, omit the parameter. No `Option<()>`, `()`, or dummy structs.
 
 ## Verification order
-
-Run verification in this order when not blocked:
 
 1. focused backend tests
 2. `forge generate` if the contract changed
 3. frontend checks if frontend changed
 4. runtime verification if runtime behavior matters
-5. `forge test` if UI changed (or `forge test --ui` to debug)
+5. `forge test` if UI changed
 6. `forge check` last
-
-Do not claim completion if tests were not run, Playwright failed, runtime boot is blocked, or `forge check` still fails.
 
 ## Reference loading
 
-Most small tasks need only this file.
-
-Load one supporting reference when the task needs it:
+Most small tasks need only this file. Load one when the task needs it:
 
 | Signal | Load |
 |---|---|
+| Macro attributes, context methods, error types, config fields | `references/api.md` |
 | Auth, JWT, login/register, protected routes | `references/auth.md` |
-| Frontend structure or SvelteKit patterns | `references/frontend.md` |
-| Dioxus frontend structure, hooks, or binding usage | `references/dioxus.md` |
-| Test design or Playwright expectations | `references/testing.md` |
-| Forge config, CLI flow, migrations, generated paths | `references/config.md` |
-| Jobs, workflows, crons, background work | `references/patterns.md` |
-| Webhooks, daemons, external APIs, file uploads | `references/integrations.md` |
-| Production hardening or observability | `references/operations.md` |
-| Review or anti-pattern checks | `references/quality.md` |
-
-Use live documentation only when the local repo does not answer the question or the API may have changed.
+| Frontend patterns (shared principles) | `references/frontend.md` |
+| SvelteKit: stores, runes, generated bindings | `references/frontend/svelte.md` |
+| Dioxus: hooks, signals, generated bindings | `references/frontend/dioxus.md` |
+| Test contexts, assertions, mocking, DB testing | `references/testing.md` |
+| Jobs, workflows, crons, daemons, webhooks | `references/patterns.md` |
+| File uploads, MCP tools, external APIs, custom routes | `references/integrations.md` |
+| Production: deploy, scaling, observability | `references/operations.md` |
+| Review checklist, anti-patterns, security | `references/quality.md` |
 
 ## Output contract
 
-For implementation tasks, report:
+For implementation tasks: what changed, tests added, what you ran, runtime success or blocker, Playwright result, `forge check` result, risks.
 
-1. what changed
-2. which tests were added or updated
-3. what you ran
-4. whether runtime verification succeeded or what blocked it
-5. Playwright result for UI work
-6. `forge check` result
-7. real risks or follow-ups
-
-For review tasks, give findings first with file references, then assumptions or open questions, then a short summary.
+For review tasks: findings with file references, assumptions, short summary.

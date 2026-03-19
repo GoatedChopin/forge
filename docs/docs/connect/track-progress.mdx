@@ -267,5 +267,5 @@ await client._registerJob(clientSubId, jobId);
 **Server-side updates**: Progress updates are pushed via PostgreSQL LISTEN/NOTIFY. The gateway receives notifications and broadcasts to relevant SSE connections:
 
 ```sql
-NOTIFY forge_job_updates, '{"job_id": "...", "status": "running", "progress_percent": 50}'
+NOTIFY forge_job_updates, '{"job_id": "...", "status": "running", "progress": 50}'
 ```

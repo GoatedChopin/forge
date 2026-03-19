@@ -90,11 +90,11 @@ pub async fn stripe_webhook(ctx: &WebhookContext) -> Result<WebhookResult> { ...
 
 ### src/schema/
 
-Data models with `#[forge::model]` generate frontend types automatically: TypeScript for SvelteKit targets and Rust types for Dioxus targets.
+Data models with `#[forge::model]` generate frontend types automatically: TypeScript for SvelteKit targets and Rust types for Dioxus targets. The macro handles derive attributes internally, so place `#[forge::model]` before any `#[derive(...)]`:
 
 ```rust
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 #[forge::model]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Todo {
     pub id: Uuid,
     pub title: String,

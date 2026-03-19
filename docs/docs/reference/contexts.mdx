@@ -15,10 +15,10 @@ Context objects provide access to databases, authentication, environment variabl
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `fetch_one` | `async fn fetch_one<O>(&self, query) -> Result<O>` | Fetch exactly one row |
-| `fetch_optional` | `async fn fetch_optional<O>(&self, query) -> Result<Option<O>>` | Fetch zero or one row |
-| `fetch_all` | `async fn fetch_all<O>(&self, query) -> Result<Vec<O>>` | Fetch all matching rows |
-| `execute` | `async fn execute(&self, query) -> Result<PgQueryResult>` | Execute a statement |
+| `fetch_one` | `async fn fetch_one<O>(&self, query) -> sqlx::Result<O>` | Fetch exactly one row |
+| `fetch_optional` | `async fn fetch_optional<O>(&self, query) -> sqlx::Result<Option<O>>` | Fetch zero or one row |
+| `fetch_all` | `async fn fetch_all<O>(&self, query) -> sqlx::Result<Vec<O>>` | Fetch all matching rows |
+| `execute` | `async fn execute(&self, query) -> sqlx::Result<PgQueryResult>` | Execute a statement |
 
 Write helper functions that accept `DbConn` to share logic between queries, mutations, MCP tools, and tests:
 
@@ -464,6 +464,8 @@ MCP tool execution context with database, auth, dispatch, and environment access
 | `env_parse` | `fn env_parse<T: FromStr>(&self, key: &str) -> Result<T>` | Parse env var to type |
 | `env_parse_or` | `fn env_parse_or<T: FromStr>(&self, key: &str, default: T) -> Result<T>` | Parse env var with default |
 | `env_contains` | `fn env_contains(&self, key: &str) -> bool` | Check if env var is set |
+
+`McpToolContext` does not have an HTTP client. Use `dispatch_job` to delegate work that needs external API calls.
 
 ---
 

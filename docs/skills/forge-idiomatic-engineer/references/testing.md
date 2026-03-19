@@ -1,339 +1,267 @@
-# Testing Playbook
+# Testing Reference
 
-Use this when changing Forge handlers.
-
-## Baseline expectation
-
-Unit tests are the primary defense against regressions. The goal is wide case coverage that makes accidental breakage structurally difficult.
-
-`forge check` runs as the absolute final step (after all tests, coverage, and refinement). See the required execution sequence at the bottom of this file.
+## Minimum Bar
 
 For every behavior change, add:
-- happy-path tests covering the main success scenarios
-- failure-path tests (validation/authz/not found/conflict)
-- boundary value tests (empty inputs, max lengths, zero amounts, negative values)
-- edge case tests for any non-obvious logic branches
+- Happy-path tests covering main success scenarios
+- Failure-path tests (validation, authz, not-found, conflict)
+- Boundary value tests (empty inputs, max lengths, zero amounts)
+- Edge case tests for non-obvious logic branches
 
-For dispatching flows, assert side effects.
-For SQL-heavy logic, prefer real DB tests with `IsolatedTestDb`.
-
-`forge check`, lint, type checks, and manual browser verification are not substitutes for tests. A clean check with no new tests is still an incomplete implementation.
-For UI work, a task is still incomplete until Playwright has run successfully or is clearly reported as blocked.
-
-Think of tests as a specification: someone reading only the tests should understand what the function accepts, rejects, and guarantees.
-
-## Test location
-
-Tests live alongside the code they test using `#[cfg(test)] mod tests` at the bottom of the same file. This applies to handlers in `src/functions/`, helpers in `src/utils/`, and types in `src/schema/`. No separate `tests/` directory for unit tests.
-
-Do not delete scaffolded test examples without replacing them with real tests for the behavior you added.
-
-## Minimum bar for new CRUD work
-
-For a new CRUD feature, add at least:
-- one happy-path backend test per handler
-- one failure-path backend test for validation, authz, not found, or conflict as applicable
-- one boundary-value test for each validated input field
-- one Playwright path covering the primary user flow if the UI changed
-
-Validation-unit tests are useful, but they do not replace handler coverage when handlers changed.
-
-For a todo-style feature, that usually means:
-- create succeeds
-- create rejects blank or invalid title
-- list returns expected ordering/filtering
-- update/toggle changes only the targeted record
-- delete removes the targeted record
-
-## 0) Pure logic unit tests (preferred starting point)
-
-Extract business logic into pure functions that don't need context or DB. These are fastest to write, run, and maintain.
-
-```rust
-// src/utils/pricing.rs
-pub fn compute_discount(subtotal_cents: i64, tier: CustomerTier) -> i64 {
-    match tier {
-        CustomerTier::Standard => 0,
-        CustomerTier::Premium => subtotal_cents / 10,
-        CustomerTier::Enterprise => subtotal_cents / 5,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn standard_gets_no_discount() {
-        assert_eq!(compute_discount(10000, CustomerTier::Standard), 0);
-    }
-
-    #[test]
-    fn premium_gets_ten_percent() {
-        assert_eq!(compute_discount(10000, CustomerTier::Premium), 1000);
-    }
-
-    #[test]
-    fn zero_subtotal_returns_zero() {
-        assert_eq!(compute_discount(0, CustomerTier::Premium), 0);
-    }
-}
-```
-
-```rust
-// src/utils/validation.rs
-pub fn normalized_title(raw: &str) -> Result<String> {
-    let v = raw.trim();
-    if v.is_empty() {
-        return Err(ForgeError::Validation("Title cannot be empty".into()));
-    }
-    if v.len() > 120 {
-        return Err(ForgeError::Validation("Title must be <= 120 chars".into()));
-    }
-    Ok(v.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn trims_whitespace() {
-        assert_eq!(normalized_title("  hello  ").unwrap(), "hello");
-    }
-
-    #[test]
-    fn rejects_empty_string() {
-        assert!(normalized_title("").is_err());
-    }
-
-    #[test]
-    fn rejects_whitespace_only() {
-        assert!(normalized_title("   ").is_err());
-    }
-
-    #[test]
-    fn rejects_over_120_chars() {
-        let long = "a".repeat(121);
-        assert!(normalized_title(&long).is_err());
-    }
-
-    #[test]
-    fn accepts_exactly_120_chars() {
-        let exact = "a".repeat(120);
-        assert!(normalized_title(&exact).is_ok());
-    }
-}
-```
-
-When a handler has non-trivial logic (calculations, transformations, decision trees), pull that logic into a pure function in `utils/` and test it exhaustively there. The handler becomes a thin adapter that calls the pure function.
-
-## 1) Query tests
-
-```rust
-#[tokio::test]
-async fn list_orders_requires_matching_scope() {
-    let user_id = uuid::Uuid::new_v4();
-    let ctx = forge::testing::TestQueryContext::builder()
-        .as_user(user_id)
-        .build();
-
-    let result = list_orders(&ctx, ListOrdersInput { user_id: uuid::Uuid::new_v4() }).await;
-    assert!(matches!(result, Err(ForgeError::Forbidden(_))));
-}
-```
-
-## 2) Mutation tests
-
-```rust
-#[tokio::test]
-async fn create_order_dispatches_confirmation_job() {
-    let user_id = uuid::Uuid::new_v4();
-    let ctx = forge::testing::TestMutationContext::builder()
-        .as_user(user_id)
-        .build();
-
-    let result = create_order(&ctx, CreateOrderInput { user_id, total_cents: 5000 }).await;
-
-    forge::assert_ok!(result);
-    forge::assert_job_dispatched!(ctx, "send_order_email");
-}
-```
-
-## 3) HTTP mock tests
-
-```rust
-#[tokio::test]
-async fn charge_card_calls_provider_once() {
-    let ctx = forge::testing::TestMutationContext::builder()
-        .mock_http_json("api.stripe.com/*", serde_json::json!({ "id": "ch_123" }))
-        .build();
-
-    let _ = charge_card(&ctx, ChargeInput::default()).await;
-
-    ctx.http().assert_called_times("api.stripe.com/*", 1);
-}
-```
-
-## 4) DB integration test with isolation
-
-```rust
-async fn setup_db(name: &str) -> forge::testing::IsolatedTestDb {
-    forge::testing::IsolatedTestDb::setup(
-        name,
-        &forge::get_internal_sql(),
-        std::path::Path::new("migrations"),
-    )
-    .await
-    .expect("db setup")
-}
-```
-
-Use this for:
-- SQL joins/CTEs that enforce ownership
-- not-found semantics
-- ordering/position logic
-- migration-dependent behavior
-
-## 5) Read consistency tests
-
-If introducing replica-aware endpoints, test behavior assumptions:
-- `consistent` endpoint returns latest state after mutation (verify `FunctionInfo.consistent == true`)
-- eventual endpoint documents lag tolerance and still behaves safely
-- column-aware invalidation: verify hot-path queries use explicit column lists, not `SELECT *`
-
-## 6) Webhook tests
-
-Minimum checks:
-- valid signed request accepted
-- duplicate idempotency key deduped
-- malformed payload rejected correctly
-- expected job dispatch occurs
-
-## 7) Workflow/Job tests
-
-- verify critical step progression
-- verify failure path behavior
-- verify dispatch/progress/cancellation logic where applicable
-
-## 8) Frontend tests (when UI is changed)
-
-- loading/error/stale state rendering
-- keyboard navigation and focus behavior
-- accessible names/labels for controls
-- no manual refetch anti-pattern where reactivity exists
-- add at least one basic Playwright integration test path and run it
-- all Playwright tests must pass before the task is considered complete. If a test fails, fix the underlying issue and rerun until green. Do not report completion with failing tests.
-
-## 9) Assertion helpers to prefer
-
-- `assert_ok!`
-- `assert_err_variant!`
-- `assert_job_dispatched!`
-- `assert_workflow_started!`
-- `assert_http_called!`
-- HTTP body/route assertions via mock APIs
-
-## 10) Regression rule
+For new CRUD: one happy-path + one failure-path per handler, boundary tests for validated fields, one Playwright path if UI changed.
 
 Bug fix => add a regression test that fails before the fix and passes after.
 
-## 11) Coverage philosophy
+When a handler has non-trivial logic (calculations, transformations, decisions), extract it into a pure function in `utils/` and test exhaustively there. The handler becomes a thin adapter. Pure functions are cheapest to test and often contain the most subtle logic.
 
-The delivery requirement is strict for changed modules:
-- measure coverage with an actual tool (`cargo llvm-cov` preferred)
-- require 100% line coverage for changed modules, or explicitly report blocker if measurement/tooling is unavailable
+## Test Location
 
-Coverage quality still matters beyond raw percentage. To get there:
+Tests live inline with the code they prove:
+```rust
+// src/functions/orders.rs
+#[forge::mutation(transactional)]
+pub async fn create_order(...) -> Result<Order> { ... }
 
-- **Boundary values**: test the edges (zero, one, max, max+1, empty, whitespace-only).
-- **State transitions**: if an entity moves through states, test each valid transition and at least one invalid one.
-- **Error variety**: don't just test "it errors." Test that the *right* error variant comes back with the *right* message context.
-- **Combinatorics**: if two inputs interact (role + scope, tier + amount), test the interesting combinations, not just the diagonal.
-- **Pure functions get the most tests**: they're cheap to test and often contain the most subtle logic. Extract and cover them aggressively.
-- **Handler tests cover integration**: auth, scope, dispatch, DB interaction. These are more expensive so focus on the critical paths.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use forge::testing::*;
 
-A well-tested module should make a reviewer think "I can't change this behavior without a test failing."
+    #[tokio::test]
+    async fn test_create_order() { ... }
+}
+```
 
-## 12) Playwright patterns for Forge apps
+## Test Contexts
 
-### Use the fixtures
+Every handler type has a matching test context with builder pattern.
 
-Every Forge project generates a `tests/fixtures.ts` that extends Playwright's `test` with Forge-specific fixtures. Always import `test` from fixtures instead of `@playwright/test`:
+### TestQueryContext
 
+```rust
+TestQueryContext::minimal()                    // unauthenticated, no DB
+TestQueryContext::authenticated(user_id)       // UUID auth, no DB
+TestQueryContext::with_pool(pool, Some(uid))   // with DB
+TestQueryContext::builder()
+    .as_user(Uuid::new_v4())
+    .as_subject("firebase-uid")               // for non-UUID auth
+    .with_role("admin")
+    .with_roles(vec!["admin".into(), "editor".into()])
+    .with_claim("org_id", json!("org-123"))
+    .with_tenant(tenant_id)
+    .with_pool(pool)
+    .with_env("API_KEY", "test-key")
+    .with_envs(map)
+    .build()
+```
+
+Access: `ctx.db()` → `Option<&PgPool>`, `ctx.auth`, `ctx.request`, `ctx.env_mock()`.
+
+### TestMutationContext
+
+Same auth/env/pool builders, plus:
+```rust
+.mock_http("api.stripe.com/*", |req| MockResponse::json(json!({...})))
+.mock_http_json("api.stripe.com/*", json!({...}))
+.with_job_dispatch(Arc::new(MockJobDispatch::new()))
+.with_workflow_dispatch(Arc::new(MockWorkflowDispatch::new()))
+```
+
+Access: `ctx.http()` → `&MockHttp`, `ctx.job_dispatch()`, `ctx.workflow_dispatch()`, `ctx.dispatch_job(...)`, `ctx.start_workflow(...)`, `ctx.pending_jobs()`, `ctx.assert_job_buffered("type")`.
+
+### TestJobContext
+
+```rust
+TestJobContext::builder("send_email")
+    .with_job_id(uuid)
+    .as_retry(3)                              // attempt = 3
+    .with_max_attempts(5)
+    .as_last_attempt()                        // attempt = max_attempts
+    .with_cancellation_requested()
+    .as_user(uuid)
+    .with_pool(pool)
+    .mock_http_json("...", json!(...))
+    .with_env("KEY", "val")
+    .build()
+```
+
+Access: `ctx.progress(50, "halfway")`, `ctx.progress_updates()` → `Vec<{percent, message}>`, `ctx.saved()`, `ctx.save(k, v)`, `ctx.is_cancel_requested()`, `ctx.check_cancelled()`, `ctx.request_cancellation()`, `ctx.heartbeat()` (no-op).
+
+Fields: `ctx.job_id`, `ctx.job_type`, `ctx.attempt`, `ctx.max_attempts`, `ctx.auth`.
+
+### TestCronContext
+
+```rust
+TestCronContext::builder("daily_cleanup")
+    .with_run_id(uuid)
+    .scheduled_at(time)
+    .executed_at(time)
+    .with_timezone("America/New_York")
+    .as_catch_up()
+    .build()
+```
+
+Access: `ctx.delay()` → `chrono::Duration`, `ctx.is_late()` → delay > 1 min, `ctx.log.info("msg")`, `ctx.log.entries()`.
+
+Fields: `ctx.run_id`, `ctx.cron_name`, `ctx.scheduled_time`, `ctx.execution_time`, `ctx.timezone`, `ctx.is_catch_up`, `ctx.log`.
+
+### TestWorkflowContext
+
+```rust
+TestWorkflowContext::builder("onboarding")
+    .with_run_id(uuid)
+    .with_version(2)
+    .with_workflow_time(fixed_time)            // pins deterministic time
+    .as_resumed()
+    .with_completed_step("step_a", json!({...}))
+    .with_tenant(uuid)
+    .build()
+```
+
+Access: `ctx.is_resumed()`, `ctx.workflow_time()`, `ctx.is_step_completed("name")`, `ctx.get_step_result::<T>("name")`, `ctx.record_step_start/complete(...)`, `ctx.completed_step_names()`, `ctx.sleep(dur)` (no-op, recorded), `ctx.sleep_called()`, `ctx.elapsed()`.
+
+### TestDaemonContext
+
+```rust
+TestDaemonContext::builder("heartbeat")
+    .with_instance_id(uuid)
+    .build()
+```
+
+Access: `ctx.is_shutdown_requested()`, `ctx.request_shutdown()`, `ctx.shutdown_signal()` (awaitable), `ctx.shutdown_tx` (public, clone for async triggers).
+
+### TestWebhookContext
+
+```rust
+TestWebhookContext::builder("stripe_webhook")
+    .with_header("Stripe-Signature", "t=123,v1=abc")
+    .with_headers(map)
+    .with_idempotency_key("evt_123")
+    .with_job_dispatch(Arc::new(MockJobDispatch::new()))
+    .build()
+```
+
+Access: `ctx.header("name")` (case-insensitive), `ctx.headers()`, `ctx.job_dispatch()`, `ctx.dispatch_job(...)`. No workflow dispatch on webhooks.
+
+## HTTP Mocking
+
+Pattern matching supports `*` wildcard (start, middle, end of URL).
+
+```rust
+// JSON response
+.mock_http_json("api.stripe.com/*", json!({"id": "ch_123"}))
+
+// Custom handler
+.mock_http("api.stripe.com/*", |req| {
+    if req.body["amount"].as_i64().unwrap() > 10000 {
+        MockResponse::error(400, "Amount exceeds limit")
+    } else {
+        MockResponse::json(json!({"id": "ch_123"}))
+    }
+})
+```
+
+Verification:
+```rust
+ctx.http().assert_called("api.stripe.com/*");
+ctx.http().assert_called_times("api.stripe.com/*", 1);
+ctx.http().assert_not_called("api.paypal.com/*");
+ctx.http().assert_called_with_body("api.stripe.com/*", |body| body["amount"] == 1000);
+let reqs = ctx.http().requests_to("api.stripe.com/*");
+```
+
+`MockResponse` constructors: `json(val)`, `ok()`, `error(status, msg)`, `not_found(msg)`, `unauthorized(msg)`, `internal_error(msg)`.
+
+## Assertion Macros
+
+```rust
+assert_ok!(result);
+assert_err!(result);
+assert_err_variant!(result, ForgeError::NotFound(_));
+
+assert_job_dispatched!(ctx, "send_email");
+assert_job_dispatched!(ctx, "send_email", |args| args["to"] == "x");
+assert_job_not_dispatched!(ctx, "send_sms");
+
+assert_workflow_started!(ctx, "onboarding");
+assert_workflow_started!(ctx, "onboarding", |input| input["plan"] == "premium");
+assert_workflow_not_started!(ctx, "enterprise");
+
+assert_http_called!(ctx, "api.stripe.com/*");
+assert_http_not_called!(ctx, "api.paypal.com/*");
+```
+
+Helper functions: `error_contains(&err, "substring")`, `validation_error_for_field(&err, "field")`, `assert_json_matches(&actual, &pattern)` (partial/subset match).
+
+## Database Testing
+
+```rust
+// Testcontainers (auto Docker PG, needs `testcontainers` feature)
+let db = TestDatabase::from_env().await?;
+
+// Explicit URL
+let db = TestDatabase::from_url("postgres://localhost/test").await?;
+
+// Isolated per-test database
+let db = IsolatedTestDb::setup(
+    "test_name",
+    &forge::get_internal_sql(),
+    Path::new("migrations"),
+).await?;
+
+// Use in context
+let ctx = TestMutationContext::builder()
+    .as_user(uuid)
+    .with_pool(db.pool().clone())
+    .build();
+
+// Cleanup (optional, orphans GC'd on next run)
+db.cleanup().await?;
+```
+
+`IsolatedTestDb` methods: `pool()`, `execute(sql)`, `run_sql(multi_statement_sql)`, `migrate(Path)`, `cleanup()`.
+
+## Playwright
+
+Always import from generated fixtures:
 ```typescript
-import { test, expect, ACTION_TIMEOUT, uniqueId } from "./fixtures";
+import { test } from "../tests/fixtures";
 
-test("create item appears in list", async ({ page, gotoReady, rpc }) => {
-  await gotoReady();
-  // ... test using rpc() for data setup, uniqueId() for isolation
+test("creates a todo", async ({ page, rpc, gotoReady, uniqueId }) => {
+    await gotoReady(page, "/");
+    // ...
 });
 ```
 
-Available fixtures:
-- `rpc(fn, args?)` - Call backend RPC endpoints directly for setup/cleanup
-- `gotoReady(path?)` - Navigate and wait for SSE subscription to be fully wired up
-- `uniqueId(prefix)` - Generate collision-free identifiers for test isolation
-- `ACTION_TIMEOUT` - CI-aware timeout constant (higher in CI, lower locally)
-- `trackConsoleErrors(page)` - Collect unexpected console errors
+Fixtures: `rpc` (direct backend calls), `gotoReady` (waits for SSE readiness), `uniqueId` (test isolation), `ACTION_TIMEOUT`, `trackConsoleErrors(page)`.
 
-### Fresh user per test
+Register a unique user per test using `uniqueId()` for full isolation, even when running in parallel.
 
-Register a unique user in each test for full isolation. Use `uniqueId()` from fixtures so tests never collide, even when running in parallel.
+`gotoReady()` waits for the first `/_api/subscribe` response, which is the signal that reactivity is wired up. Don't use it if SSE was already established during a login step. In that case, wait for a UI element that depends on server data instead.
 
-```typescript
-const user = {
-  name: `User ${uniqueId("test")}`,
-  email: `${uniqueId("test")}@example.com`,
-  password: "password123",
-};
-```
+`forge dev` runs the frontend in Docker, but Playwright needs a locally accessible dev server. Stop the Docker frontend container, then run `bun run dev` locally in `frontend/`. The backend can stay in Docker.
 
-### Local frontend for Playwright
+Add `test-results/` and `playwright-report/` to `.prettierignore` to prevent `forge check` from formatting generated HTML/JSON in those directories.
 
-`forge dev` runs the frontend inside Docker, but Playwright needs a locally accessible dev server. Stop the Docker frontend container, then run `bun run dev` locally in the `frontend/` directory. The backend can stay in Docker.
+Run: `forge test` (backend must be running). Debug: `forge test --ui`. Headed: `forge test --headed`.
 
-### SSE readiness
+## Coverage Philosophy
 
-The `gotoReady()` fixture waits for the first `/_api/subscribe` response, which is the actual signal that reactivity is wired up. This replaces the old pattern of waiting for the `/_api/events` request plus an arbitrary `waitForTimeout(2000)`.
+- **Boundary values**: test edges (zero, one, max, max+1, empty, whitespace-only)
+- **State transitions**: test each valid transition and at least one invalid one
+- **Error variety**: test that the right error variant comes back, not just "it errors"
+- **Combinatorics**: if two inputs interact (role + scope, tier + amount), test interesting combinations
+- **Pure functions get the most tests**: cheap to write and often contain subtle logic
+- **Handler tests cover integration**: auth, scope, dispatch, DB interaction. More expensive so focus on critical paths.
 
-Don't use `gotoReady()` if the SSE connection was already established during a registration/login step. In that case, wait for a UI element that depends on server data instead.
+A well-tested module should make a reviewer think "I can't change this behavior without a test failing."
 
-```typescript
-// gotoReady() already handles SSE readiness
-await gotoReady();
+## Execution Order
 
-// for auth flows where SSE connects during login, wait for data instead
-await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
-```
+1. Backend unit tests (`cargo test`)
+2. `forge generate` if contract changed
+3. Frontend lint/build checks
+4. Playwright (`forge test --skip-backend`)
+5. `forge check`
 
-### Ignoring test artifacts
-
-Add `test-results/` and `playwright-report/` to `.prettierignore` to prevent `forge check` from trying to format generated HTML/JSON in those directories.
-
-```
-test-results/
-playwright-report/
-```
-
-## 13) Running Playwright tests
-
-Use `forge test` from the project root. It checks that the backend and frontend are reachable, installs Playwright browsers if needed, and runs the test suite.
-
-```bash
-forge test                      # run all tests
-forge test --ui                 # interactive UI mode for debugging
-forge test tests/todo.spec.ts   # run a specific file
-forge test --headed             # run with visible browser
-```
-
-The backend must be running before tests execute. Start it with `forge dev` or `cargo run`.
-
-## 14) Required execution sequence
-
-1. Write backend tests for changed behavior before calling the work done.
-2. Run backend tests for changed areas.
-3. Generate and review coverage results; enforce 100% line coverage on changed modules.
-4. If UI exists or changed, write or update Playwright integration tests. Run them with `forge test`. Fix any failures before proceeding.
-5. If the task is meant to work out of the box, boot the real app flow and verify the primary path before delivery.
-6. As the absolute final step, run `forge check` from the app root. Fix all findings and rerun until fully clean. Nothing ships with unresolved findings, failing tests, missing test coverage, or unverified app boot.
+Do not claim completion if tests were not run, Playwright failed, runtime boot is blocked, or `forge check` still fails.

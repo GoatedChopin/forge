@@ -38,8 +38,8 @@ Create `src/schema/todo.rs`:
 ```rust
 use forge::prelude::*;
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 #[forge::model]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Todo {
     pub id: Uuid,
     pub title: String,

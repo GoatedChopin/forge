@@ -213,8 +213,8 @@ The generated store follows Svelte's store contract with additional state fields
 interface SubscriptionResult<T> {
   loading: boolean;   // true until first data arrives
   data: T | null;     // the result
-  error: Error | null;
-  stale: boolean;     // true during reconnection
+  error: ForgeError | null;
+  stale: boolean;     // reserved for future use
 }
 ```
 
@@ -299,7 +299,7 @@ Re-executing a query does not guarantee data changed. A user might INSERT then D
 Forge hashes query results before pushing:
 
 ```
-hash = hash(function_name + serialize(result))
+hash = hash(serialize(result))
 ```
 
 Updates only reach the client when the hash differs from the last push, which prevents unnecessary re-renders.
@@ -316,7 +316,7 @@ Forge tracks changes at different granularities based on tracked row count per t
 
 Hysteresis prevents oscillation: switches to table-level above 100 tracked rows (`> 100`), back to row-level below 50 (`< 50`). Rows in the 50-100 range stay in their current mode.
 
-Row-level tracking is more efficient for few subscriptions. Table-level avoids memory overhead when many clients subscribe. Forge re-evaluates every 60 seconds with a maximum of 10,000 tracked rows per table.
+Row-level tracking is more efficient for few subscriptions. Table-level avoids memory overhead when many clients subscribe. Maximum of 10,000 tracked rows per table.
 
 ### Column-Aware Invalidation
 
@@ -342,11 +342,9 @@ For `SELECT *` queries or dynamic SQL where columns can't be determined, all UPD
 SSE connections may drop due to network issues or deploys. The client handles reconnection:
 
 1. Connection drops
-2. Store sets `stale: true` (data may be outdated)
-3. Exponential backoff: 1s, 2s, 4s... up to 30s
-4. Reconnect with jitter to prevent thundering herd
-5. Re-register all active subscriptions
-6. Receive fresh data, clear `stale` flag
+2. Exponential backoff with jitter: base 1s, doubling each attempt, capped at 30s
+3. Reconnect and re-register all active subscriptions
+4. Receive fresh data
 
 Maximum 10 reconnection attempts before giving up.
 

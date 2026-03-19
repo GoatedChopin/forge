@@ -1,189 +1,184 @@
 # Operations
 
-Read replicas, observability, and production hardening.
+Production deployment, scaling, observability, and hardening.
 
-## Contents
+## Deploy
 
-1. [Read replicas](#1-read-replicas)
-2. [Observability configuration](#2-observability-configuration)
-3. [Trace context and request correlation](#3-trace-context-and-request-correlation)
-4. [Structured logging guidelines](#4-structured-logging-guidelines)
-5. [Operational checklist](#5-operational-checklist)
+Single binary: `cargo build --release`. Frontend embedded via `embedded-frontend` feature flag (Cargo feature that bundles the frontend build directory into the binary).
 
----
+### Docker
 
-## 1) Read replicas
+```dockerfile
+FROM rust:1-alpine AS builder
+RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static pkgconf
+WORKDIR /app
+COPY . .
+RUN cargo build --release
 
-### Enablement
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates libgcc
+COPY --from=builder /app/target/release/my-app /app/my-app
+COPY --from=builder /app/migrations /app/migrations
+ENV RUST_LOG=info
+CMD ["/app/my-app"]
+```
+
+Migrations are loaded from filesystem at runtime (not embedded). Copy the `migrations/` directory into the production image.
+
+### Health Endpoints
+
+| Path | Purpose | Response |
+|---|---|---|
+| `/_api/health` | Liveness | 200 always |
+| `/_api/ready` | Readiness | 200 or 503 (checks DB + reactor) |
+
+### Graceful Shutdown
+
+On SIGTERM: stop accepting → drain in-flight (30s timeout) → release leadership → deregister → close connections.
+
+```yaml
+# Kubernetes
+terminationGracePeriodSeconds: 45  # > drain timeout (30s)
+readinessProbe:
+  httpGet:
+    path: /_api/ready
+    port: 8080
+```
+
+## Scaling
+
+### Multiple Nodes
+
+All coordination through PostgreSQL. No separate service mesh.
+
+- Leader election: advisory locks (`pg_try_advisory_lock`), not Raft/Paxos
+- Job claiming: `FOR UPDATE SKIP LOCKED` (no thundering herd)
+- Heartbeat: 5s interval, dead after `max(15s, 3 * adaptive_interval)`
+- Node roles: `gateway`, `function`, `worker`, `scheduler`
+
+### Worker Pools
+
+Route jobs to specialized workers:
+```rust
+#[forge::job(worker_capability = "gpu")]
+```
+
+```toml
+[node]
+roles = ["worker"]
+worker_capabilities = ["gpu", "general"]
+```
+
+Jobs without `worker_capability` run on any worker.
+
+### Read Replicas
 
 ```toml
 [database]
-url = "${DATABASE_URL}"
-replica_urls = ["${DATABASE_REPLICA_1}", "${DATABASE_REPLICA_2}"]
+replica_urls = ["postgres://replica1...", "postgres://replica2..."]
 read_from_replica = true
 ```
 
-### Routing behavior
-- Queries route to healthy replicas via round-robin when `read_from_replica = true`.
-- Mutations always target primary.
-- Health monitor pings each replica every 15s with `SELECT 1`. Unhealthy replicas are skipped automatically.
-- If all replicas fail, reads fall back to primary with no config changes needed.
+Round-robin distribution via atomic counter. Health monitor pings replicas every 15s. Unhealthy replicas skipped, falls back to primary.
 
-### Consistent reads
+Use `#[forge::query(consistent)]` for read-after-write paths:
+- Immediate post-mutation confirmation screens
+- Permission checks that depend on just-written state
+- Idempotency checks that must observe latest writes
 
-Use `#[forge::query(consistent)]` to force reads from primary, bypassing replicas:
+Replica-safe (no `consistent` needed): dashboards, analytics, non-critical listing screens, background reporting.
 
-```rust
-#[forge::query(consistent)]
-pub async fn get_order_receipt(ctx: &QueryContext, order_id: Uuid) -> Result<Order> {
-    sqlx::query_as("SELECT * FROM orders WHERE id = $1")
-        .bind(order_id)
-        .fetch_one(ctx.db())
-        .await
-        .map_err(Into::into)
-}
-```
-
-Use `consistent` when you need read-your-write consistency:
-- immediate post-mutation confirmation screens
-- permission checks that depend on just-written state
-- idempotency checks that must observe latest writes
-
-Replica-safe cases (no `consistent` needed):
-- dashboards/analytics tolerant to slight lag
-- non-critical listing screens
-- background reporting
-
-### Pool isolation (bulkhead)
-
-Separate connection pools prevent workload starvation:
+### Pool Isolation
 
 ```toml
 [database.pools.default]
-size = 30         # queries, mutations, reactor, rate limiter
-timeout_secs = 30
+size = 30
 
 [database.pools.jobs]
-size = 15         # job workers, cron, daemons, workflows
-timeout_secs = 60
-statement_timeout_secs = 300
+size = 10
 
 [database.pools.analytics]
-size = 5          # user code via db.analytics_pool()
-timeout_secs = 120
+size = 5
 statement_timeout_secs = 600
-
-[database.pools.observability]
-size = 3          # internal metrics collection
-timeout_secs = 5
 ```
 
-Unconfigured pools fall back to primary. Configure them when workloads risk starving each other.
+Prevents a runaway analytics query from exhausting connections for user requests.
 
-### Column-aware invalidation
-
-Forge extracts selected columns at compile time. When an UPDATE notification arrives with changed columns, queries whose selected columns don't overlap skip re-execution entirely.
-
-```rust
-// Selected columns: [title, completed]. An UPDATE to only `updated_at` won't trigger re-execution.
-#[forge::query]
-pub async fn list_todos(ctx: &QueryContext) -> Result<Vec<Todo>> {
-    sqlx::query_as("SELECT title, completed FROM todos")
-        .fetch_all(ctx.db())
-        .await
-        .map_err(Into::into)
-}
-```
-
-For `SELECT *` queries, all UPDATEs trigger re-execution. Prefer explicit column lists in hot-path queries.
-
-### Design pattern
-- Use `consistent` on strict read-after-write paths; leave it off for eventual-consistency-tolerant reads.
-- Size pool isolation to match actual workload ratios.
-- Use explicit column lists in performance-critical queries to benefit from column-aware invalidation.
-
-## 2) Observability configuration
+## Observability
 
 ```toml
 [observability]
 enabled = true
 otlp_endpoint = "http://localhost:4318"
-service_name = "my-app"
-enable_traces = true
-enable_metrics = true
-enable_logs = true
-sampling_ratio = 0.5
+sampling_ratio = 1.0
 log_level = "info"
 ```
 
-### What should be observable
-- HTTP request lifecycle
-- function execution durations
-- job execution outcomes and retries
-- cron and workflow lifecycle events
-- DB pool pressure and slow queries
+### Trace Correlation
 
-### Gateway noise control
-- `quiet_routes` suppresses telemetry for selected paths.
-- Keep health checks quiet by default unless you need full probe telemetry.
+Every request gets `request_id` (UUID) and `trace_id` (distributed trace). Available via `ctx.request.request_id` and `ctx.request.trace_id`.
 
-## 3) Trace context and request correlation
-
-Use request metadata for correlation:
-- `ctx.request.request_id`
-- `ctx.request.trace_id`
-
-For outgoing HTTP, forward context where possible:
-
+Pass to external calls:
 ```rust
-let req_id = ctx.request.request_id.to_string();
-let trace_id = ctx.request.trace_id.clone();
-
 ctx.http()
-    .post("https://api.partner.example/events")
-    .header("x-request-id", req_id)
-    .header("x-trace-id", trace_id)
-    .json(&payload)
-    .send()
-    .await?;
+    .post(url)
+    .header("x-request-id", ctx.request.request_id.to_string())
+    .header("x-trace-id", &ctx.request.trace_id)
 ```
 
-For jobs/workflows/crons where request metadata may not exist the same way, always log run identifiers:
-- `job_id`
-- `run_id`
-- workflow ID + current step
+### Quiet Routes
 
-## 4) Structured logging guidelines
+Exclude noisy health checks from logs/traces:
+```toml
+[gateway]
+quiet_routes = ["/_api/health", "/_api/ready"]
+```
 
-Prefer fields over interpolated strings:
+### Structured Logging
 
 ```rust
-tracing::info!(
-    request_id = %ctx.request.request_id,
-    trace_id = %ctx.request.trace_id,
-    user_id = ?ctx.auth.user_id(),
-    order_id = %order.id,
-    "Order created"
-);
+tracing::info!(job_id = %ctx.job_id, attempt = ctx.attempt, "Processing");
 ```
 
-For retries/failures include:
-- attempt number
-- max attempts
-- external endpoint or dependency name
-- error class/message
+Use context fields, not string interpolation. Set `RUST_LOG=info` (or `debug` for troubleshooting).
 
-## 5) Operational checklist
+## Real-Time Tuning
 
-Before completion, validate:
-- replica routing enabled only when intended
-- strict-consistency endpoints do not rely on replica freshness
-- OTLP endpoint reachable and sampled properly
-- identifiers present across logs for every async boundary
-- slow-path operations emit enough detail to debug production incidents
-- read replica checklist:
-  - `read_from_replica` enabled only when consistency expectations are explicit
-  - `consistent` on strict read-after-write paths
-  - dashboard/reporting paths left on default replica routing
-  - health monitoring is automatic, no manual failover needed
-  - fallback-to-primary behavior understood operationally
+### Debouncing
+
+Default: 50ms quiet period after last change, 200ms max window. Configurable in code via `InvalidationConfig`.
+
+### Adaptive Tracking
+
+Row-level tracking for 1-100 subscribed rows per table. Table-level above 100. Hysteresis band: switches at >100, back at <50. Max 10,000 tracked rows per table.
+
+### Column-Aware Invalidation
+
+Queries with explicit column lists (`SELECT title, completed FROM todos`) skip re-execution when only unrelated columns change (`UPDATE todos SET updated_at = now()`). `SELECT *` defeats this optimization.
+
+### SSE
+
+Keepalive: 30s ping. Max sessions: 10,000 (configurable via `gateway.sse_max_sessions`). Reconnection handled client-side with exponential backoff.
+
+## Circuit Breaker
+
+Defaults: 5 failures → open, 30s base backoff, 1.5x multiplier, 10min max, 2 successes → close from half-open. Tracks per host (`scheme://host:port`).
+
+Use `ctx.http_with_circuit_breaker()` on MutationContext. Raw `ctx.http()` bypasses the circuit breaker.
+
+## Caching
+
+Content-addressable: `hash(function_name + args + auth_scope)`. TTL-based with lazy eviction. Max 10,000 entries. Different users get separate cache entries via auth_scope_hash. Invalidate programmatically via `cache.invalidate(fn, args)` or `cache.invalidate_function(fn)`.
+
+## Operational Checklist
+
+- [ ] `DATABASE_URL` set (not embedded PG in production)
+- [ ] `JWT_SECRET` rotated and not checked into source control
+- [ ] Health endpoints accessible from load balancer
+- [ ] `terminationGracePeriodSeconds` > 30s
+- [ ] Pool isolation configured for mixed workloads
+- [ ] `quiet_routes` excludes health endpoints from logs
+- [ ] `RUST_LOG` set to `info` (not `debug` in production)
+- [ ] Migrations tested with rollback (`forge migrate down`)
+- [ ] Rate limits configured on public endpoints
+- [ ] Circuit breaker enabled for external API calls

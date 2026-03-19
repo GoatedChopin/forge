@@ -125,8 +125,8 @@ Multiple nodes can start simultaneously. First node runs migrations. Others wait
 
 | Endpoint | Purpose | Response |
 |----------|---------|----------|
-| `/health` | Liveness probe | `200 { status: "healthy", version: "0.1.0" }` |
-| `/ready` | Readiness probe | `200/503 { ready: bool, database: bool, reactor: bool, version: "0.1.0" }` |
+| `/_api/health` | Liveness probe | `200 { status: "healthy", version: "0.1.0" }` |
+| `/_api/ready` | Readiness probe | `200/503 { ready: bool, database: bool, reactor: bool, version: "0.1.0" }` |
 
 The readiness probe queries the database:
 
@@ -140,13 +140,13 @@ Returns `503 Service Unavailable` if the database connection fails. Use this for
 # kubernetes
 livenessProbe:
   httpGet:
-    path: /health
+    path: /_api/health
     port: 8080
   periodSeconds: 10
 
 readinessProbe:
   httpGet:
-    path: /ready
+    path: /_api/ready
     port: 8080
   periodSeconds: 5
 ```
@@ -205,8 +205,6 @@ COPY --from=builder /app/migrations /app/migrations
 EXPOSE 8080
 
 ENV RUST_LOG=info
-ENV HOST=0.0.0.0
-ENV PORT=8080
 
 CMD ["/app/my-app"]
 ```

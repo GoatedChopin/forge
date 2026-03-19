@@ -1,124 +1,107 @@
 # Backend Patterns
 
-Advanced Forge patterns for background processing, observability, and design.
+Jobs, workflows, crons, daemons, and shared design patterns.
 
-## Contents
+## Shared DbConn Pattern
 
-1. [Shared DbConn helper](#1-shared-dbconn-helper)
-2. [Boundary validation](#2-boundary-validation)
-3. [Job with retry, progress, cancellation](#3-job-with-retry-progress-cancellation)
-4. [Cron with timezone and late-run handling](#4-cron-with-timezone-and-late-run-handling)
-5. [Workflow with compensation](#5-workflow-with-compensation)
-6. [Edge-case elimination through design](#6-edge-case-elimination-through-design)
-7. [Trace propagation to external HTTP](#7-trace-propagation-to-external-http)
-8. [Read consistency (strict vs eventual)](#8-read-consistency-strict-vs-eventual)
-9. [Structured logging](#9-structured-logging)
-
----
-
-## 1) Shared DbConn helper
-
-Use one helper for query/mutation/MCP/test reuse.
+Write helpers that work across query, mutation, MCP, and tests:
 
 ```rust
-use forge::forge_core::DbConn;
-use forge::prelude::*;
-
-pub(crate) async fn get_order_by_id(db: DbConn<'_>, id: uuid::Uuid) -> Result<Order> {
-    db.fetch_optional(sqlx::query_as("SELECT * FROM orders WHERE id = $1").bind(id))
-        .await?
-        .ok_or_else(|| ForgeError::NotFound("Order not found".into()))
+pub async fn list_items(db: DbConn<'_>) -> Result<Vec<Item>> {
+    db.fetch_all(sqlx::query_as("SELECT * FROM items ORDER BY created_at DESC"))
+        .await
+        .map_err(Into::into)
 }
 
 #[forge::query]
-pub async fn order(ctx: &QueryContext, id: uuid::Uuid) -> Result<Order> {
-    get_order_by_id(ctx.db_conn(), id).await
+pub async fn get_items(ctx: &QueryContext) -> Result<Vec<Item>> {
+    list_items(ctx.db_conn()).await
 }
 
 #[forge::mutation]
-pub async fn order_for_update(ctx: &MutationContext, id: uuid::Uuid) -> Result<Order> {
-    get_order_by_id(ctx.db(), id).await
+pub async fn items_snapshot(ctx: &MutationContext, input: Input) -> Result<Vec<Item>> {
+    list_items(ctx.db()).await  // MutationContext.db() returns DbConn
 }
 ```
 
-## 2) Boundary validation
-
-```rust
-fn normalized_title(raw: &str) -> Result<String> {
-    let v = raw.trim();
-    if v.is_empty() {
-        return Err(ForgeError::Validation("Title cannot be empty".into()));
-    }
-    if v.len() > 120 {
-        return Err(ForgeError::Validation("Title must be <= 120 chars".into()));
-    }
-    Ok(v.to_string())
-}
-```
-
-## 3) Job with retry, progress, cancellation
+## Jobs
 
 ```rust
 #[forge::job(
     priority = "high",
     retry(max_attempts = 5, backoff = "exponential", max_backoff = "10m"),
-    timeout = "30m",
-    idempotent(key = "invoice_id")
+    worker_capability = "media",
+    timeout = "30m"
 )]
-pub async fn generate_invoice_pdf(ctx: &JobContext, input: GenerateInvoicePdfInput) -> Result<()> {
-    ctx.progress(0, "Starting")?;
+pub async fn process_video(ctx: &JobContext, args: ProcessArgs) -> Result<VideoResult> {
+    ctx.progress(0, "Starting").unwrap();
 
-    for (idx, item) in input.items.iter().enumerate() {
-        ctx.check_cancelled().await?;
-        render_line_item(item).await?;
-        let pct = ((idx + 1) * 100 / input.items.len()) as u8;
-        ctx.progress(pct, "Rendering")?;
+    for (i, chunk) in chunks.iter().enumerate() {
+        ctx.check_cancelled().await?;  // exit early if cancelled
+        process_chunk(chunk).await?;
+        ctx.heartbeat().await?;        // prevent stale reclaim
+        ctx.progress(((i + 1) * 100 / total) as u8, format!("Chunk {}", i + 1)).unwrap();
+    }
+
+    Ok(result)
+}
+```
+
+Key behaviors:
+- Backoff: `fixed` (constant), `linear` (base * attempt), `exponential` (base * 2^(attempt-1))
+- Default max_backoff: 5m. Stale reclaim: 5 minutes with no heartbeat.
+- `progress(percent, msg)` is sync. `heartbeat()`, `save()`, `saved()`, `is_cancel_requested()`, `check_cancelled()` are async.
+- SKIP LOCKED prevents thundering herd. Workers claim with `FOR UPDATE SKIP LOCKED`.
+
+Dispatch from mutations (requires `transactional`):
+```rust
+#[forge::mutation(transactional)]
+pub async fn start_export(ctx: &MutationContext, input: ExportInput) -> Result<Uuid> {
+    let job_id = ctx.dispatch_job("export_data", json!({"format": input.format})).await?;
+    Ok(job_id)
+}
+```
+
+## Crons
+
+```rust
+#[forge::cron("0 */6 * * *", timezone = "America/New_York", catch_up, catch_up_limit = 3)]
+pub async fn sync_external(ctx: &CronContext) -> Result<()> {
+    if ctx.is_late() {
+        ctx.log.warn("Running late", json!({"delay_secs": ctx.delay().num_seconds()}));
+    }
+
+    if ctx.is_catch_up {
+        // lightweight version for catch-up runs
     }
 
     Ok(())
 }
 ```
 
-## 4) Cron with timezone and late-run handling
+Exactly-once via `UNIQUE(cron_name, scheduled_time)`. Leader-only execution. 5-part cron expressions (seconds added automatically).
+
+## Workflows
 
 ```rust
-#[forge::cron("0 9 * * *", timezone = "America/New_York", catch_up, catch_up_limit = 3)]
-pub async fn daily_digest(ctx: &CronContext) -> Result<()> {
-    if ctx.is_late() {
-        ctx.log.warn(
-            "Digest run delayed",
-            serde_json::json!({
-                "run_id": ctx.run_id,
-                "delay_secs": ctx.delay().num_seconds()
-            }),
-        );
-    }
-
-    run_digest(ctx.db()).await
-}
-```
-
-## 5) Workflow with compensation
-
-```rust
-#[forge::workflow(version = 2, timeout = "14d")]
-pub async fn account_closure(ctx: &WorkflowContext, input: CloseAccountInput) -> Result<()> {
-    ctx.step("revoke_sessions", || async {
-        revoke_sessions(input.user_id).await
+#[forge::workflow(version = 1, timeout = "30d")]
+pub async fn order_fulfillment(ctx: &WorkflowContext, order_id: Uuid) -> Result<()> {
+    let payment = ctx.step("charge", || async {
+        charge_card(order_id).await
     })
-    .compensate(|_| async move {
-        restore_sessions(input.user_id).await
+    .timeout(Duration::from_secs(30))
+    .retry(3, Duration::from_secs(5))    // 3 retries = 4 total attempts
+    .compensate(|result| async move {
+        refund(result.charge_id).await
     })
     .run()
-    .await?;
+    .await?;  // Result<Option<PaymentResult>>
 
-    ctx.step("archive_data", || async { archive_data(input.user_id).await })
-        .run()
-        .await?;
+    // Durable sleep survives restarts
+    ctx.sleep(Duration::from_days(1)).await?;
 
-    ctx.sleep(std::time::Duration::from_secs(7 * 24 * 60 * 60)).await?;
-
-    ctx.step("hard_delete", || async { hard_delete_user(input.user_id).await })
+    ctx.step("ship", || async { ship_order(order_id).await })
+        .optional()  // failure returns Ok(None), no compensation triggered
         .run()
         .await?;
 
@@ -126,73 +109,79 @@ pub async fn account_closure(ctx: &WorkflowContext, input: CloseAccountInput) ->
 }
 ```
 
-## 6) Edge-case elimination through design
+Key behaviors:
+- Steps are cached: on resume, completed steps return cached result without re-executing
+- Compensation runs in reverse order on failure
+- `ctx.workflow_time()` for deterministic replay (not wall clock)
+- `ctx.parallel().step("a", ...).step("b", ...).run().await?` for parallel execution
+- Parallel steps use `FnOnce` (no retry). Sequential steps use `Fn` (supports retry).
+- `wait_for_event::<T>(name, timeout)` for external event correlation
 
-Don't patch symptoms with special-case branches. Redesign so the problem becomes impossible.
+## Daemons
 
-- Normalize optional state once at the top.
-- Use one loop/operation path.
-- Commit exactly once.
-- In SQL, use CTE/upsert patterns to keep one write path instead of split logic.
+```rust
+#[forge::daemon(leader_elected = true, restart_delay = "10s", max_restarts = 5)]
+pub async fn queue_processor(ctx: &DaemonContext) -> Result<()> {
+    loop {
+        tokio::select! {
+            _ = process_batch(&ctx) => {}
+            _ = ctx.shutdown_signal() => break,
+        }
+        ctx.heartbeat().await?;
+    }
+    Ok(())
+}
+```
 
-## 7) Trace propagation to external HTTP
+Advisory lock-based leadership via `pg_try_advisory_lock`. Lock released on connection drop (automatic failover). Dispatch jobs/workflows from daemons (no auth context, owner = None).
 
+## Design Patterns
+
+### Boundary Validation
+
+Validate and normalize at the handler boundary, not deep in helpers:
 ```rust
 #[forge::mutation]
-pub async fn sync_partner(ctx: &MutationContext, input: SyncInput) -> Result<()> {
-    let req_id = ctx.request.request_id.to_string();
-    let trace_id = ctx.request.trace_id.clone();
-
-    ctx.http()
-        .post("https://partner.example/api/sync")
-        .header("x-request-id", req_id)
-        .header("x-trace-id", trace_id)
-        .json(&input)
-        .send()
-        .await?;
-
-    Ok(())
+pub async fn create_item(ctx: &MutationContext, input: CreateItemInput) -> Result<Item> {
+    let title = input.title.trim();
+    if title.is_empty() {
+        return Err(ForgeError::Validation("Title required".into()));
+    }
+    insert_item(ctx.db(), title).await
 }
 ```
 
-## 8) Read consistency (strict vs eventual)
+### Transactional Outbox
+
+Jobs dispatched in `transactional` mutations are buffered in memory and inserted after commit. If the mutation fails, no jobs are created. No 2PC needed.
+
+### Idempotency
+
+Jobs: `idempotent(key = "request_id")` prevents duplicate processing.
+Webhooks: `idempotency = "header:X-Request-Id"` or `"body:$.id"` with 24h TTL.
+
+### Structured Logging
 
 ```rust
-#[forge::query(consistent)]
-pub async fn invoice_after_checkout(ctx: &QueryContext, id: uuid::Uuid) -> Result<Invoice> {
-    // `consistent` forces primary read, bypassing replicas.
-    sqlx::query_as!(Invoice, "SELECT * FROM invoices WHERE id = $1", id)
-        .fetch_one(ctx.db())
-        .await
-        .map_err(Into::into)
-}
-
-#[forge::query(cache = "15s")]
-pub async fn invoice_dashboard(ctx: &QueryContext) -> Result<Vec<InvoiceSummary>> {
-    // Replica-safe: dashboard tolerates lag. Explicit columns enable column-aware invalidation.
-    sqlx::query_as!(InvoiceSummary, "SELECT status, count(*) AS count FROM invoices GROUP BY status")
-        .fetch_all(ctx.db())
-        .await
-        .map_err(Into::into)
-}
+tracing::info!(
+    job_id = %ctx.job_id,
+    attempt = ctx.attempt,
+    entity_id = %args.id,
+    "Processing entity"
+);
 ```
 
-## 9) Structured logging
+Use context fields, not string interpolation. Cron has `ctx.log.info("msg")` for structured output.
 
+## Trace Propagation
+
+Pass request context to external HTTP calls:
 ```rust
-#[forge::job(retry(max_attempts = 5, backoff = "exponential"))]
-pub async fn send_receipt(ctx: &JobContext, input: ReceiptInput) -> Result<()> {
-    tracing::info!(
-        job_id = %ctx.job_id,
-        attempt = ctx.attempt,
-        order_id = %input.order_id,
-        "Sending receipt"
-    );
-
-    // ...
-
-    Ok(())
-}
+let response = ctx.http()
+    .post(url)
+    .header("x-request-id", ctx.request.request_id.to_string())
+    .header("x-trace-id", &ctx.request.trace_id)
+    .json(&body)
+    .send()
+    .await?;
 ```
-
-Prefer fields over interpolated strings. For retries/failures include attempt number, max attempts, dependency name, and error class.

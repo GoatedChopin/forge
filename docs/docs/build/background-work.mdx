@@ -305,19 +305,19 @@ pub async fn send_notification(ctx: &JobContext, args: NotifyArgs) -> Result<()>
 | `ctx.db_conn()` | `DbConn<'_>` | Database connection as `DbConn` for shared helpers |
 | `ctx.http()` | `&Client` | HTTP client for external calls |
 | `ctx.progress(percent, msg)` | `Result<()>` | Report progress (0-100) |
-| `ctx.heartbeat()` | `Result<()>` | Send heartbeat to prevent stale reclaim |
-| `ctx.save(key, value)` | `Result<()>` | Save data for retries/compensation |
-| `ctx.saved()` | `Value` | Get all saved data |
-| `ctx.set_saved(data)` | `Result<()>` | Replace all saved data |
-| `ctx.is_cancel_requested()` | `Result<bool>` | Check if cancellation requested |
-| `ctx.check_cancelled()` | `Result<()>` | Return error if cancelled |
+| `ctx.heartbeat()` | `async Result<()>` | Send heartbeat to prevent stale reclaim |
+| `ctx.save(key, value)` | `async Result<()>` | Save data for retries/compensation |
+| `ctx.saved()` | `async Value` | Get all saved data |
+| `ctx.set_saved(data)` | `async Result<()>` | Replace all saved data |
+| `ctx.is_cancel_requested()` | `async Result<bool>` | Check if cancellation requested |
+| `ctx.check_cancelled()` | `async Result<()>` | Return error if cancelled |
 | `ctx.is_retry()` | `bool` | Check if this is a retry attempt |
 | `ctx.is_last_attempt()` | `bool` | Check if this is the final attempt |
 | `ctx.env(key)` | `Option<String>` | Get environment variable |
 | `ctx.env_or(key, default)` | `String` | Environment variable with default |
 | `ctx.env_require(key)` | `Result<String>` | Get required env var |
 | `ctx.env_parse::<T>(key)` | `Result<T>` | Parse environment variable |
-| `ctx.env_parse_or(key, default)` | `T` | Parse environment variable with default |
+| `ctx.env_parse_or(key, default)` | `Result<T>` | Parse environment variable with default |
 | `ctx.env_contains(key)` | `bool` | Check if environment variable is set |
 
 ### Context Fields

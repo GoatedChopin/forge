@@ -76,9 +76,9 @@ Transactional write operations.
 | `log` | `"level"` | none | Log level (`trace`, `debug`, `info`, `warn`, `error`, `off`) |
 | `rate_limit(...)` | config | none | Rate limiting configuration (same as query) |
 
-### Compile-Time Enforcement
+### Runtime Enforcement
 
-Mutations that call `dispatch_job()` or `start_workflow()` must use `transactional`. The macro will error if you forget:
+Mutations that call `dispatch_job()` or `start_workflow()` must use `transactional`. You get an error at runtime if you forget:
 
 ```
 

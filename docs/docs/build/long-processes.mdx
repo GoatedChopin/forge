@@ -344,7 +344,7 @@ The version is recorded when a workflow is started. On resume, the runtime loads
 | `ctx.get_step_result(name)` | `Option<T>` | Get cached step result |
 | `ctx.record_step_start(name)` | `()` | Mark step as started |
 | `ctx.record_step_complete(name, value)` | `()` | Mark step as completed |
-| `ctx.elapsed()` | `Duration` | Time since workflow started |
+| `ctx.elapsed()` | `chrono::Duration` | Time since workflow started |
 | `ctx.db()` | `&PgPool` | Database connection pool |
 | `ctx.db_conn()` | `DbConn<'_>` | Database connection as `DbConn` for shared helpers |
 | `ctx.http()` | `&Client` | HTTP client |
@@ -352,7 +352,7 @@ The version is recorded when a workflow is started. On resume, the runtime loads
 | `ctx.env_or(key, default)` | `String` | Environment variable with default |
 | `ctx.env_require(key)` | `Result<String>` | Required environment variable |
 | `ctx.env_parse::<T>(key)` | `Result<T>` | Parse environment variable |
-| `ctx.env_parse_or(key, default)` | `T` | Parse environment variable with default |
+| `ctx.env_parse_or(key, default)` | `Result<T>` | Parse environment variable with default |
 | `ctx.env_contains(key)` | `bool` | Check if environment variable is set |
 
 ## Step Configuration
@@ -362,7 +362,7 @@ The fluent API configures step behavior:
 | Method | Description |
 |--------|-------------|
 | `.timeout(duration)` | Cancel step if it exceeds duration |
-| `.retry(count, delay)` | Retry failed steps with fixed delay |
+| `.retry(max_retries, delay)` | Retry failed steps (N retries = N+1 total attempts) |
 | `.optional()` | Continue workflow even if step fails |
 | `.compensate(fn)` | Register rollback handler |
 | `.run()` | Execute the step |

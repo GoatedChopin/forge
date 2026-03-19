@@ -86,7 +86,7 @@ Generated client includes error types:
 export interface ForgeError {
   code: string;
   message: string;
-  details?: Record<string, unknown>;
+  details?: unknown;
 }
 ```
 
@@ -243,9 +243,9 @@ async function submit() {
 Configure a handler for auth errors across all requests:
 
 ```typescript
-import { initForge } from '$lib/forge';
+import { createForgeClient } from '$lib/forge';
 
-initForge({
+createForgeClient({
   url: 'http://localhost:3000',
   getToken: () => localStorage.getItem('token'),
   onAuthError: (error) => {

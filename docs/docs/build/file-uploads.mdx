@@ -191,9 +191,9 @@ function uploadWithProgress(
 
 | Method          | Return Type       | Description                                        |
 | --------------- | ----------------- | -------------------------------------------------- |
-| `ctx.db()`      | `&PgPool`         | Database connection pool                           |
+| `ctx.db()`      | `DbConn<'_>`      | Database connection (pool or transaction handle)   |
 | `ctx.db_conn()` | `DbConn<'_>`      | Database connection as `DbConn` for shared helpers |
-| `ctx.http()`    | `reqwest::Client` | HTTP client for external calls                     |
+| `ctx.http()`    | `&reqwest::Client` | HTTP client for external calls                     |
 | `ctx.auth`      | `AuthContext`     | Current user authentication                        |
 | `ctx.env(key)`  | `Option<String>`  | Environment variable lookup                        |
 

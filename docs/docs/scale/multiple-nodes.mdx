@@ -165,7 +165,8 @@ Nodes missing heartbeats past the dead threshold are marked dead. The effective 
 UPDATE forge_nodes
 SET status = 'dead'
 WHERE status = 'active'
-  AND last_heartbeat < NOW() - INTERVAL '15 seconds'
+  AND last_heartbeat < NOW() - make_interval(secs => $1)
+-- $1 = max(dead_threshold_secs, 3 * current_adaptive_interval)
 ```
 
 Dead node detection triggers:
