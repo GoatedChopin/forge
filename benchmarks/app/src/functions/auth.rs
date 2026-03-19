@@ -39,7 +39,7 @@ pub async fn register(ctx: &MutationContext, input: RegisterInput) -> Result<Aut
         "INSERT INTO users (name) VALUES ($1) RETURNING *",
         &input.name
     )
-    .fetch_one(&mut *conn)
+    .fetch_one(&mut conn)
     .await
     .map_err(|e| {
         if e.to_string().contains("users_name_key") {

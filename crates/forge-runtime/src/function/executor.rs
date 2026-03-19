@@ -96,7 +96,7 @@ impl FunctionExecutor {
         let span = tracing::info_span!(
             "fn.execute",
             function = function_name,
-            kind = %kind,
+            fn.kind = %kind,
         );
 
         let result = match timeout(

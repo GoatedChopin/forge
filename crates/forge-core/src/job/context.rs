@@ -94,13 +94,8 @@ impl JobContext {
     }
 
     /// Get database pool.
-    pub fn db(&self) -> &sqlx::PgPool {
-        &self.db_pool
-    }
-
-    /// Returns a `DbConn` wrapping the pool for shared helper functions.
-    pub fn db_conn(&self) -> crate::function::DbConn<'_> {
-        crate::function::DbConn::Pool(&self.db_pool)
+    pub fn db(&self) -> crate::function::ForgeDb {
+        crate::function::ForgeDb::from_pool(&self.db_pool)
     }
 
     /// Acquire a connection compatible with sqlx compile-time checked macros.

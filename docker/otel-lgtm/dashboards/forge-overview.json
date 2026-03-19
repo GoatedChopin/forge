@@ -600,12 +600,25 @@
     {
       "type": "table",
       "title": "Recent Requests",
-      "description": "Latest traced requests with status, duration, and route. Click a Trace ID to view the full waterfall.",
+      "description": "Latest HTTP requests with method, route, and status. Click a Trace ID to open the waterfall and see fn.execute / db spans.",
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 50 },
       "datasource": { "uid": "tempo" },
       "targets": [{
         "queryType": "traceql",
-        "query": "{rootServiceName =~ \"$service_name\" && name = \"fn.execute\"} | select(span.function, span.kind)",
+        "query": "{rootServiceName =~ \"$service_name\" && name = \"http.request\"} | select(span.http.method, span.http.route, span.http.status_code)",
+        "tableType": "spans",
+        "limit": 20
+      }]
+    },
+    {
+      "type": "table",
+      "title": "Recent Function Calls",
+      "description": "Latest function executions with name and kind. Click a Trace ID to see the full request context.",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 58 },
+      "datasource": { "uid": "tempo" },
+      "targets": [{
+        "queryType": "traceql",
+        "query": "{rootServiceName =~ \"$service_name\" && name = \"fn.execute\"} | select(span.function, span.fn.kind)",
         "tableType": "spans",
         "limit": 20
       }]
@@ -614,14 +627,14 @@
     {
       "type": "row",
       "title": "Logs",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 58 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 66 },
       "collapsed": false
     },
     {
       "type": "logs",
       "title": "Application Logs",
       "description": "Live log stream. Click a log line to expand structured fields (function, duration, error, SQL, etc).",
-      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 59 },
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 67 },
       "datasource": { "uid": "loki" },
       "options": {
         "showTime": true,
@@ -635,7 +648,7 @@
         "displayedFields": ["severity_text", "scope_name", "function", "kind", "duration_ms", "error"]
       },
       "targets": [{
-        "expr": "{service_name=~\"$service_name\", detected_level=~\"INFO|WARN|ERROR\"}",
+        "expr": "{service_name=~\"$service_name\"}",
         "refId": "A"
       }]
     }

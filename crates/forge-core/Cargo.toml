@@ -22,6 +22,7 @@ cron = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 tracing-opentelemetry = { workspace = true }
+futures-core = { workspace = true }
 opentelemetry = { workspace = true }
 sqlx = { workspace = true }
 reqwest = { workspace = true }

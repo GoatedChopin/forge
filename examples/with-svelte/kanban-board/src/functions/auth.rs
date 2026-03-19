@@ -86,7 +86,7 @@ pub async fn register(ctx: &MutationContext, input: RegisterInput) -> Result<Aut
         name,
         &password_hash
     )
-    .fetch_one(&mut *conn)
+    .fetch_one(&mut conn)
     .await
     .map_err(|e| {
         if e.to_string().contains("idx_users_email") {
@@ -104,7 +104,7 @@ pub async fn login(ctx: &MutationContext, input: LoginInput) -> Result<AuthRespo
     let mut conn = ctx.conn().await?;
 
     let user = sqlx::query_as!(User, "SELECT * FROM users WHERE email = $1", &input.email)
-        .fetch_optional(&mut *conn)
+        .fetch_optional(&mut conn)
         .await?
         .ok_or_else(|| ForgeError::Validation("Invalid email or password".into()))?;
 

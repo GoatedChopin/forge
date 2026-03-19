@@ -35,7 +35,7 @@ pub async fn create_counter(ctx: &MutationContext, input: CreateCounterInput) ->
         "INSERT INTO counters (name) VALUES ($1) RETURNING *",
         &input.name
     )
-    .fetch_one(&mut *conn)
+    .fetch_one(&mut conn)
     .await
     .map_err(Into::into)
 }
@@ -57,7 +57,7 @@ pub async fn increment(ctx: &MutationContext, input: IncrementInput) -> Result<C
         input.id,
         user_id
     )
-    .fetch_optional(&mut *conn)
+    .fetch_optional(&mut conn)
     .await?
     .ok_or_else(|| ForgeError::NotFound("Counter not found".into()))
 }

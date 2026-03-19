@@ -1065,6 +1065,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "cron",
+ "futures-core",
  "opentelemetry",
  "reqwest",
  "schemars 0.8.22",

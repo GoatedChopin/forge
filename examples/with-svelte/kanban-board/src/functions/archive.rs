@@ -37,7 +37,7 @@ pub async fn schedule_project_archive(
                 project_id,
                 project_owner
             )
-            .fetch_optional(&db)
+            .fetch_optional(db.clone())
             .await?;
 
             let Some(row) = existing else {
@@ -60,7 +60,7 @@ pub async fn schedule_project_archive(
                 project_id,
                 project_owner
             )
-            .fetch_one(&db)
+            .fetch_one(db.clone())
             .await?;
 
             let delete_at: DateTime<Utc> = updated
@@ -92,7 +92,7 @@ pub async fn schedule_project_archive(
                 project_id,
                 project_owner
             )
-            .fetch_all(&db)
+            .fetch_all(db.clone())
             .await?;
 
             let json = serde_json::to_string_pretty(&tasks)
@@ -126,7 +126,7 @@ pub async fn schedule_project_archive(
                     project_id,
                     project_owner
                 )
-                .execute(&db)
+                .execute(db.clone())
                 .await?;
                 Ok(serde_json::json!({ "deleted": result.rows_affected() }))
             }
@@ -150,7 +150,7 @@ pub async fn schedule_project_archive(
                 project_id,
                 project_owner
             )
-            .execute(&db)
+            .execute(db.clone())
             .await?;
             Ok(serde_json::json!({ "cleared": true }))
         }

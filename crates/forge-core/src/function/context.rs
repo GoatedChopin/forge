@@ -35,8 +35,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use sqlx::postgres::{PgArguments, PgConnection, PgQueryResult, PgRow};
-use sqlx::{FromRow, Postgres, Transaction};
+use futures_core::future::BoxFuture;
+use futures_core::stream::BoxStream;
+use sqlx::postgres::{PgConnection, PgQueryResult, PgRow};
+use sqlx::{Postgres, Transaction};
 use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
 
@@ -57,105 +59,11 @@ pub trait TokenIssuer: Send + Sync {
     fn sign(&self, claims: &Claims) -> crate::error::Result<String>;
 }
 
-/// Abstracts over pool and transaction connections so handlers can work with either.
-pub enum DbConn<'a> {
-    Pool(&'a sqlx::PgPool),
-    Transaction(Arc<AsyncMutex<Transaction<'static, Postgres>>>),
-}
-
-impl DbConn<'_> {
-    pub async fn fetch_one<'q, O>(
-        &self,
-        query: sqlx::query::QueryAs<'q, Postgres, O, PgArguments>,
-    ) -> sqlx::Result<O>
-    where
-        O: Send + Unpin + for<'r> FromRow<'r, PgRow>,
-    {
-        let span = tracing::info_span!(
-            "db.query",
-            db.system = "postgresql",
-            db.operation.name = "fetch_one",
-        );
-        async {
-            match self {
-                DbConn::Pool(pool) => query.fetch_one(*pool).await,
-                DbConn::Transaction(tx) => query.fetch_one(&mut **tx.lock().await).await,
-            }
-        }
-        .instrument(span)
-        .await
-    }
-
-    pub async fn fetch_optional<'q, O>(
-        &self,
-        query: sqlx::query::QueryAs<'q, Postgres, O, PgArguments>,
-    ) -> sqlx::Result<Option<O>>
-    where
-        O: Send + Unpin + for<'r> FromRow<'r, PgRow>,
-    {
-        let span = tracing::info_span!(
-            "db.query",
-            db.system = "postgresql",
-            db.operation.name = "fetch_optional",
-        );
-        async {
-            match self {
-                DbConn::Pool(pool) => query.fetch_optional(*pool).await,
-                DbConn::Transaction(tx) => query.fetch_optional(&mut **tx.lock().await).await,
-            }
-        }
-        .instrument(span)
-        .await
-    }
-
-    pub async fn fetch_all<'q, O>(
-        &self,
-        query: sqlx::query::QueryAs<'q, Postgres, O, PgArguments>,
-    ) -> sqlx::Result<Vec<O>>
-    where
-        O: Send + Unpin + for<'r> FromRow<'r, PgRow>,
-    {
-        let span = tracing::info_span!(
-            "db.query",
-            db.system = "postgresql",
-            db.operation.name = "fetch_all",
-        );
-        async {
-            match self {
-                DbConn::Pool(pool) => query.fetch_all(*pool).await,
-                DbConn::Transaction(tx) => query.fetch_all(&mut **tx.lock().await).await,
-            }
-        }
-        .instrument(span)
-        .await
-    }
-
-    pub async fn execute<'q>(
-        &self,
-        query: sqlx::query::Query<'q, Postgres, PgArguments>,
-    ) -> sqlx::Result<PgQueryResult> {
-        let span = tracing::info_span!(
-            "db.query",
-            db.system = "postgresql",
-            db.operation.name = "execute",
-        );
-        async {
-            match self {
-                DbConn::Pool(pool) => query.execute(*pool).await,
-                DbConn::Transaction(tx) => query.execute(&mut **tx.lock().await).await,
-            }
-        }
-        .instrument(span)
-        .await
-    }
-}
-
-/// Connection wrapper that implements `DerefMut<Target = PgConnection>`, making it
-/// compatible with sqlx compile-time checked macros (`query_as!`, `query!`).
+/// Connection wrapper that implements sqlx's `Executor` trait with automatic
+/// `db.query` tracing spans.
 ///
-/// Obtain via `ctx.conn().await?` in mutation handlers, or any pool-backed context
-/// (job, cron, daemon, webhook, mcp). `QueryContext.db()` returns `&PgPool` which
-/// works directly with macros without needing `ForgeConn`.
+/// Obtain via `ctx.conn().await?` in mutation handlers.
+/// Works with compile-time checked macros via `&mut conn`.
 ///
 /// ```ignore
 /// let mut conn = ctx.conn().await?;
@@ -184,6 +92,265 @@ impl std::ops::DerefMut for ForgeConn<'_> {
             ForgeConn::Pool(c) => c,
             ForgeConn::Tx(g) => g,
         }
+    }
+}
+
+/// Pool wrapper that adds `db.query` tracing spans to every database operation.
+///
+/// Returned by [`QueryContext::db()`]. Implements sqlx's [`sqlx::Executor`] trait,
+/// so it works as a drop-in replacement for `&PgPool` with compile-time
+/// checked macros (`query!`, `query_as!`).
+///
+/// ```ignore
+/// sqlx::query_as!(User, "SELECT * FROM users")
+///     .fetch_all(ctx.db())
+///     .await?
+/// ```
+#[derive(Clone)]
+pub struct ForgeDb(sqlx::PgPool);
+
+impl std::fmt::Debug for ForgeDb {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("ForgeDb").finish()
+    }
+}
+
+impl ForgeDb {
+    /// Create a `ForgeDb` from a pool reference. Clones the Arc-backed pool handle.
+    pub fn from_pool(pool: &sqlx::PgPool) -> Self {
+        Self(pool.clone())
+    }
+}
+
+fn sql_operation(sql: &str) -> &'static str {
+    let bytes = sql.trim_start().as_bytes();
+    if bytes.len() >= 6 && bytes[..6].eq_ignore_ascii_case(b"select") {
+        "SELECT"
+    } else if bytes.len() >= 6 && bytes[..6].eq_ignore_ascii_case(b"insert") {
+        "INSERT"
+    } else if bytes.len() >= 6 && bytes[..6].eq_ignore_ascii_case(b"update") {
+        "UPDATE"
+    } else if bytes.len() >= 6 && bytes[..6].eq_ignore_ascii_case(b"delete") {
+        "DELETE"
+    } else {
+        "OTHER"
+    }
+}
+
+impl sqlx::Executor<'static> for ForgeDb {
+    type Database = Postgres;
+
+    fn fetch_many<'e, 'q: 'e, E>(
+        self,
+        query: E,
+    ) -> BoxStream<'e, Result<sqlx::Either<PgQueryResult, PgRow>, sqlx::Error>>
+    where
+        E: sqlx::Execute<'q, Postgres> + 'q,
+    {
+        (&self.0).fetch_many(query)
+    }
+
+    fn fetch_optional<'e, 'q: 'e, E>(
+        self,
+        query: E,
+    ) -> BoxFuture<'e, Result<Option<PgRow>, sqlx::Error>>
+    where
+        E: sqlx::Execute<'q, Postgres> + 'q,
+    {
+        let op = sql_operation(query.sql());
+        let span = tracing::info_span!(
+            "db.query",
+            db.system = "postgresql",
+            db.operation.name = op,
+        );
+        Box::pin(
+            async move { sqlx::Executor::fetch_optional(&self.0, query).await }.instrument(span),
+        )
+    }
+
+    fn execute<'e, 'q: 'e, E>(
+        self,
+        query: E,
+    ) -> BoxFuture<'e, Result<PgQueryResult, sqlx::Error>>
+    where
+        E: sqlx::Execute<'q, Postgres> + 'q,
+    {
+        let op = sql_operation(query.sql());
+        let span = tracing::info_span!(
+            "db.query",
+            db.system = "postgresql",
+            db.operation.name = op,
+        );
+        Box::pin(async move { sqlx::Executor::execute(&self.0, query).await }.instrument(span))
+    }
+
+    fn fetch_all<'e, 'q: 'e, E>(
+        self,
+        query: E,
+    ) -> BoxFuture<'e, Result<Vec<PgRow>, sqlx::Error>>
+    where
+        E: sqlx::Execute<'q, Postgres> + 'q,
+    {
+        let op = sql_operation(query.sql());
+        let span = tracing::info_span!(
+            "db.query",
+            db.system = "postgresql",
+            db.operation.name = op,
+        );
+        Box::pin(async move { sqlx::Executor::fetch_all(&self.0, query).await }.instrument(span))
+    }
+
+    fn fetch_one<'e, 'q: 'e, E>(
+        self,
+        query: E,
+    ) -> BoxFuture<'e, Result<PgRow, sqlx::Error>>
+    where
+        E: sqlx::Execute<'q, Postgres> + 'q,
+    {
+        let op = sql_operation(query.sql());
+        let span = tracing::info_span!(
+            "db.query",
+            db.system = "postgresql",
+            db.operation.name = op,
+        );
+        Box::pin(async move { sqlx::Executor::fetch_one(&self.0, query).await }.instrument(span))
+    }
+
+    fn prepare_with<'e, 'q: 'e>(
+        self,
+        sql: &'q str,
+        parameters: &'e [<Postgres as sqlx::Database>::TypeInfo],
+    ) -> BoxFuture<'e, Result<<Postgres as sqlx::Database>::Statement<'q>, sqlx::Error>> {
+        Box::pin(async move {
+            sqlx::Executor::prepare_with(&self.0, sql, parameters).await
+        })
+    }
+
+    fn describe<'e, 'q: 'e>(
+        self,
+        sql: &'q str,
+    ) -> BoxFuture<'e, Result<sqlx::Describe<Postgres>, sqlx::Error>> {
+        Box::pin(async move { sqlx::Executor::describe(&self.0, sql).await })
+    }
+}
+
+impl std::fmt::Debug for ForgeConn<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ForgeConn::Pool(_) => f.debug_tuple("ForgeConn::Pool").finish(),
+            ForgeConn::Tx(_) => f.debug_tuple("ForgeConn::Tx").finish(),
+        }
+    }
+}
+
+impl<'c> sqlx::Executor<'c> for &'c mut ForgeConn<'_> {
+    type Database = Postgres;
+
+    fn fetch_many<'e, 'q: 'e, E>(
+        self,
+        query: E,
+    ) -> BoxStream<'e, Result<sqlx::Either<PgQueryResult, PgRow>, sqlx::Error>>
+    where
+        'c: 'e,
+        E: sqlx::Execute<'q, Postgres> + 'q,
+    {
+        let conn: &'e mut PgConnection = &mut *self;
+        conn.fetch_many(query)
+    }
+
+    fn fetch_optional<'e, 'q: 'e, E>(
+        self,
+        query: E,
+    ) -> BoxFuture<'e, Result<Option<PgRow>, sqlx::Error>>
+    where
+        'c: 'e,
+        E: sqlx::Execute<'q, Postgres> + 'q,
+    {
+        let op = sql_operation(query.sql());
+        let span = tracing::info_span!(
+            "db.query",
+            db.system = "postgresql",
+            db.operation.name = op,
+        );
+        let conn: &'e mut PgConnection = &mut *self;
+        Box::pin(conn.fetch_optional(query).instrument(span))
+    }
+
+    fn execute<'e, 'q: 'e, E>(
+        self,
+        query: E,
+    ) -> BoxFuture<'e, Result<PgQueryResult, sqlx::Error>>
+    where
+        'c: 'e,
+        E: sqlx::Execute<'q, Postgres> + 'q,
+    {
+        let op = sql_operation(query.sql());
+        let span = tracing::info_span!(
+            "db.query",
+            db.system = "postgresql",
+            db.operation.name = op,
+        );
+        let conn: &'e mut PgConnection = &mut *self;
+        Box::pin(conn.execute(query).instrument(span))
+    }
+
+    fn fetch_all<'e, 'q: 'e, E>(
+        self,
+        query: E,
+    ) -> BoxFuture<'e, Result<Vec<PgRow>, sqlx::Error>>
+    where
+        'c: 'e,
+        E: sqlx::Execute<'q, Postgres> + 'q,
+    {
+        let op = sql_operation(query.sql());
+        let span = tracing::info_span!(
+            "db.query",
+            db.system = "postgresql",
+            db.operation.name = op,
+        );
+        let conn: &'e mut PgConnection = &mut *self;
+        Box::pin(conn.fetch_all(query).instrument(span))
+    }
+
+    fn fetch_one<'e, 'q: 'e, E>(
+        self,
+        query: E,
+    ) -> BoxFuture<'e, Result<PgRow, sqlx::Error>>
+    where
+        'c: 'e,
+        E: sqlx::Execute<'q, Postgres> + 'q,
+    {
+        let op = sql_operation(query.sql());
+        let span = tracing::info_span!(
+            "db.query",
+            db.system = "postgresql",
+            db.operation.name = op,
+        );
+        let conn: &'e mut PgConnection = &mut *self;
+        Box::pin(conn.fetch_one(query).instrument(span))
+    }
+
+    fn prepare_with<'e, 'q: 'e>(
+        self,
+        sql: &'q str,
+        parameters: &'e [<Postgres as sqlx::Database>::TypeInfo],
+    ) -> BoxFuture<'e, Result<<Postgres as sqlx::Database>::Statement<'q>, sqlx::Error>>
+    where
+        'c: 'e,
+    {
+        let conn: &'e mut PgConnection = &mut *self;
+        conn.prepare_with(sql, parameters)
+    }
+
+    fn describe<'e, 'q: 'e>(
+        self,
+        sql: &'q str,
+    ) -> BoxFuture<'e, Result<sqlx::Describe<Postgres>, sqlx::Error>>
+    where
+        'c: 'e,
+    {
+        let conn: &'e mut PgConnection = &mut *self;
+        conn.describe(sql)
     }
 }
 
@@ -557,14 +724,16 @@ impl QueryContext {
         }
     }
 
-    pub fn db(&self) -> &sqlx::PgPool {
-        &self.db_pool
-    }
-
-    /// Returns a `DbConn` wrapping the pool, allowing shared helper functions
-    /// that accept `DbConn` to work with both query and mutation contexts.
-    pub fn db_conn(&self) -> DbConn<'_> {
-        DbConn::Pool(&self.db_pool)
+    /// Database handle with automatic `db.query` tracing spans.
+    ///
+    /// Works directly with sqlx compile-time checked macros:
+    /// ```ignore
+    /// sqlx::query_as!(User, "SELECT * FROM users")
+    ///     .fetch_all(ctx.db())
+    ///     .await?
+    /// ```
+    pub fn db(&self) -> ForgeDb {
+        ForgeDb(self.db_pool.clone())
     }
 
     pub fn require_user_id(&self) -> crate::error::Result<Uuid> {
@@ -717,12 +886,6 @@ impl MutationContext {
         self.tx.is_some()
     }
 
-    pub fn db(&self) -> DbConn<'_> {
-        match &self.tx {
-            Some(tx) => DbConn::Transaction(tx.clone()),
-            None => DbConn::Pool(&self.db_pool),
-        }
-    }
 
     /// Acquire a connection compatible with sqlx compile-time checked macros.
     ///

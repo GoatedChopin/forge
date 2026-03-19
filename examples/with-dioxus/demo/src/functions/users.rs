@@ -82,7 +82,7 @@ pub async fn create_user(
         now,
         now
     )
-    .fetch_one(&mut *conn)
+    .fetch_one(&mut conn)
     .await
     .map_err(Into::into)
 }
@@ -123,7 +123,7 @@ pub async fn update_user(
         name,
         role as Option<UserRole>
     )
-    .fetch_one(&mut *conn)
+    .fetch_one(&mut conn)
     .await
     .map_err(Into::into)
 }
@@ -136,7 +136,7 @@ pub async fn delete_user(ctx: &MutationContext, id: Uuid) -> Result<bool> {
         .await
         .map_err(|e| ForgeError::Database(e.to_string()))?;
     let result = sqlx::query!("DELETE FROM users WHERE id = $1", id)
-        .execute(&mut *conn)
+        .execute(&mut conn)
         .await?;
 
     Ok(result.rows_affected() > 0)

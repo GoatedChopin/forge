@@ -107,7 +107,7 @@ pub async fn create_task(ctx: &MutationContext, input: CreateTaskInput) -> Resul
         priority as TaskPriority,
         input.assignee_id
     )
-    .fetch_optional(&mut *conn)
+    .fetch_optional(&mut conn)
     .await?
     .ok_or_else(|| ForgeError::NotFound("Project not found".into()))
 }
@@ -148,7 +148,7 @@ pub async fn update_task(ctx: &MutationContext, input: UpdateTaskInput) -> Resul
         input.id,
         user_id
     )
-    .fetch_optional(&mut *conn)
+    .fetch_optional(&mut conn)
     .await?
     .ok_or_else(|| ForgeError::NotFound("Task not found".into()))
 }
@@ -169,7 +169,7 @@ pub async fn delete_task(ctx: &MutationContext, input: DeleteTaskInput) -> Resul
         input.id,
         user_id
     )
-    .execute(&mut *conn)
+    .execute(&mut conn)
     .await?;
 
     Ok(result.rows_affected() > 0)
@@ -197,7 +197,7 @@ pub async fn move_task(ctx: &MutationContext, input: MoveTaskInput) -> Result<Ta
         input.id,
         user_id
     )
-    .fetch_one(&mut *conn)
+    .fetch_one(&mut conn)
     .await
     .map_err(Into::into)
 }

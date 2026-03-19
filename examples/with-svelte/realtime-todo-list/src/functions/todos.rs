@@ -37,7 +37,7 @@ pub async fn create_todo(ctx: &MutationContext, input: CreateTodoInput) -> Resul
         "INSERT INTO todos (title) VALUES ($1) RETURNING *",
         title
     )
-    .fetch_one(&mut *conn)
+    .fetch_one(&mut conn)
     .await
     .map_err(Into::into)
 }
@@ -58,7 +58,7 @@ pub async fn update_todo(ctx: &MutationContext, input: UpdateTodoInput) -> Resul
         input.completed,
         input.id
     )
-    .fetch_optional(&mut *conn)
+    .fetch_optional(&mut conn)
     .await?
     .ok_or_else(|| ForgeError::NotFound("Todo not found".into()))
 }
@@ -68,7 +68,7 @@ pub async fn delete_todo(ctx: &MutationContext, id: Uuid) -> Result<bool> {
     let mut conn = ctx.conn().await?;
 
     let result = sqlx::query!("DELETE FROM todos WHERE id = $1", id)
-        .execute(&mut *conn)
+        .execute(&mut conn)
         .await?;
 
     Ok(result.rows_affected() > 0)

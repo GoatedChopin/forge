@@ -113,7 +113,7 @@ pub async fn create_project(ctx: &MutationContext, input: CreateProjectInput) ->
         &input.description,
         user_id
     )
-    .fetch_one(&mut *conn)
+    .fetch_one(&mut conn)
     .await
     .map_err(Into::into)
 }
@@ -140,7 +140,7 @@ pub async fn update_project(ctx: &MutationContext, input: UpdateProjectInput) ->
         input.id,
         user_id
     )
-    .fetch_optional(&mut *conn)
+    .fetch_optional(&mut conn)
     .await?
     .ok_or_else(|| ForgeError::NotFound("Project not found".into()))
 }
@@ -168,7 +168,7 @@ pub async fn unarchive_project(
         input.id,
         user_id
     )
-    .fetch_optional(&mut *conn)
+    .fetch_optional(&mut conn)
     .await?
     .ok_or_else(|| ForgeError::NotFound("Project not found or not archived".into()))
 }
