@@ -49,6 +49,13 @@ fi
 
 cd "$DIR"
 
+echo "=== Auto-format generated code ==="
+cargo fmt 2>/dev/null || true
+[ -f "$DIR/frontend/Cargo.toml" ] && cargo fmt --manifest-path "$DIR/frontend/Cargo.toml" 2>/dev/null || true
+if [ -d "$DIR/frontend" ] && [ -f "$DIR/frontend/package.json" ]; then
+  cd "$DIR/frontend" && bun install --no-save 2>/dev/null && bunx prettier --write . 2>/dev/null || true && cd "$DIR"
+fi
+
 echo "=== Forge check ==="
 "$FORGE" check
 
