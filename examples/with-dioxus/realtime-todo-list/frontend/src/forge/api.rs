@@ -23,7 +23,6 @@ pub fn use_list_todos() -> QueryState<Vec<Todo>> {
 pub fn use_list_todos_live() -> SubscriptionState<Vec<Todo>> {
     use_forge_subscription("list_todos", ())
 }
-
 pub async fn create_todo(
     client: &ForgeClient,
     args: CreateTodoInput,
@@ -34,7 +33,6 @@ pub async fn create_todo(
 pub fn use_create_todo() -> Mutation<CreateTodoInput, Todo> {
     use_forge_mutation("create_todo")
 }
-
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct DeleteTodoParams {
     pub id: String,
@@ -55,7 +53,6 @@ pub async fn delete_todo(
 pub fn use_delete_todo() -> Mutation<DeleteTodoParams, bool> {
     use_forge_mutation("delete_todo")
 }
-
 pub async fn update_todo(
     client: &ForgeClient,
     args: UpdateTodoInput,

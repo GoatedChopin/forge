@@ -25,7 +25,6 @@ pub fn use_get_iss_location() -> QueryState<Option<IssLocation>> {
 pub fn use_get_iss_location_live() -> SubscriptionState<Option<IssLocation>> {
     use_forge_subscription("get_iss_location", ())
 }
-
 pub async fn get_trades(client: &ForgeClient) -> Result<Vec<Trade>, ForgeClientError> {
     client.call("get_trades", ()).await
 }
@@ -37,7 +36,6 @@ pub fn use_get_trades() -> QueryState<Vec<Trade>> {
 pub fn use_get_trades_live() -> SubscriptionState<Vec<Trade>> {
     use_forge_subscription("get_trades", ())
 }
-
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct GetUserParams {
     pub id: String,
@@ -62,7 +60,6 @@ pub fn use_get_user(args: GetUserParams) -> QueryState<Option<User>> {
 pub fn use_get_user_live(args: GetUserParams) -> SubscriptionState<Option<User>> {
     use_forge_subscription("get_user", args)
 }
-
 pub async fn get_users(client: &ForgeClient) -> Result<Vec<User>, ForgeClientError> {
     client.call("get_users", ()).await
 }
@@ -74,7 +71,6 @@ pub fn use_get_users() -> QueryState<Vec<User>> {
 pub fn use_get_users_live() -> SubscriptionState<Vec<User>> {
     use_forge_subscription("get_users", ())
 }
-
 pub async fn get_webhook_events(
     client: &ForgeClient,
 ) -> Result<Vec<WebhookEvent>, ForgeClientError> {
@@ -88,7 +84,6 @@ pub fn use_get_webhook_events() -> QueryState<Vec<WebhookEvent>> {
 pub fn use_get_webhook_events_live() -> SubscriptionState<Vec<WebhookEvent>> {
     use_forge_subscription("get_webhook_events", ())
 }
-
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct CreateUserParams {
     pub email: String,
@@ -120,7 +115,6 @@ pub async fn create_user(
 pub fn use_create_user() -> Mutation<CreateUserParams, User> {
     use_forge_mutation("create_user")
 }
-
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct DeleteUserParams {
     pub id: String,
@@ -141,7 +135,6 @@ pub async fn delete_user(
 pub fn use_delete_user() -> Mutation<DeleteUserParams, bool> {
     use_forge_mutation("delete_user")
 }
-
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct UpdateUserParams {
     pub id: String,
@@ -185,11 +178,9 @@ pub async fn update_user(
 pub fn use_update_user() -> Mutation<UpdateUserParams, User> {
     use_forge_mutation("update_user")
 }
-
 pub fn use_export_users(args: ExportInput) -> JobExecutionState<ExportOutput> {
     use_forge_job("export_users", args)
 }
-
 pub fn use_account_verification(
     args: VerificationInput,
 ) -> WorkflowExecutionState<VerificationOutput> {
