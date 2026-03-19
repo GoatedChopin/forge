@@ -4,6 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: dev
+    working_dir: /workspace/examples/with-dioxus/demo
     ports:
       - "8080:8080"
     env_file:
@@ -15,9 +16,9 @@ services:
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel:4318
     command: cargo watch --poll -x "run --no-default-features"
     volumes:
-      - .:/app
+      - ../../..:/workspace
       - cargo_cache:/usr/local/cargo/registry
-      - ./target:/app/target
+      - target_cache:/workspace/target
     depends_on:
       db:
         condition: service_healthy
@@ -26,7 +27,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 30
-      start_period: 60s
+      start_period: 120s
 
   db:
     image: postgres:18
@@ -48,3 +49,4 @@ services:
 volumes:
   postgres_data:
   cargo_cache:
+  target_cache:

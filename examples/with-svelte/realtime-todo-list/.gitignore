@@ -12,7 +12,6 @@ package-lock.json
 /frontend/test-results
 
 # Environment
-.env
 .env.local
 .env.*.local
 

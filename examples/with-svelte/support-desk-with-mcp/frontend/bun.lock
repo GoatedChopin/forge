@@ -6,7 +6,7 @@
       "name": "support-desk-frontend",
       "devDependencies": {
         "@eslint/js": "^9.0.0",
-        "@forge-rs/svelte": "=0.7.0",
+        "@forge-rs/svelte": "file:../../../../packages/forge-svelte",
         "@playwright/test": "^1.58.2",
         "@sveltejs/adapter-static": "^3.0.0",
         "@sveltejs/kit": "^2.49.0",
@@ -96,7 +96,7 @@
 
     "@eslint/plugin-kit": ["@eslint/plugin-kit@0.4.1", "", { "dependencies": { "@eslint/core": "^0.17.0", "levn": "^0.4.1" } }, "sha512-43/qtrDUokr7LJqoF2c3+RInu/t4zfrpYdoSDfYyhg52rwLV6TnOvdG4fXm7IkSB3wErkcmJS9iEhjVtOSEjjA=="],
 
-    "@forge-rs/svelte": ["@forge-rs/svelte@0.7.0", "", { "peerDependencies": { "svelte": "^5.0.0" } }, "sha512-/Ar8hIyf4B5QTcjglmdtS/e1UoEBRYaMDnMs5K2zWJSigKs2/M1aAfupbVvEf2QYxu7nxDbSKWMjHzsuNXYetA=="],
+    "@forge-rs/svelte": ["@forge-rs/svelte@file:../../../../packages/forge-svelte", { "peerDependencies": { "svelte": "^5.0.0" } }],
 
     "@humanfs/core": ["@humanfs/core@0.19.1", "", {}, "sha512-5DyQ4+1JEUzejeK1JGICcideyfUbGixgS9jNgex5nqkW+cY7WZhxBigmieN5Qnw9ZosSNVC9KQKyb+GUaGyKUA=="],
 

@@ -110,7 +110,7 @@ impl FunctionRouter {
             // Skip scope enforcement for functions with no input args.
             // The JWT still carries identity, accessible via ctx.require_user_id().
             let enforce = !entry.info().is_public && entry.info().has_input_args;
-            Self::check_identity_args(function_name, &args, &auth, enforce)?;
+            auth.check_identity_args(function_name, &args, enforce)?;
 
             return match entry {
                 FunctionEntry::Query { handler, info, .. } => {
@@ -175,7 +175,7 @@ impl FunctionRouter {
             && let Some(job_info) = job_dispatcher.get_info(function_name)
         {
             self.check_job_auth(&job_info, &auth)?;
-            Self::check_identity_args(function_name, &args, &auth, !job_info.is_public)?;
+            auth.check_identity_args(function_name, &args, !job_info.is_public)?;
             match job_dispatcher
                 .dispatch_by_name(function_name, args.clone(), auth.principal_id())
                 .await
@@ -192,7 +192,7 @@ impl FunctionRouter {
             && let Some(workflow_info) = workflow_dispatcher.get_info(function_name)
         {
             self.check_workflow_auth(&workflow_info, &auth)?;
-            Self::check_identity_args(function_name, &args, &auth, !workflow_info.is_public)?;
+            auth.check_identity_args(function_name, &args, !workflow_info.is_public)?;
             match workflow_dispatcher
                 .start_by_name(function_name, args.clone(), auth.principal_id())
                 .await
@@ -345,116 +345,6 @@ impl FunctionRouter {
             "subject:{principal}:scope:{:016x}",
             hasher.finish()
         ))
-    }
-
-    fn check_identity_args(
-        function_name: &str,
-        args: &Value,
-        auth: &AuthContext,
-        enforce_scope: bool,
-    ) -> Result<()> {
-        if auth.is_admin() {
-            return Ok(());
-        }
-
-        let Some(obj) = args.as_object() else {
-            if enforce_scope && auth.is_authenticated() {
-                return Err(ForgeError::Forbidden(format!(
-                    "Function '{function_name}' must include identity or tenant scope arguments"
-                )));
-            }
-            return Ok(());
-        };
-
-        let mut principal_values: Vec<String> = Vec::new();
-        if let Some(user_id) = auth.user_id().map(|id| id.to_string()) {
-            principal_values.push(user_id);
-        }
-        if let Some(subject) = auth.principal_id()
-            && !principal_values.iter().any(|v| v == &subject)
-        {
-            principal_values.push(subject);
-        }
-
-        let mut has_scope_key = false;
-
-        for key in [
-            "user_id",
-            "userId",
-            "owner_id",
-            "ownerId",
-            "owner_subject",
-            "ownerSubject",
-            "subject",
-            "sub",
-            "principal_id",
-            "principalId",
-        ] {
-            let Some(value) = obj.get(key) else {
-                continue;
-            };
-            has_scope_key = true;
-
-            if !auth.is_authenticated() {
-                return Err(ForgeError::Unauthorized(format!(
-                    "Function '{function_name}' requires authentication for identity-scoped argument '{key}'"
-                )));
-            }
-
-            let Value::String(actual) = value else {
-                return Err(ForgeError::InvalidArgument(format!(
-                    "Function '{function_name}' argument '{key}' must be a non-empty string"
-                )));
-            };
-
-            if actual.trim().is_empty() || !principal_values.iter().any(|v| v == actual) {
-                return Err(ForgeError::Forbidden(format!(
-                    "Function '{function_name}' argument '{key}' does not match authenticated principal"
-                )));
-            }
-        }
-
-        for key in ["tenant_id", "tenantId"] {
-            let Some(value) = obj.get(key) else {
-                continue;
-            };
-            has_scope_key = true;
-
-            if !auth.is_authenticated() {
-                return Err(ForgeError::Unauthorized(format!(
-                    "Function '{function_name}' requires authentication for tenant-scoped argument '{key}'"
-                )));
-            }
-
-            let expected = auth
-                .claim("tenant_id")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| {
-                    ForgeError::Forbidden(format!(
-                        "Function '{function_name}' argument '{key}' is not allowed for this principal"
-                    ))
-                })?;
-
-            let Value::String(actual) = value else {
-                return Err(ForgeError::InvalidArgument(format!(
-                    "Function '{function_name}' argument '{key}' must be a non-empty string"
-                )));
-            };
-
-            if actual.trim().is_empty() || actual != expected {
-                return Err(ForgeError::Forbidden(format!(
-                    "Function '{function_name}' argument '{key}' does not match authenticated tenant"
-                )));
-            }
-        }
-
-        if enforce_scope && auth.is_authenticated() && !has_scope_key {
-            return Err(ForgeError::Forbidden(format!(
-                "Function '{function_name}' must include identity or tenant scope arguments"
-            )));
-        }
-
-        Ok(())
     }
 
     /// Get the function kind by name.
@@ -657,7 +547,7 @@ mod tests {
             "user_id": uuid::Uuid::new_v4().to_string()
         });
 
-        let result = FunctionRouter::check_identity_args("list_orders", &args, &auth, true);
+        let result = auth.check_identity_args("list_orders", &args, true);
         assert!(matches!(result, Err(ForgeError::Forbidden(_))));
     }
 
@@ -675,7 +565,7 @@ mod tests {
             "subject": sub
         });
 
-        let result = FunctionRouter::check_identity_args("list_orders", &args, &auth, true);
+        let result = auth.check_identity_args("list_orders", &args, true);
         assert!(result.is_ok());
     }
 
@@ -686,7 +576,7 @@ mod tests {
             "user_id": uuid::Uuid::new_v4().to_string()
         });
 
-        let result = FunctionRouter::check_identity_args("list_orders", &args, &auth, true);
+        let result = auth.check_identity_args("list_orders", &args, true);
         assert!(matches!(result, Err(ForgeError::Unauthorized(_))));
     }
 
@@ -702,8 +592,7 @@ mod tests {
             )]),
         );
 
-        let result =
-            FunctionRouter::check_identity_args("list_orders", &serde_json::json!({}), &auth, true);
+        let result = auth.check_identity_args("list_orders", &serde_json::json!({}), true);
         assert!(matches!(result, Err(ForgeError::Forbidden(_))));
     }
 
@@ -720,12 +609,7 @@ mod tests {
         );
 
         // enforce_scope=false simulates has_input_args=false
-        let result = FunctionRouter::check_identity_args(
-            "list_todos",
-            &serde_json::Value::Null,
-            &auth,
-            false,
-        );
+        let result = auth.check_identity_args("list_todos", &serde_json::Value::Null, false);
         assert!(result.is_ok());
     }
 

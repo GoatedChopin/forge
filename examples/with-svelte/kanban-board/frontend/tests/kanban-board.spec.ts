@@ -368,9 +368,7 @@ test.describe("Kanban Board UI E2E", () => {
     await createProject(projectName);
     await openProject(projectName);
 
-    await expect(
-      page.getByRole("button", { name: "Add task" }),
-    ).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Add task" })).toBeDisabled();
   });
 
   test("project count displays on projects page", async ({
@@ -652,8 +650,6 @@ test.describe("Kanban Board UI E2E", () => {
 
     await page.locator("a", { hasText: "Projects" }).click();
     await expect(page).toHaveURL(/\/app$/);
-    await expect(
-      page.getByRole("heading", { name: "Projects" }),
-    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
   });
 });

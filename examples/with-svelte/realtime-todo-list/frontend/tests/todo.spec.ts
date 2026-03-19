@@ -2,7 +2,9 @@ import { test, expect, API_URL, ACTION_TIMEOUT, uniqueId } from "./fixtures";
 
 const INPUT = 'input[placeholder="What needs to be done?"]';
 
-async function deleteAllTodos(rpc: (fn: string, args?: unknown) => Promise<unknown>) {
+async function deleteAllTodos(
+  rpc: (fn: string, args?: unknown) => Promise<unknown>,
+) {
   const todos = await rpc("list_todos");
   if (!Array.isArray(todos)) return;
   for (const todo of todos) {
@@ -101,8 +103,8 @@ test.describe("CRUD with reactivity", () => {
     });
   });
 
-  test("add button disabled when input empty", async ({ page }) => {
-    await page.goto("/");
+  test("add button disabled when input empty", async ({ page, gotoReady }) => {
+    await gotoReady();
     await expect(page.locator(".input-row button")).toBeDisabled();
   });
 });
@@ -188,17 +190,9 @@ test.describe("UX details", () => {
     await expect(page.locator(INPUT)).toHaveValue("", {
       timeout: ACTION_TIMEOUT,
     });
-    await expect(page.locator(INPUT))
-      .toBeFocused({ timeout: 2000 })
-      .catch(() => {
-        // Focus behavior may vary, not critical
-      });
   });
 
-  test("untoggle completed todo restores it", async ({
-    page,
-    gotoReady,
-  }) => {
+  test("untoggle completed todo restores it", async ({ page, gotoReady }) => {
     const title = uniqueId("untoggle");
     await gotoReady();
 

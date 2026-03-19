@@ -4,6 +4,7 @@ use forge::prelude::*;
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, sqlx::Type,
 )]
+#[serde(rename_all = "snake_case")]
 #[sqlx(type_name = "user_role", rename_all = "lowercase")]
 pub enum UserRole {
     Admin,

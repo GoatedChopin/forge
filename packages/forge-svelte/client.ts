@@ -353,10 +353,10 @@ export class ForgeClient {
     });
   }
 
-  async _registerJob(clientSubId: string, jobId: string): Promise<void> {
-    if (!this.sessionId) return;
+  async _registerJob(clientSubId: string, jobId: string): Promise<unknown> {
+    if (!this.sessionId) return null;
     const token = await this.getToken();
-    await fetch(`${this.config.url}/_api/subscribe-job`, {
+    const res = await fetch(`${this.config.url}/_api/subscribe-job`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -369,12 +369,17 @@ export class ForgeClient {
         job_id: jobId,
       }),
     });
+    if (res.ok) {
+      const json = await res.json();
+      return json.data ?? null;
+    }
+    return null;
   }
 
-  async _registerWorkflow(clientSubId: string, workflowId: string): Promise<void> {
-    if (!this.sessionId) return;
+  async _registerWorkflow(clientSubId: string, workflowId: string): Promise<unknown> {
+    if (!this.sessionId) return null;
     const token = await this.getToken();
-    await fetch(`${this.config.url}/_api/subscribe-workflow`, {
+    const res = await fetch(`${this.config.url}/_api/subscribe-workflow`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -387,6 +392,11 @@ export class ForgeClient {
         workflow_id: workflowId,
       }),
     });
+    if (res.ok) {
+      const json = await res.json();
+      return json.data ?? null;
+    }
+    return null;
   }
 
   private async reregisterSubscriptions(): Promise<void> {

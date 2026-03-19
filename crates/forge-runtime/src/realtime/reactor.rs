@@ -922,7 +922,7 @@ impl Reactor {
             Some(FunctionEntry::Query { info, handler }) => {
                 Self::check_query_auth(info, auth_context)?;
                 let enforce = !info.is_public && info.has_input_args;
-                Self::check_identity_args(query_name, args, auth_context, enforce)?;
+                auth_context.check_identity_args(query_name, args, enforce)?;
 
                 let ctx = forge_core::function::QueryContext::new(
                     db_pool.clone(),
@@ -1002,116 +1002,6 @@ impl Reactor {
         Ok(())
     }
 
-    fn check_identity_args(
-        function_name: &str,
-        args: &serde_json::Value,
-        auth: &forge_core::function::AuthContext,
-        enforce_scope: bool,
-    ) -> forge_core::Result<()> {
-        if auth.is_admin() {
-            return Ok(());
-        }
-
-        let Some(obj) = args.as_object() else {
-            if enforce_scope && auth.is_authenticated() {
-                return Err(forge_core::ForgeError::Forbidden(format!(
-                    "Function '{function_name}' must include identity or tenant scope arguments"
-                )));
-            }
-            return Ok(());
-        };
-
-        let mut principal_values: Vec<String> = Vec::new();
-        if let Some(user_id) = auth.user_id().map(|id| id.to_string()) {
-            principal_values.push(user_id);
-        }
-        if let Some(subject) = auth.principal_id()
-            && !principal_values.iter().any(|v| v == &subject)
-        {
-            principal_values.push(subject);
-        }
-
-        let mut has_scope_key = false;
-
-        for key in [
-            "user_id",
-            "userId",
-            "owner_id",
-            "ownerId",
-            "owner_subject",
-            "ownerSubject",
-            "subject",
-            "sub",
-            "principal_id",
-            "principalId",
-        ] {
-            let Some(value) = obj.get(key) else {
-                continue;
-            };
-            has_scope_key = true;
-
-            if !auth.is_authenticated() {
-                return Err(forge_core::ForgeError::Unauthorized(format!(
-                    "Function '{function_name}' requires authentication for identity-scoped argument '{key}'"
-                )));
-            }
-
-            let serde_json::Value::String(actual) = value else {
-                return Err(forge_core::ForgeError::InvalidArgument(format!(
-                    "Function '{function_name}' argument '{key}' must be a non-empty string"
-                )));
-            };
-
-            if actual.trim().is_empty() || !principal_values.iter().any(|v| v == actual) {
-                return Err(forge_core::ForgeError::Forbidden(format!(
-                    "Function '{function_name}' argument '{key}' does not match authenticated principal"
-                )));
-            }
-        }
-
-        for key in ["tenant_id", "tenantId"] {
-            let Some(value) = obj.get(key) else {
-                continue;
-            };
-            has_scope_key = true;
-
-            if !auth.is_authenticated() {
-                return Err(forge_core::ForgeError::Unauthorized(format!(
-                    "Function '{function_name}' requires authentication for tenant-scoped argument '{key}'"
-                )));
-            }
-
-            let expected = auth
-                .claim("tenant_id")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| {
-                    forge_core::ForgeError::Forbidden(format!(
-                        "Function '{function_name}' argument '{key}' is not allowed for this principal"
-                    ))
-                })?;
-
-            let serde_json::Value::String(actual) = value else {
-                return Err(forge_core::ForgeError::InvalidArgument(format!(
-                    "Function '{function_name}' argument '{key}' must be a non-empty string"
-                )));
-            };
-
-            if actual.trim().is_empty() || actual != expected {
-                return Err(forge_core::ForgeError::Forbidden(format!(
-                    "Function '{function_name}' argument '{key}' does not match authenticated tenant"
-                )));
-            }
-        }
-
-        if enforce_scope && auth.is_authenticated() && !has_scope_key {
-            return Err(forge_core::ForgeError::Forbidden(format!(
-                "Function '{function_name}' must include identity or tenant scope arguments"
-            )));
-        }
-
-        Ok(())
-    }
-
     async fn ensure_job_access(
         db_pool: &sqlx::PgPool,
         job_id: Uuid,
@@ -1160,18 +1050,21 @@ impl Reactor {
             return Ok(());
         }
 
+        // Treat empty string the same as NULL (no owner)
+        let Some(owner) = owner_subject.filter(|s| !s.is_empty()) else {
+            return Ok(());
+        };
+
         let principal = auth.principal_id().ok_or_else(|| {
             forge_core::ForgeError::Unauthorized("Authentication required".to_string())
         })?;
 
-        match owner_subject {
-            Some(owner) if owner == principal => Ok(()),
-            Some(_) => Err(forge_core::ForgeError::Forbidden(
+        if owner == principal {
+            Ok(())
+        } else {
+            Err(forge_core::ForgeError::Forbidden(
                 "Not authorized to access this resource".to_string(),
-            )),
-            None => Err(forge_core::ForgeError::Forbidden(
-                "Resource has no owner; admin role required".to_string(),
-            )),
+            ))
         }
     }
 
@@ -1246,10 +1139,9 @@ mod tests {
             )]),
         );
 
-        let result = Reactor::check_identity_args(
+        let result = auth.check_identity_args(
             "list_orders",
             &serde_json::json!({"user_id": uuid::Uuid::new_v4().to_string()}),
-            &auth,
             true,
         );
         assert!(matches!(result, Err(forge_core::ForgeError::Forbidden(_))));
@@ -1268,7 +1160,7 @@ mod tests {
         );
 
         let result =
-            Reactor::check_identity_args("list_orders", &serde_json::json!({}), &auth, true);
+            auth.check_identity_args("list_orders", &serde_json::json!({}), true);
         assert!(matches!(result, Err(forge_core::ForgeError::Forbidden(_))));
     }
 

@@ -2,7 +2,7 @@
   "name": "demo-frontend",
   "private": true,
   "scripts": {
-    "dev": "dx serve --web --port 5173 --addr 0.0.0.0 --open false",
+    "dev": "dx serve --web --port 5173 --addr 0.0.0.0 --open false --hot-reload false",
     "build": "dx build --web --release",
     "format": "prettier --write . && cargo fmt --manifest-path Cargo.toml",
     "check": "cargo fmt --check --manifest-path Cargo.toml && prettier --check ."

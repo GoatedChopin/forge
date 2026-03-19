@@ -13,7 +13,6 @@ frontend/playwright-report/
 frontend/test-results/
 
 # Environment
-.env
 .env.local
 .env.*.local
 

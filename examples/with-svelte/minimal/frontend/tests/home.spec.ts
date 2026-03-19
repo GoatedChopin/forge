@@ -27,9 +27,7 @@ test.describe("Backend Connection", () => {
     expect(data.status).toBe("healthy");
   });
 
-  test("SSE connection establishes through ForgeProvider", async ({
-    page,
-  }) => {
+  test("SSE connection establishes through ForgeProvider", async ({ page }) => {
     const sseRequests: string[] = [];
 
     page.on("request", (req) => {

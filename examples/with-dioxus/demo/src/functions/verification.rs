@@ -3,7 +3,7 @@ use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VerificationInput {
-    pub user_id: String,
+    pub account_id: String,
     pub email: String,
 }
 
@@ -69,7 +69,7 @@ pub async fn account_verification(
     // Step 5: Mark verified
     if !ctx.is_step_completed("mark_verified") {
         ctx.record_step_start("mark_verified");
-        tracing::info!(user_id = %input.user_id, "Marking account verified");
+        tracing::info!(account_id = %input.account_id, "Marking account verified");
         tokio::time::sleep(Duration::from_millis(600)).await;
         ctx.record_step_complete("mark_verified", serde_json::json!(true));
     }

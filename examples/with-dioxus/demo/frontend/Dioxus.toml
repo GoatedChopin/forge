@@ -6,3 +6,6 @@ asset_dir = "public"
 
 [web.app]
 title = "demo"
+
+[web.wasm_opt]
+level = "s"

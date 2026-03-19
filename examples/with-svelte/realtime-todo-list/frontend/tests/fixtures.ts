@@ -53,8 +53,7 @@ export const test = base.extend<ForgeFixtures>({
       // Wait for the subscription registration response, not just the SSE
       // connection. This signals that reactivity is fully wired up.
       const subscribed = page.waitForResponse(
-        (res) =>
-          res.url().includes("/_api/subscribe") && res.status() === 200,
+        (res) => res.url().includes("/_api/subscribe") && res.status() === 200,
         { timeout: ACTION_TIMEOUT * 3 },
       );
       await page.goto(path);

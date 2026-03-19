@@ -53,8 +53,7 @@ export const test = base.extend<ForgeFixtures>({
       // WASM apps need extra time: download → compile → init → subscribe.
       // Wait for the app to render before expecting network activity.
       const subscribed = page.waitForResponse(
-        (res) =>
-          res.url().includes("/_api/subscribe") && res.status() === 200,
+        (res) => res.url().includes("/_api/subscribe") && res.status() === 200,
         { timeout: 60_000 },
       );
       await page.goto(path);

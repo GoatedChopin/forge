@@ -125,7 +125,7 @@
 
   function startVerificationWorkflow() {
     workflowStore = trackAccountVerification({
-      user_id: selectedUser?.id || "demo-user",
+      account_id: selectedUser?.id || "demo-user",
       email: selectedUser?.email || "demo@example.com",
     });
   }

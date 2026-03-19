@@ -93,10 +93,7 @@ test.describe("Support Inbox", () => {
     });
   });
 
-  test("escalate then de-escalate priority", async ({
-    page,
-    gotoReady,
-  }) => {
+  test("escalate then de-escalate priority", async ({ page, gotoReady }) => {
     const n = uniqueId("priority");
     const subject = `Priority cycle ${n}`;
 

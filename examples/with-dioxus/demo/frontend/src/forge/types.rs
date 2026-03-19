@@ -69,7 +69,7 @@ pub struct User {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VerificationInput {
-    pub user_id: String,
+    pub account_id: String,
     pub email: String,
 }
 

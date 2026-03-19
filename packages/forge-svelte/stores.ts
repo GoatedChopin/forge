@@ -187,6 +187,18 @@ export function createSubscriptionStore<TArgs, TResult>(
 
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+function asValidRecord(
+  data: unknown,
+  ...requiredStringFields: string[]
+): Record<string, unknown> | null {
+  if (!data || typeof data !== "object") return null;
+  const record = data as Record<string, unknown>;
+  for (const field of requiredStringFields) {
+    if (typeof record[field] !== "string") return null;
+  }
+  return record;
+}
+
 export function createJobStore<TArgs, TOutput>(
   functionName: string,
   args: RejectEmptyObject<TArgs>
@@ -219,32 +231,30 @@ export function createJobStore<TArgs, TOutput>(
       notify();
 
       const clientSubId = crypto.randomUUID();
-      await client._registerJob(clientSubId, jobId);
+      const initialData = await client._registerJob(clientSubId, jobId);
 
-      unsubscribeFn = client._subscribe(`job:${clientSubId}`, (data: unknown) => {
-        // Validate required fields exist
-        if (!data || typeof data !== "object") {
-          state = { ...state, status: "failed", error: "Invalid job update: not an object", loading: false };
-          notify();
-          return;
-        }
-        const jobData = data as Record<string, unknown>;
-        if (typeof jobData.job_id !== "string" || typeof jobData.status !== "string") {
-          state = { ...state, status: "failed", error: "Invalid job update: missing required fields", loading: false };
+      const applyJobData = (data: unknown) => {
+        const jobData = asValidRecord(data, "job_id", "status");
+        if (!jobData) {
+          state = { ...state, status: "failed", error: "Invalid job update", loading: false };
           notify();
           return;
         }
         state = {
           jobId: jobData.job_id,
           status: jobData.status as JobState<TOutput>["status"],
-          progress: typeof jobData.progress_percent === "number" ? jobData.progress_percent : null,
-          message: typeof jobData.progress_message === "string" ? jobData.progress_message : null,
+          progress: typeof jobData.progress === "number" ? jobData.progress : null,
+          message: typeof jobData.message === "string" ? jobData.message : null,
           output: (jobData.output ?? null) as TOutput | null,
           error: typeof jobData.error === "string" ? jobData.error : null,
           loading: false,
         };
         notify();
-      });
+      };
+
+      if (initialData) applyJobData(initialData);
+
+      unsubscribeFn = client._subscribe(`job:${clientSubId}`, applyJobData);
     } catch (e) {
       state = {
         ...state,
@@ -312,18 +322,12 @@ export function createWorkflowStore<TArgs, TOutput>(
       notify();
 
       const clientSubId = crypto.randomUUID();
-      await client._registerWorkflow(clientSubId, workflowId);
+      const initialData = await client._registerWorkflow(clientSubId, workflowId);
 
-      unsubscribeFn = client._subscribe(`wf:${clientSubId}`, (data: unknown) => {
-        // Validate required fields exist
-        if (!data || typeof data !== "object") {
-          state = { ...state, status: "failed", error: "Invalid workflow update: not an object", loading: false };
-          notify();
-          return;
-        }
-        const wfData = data as Record<string, unknown>;
-        if (typeof wfData.workflow_id !== "string" || typeof wfData.status !== "string") {
-          state = { ...state, status: "failed", error: "Invalid workflow update: missing required fields", loading: false };
+      const applyWorkflowData = (data: unknown) => {
+        const wfData = asValidRecord(data, "workflow_id", "status");
+        if (!wfData) {
+          state = { ...state, status: "failed", error: "Invalid workflow update", loading: false };
           notify();
           return;
         }
@@ -331,7 +335,7 @@ export function createWorkflowStore<TArgs, TOutput>(
         state = {
           workflowId: wfData.workflow_id,
           status: wfData.status as WorkflowState<TOutput>["status"],
-          step: typeof wfData.current_step === "string" ? wfData.current_step : null,
+          step: typeof wfData.step === "string" ? wfData.step : null,
           waitingFor: null,
           steps: rawSteps
             .filter((s): s is Record<string, unknown> => s && typeof s === "object")
@@ -346,7 +350,11 @@ export function createWorkflowStore<TArgs, TOutput>(
           loading: false,
         };
         notify();
-      });
+      };
+
+      if (initialData) applyWorkflowData(initialData);
+
+      unsubscribeFn = client._subscribe(`wf:${clientSubId}`, applyWorkflowData);
     } catch (e) {
       state = {
         ...state,

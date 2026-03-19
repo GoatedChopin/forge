@@ -2,6 +2,7 @@ target
 node_modules
 .svelte-kit
 .env
+!examples/**/.env
 .agents/
 crates/forge/generated/
 **/test-results/**

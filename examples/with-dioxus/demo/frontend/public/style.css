@@ -1,0 +1,432 @@
+body {
+  margin: 0;
+  background: #f8fafc;
+  color: #111827;
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  min-height: 100vh;
+}
+
+main {
+  max-width: 56rem;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+h1 {
+  margin: 0 0 1.5rem;
+  font-size: 2rem;
+  font-weight: 700;
+}
+
+h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+}
+
+.shell {
+  line-height: 1.5;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
+  align-items: start;
+}
+
+.grid > .stack {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 1.5rem;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 4%);
+}
+
+.card.dark {
+  background: linear-gradient(135deg, #0f172a, #1e293b);
+  border-color: #334155;
+  color: #f1f5f9;
+}
+
+.card.dark .muted {
+  color: #64748b;
+}
+
+.badge {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.15rem 0.4rem;
+  border-radius: 3px;
+  background: #e5e5e5;
+  color: #666;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+}
+
+.badge.green {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.badge.purple {
+  background: #ede9fe;
+  color: #5b21b6;
+}
+
+.stats {
+  display: flex;
+  gap: 2rem;
+}
+
+.label {
+  display: block;
+  color: #94a3b8;
+  font-size: 0.75rem;
+}
+
+.value {
+  color: #60a5fa;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.value.placeholder {
+  color: #475569;
+}
+
+.muted {
+  margin: 0;
+  color: #999;
+  font-style: italic;
+}
+
+.muted.small {
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.workflow-desc,
+.export-desc {
+  margin-bottom: 0.75rem;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.trades-table,
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.trades-table th {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #eee;
+  color: #666;
+  font-size: 0.9rem;
+  font-weight: 500;
+  text-align: left;
+}
+
+.trades-table td {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #f5f5f5;
+  font-size: 0.9rem;
+}
+
+.buy {
+  color: #16a34a;
+  font-weight: 500;
+}
+
+.sell {
+  color: #dc2626;
+  font-weight: 500;
+}
+
+.placeholder-row {
+  color: #ccc;
+}
+
+.input-label {
+  display: block;
+  margin-bottom: 0.35rem;
+  color: #666;
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.events-label {
+  margin-top: 1rem;
+}
+
+.webhook-row,
+.form-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.webhook-row {
+  margin-bottom: 0.5rem;
+}
+
+.key-input,
+input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+  color: #111827;
+  font-family: inherit;
+  font-size: 0.95rem;
+}
+
+.key-input {
+  background: #fafafa;
+  border-color: #d1d5db;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+}
+
+.key-input.used {
+  background: #f0fdf4;
+  border-color: #16a34a;
+  border-width: 2px;
+  color: #166534;
+}
+
+.hint {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+}
+
+.hint.warning {
+  color: #b45309;
+}
+
+.hint.success {
+  color: #166534;
+}
+
+.events {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.event {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #f8fafc;
+  font-size: 0.85rem;
+}
+
+.event .time {
+  color: #64748b;
+}
+
+.progress-bar {
+  height: 8px;
+  margin-bottom: 0.5rem;
+  border-radius: 4px;
+  background: #e5e5e5;
+  overflow: hidden;
+}
+
+.fill {
+  height: 100%;
+  background: #0066cc;
+  transition: width 0.3s;
+}
+
+.progress-text {
+  margin: 0 0 0.5rem;
+  color: #666;
+  font-size: 0.85rem;
+}
+
+.steps {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 4px;
+  background: #f5f5f5;
+  font-size: 0.9rem;
+}
+
+.step.completed {
+  background: #dcfce7;
+}
+
+.step.running {
+  background: #dbeafe;
+}
+
+.step.failed {
+  background: #fee2e2;
+}
+
+.icon {
+  width: 1.5rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+button {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 4px;
+  background: #0066cc;
+  color: #fff;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+button:hover:not(:disabled) {
+  background: #0055aa;
+}
+
+button:disabled {
+  background: #999;
+  cursor: not-allowed;
+}
+
+button.small {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.85rem;
+}
+
+button.secondary {
+  background: #666;
+}
+
+button.danger {
+  background: #dc2626;
+}
+
+.form-row {
+  margin-bottom: 1rem;
+}
+
+th,
+td {
+  padding: 0.75rem;
+  border-bottom: 1px solid #eee;
+  text-align: left;
+}
+
+th {
+  color: #555;
+  font-weight: 600;
+}
+
+.editing {
+  background: #f0f9ff;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.action-cell {
+  position: relative;
+  display: inline-flex;
+  gap: 0.5rem;
+  white-space: nowrap;
+}
+
+.popover {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 100;
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 4px;
+  padding: 0.5rem;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 15%);
+}
+
+@media (max-width: 700px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .grid > .stack {
+    min-height: auto;
+    justify-content: flex-start;
+  }
+
+  .form-row {
+    flex-wrap: wrap;
+  }
+
+  .form-row input,
+  .form-row button {
+    flex: 1 1 100%;
+  }
+
+  table {
+    font-size: 0.85rem;
+  }
+
+  th,
+  td {
+    padding: 0.5rem 0.25rem;
+  }
+
+  .action-cell {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+  }
+
+  .popover {
+    position: fixed;
+    top: 50%;
+    right: auto;
+    left: 50%;
+    transform: translate(-50%, -50%);
+  }
+}

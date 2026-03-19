@@ -11,7 +11,7 @@
     "test": "playwright test"
   },
   "devDependencies": {
-    "@forge-rs/svelte": "=0.7.1",
+    "@forge-rs/svelte": "file:../../../../packages/forge-svelte",
     "@playwright/test": "^1.58.2",
     "@sveltejs/adapter-static": "^3.0.0",
     "@sveltejs/kit": "^2.49.0",

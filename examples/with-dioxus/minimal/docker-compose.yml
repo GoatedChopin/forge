@@ -13,11 +13,12 @@ services:
       - SQLX_OFFLINE=true
       - FORGE_OTEL_ENABLED=true
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel:4318
+    working_dir: /workspace/examples/with-dioxus/minimal
     command: cargo watch --poll -x "run --no-default-features"
     volumes:
-      - .:/app
+      - ../../..:/workspace
       - cargo_cache:/usr/local/cargo/registry
-      - ./target:/app/target
+      - ./target:/workspace/examples/with-dioxus/minimal/target
     depends_on:
       db:
         condition: service_healthy

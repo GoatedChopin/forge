@@ -57,7 +57,7 @@ export interface User {
 }
 
 export interface VerificationInput {
-  user_id: string;
+  account_id: string;
   email: string;
 }
 

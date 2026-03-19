@@ -26,7 +26,9 @@ impl Default for RealtimeConfig {
 pub struct JobData {
     pub job_id: String,
     pub status: String,
+    #[serde(rename = "progress")]
     pub progress_percent: Option<i32>,
+    #[serde(rename = "message")]
     pub progress_message: Option<String>,
     pub output: Option<serde_json::Value>,
     pub error: Option<String>,
@@ -37,6 +39,7 @@ pub struct JobData {
 pub struct WorkflowData {
     pub workflow_id: String,
     pub status: String,
+    #[serde(rename = "step")]
     pub current_step: Option<String>,
     pub steps: Vec<WorkflowStepData>,
     pub output: Option<serde_json::Value>,

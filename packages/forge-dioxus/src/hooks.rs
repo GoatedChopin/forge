@@ -96,6 +96,10 @@ where
     let state = use_signal(SubscriptionState::<TResult>::default);
     let handle = use_hook(|| Rc::new(RefCell::new(None::<SubscriptionHandle>)));
     let generation = use_hook(|| Rc::new(Cell::new(0_u64)));
+    let pending_data = use_hook(|| Rc::new(RefCell::new(None::<TResult>)));
+    let flush_scheduled = use_hook(|| Rc::new(Cell::new(false)));
+    let has_received_data = use_hook(|| Rc::new(Cell::new(false)));
+    let reconnect_attempts = use_hook(|| Rc::new(Cell::new(0_u32)));
     let reconnect_nonce = use_signal(|| 0_u64);
     let effect_handle = handle.clone();
     let reconnect_key = reconnect_nonce();
@@ -110,37 +114,93 @@ where
         }
 
         let mut state = state;
-        state.set(SubscriptionState::default());
+        let previous = state.peek().clone();
+        pending_data.borrow_mut().take();
+        flush_scheduled.set(false);
+        let had_data = previous.data.is_some();
+        has_received_data.set(had_data);
+        state.set(SubscriptionState {
+            loading: !had_data,
+            data: previous.data,
+            error: None,
+            stale: had_data,
+            connection_state: ConnectionState::Connecting,
+        });
         let reconnect_generation = generation.clone();
+        let reconnect_attempts = reconnect_attempts.clone();
+        reconnect_attempts.set(0);
+        let pending_data = pending_data.clone();
+        let flush_scheduled = flush_scheduled.clone();
+        let has_received_data = has_received_data.clone();
 
         let subscription = client.subscribe_query(function_name, args, move |event| match event {
             StreamEvent::Connection(connection_state) => {
-                let mut next = state();
+                let mut next = state.peek().clone();
                 next.connection_state = connection_state;
                 next.stale = connection_state != ConnectionState::Connected;
                 state.set(next);
 
+                if connection_state == ConnectionState::Connected {
+                    reconnect_attempts.set(0);
+                }
+
                 if connection_state == ConnectionState::Disconnected
                     && reconnect_generation.get() == current_generation
                 {
+                    let attempts = reconnect_attempts.get();
+                    if attempts >= 10 {
+                        return;
+                    }
+                    reconnect_attempts.set(attempts + 1);
+                    let delay = 1000 * (1 << attempts.min(4));
                     let mut reconnect_nonce = reconnect_nonce;
                     spawn(async move {
-                        sleep(Duration::from_millis(350)).await;
+                        sleep(Duration::from_millis(delay as u64)).await;
                         reconnect_nonce += 1;
                     });
                 }
             }
             StreamEvent::Data(data) => {
-                state.set(SubscriptionState {
-                    loading: false,
-                    data: Some(data),
-                    error: None,
-                    stale: false,
-                    connection_state: state().connection_state,
+                if !has_received_data.replace(true) {
+                    let conn = state.peek().connection_state;
+                    state.set(SubscriptionState {
+                        loading: false,
+                        data: Some(data),
+                        error: None,
+                        stale: false,
+                        connection_state: conn,
+                    });
+                    return;
+                }
+
+                *pending_data.borrow_mut() = Some(data);
+                if flush_scheduled.replace(true) {
+                    return;
+                }
+
+                let pending_data = pending_data.clone();
+                let flush_scheduled = flush_scheduled.clone();
+                let mut state = state;
+                spawn(async move {
+                    sleep(Duration::from_millis(120)).await;
+                    flush_scheduled.set(false);
+
+                    let Some(data) = pending_data.borrow_mut().take() else {
+                        return;
+                    };
+
+                    let conn = state.peek().connection_state;
+                    state.set(SubscriptionState {
+                        loading: false,
+                        data: Some(data),
+                        error: None,
+                        stale: false,
+                        connection_state: conn,
+                    });
                 });
             }
             StreamEvent::Error(err) => {
-                let mut next = state();
+                let mut next = state.peek().clone();
                 next.loading = false;
                 next.error = Some(err.as_forge_error());
                 next.stale = true;
@@ -192,19 +252,20 @@ where
                     let subscription = client.subscribe_job(started.job_id.clone(), move |event| {
                         match event {
                             StreamEvent::Connection(connection_state) => {
-                                let mut next = state();
+                                let mut next = state.peek().clone();
                                 next.connection_state = connection_state;
                                 state.set(next);
                             }
                             StreamEvent::Data(job_state) => {
+                                let conn = state.peek().connection_state;
                                 state.set(JobExecutionState {
                                     loading: false,
-                                    connection_state: state().connection_state,
+                                    connection_state: conn,
                                     state: job_state,
                                 });
                             }
                             StreamEvent::Error(err) => {
-                                let mut next = state();
+                                let mut next = state.peek().clone();
                                 next.loading = false;
                                 next.state.error = Some(err.message);
                                 state.set(next);
@@ -214,7 +275,7 @@ where
                     *handle.borrow_mut() = Some(subscription);
                 }
                 Err(err) => {
-                    let mut next = state();
+                    let mut next = state.peek().clone();
                     next.loading = false;
                     next.state.error = Some(err.message);
                     state.set(next);
@@ -268,19 +329,20 @@ where
                         client.subscribe_workflow(started.workflow_id.clone(), move |event| {
                             match event {
                                 StreamEvent::Connection(connection_state) => {
-                                    let mut next = state();
+                                    let mut next = state.peek().clone();
                                     next.connection_state = connection_state;
                                     state.set(next);
                                 }
                                 StreamEvent::Data(workflow_state) => {
+                                    let conn = state.peek().connection_state;
                                     state.set(WorkflowExecutionState {
                                         loading: false,
-                                        connection_state: state().connection_state,
+                                        connection_state: conn,
                                         state: workflow_state,
                                     });
                                 }
                                 StreamEvent::Error(err) => {
-                                    let mut next = state();
+                                    let mut next = state.peek().clone();
                                     next.loading = false;
                                     next.state.error = Some(err.message);
                                     state.set(next);
@@ -290,7 +352,7 @@ where
                     *handle.borrow_mut() = Some(subscription);
                 }
                 Err(err) => {
-                    let mut next = state();
+                    let mut next = state.peek().clone();
                     next.loading = false;
                     next.state.error = Some(err.message);
                     state.set(next);

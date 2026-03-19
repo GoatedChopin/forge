@@ -2,7 +2,9 @@ import { test, expect, API_URL, ACTION_TIMEOUT, uniqueId } from "./fixtures";
 
 const INPUT = 'input[placeholder="What needs to be done?"]';
 
-async function deleteAllTodos(rpc: (fn: string, args?: unknown) => Promise<unknown>) {
+async function deleteAllTodos(
+  rpc: (fn: string, args?: unknown) => Promise<unknown>,
+) {
   const todos = await rpc("list_todos");
   if (!Array.isArray(todos)) return;
   for (const todo of todos) {
@@ -190,10 +192,7 @@ test.describe("UX details", () => {
     });
   });
 
-  test("untoggle completed todo restores it", async ({
-    page,
-    gotoReady,
-  }) => {
+  test("untoggle completed todo restores it", async ({ page, gotoReady }) => {
     const title = uniqueId("untoggle");
     await gotoReady();
 
@@ -209,6 +208,139 @@ test.describe("UX details", () => {
 
     await todoItem.locator("button.toggle").click();
     await expect(todoItem).not.toHaveClass(/completed/, {
+      timeout: ACTION_TIMEOUT,
+    });
+  });
+
+  test("empty state returns after deleting last todo", async ({
+    page,
+    gotoReady,
+  }) => {
+    const title = uniqueId("last-delete");
+    await gotoReady();
+
+    await page.fill(INPUT, title);
+    await page.click(".input-row button");
+    await expect(page.locator(".title", { hasText: title })).toBeVisible({
+      timeout: ACTION_TIMEOUT,
+    });
+
+    await page
+      .locator("li", { hasText: title })
+      .locator("button.delete")
+      .click();
+
+    await expect(
+      page.locator(".status", { hasText: "No todos yet" }),
+    ).toBeVisible({ timeout: ACTION_TIMEOUT });
+  });
+
+  test("summary header shows remaining count above list", async ({
+    page,
+    gotoReady,
+  }) => {
+    const t1 = uniqueId("summary-1");
+    const t2 = uniqueId("summary-2");
+    await gotoReady();
+
+    await page.fill(INPUT, t1);
+    await page.click(".input-row button");
+    await expect(page.locator(".title", { hasText: t1 })).toBeVisible({
+      timeout: ACTION_TIMEOUT,
+    });
+
+    await page.fill(INPUT, t2);
+    await page.click(".input-row button");
+    await expect(page.locator(".title", { hasText: t2 })).toBeVisible({
+      timeout: ACTION_TIMEOUT,
+    });
+
+    await expect(page.locator(".summary")).toContainText("2 remaining");
+  });
+
+  test("todos persist after page reload", async ({ page, gotoReady }) => {
+    const title = uniqueId("persist");
+    await gotoReady();
+
+    await page.fill(INPUT, title);
+    await page.click(".input-row button");
+    await expect(page.locator(".title", { hasText: title })).toBeVisible({
+      timeout: ACTION_TIMEOUT,
+    });
+
+    await page.reload();
+    await expect(page.locator(".title", { hasText: title })).toBeVisible({
+      timeout: ACTION_TIMEOUT,
+    });
+  });
+
+  test("completed state persists after page reload", async ({
+    page,
+    gotoReady,
+  }) => {
+    const title = uniqueId("persist-done");
+    await gotoReady();
+
+    await page.fill(INPUT, title);
+    await page.click(".input-row button");
+    const todoItem = page.locator("li", { hasText: title });
+    await expect(todoItem).toBeVisible({ timeout: ACTION_TIMEOUT });
+
+    await todoItem.locator("button.toggle").click();
+    await expect(todoItem).toHaveClass(/completed/, {
+      timeout: ACTION_TIMEOUT,
+    });
+
+    await page.reload();
+    const reloaded = page.locator("li", { hasText: title });
+    await expect(reloaded).toHaveClass(/completed/, {
+      timeout: ACTION_TIMEOUT,
+    });
+  });
+
+  test("delete button becomes visible on hover", async ({
+    page,
+    gotoReady,
+  }) => {
+    const title = uniqueId("hover-del");
+    await gotoReady();
+
+    await page.fill(INPUT, title);
+    await page.click(".input-row button");
+    const todoItem = page.locator("li", { hasText: title });
+    await expect(todoItem).toBeVisible({ timeout: ACTION_TIMEOUT });
+
+    const deleteBtn = todoItem.locator("button.delete");
+    await expect(deleteBtn).toHaveCSS("opacity", "0");
+
+    await todoItem.hover();
+    await expect(deleteBtn).toHaveCSS("opacity", "1");
+  });
+
+  test("bottom count reflects mix of completed and active", async ({
+    page,
+    gotoReady,
+  }) => {
+    const t1 = uniqueId("mix-1");
+    const t2 = uniqueId("mix-2");
+    const t3 = uniqueId("mix-3");
+    await gotoReady();
+
+    for (const t of [t1, t2, t3]) {
+      await page.fill(INPUT, t);
+      await page.click(".input-row button");
+      await expect(page.locator(".title", { hasText: t })).toBeVisible({
+        timeout: ACTION_TIMEOUT,
+      });
+    }
+
+    await page.locator("li", { hasText: t1 }).locator("button.toggle").click();
+    await expect(page.locator(".count")).toHaveText("2 remaining", {
+      timeout: ACTION_TIMEOUT,
+    });
+
+    await page.locator("li", { hasText: t2 }).locator("button.toggle").click();
+    await expect(page.locator(".count")).toHaveText("1 remaining", {
       timeout: ACTION_TIMEOUT,
     });
   });
