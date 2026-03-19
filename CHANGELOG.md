@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-03-20
+
+### Added
+
+- `ForgeDb` executor wrapper providing automatic `db.query` tracing spans on all database operations
+- Benchmark suite with RPC latency, realtime propagation, and subscription scaling measurements
+- Load generator (`loadgen`) for simulating concurrent users with SSE connections and RPC workloads
+- Dioxus codegen: query-first API with `Mutation` struct and builder DTOs for cleaner frontend bindings
+- Environment configuration files (`.env`) committed for all examples to simplify local development
+
+### Changed
+
+- Codegen internals refactored into unified `binding` and `emit` modules shared across Svelte and Dioxus generators
+- Dioxus and Svelte runtime packages updated with improved realtime messaging and client libraries
+- CI test isolation improved for Dioxus WASM targets with timer fixes
+- Documentation refined across build guides, configuration, and skill references
+
+### Fixed
+
+- Runtime wiring for cluster heartbeat, gateway request handling, and realtime subsystem initialization
+- Clippy `indexing_slicing` warnings in `ForgeDb` SQL operation detection
+- Loadgen `while_let_loop` and argument count lint issues
+
 ## [0.7.1] - 2026-03-14
 
 ### Added
@@ -374,7 +397,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust 2024 edition unsafe block compatibility
 - Release workflow cargo-edit installation
 
-[unreleased]: https://github.com/isala404/forge/compare/v0.7.1...HEAD
+[unreleased]: https://github.com/isala404/forge/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/isala404/forge/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/isala404/forge/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/isala404/forge/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/isala404/forge/compare/v0.5.1...v0.6.0
