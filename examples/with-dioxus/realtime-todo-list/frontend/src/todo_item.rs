@@ -17,7 +17,9 @@ pub fn TodoItem(todo: Todo, mut error: Signal<Option<String>>) -> Element {
             let update_todo = update_todo.clone();
             let id = id.clone();
             spawn(async move {
-                if let Err(err) = update_todo.call(UpdateTodoInput::new(id).completed(!completed)).await
+                if let Err(err) = update_todo
+                    .call(UpdateTodoInput::new(id).completed(!completed))
+                    .await
                 {
                     error.set(Some(err.message));
                 }

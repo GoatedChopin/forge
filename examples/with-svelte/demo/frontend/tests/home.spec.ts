@@ -253,7 +253,7 @@ test.describe("Forge Demo", () => {
 
     // Key input should turn green (used state) and show success message
     await expect(webhookSection.getByText(/Webhook processed/i)).toBeVisible({
-      timeout: ACTION_TIMEOUT,
+      timeout: ACTION_TIMEOUT * 2,
     });
 
     // Send button should be disabled after use

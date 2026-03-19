@@ -33,7 +33,7 @@ for pkg in examples/with-*/*/frontend/package.json; do
   ' "$pkg" > "$pkg.tmp" && mv "$pkg.tmp" "$pkg"
 done
 for cargo in examples/with-*/*/frontend/Cargo.toml; do
-  [ -f "$cargo" ] && sed -i "s/forge-dioxus\", version = \"=[^\"]*\"/forge-dioxus\", version = \"=$VERSION\"/g" "$cargo"
+  [ -f "$cargo" ] && sed -i "s/forge-dioxus\", \(version\|path\) = \"[^\"]*\"/forge-dioxus\", version = \"=$VERSION\"/g" "$cargo"
 done
 for cargo_toml in examples/with-*/*/Cargo.toml; do
   [ -f "$cargo_toml" ] && sed -i "s/forge = { \(version\|path\) = \"[^\"]*\"/forge = { version = \"$VERSION\"/g" "$cargo_toml"

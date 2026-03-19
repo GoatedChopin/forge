@@ -3,14 +3,13 @@
 #![allow(dead_code, unused_imports)]
 
 use forge_dioxus::{
-    ForgeClient, ForgeClientError, Mutation, QueryState,
-    SubscriptionState, JobExecutionState, WorkflowExecutionState,
+    ForgeClient, ForgeClientError, JobExecutionState, Mutation, QueryState, SubscriptionState,
+    WorkflowExecutionState,
 };
 
 use super::types::*;
 use super::{
-    use_forge_query, use_forge_subscription,
-    use_forge_mutation, use_forge_job, use_forge_workflow,
+    use_forge_job, use_forge_mutation, use_forge_query, use_forge_subscription, use_forge_workflow,
 };
 
 pub async fn get_iss_location(
