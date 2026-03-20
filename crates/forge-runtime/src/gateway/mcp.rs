@@ -422,7 +422,6 @@ fn handle_tools_list(state: &Arc<McpState>, id: Option<Value>, params: &Value) -
                 "description": entry.info.description,
                 "inputSchema": entry.input_schema,
             });
-            // json!({}) always produces Value::Object
             let obj = value.as_object_mut().expect("json! object literal");
 
             if let Some(title) = &entry.info.title {
@@ -447,13 +446,8 @@ fn handle_tools_list(state: &Arc<McpState>, id: Option<Value>, params: &Value) -
                     .collect();
                 obj.insert("icons".into(), serde_json::Value::Array(icons));
             }
-            if let Some(output_schema) = &entry.output_schema {
-                // MCP spec requires outputSchema to have type: "object".
-                // schemars may generate type: "array" (Vec<T>) or anyOf (Option<T>).
-                // Wrap non-object schemas so they conform.
-                let schema = normalize_output_schema(output_schema);
-                obj.insert("outputSchema".into(), schema);
-            }
+            // Omit outputSchema — Cursor's MCP client rejects it.
+
             value
         })
         .collect();
@@ -462,8 +456,7 @@ fn handle_tools_list(state: &Arc<McpState>, id: Option<Value>, params: &Value) -
 
     // Build result: omit nextCursor when null (Claude Code expects string or absent)
     let mut result = serde_json::json!({ "tools": page });
-    if end < tools.len() && result.is_object() {
-        // json!({}) always produces Value::Object
+    if end < tools.len() {
         result
             .as_object_mut()
             .expect("json! object literal")
@@ -474,37 +467,6 @@ fn handle_tools_list(state: &Arc<McpState>, id: Option<Value>, params: &Value) -
     }
 
     (StatusCode::OK, Json(json_rpc_success(id, result))).into_response()
-}
-
-/// MCP spec requires outputSchema to be `type: "object"`. Wrap schemas that
-/// schemars generates as arrays or union types (anyOf/oneOf for Option<T>).
-fn normalize_output_schema(schema: &Value) -> Value {
-    let type_str = schema.get("type").and_then(Value::as_str).unwrap_or("");
-    if type_str == "object" {
-        return schema.clone();
-    }
-
-    // Wrap non-object schemas: put the original under a "result" property
-    let mut wrapper = serde_json::json!({
-        "type": "object",
-        "properties": {
-            "result": schema
-        }
-    });
-
-    // Hoist $schema and definitions to the wrapper level
-    if let (Some(s), Some(obj)) = (schema.get("$schema"), wrapper.as_object_mut()) {
-        obj.insert("$schema".into(), s.clone());
-    }
-    if let (Some(d), Some(obj)) = (schema.get("definitions"), wrapper.as_object_mut()) {
-        obj.insert("definitions".into(), d.clone());
-        // Remove from the nested copy to avoid duplication
-        if let Some(inner) = wrapper.pointer_mut("/properties/result") {
-            inner.as_object_mut().map(|o| o.remove("definitions"));
-        }
-    }
-
-    wrapper
 }
 
 async fn handle_tools_call(
@@ -1258,7 +1220,10 @@ mod tests {
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0]["name"], "echo");
         assert!(tools[0].get("inputSchema").is_some());
-        assert!(tools[0].get("outputSchema").is_some());
+        assert!(
+            tools[0].get("outputSchema").is_none(),
+            "outputSchema should be omitted for Cursor compatibility"
+        );
     }
 
     #[tokio::test]

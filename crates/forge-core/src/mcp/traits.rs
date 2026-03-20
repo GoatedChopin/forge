@@ -20,17 +20,21 @@ pub struct McpToolIcon {
 }
 
 /// Tool behavior annotations exposed to clients.
+///
+/// Per MCP 2025-11-25, `title` belongs on the top-level tool object, not inside
+/// `annotations`. We keep the field here for backward compat but skip it during
+/// serialization so it never appears in the wire-format `annotations` object.
 #[derive(Debug, Clone, Copy, Serialize, Default)]
 pub struct McpToolAnnotations {
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip)]
     pub title: Option<&'static str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "readOnlyHint", skip_serializing_if = "Option::is_none")]
     pub read_only_hint: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "destructiveHint", skip_serializing_if = "Option::is_none")]
     pub destructive_hint: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "idempotentHint", skip_serializing_if = "Option::is_none")]
     pub idempotent_hint: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "openWorldHint", skip_serializing_if = "Option::is_none")]
     pub open_world_hint: Option<bool>,
 }
 
