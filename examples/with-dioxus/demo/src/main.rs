@@ -4,64 +4,18 @@ mod functions;
 mod schema;
 
 #[cfg(feature = "embedded-frontend")]
-mod embedded {
-    use axum::{
-        body::Body,
-        http::{Request, StatusCode, header},
-        response::{IntoResponse, Response},
-    };
-    use rust_embed::Embed;
-    use std::future::Future;
-    use std::pin::Pin;
-
-    #[derive(Embed)]
-    #[folder = "frontend/dist"]
-    pub struct Assets;
-
-    async fn serve_frontend_inner(req: Request<Body>) -> Response {
-        let path = req.uri().path().trim_start_matches('/');
-        let path = if path.is_empty() { "index.html" } else { path };
-
-        match Assets::get(path) {
-            Some(content) => {
-                let mime = mime_guess::from_path(path).first_or_octet_stream();
-                ([(header::CONTENT_TYPE, mime.as_ref())], content.data).into_response()
-            }
-            None => match Assets::get("index.html") {
-                Some(content) => {
-                    ([(header::CONTENT_TYPE, "text/html")], content.data).into_response()
-                }
-                None => (StatusCode::NOT_FOUND, "not found").into_response(),
-            },
-        }
-    }
-
-    pub fn serve_frontend(req: Request<Body>) -> Pin<Box<dyn Future<Output = Response> + Send>> {
-        Box::pin(serve_frontend_inner(req))
-    }
-}
+#[derive(rust_embed::Embed)]
+#[folder = "frontend/dist"]
+struct Assets;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     let config = ForgeConfig::from_file("forge.toml")?;
-    let builder = Forge::builder()
-        .register_query::<functions::GetUsersQuery>()
-        .register_query::<functions::GetUserQuery>()
-        .register_query::<functions::GetIssLocationQuery>()
-        .register_query::<functions::GetTradesQuery>()
-        .register_query::<functions::GetWebhookEventsQuery>()
-        .register_mutation::<functions::CreateUserMutation>()
-        .register_mutation::<functions::UpdateUserMutation>()
-        .register_mutation::<functions::DeleteUserMutation>()
-        .register_job::<functions::ExportUsersJob>()
-        .register_cron::<functions::IssLocationCron>()
-        .register_workflow::<functions::AccountVerificationWorkflow>()
-        .register_daemon::<functions::TradeStreamDaemon>()
-        .register_webhook::<functions::DemoWebhookWebhook>();
+    let builder = Forge::builder().auto_register();
 
     #[cfg(feature = "embedded-frontend")]
-    let builder = builder.frontend_handler(embedded::serve_frontend);
+    let builder = builder.frontend_handler(forge::serve_embedded_assets::<Assets>);
 
     builder.config(config).build()?.run().await
 }

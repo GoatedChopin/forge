@@ -16,7 +16,8 @@ main {
   max-width: 56rem;
   margin: 0 auto;
   padding: 2rem;
-  padding: 2rem max(2rem, env(safe-area-inset-left)) 2rem max(2rem, env(safe-area-inset-right));
+  padding: 2rem max(2rem, env(safe-area-inset-left)) 2rem
+    max(2rem, env(safe-area-inset-right));
   padding-top: max(2rem, env(safe-area-inset-top));
   padding-bottom: max(2rem, env(safe-area-inset-bottom));
 }

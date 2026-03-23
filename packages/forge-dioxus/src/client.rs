@@ -280,7 +280,8 @@ impl SubscriptionHandle {
 
     pub fn close(&self) {
         self.closed.set(true);
-        if let Some(task) = self.task.borrow_mut().take() {
+        let task = { self.task.borrow_mut().take() };
+        if let Some(task) = task {
             task.cancel();
         }
     }
@@ -332,7 +333,7 @@ mod platform {
     use futures_util::{StreamExt, stream};
     use gloo_net::eventsource::futures::{EventSource, EventSourceSubscription};
     use gloo_net::http::Request;
-    use js_sys::encode_uri_component;
+    use js_sys::{JSON, encode_uri_component};
     use serde::Serialize;
     use serde::de::DeserializeOwned;
 
@@ -388,6 +389,18 @@ mod platform {
         error_stream: EventSourceSubscription,
     }
 
+    fn message_data_as_string(message: &web_sys::MessageEvent) -> Option<String> {
+        let data = message.data();
+        data.as_string().or_else(|| {
+            JSON::stringify(&data)
+                .ok()
+                .and_then(|value| value.as_string())
+                .map(|raw| {
+                    serde_json::from_str::<String>(&raw).unwrap_or(raw)
+                })
+        })
+    }
+
     async fn open_sse_connection<TValue, F>(
         client: &ForgeClient,
         callback: &Rc<RefCell<F>>,
@@ -436,7 +449,7 @@ mod platform {
 
         let connected_event = match connected_stream.next().await {
             Some(Ok((_kind, message))) => {
-                let Some(raw) = message.data().as_string() else {
+                let Some(raw) = message_data_as_string(&message) else {
                     client.emit_error(
                         callback,
                         ForgeClientError::new(
@@ -502,7 +515,7 @@ mod platform {
 
             match event {
                 Ok((kind, message)) if kind == "update" => {
-                    let Some(raw) = message.data().as_string() else {
+                    let Some(raw) = message_data_as_string(&message) else {
                         client.emit_error(
                             callback,
                             ForgeClientError::new(
@@ -539,7 +552,7 @@ mod platform {
                     }
                 }
                 Ok((_kind, message)) => {
-                    let Some(raw) = message.data().as_string() else {
+                    let Some(raw) = message_data_as_string(&message) else {
                         client.emit_error(
                             callback,
                             ForgeClientError::new(

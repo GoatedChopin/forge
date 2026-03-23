@@ -1,9 +1,13 @@
+pub mod auth;
 mod client;
 mod context;
 mod hooks;
 mod types;
 mod upload;
 
+pub use auth::{ForgeAuth, ForgeAuthProvider, ForgeAuthState, use_auth_key, use_forge_auth, use_viewer};
+#[cfg(feature = "router")]
+pub use auth::use_require_auth;
 pub use client::{ForgeClient, ForgeClientConfig, SubscriptionHandle};
 pub use context::{ForgeProvider, use_connection_state, use_forge_client};
 pub use hooks::{

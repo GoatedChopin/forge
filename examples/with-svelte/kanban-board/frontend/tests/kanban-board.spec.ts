@@ -275,11 +275,11 @@ test.describe("Kanban Board UI E2E", () => {
     await createProject(projectName);
 
     await page.evaluate((tamperedId) => {
-      const raw = localStorage.getItem("kanban_user");
+      const raw = localStorage.getItem("forge_auth");
       if (!raw) return;
-      const parsed = JSON.parse(raw) as { id?: string };
-      parsed.id = tamperedId;
-      localStorage.setItem("kanban_user", JSON.stringify(parsed));
+      const parsed = JSON.parse(raw) as { user?: { id?: string } };
+      if (parsed.user) parsed.user.id = tamperedId;
+      localStorage.setItem("forge_auth", JSON.stringify(parsed));
     }, randomUUID());
 
     await page.goto("/app");

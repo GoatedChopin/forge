@@ -4,64 +4,18 @@ mod functions;
 mod schema;
 
 #[cfg(feature = "embedded-frontend")]
-mod embedded {
-    use axum::{
-        body::Body,
-        http::{Request, StatusCode, header},
-        response::{IntoResponse, Response},
-    };
-    use rust_embed::Embed;
-    use std::future::Future;
-    use std::pin::Pin;
-
-    #[derive(Embed)]
-    #[folder = "frontend/build"]
-    pub struct Assets;
-
-    async fn serve_frontend_inner(req: Request<Body>) -> Response {
-        let path = req.uri().path().trim_start_matches('/');
-        let path = if path.is_empty() { "index.html" } else { path };
-
-        match Assets::get(path) {
-            Some(content) => {
-                let mime = mime_guess::from_path(path).first_or_octet_stream();
-                ([(header::CONTENT_TYPE, mime.as_ref())], content.data).into_response()
-            }
-            None => {
-                // SPA fallback - serve index.html for client-side routing
-                match Assets::get("index.html") {
-                    Some(content) => {
-                        ([(header::CONTENT_TYPE, "text/html")], content.data).into_response()
-                    }
-                    None => (StatusCode::NOT_FOUND, "not found").into_response(),
-                }
-            }
-        }
-    }
-
-    pub fn serve_frontend(req: Request<Body>) -> Pin<Box<dyn Future<Output = Response> + Send>> {
-        Box::pin(serve_frontend_inner(req))
-    }
-}
+#[derive(rust_embed::Embed)]
+#[folder = "frontend/build"]
+struct Assets;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     let config = ForgeConfig::from_file("forge.toml")?;
-    let builder = Forge::builder()
-        .register_query::<functions::ListSupportTicketsQuery>()
-        .register_mutation::<functions::CreateSupportTicketMutation>()
-        .register_mutation::<functions::SetTicketStatusMutation>()
-        .register_mutation::<functions::SetTicketPriorityMutation>()
-        .register_mutation::<functions::AddTicketNoteMutation>()
-        .register_mcp_tool::<functions::McpListSupportTicketsMcpTool>()
-        .register_mcp_tool::<functions::McpCreateSupportTicketMcpTool>()
-        .register_mcp_tool::<functions::McpSetTicketStatusMcpTool>()
-        .register_mcp_tool::<functions::McpSetTicketPriorityMcpTool>()
-        .register_mcp_tool::<functions::McpAddTicketNoteMcpTool>();
+    let builder = Forge::builder().auto_register();
 
     #[cfg(feature = "embedded-frontend")]
-    let builder = builder.frontend_handler(embedded::serve_frontend);
+    let builder = builder.frontend_handler(forge::serve_embedded_assets::<Assets>);
 
     builder.config(config).build()?.run().await
 }

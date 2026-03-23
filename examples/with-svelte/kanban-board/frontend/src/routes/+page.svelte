@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
   import { resolve } from "$app/paths";
-  import { getForgeClient, register, login } from "$lib/forge";
+  import { auth, register, login } from "$lib/forge";
   import type { ForgeError } from "$lib/forge";
 
   let mode: "login" | "register" = $state("login");
@@ -16,18 +16,12 @@
     loading = true;
 
     try {
-      // Clear stale tokens so the auth middleware doesn't reject public endpoints
-      localStorage.removeItem("kanban_token");
-      localStorage.removeItem("kanban_user");
-
       const result =
         mode === "register"
           ? await register({ email, name, password })
           : await login({ email, password });
 
-      localStorage.setItem("kanban_token", result.token);
-      localStorage.setItem("kanban_user", JSON.stringify(result.user));
-      await getForgeClient().reconnect();
+      auth.setAuth(result.access_token, result.refresh_token, result.user);
       goto(resolve("/app"));
     } catch (e) {
       error = (e as ForgeError).message ?? "Something went wrong";

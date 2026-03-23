@@ -19,7 +19,8 @@ pub struct LoginInput {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AuthResponse {
-    pub token: String,
+    pub access_token: String,
+    pub refresh_token: String,
     pub user: UserPublic,
 }
 
@@ -30,26 +31,16 @@ pub struct UserPublic {
     pub name: String,
 }
 
-fn sign_jwt(user_id: Uuid, secret: &str) -> Result<String> {
-    let claims = serde_json::json!({
-        "sub": user_id,
-        "iat": chrono::Utc::now().timestamp(),
-        "exp": (chrono::Utc::now() + chrono::Duration::days(7)).timestamp(),
-    });
-
-    jsonwebtoken::encode(
-        &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
-        &claims,
-        &jsonwebtoken::EncodingKey::from_secret(secret.as_bytes()),
-    )
-    .map_err(|e| ForgeError::Internal(format!("JWT signing failed: {e}")))
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RefreshInput {
+    pub refresh_token: String,
 }
 
-fn auth_response(ctx: &MutationContext, user: &User) -> Result<AuthResponse> {
-    let secret = ctx.env_require("JWT_SECRET")?;
-    let token = sign_jwt(user.id, &secret)?;
+async fn auth_response(ctx: &MutationContext, user: &User) -> Result<AuthResponse> {
+    let pair = ctx.issue_token_pair(user.id, &["user"]).await?;
     Ok(AuthResponse {
-        token,
+        access_token: pair.access_token,
+        refresh_token: pair.refresh_token,
         user: UserPublic {
             id: user.id,
             email: user.email.clone(),
@@ -96,7 +87,7 @@ pub async fn register(ctx: &MutationContext, input: RegisterInput) -> Result<Aut
         }
     })?;
 
-    auth_response(ctx, &user)
+    auth_response(ctx, &user).await
 }
 
 #[forge::mutation(public)]
@@ -115,5 +106,10 @@ pub async fn login(ctx: &MutationContext, input: LoginInput) -> Result<AuthRespo
         return Err(ForgeError::Validation("Invalid email or password".into()));
     }
 
-    auth_response(ctx, &user)
+    auth_response(ctx, &user).await
+}
+
+#[forge::mutation(public)]
+pub async fn refresh(ctx: &MutationContext, input: RefreshInput) -> Result<TokenPair> {
+    ctx.rotate_refresh_token(&input.refresh_token).await
 }

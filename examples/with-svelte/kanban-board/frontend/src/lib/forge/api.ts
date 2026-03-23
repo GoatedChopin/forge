@@ -15,10 +15,12 @@ import type {
   MoveTaskInput,
   Project,
   ProjectWithTasks,
+  RefreshInput,
   RegisterInput,
   ScheduleDeletionInput,
   ScheduleDeletionOutput,
   Task,
+  TokenPair,
   UnarchiveProjectInput,
   UpdateProjectInput,
   UpdateTaskInput,
@@ -51,6 +53,8 @@ export const login = (args: LoginInput): Promise<AuthResponse> =>
   getForgeClient().call("login", args);
 export const moveTask = (args: MoveTaskInput): Promise<Task> =>
   getForgeClient().call("move_task", args);
+export const refresh = (args: RefreshInput): Promise<TokenPair> =>
+  getForgeClient().call("refresh", args);
 export const register = (args: RegisterInput): Promise<AuthResponse> =>
   getForgeClient().call("register", args);
 export const unarchiveProject = (args: UnarchiveProjectInput): Promise<Project> =>

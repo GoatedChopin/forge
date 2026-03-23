@@ -3,7 +3,7 @@
   import { resolve } from "$app/paths";
   import { SvelteMap } from "svelte/reactivity";
   import {
-    getForgeClient,
+    auth,
     listProjects$,
     createProject,
     updateProject,
@@ -86,9 +86,7 @@
   }
 
   async function handleLogout() {
-    localStorage.removeItem("kanban_token");
-    localStorage.removeItem("kanban_user");
-    await getForgeClient().reconnect();
+    auth.clearAuth();
     goto(resolve("/"));
   }
 </script>
