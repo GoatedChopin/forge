@@ -44,9 +44,11 @@ Workflows add: `workflowId`, `status`, `step`, `steps[]`, `output`, `error`.
 
 ## Auth Pattern
 
-1. Backend: `[auth]` config in `forge.toml` + public `register`/`login` mutations that call `ctx.issue_token(claims)`
-2. Frontend: auth store persists token in localStorage, provides `getToken()` to the client
+1. Backend: `[auth]` config in `forge.toml` + public `register`/`login`/`refresh` mutations using `ctx.issue_token_pair()`
+2. Frontend: auth layer persists tokens + user/viewer to localStorage, provides token to the client, runs periodic refresh
 3. On auth change: client reconnects SSE automatically (subscriptions re-register with new identity)
+
+Both SvelteKit (`auth.setAuth(token, refreshToken, user)`) and Dioxus (`auth.login_with_viewer(token, refreshToken, &viewer)`) store the authenticated user alongside tokens. This avoids apps needing their own user persistence layer.
 
 Protected endpoints require `Authorization: Bearer <token>`. Public endpoints (`#[forge::query(public)]`) skip auth.
 

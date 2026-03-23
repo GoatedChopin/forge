@@ -32,6 +32,8 @@ Before editing, read only what defines the task surface:
 
 Stop exploring once you know which files need changes and which command should verify them.
 
+For Dioxus projects, also check `frontend/Cargo.toml` for correct platform feature separation (web/desktop/mobile should be separate features, not hardcoded). For projects created with `forge new`, check `docker-compose.yml` for hardcoded workspace paths that need updating.
+
 ## Build order
 
 For most work:
@@ -89,16 +91,18 @@ Macros alone do not make handlers reachable. Each must be registered in `src/mai
 
 | Function | Generated struct | Register call |
 |---|---|---|
-| `list_todos` | `ListTodosQuery` | `.register_query::<f::ListTodosQuery>()` |
-| `create_order` | `CreateOrderMutation` | `.register_mutation::<f::CreateOrderMutation>()` |
-| `send_email` | `SendEmailJob` | `.register_job::<f::SendEmailJob>()` |
-| `daily_cleanup` | `DailyCleanupCron` | `.register_cron::<f::DailyCleanupCron>()` |
-| `onboarding` | `OnboardingWorkflow` | `.register_workflow::<f::OnboardingWorkflow>()` |
-| `heartbeat` | `HeartbeatDaemon` | `.register_daemon::<f::HeartbeatDaemon>()` |
-| `stripe` | `StripeWebhook` | `.register_webhook::<f::StripeWebhook>()` |
-| `export_data` | `ExportDataMcpTool` | `.register_mcp_tool::<f::ExportDataMcpTool>()` |
+| `list_todos` | `ListTodosQuery` | `.register_query::<functions::ListTodosQuery>()` |
+| `create_order` | `CreateOrderMutation` | `.register_mutation::<functions::CreateOrderMutation>()` |
+| `send_email` | `SendEmailJob` | `.register_job::<functions::SendEmailJob>()` |
+| `daily_cleanup` | `DailyCleanupCron` | `.register_cron::<functions::DailyCleanupCron>()` |
+| `onboarding` | `OnboardingWorkflow` | `.register_workflow::<functions::OnboardingWorkflow>()` |
+| `heartbeat` | `HeartbeatDaemon` | `.register_daemon::<functions::HeartbeatDaemon>()` |
+| `stripe` | `StripeWebhook` | `.register_webhook::<functions::StripeWebhook>()` |
+| `export_data` | `ExportDataMcpTool` | `.register_mcp_tool::<functions::ExportDataMcpTool>()` |
 
 Naming: PascalCase(fn_name) + type suffix. Avoid naming functions with the suffix (e.g. `heartbeat_daemon` → `HeartbeatDaemonDaemon`).
+
+Generated structs inherit the visibility of the handler function. If the function is not `pub`, the struct is private and won't be accessible via `functions::StructName`. Always declare handlers as `pub async fn`.
 
 ### Migrations
 
@@ -111,6 +115,12 @@ Derive identity from context, never trust client-supplied ownership fields. Forg
 ### No fake inputs
 
 If a handler has no business input, omit the parameter. No `Option<()>`, `()`, or dummy structs.
+
+### On compilation or runtime failure
+
+If `cargo check`, `forge check`, or runtime errors occur (SSE failures, deserialization errors, session mismatches), load `references/troubleshooting.md` before attempting fixes. Most failures fall into known categories with direct solutions. Do not iterate through trial-and-error when the troubleshooting guide covers the error.
+
+Key categories covered: sqlx offline mode, struct visibility, ForgeConn borrowing, Docker path issues, `SESSION_PRINCIPAL_MISMATCH` (auth + SSE), `DESERIALIZATION_ERROR` from serde-skipped fields in generated types, ForgeError formatting.
 
 ## Verification order
 
@@ -137,6 +147,7 @@ Most small tasks need only this file. Load one when the task needs it:
 | File uploads, MCP tools, external APIs, custom routes | `references/integrations.md` |
 | Production: deploy, scaling, observability | `references/operations.md` |
 | Review checklist, anti-patterns, security | `references/quality.md` |
+| Build failures, runtime errors, Docker issues, common fixes | `references/troubleshooting.md` |
 
 ## Output contract
 

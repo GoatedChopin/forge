@@ -5,11 +5,12 @@ End-to-end auth setup for Forge apps.
 ## Config
 
 ```toml
-# HS256 (self-issued JWT)
+# HS256 (self-issued JWT) with built-in refresh tokens
 [auth]
 jwt_algorithm = "HS256"
 jwt_secret = "${JWT_SECRET}"
-token_expiry = "15m"
+access_token_ttl = "1h"    # default "1h", accepts "15m", "2h", etc.
+refresh_token_ttl = "30d"  # default "30d", accepts "7d", "90d", etc.
 
 # RS256 (external provider like Auth0, Clerk, Firebase)
 [auth]
@@ -19,6 +20,8 @@ jwt_issuer = "https://provider.com/"
 jwt_audience = "my-app"
 jwks_cache_ttl_secs = 3600
 ```
+
+`access_token_ttl` and `refresh_token_ttl` control the lifetime of tokens issued by `ctx.issue_token_pair()`. The deprecated `token_expiry` is used as a fallback for `access_token_ttl` if not set.
 
 Supported algorithms: HS256, HS384, HS512 (need `jwt_secret`), RS256, RS384, RS512 (need `jwks_url`). Validation: 60s clock skew leeway, requires `exp` and `sub` claims.
 
@@ -58,60 +61,65 @@ pub struct AuthInput { pub email: String, pub password: String }
 pub struct AuthResponse { pub token: String, pub user: User }
 ```
 
-### Handlers
+### Handlers (with built-in refresh tokens)
 
 ```rust
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AuthResponse {
+    pub access_token: String,
+    pub refresh_token: String,
+    pub user: User,
+}
+
 #[forge::mutation(public)]
 pub async fn register(ctx: &MutationContext, input: AuthInput) -> Result<AuthResponse> {
     let hash = bcrypt::hash(&input.password, bcrypt::DEFAULT_COST)
         .map_err(|e| ForgeError::Internal(e.to_string()))?;
 
-    let user: User = ctx.db().fetch_one(
-        sqlx::query_as("INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING *")
-            .bind(&input.email).bind(&hash)
-    ).await.map_err(|e| {
-        if e.to_string().contains("unique constraint") {
-            ForgeError::Validation("Email already registered".into())
-        } else { e.into() }
-    })?;
+    let user: User = sqlx::query_as("INSERT INTO users ...")
+        .fetch_one(ctx.pool()).await?;
 
-    let claims = Claims::builder()
-        .subject(user.id)
-        .role("user")
-        .build();
-    let token = ctx.issue_token(&claims)?;
-
-    Ok(AuthResponse { token, user })
+    // Framework handles token generation, hashing, storage, and expiry.
+    // TTLs come from [auth] in forge.toml (access_token_ttl, refresh_token_ttl).
+    let pair = ctx.issue_token_pair(user.id, &["user"]).await?;
+    Ok(AuthResponse {
+        access_token: pair.access_token,
+        refresh_token: pair.refresh_token,
+        user,
+    })
 }
 
 #[forge::mutation(public)]
 pub async fn login(ctx: &MutationContext, input: AuthInput) -> Result<AuthResponse> {
-    let user: User = ctx.db().fetch_optional(
-        sqlx::query_as("SELECT * FROM users WHERE email = $1").bind(&input.email)
-    ).await?
-    .ok_or_else(|| ForgeError::Unauthorized("Invalid credentials".into()))?;
+    let user = /* verify credentials */;
+    let pair = ctx.issue_token_pair(user.id, &["user"]).await?;
+    Ok(AuthResponse { access_token: pair.access_token, refresh_token: pair.refresh_token, user })
+}
 
-    if !bcrypt::verify(&input.password, &user.password_hash)
-        .unwrap_or(false) {
-        return Err(ForgeError::Unauthorized("Invalid credentials".into()));
-    }
+// Refresh: framework rotates the token atomically (delete old, insert new)
+#[forge::mutation(public)]
+pub async fn refresh(ctx: &MutationContext, input: RefreshInput) -> Result<RefreshResponse> {
+    let pair = ctx.rotate_refresh_token(&input.refresh_token).await?;
+    Ok(RefreshResponse { access_token: pair.access_token, refresh_token: pair.refresh_token })
+}
 
-    let claims = Claims::builder()
-        .subject(user.id)
-        .role("user")
-        .build();
-    let token = ctx.issue_token(&claims)?;
-
-    Ok(AuthResponse { token, user })
+// Logout: framework revokes the refresh token
+#[forge::mutation]
+pub async fn logout(ctx: &MutationContext, input: LogoutInput) -> Result<()> {
+    ctx.revoke_refresh_token(&input.refresh_token).await
 }
 ```
 
 ### Registration
 
 ```rust
+// auto_register() discovers all #[forge::query], #[forge::mutation], etc. automatically
 Forge::builder()
-    .register_mutation::<functions::RegisterMutation>()
-    .register_mutation::<functions::LoginMutation>()
+    .config(config)
+    .auto_register()
+    .build()?
+    .run()
+    .await
 ```
 
 ## Claims Builder
@@ -171,14 +179,117 @@ ctx.auth.is_admin() -> bool                  // has "admin" role
 
 ## Frontend Auth (SvelteKit)
 
-See `frontend/svelte.md` for auth store details. Key points:
-- `auth.setAuth(token, user)` after login (persists to localStorage, reconnects SSE)
-- `auth.clearAuth()` on logout
-- `getToken()` passed to `ForgeProvider` for automatic header injection
+The generated `auth.svelte.ts` store provides built-in refresh token support:
+
+```typescript
+import { auth, getToken } from "./forge/auth.svelte";
+
+// After login/register (stores tokens + user to localStorage, reconnects SSE):
+auth.setAuth(response.access_token, response.refresh_token, response.user);
+
+// Update just tokens after refresh (preserves user):
+auth.updateTokens(response.access_token, response.refresh_token);
+
+// Start periodic refresh (call once in root layout):
+auth.startRefreshLoop("http://localhost:8080", 40 * 60 * 1000);
+
+// Logout (clears localStorage, stops refresh loop, reconnects SSE):
+auth.clearAuth();
+
+// Read state:
+auth.isAuthenticated  // boolean
+auth.token            // string | null
+auth.user             // User | null
+
+// Pass to ForgeProvider:
+// <ForgeProvider url="..." getToken={getToken}>
+```
+
+The store handles localStorage persistence, periodic token refresh, and 401 recovery via `auth.handleAuthError()`. SSE reconnects automatically on `setAuth` and `clearAuth`.
 
 ## Frontend Auth (Dioxus)
 
-Pass `get_token` callback to `ForgeProvider`. Store token in a signal or persistent storage. On auth change, the client reconnects automatically.
+Use `ForgeAuthProvider` instead of `ForgeProvider` for built-in token + viewer storage, refresh loops, and 401 recovery:
+
+```rust
+rsx! {
+    ForgeAuthProvider {
+        url: "http://localhost:8080",
+        app_name: "my-app",
+        refresh_interval_secs: 2400,   // default 40min, ~2/3 of access_token_ttl
+        Router::<Route> {}
+    }
+}
+```
+
+Access auth state and viewer in components:
+```rust
+let mut auth = use_forge_auth();
+
+// After login/register (stores tokens + viewer, persists across sessions):
+auth.login_with_viewer(response.access_token, response.refresh_token, &response.viewer);
+
+// Read the viewer anywhere (typed to your app's user struct):
+let viewer: Option<Viewer> = use_viewer::<Viewer>();
+
+// Update just the viewer (e.g. after profile edit):
+auth.update_viewer(&updated_viewer);
+
+// Logout (clears tokens + viewer):
+auth.logout();
+
+// Route guard (redirects unauthenticated users):
+if !use_require_auth("/login") { return rsx! {} }
+
+// Keyed remount for SSE reconnection on auth change:
+let auth_key = use_auth_key();
+rsx! { main { key: "{auth_key}", Router::<Route> {} } }
+```
+
+`ForgeAuthProvider` automatically wires the token provider, handles 401 errors with refresh, runs periodic refresh, and persists the viewer alongside tokens. See `references/frontend/dioxus.md` for the full auth pattern.
+
+## Refresh Tokens (Built-in)
+
+Forge provides built-in refresh token management via `forge_refresh_tokens` system table. No app-level migration needed.
+
+### MutationContext Methods
+
+```rust
+// Issue access + refresh token pair (TTLs from forge.toml)
+let pair = ctx.issue_token_pair(user_id, &["user"]).await?;
+// pair.access_token, pair.refresh_token
+
+// Rotate: delete old token, issue new pair atomically
+let pair = ctx.rotate_refresh_token(&old_refresh_token).await?;
+
+// Revoke a specific token (logout)
+ctx.revoke_refresh_token(&refresh_token).await?;
+
+// Revoke all tokens for a user (password change, account deletion)
+ctx.revoke_all_refresh_tokens(user_id).await?;
+```
+
+### How it works
+
+- Refresh tokens are random opaque strings, SHA-256 hashed before storage
+- Single-use rotation: each refresh consumes the old token and issues a new one
+- Expired tokens are rejected; a cleanup function `forge_cleanup_refresh_tokens()` is available for cron
+
+### Claims Builder (low-level)
+
+For manual token issuance without refresh tokens:
+
+```rust
+let claims = Claims::builder()
+    .subject(user_id)
+    .role("user")
+    .duration_secs(900)
+    .build()
+    .map_err(ForgeError::Internal)?;
+let token = ctx.issue_token(&claims)?;
+```
+
+`issue_token()` and `issue_token_pair()` are only available on `MutationContext` and only with HMAC algorithms (HS256/384/512).
 
 ## External Provider (JWKS)
 

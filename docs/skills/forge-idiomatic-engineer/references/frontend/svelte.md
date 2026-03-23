@@ -81,16 +81,34 @@ Generated `auth.svelte.ts` provides:
 ```typescript
 class AuthStore {
   get token(): string | null
+  get refreshToken(): string | null
   get user(): User | null
   get isAuthenticated(): boolean
-  setAuth(token: string, user: User): void   // persists to localStorage, reconnects SSE
-  clearAuth(): void                           // clears localStorage, reconnects SSE
+  setAuth(token: string, refreshToken: string, user: User): void  // persists to localStorage, reconnects SSE
+  updateTokens(token: string, refreshToken: string): void          // updates tokens, preserves user
+  updateUser(user: User): void                                     // updates user, preserves tokens
+  clearAuth(): void                                                // clears localStorage, stops refresh, reconnects SSE
+  startRefreshLoop(apiUrl: string, intervalMs?: number): void      // periodic token refresh (default 40min)
+  stopRefreshLoop(): void
+  tryRefresh(): Promise<boolean>                                   // manual refresh attempt
+  handleAuthError(): Promise<void>                                 // call from ForgeProvider's onAuthError
 }
 export const auth: AuthStore;
 export function getToken(): string | null;
 ```
 
-Use `auth.setAuth(token, user)` after login. Use `auth.clearAuth()` on logout. SSE reconnects automatically on auth change.
+```typescript
+// After login/register:
+auth.setAuth(response.access_token, response.refresh_token, response.user);
+
+// In root layout (once):
+auth.startRefreshLoop("http://localhost:8080");
+
+// Logout:
+auth.clearAuth();
+```
+
+SSE reconnects automatically on `setAuth` and `clearAuth`. The `user` property persists to localStorage alongside tokens, similar to Dioxus `login_with_viewer`.
 
 ## Navigation
 

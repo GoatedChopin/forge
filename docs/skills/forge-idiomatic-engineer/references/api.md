@@ -158,8 +158,8 @@ All duration strings: `500ms`, `30s`, `5m`, `2h`, `7d`, or bare number (= second
 
 ### Key Context Notes
 
-- `MutationContext.db()` returns `DbConn<'_>` (pool or tx). Use `conn().await?` for `sqlx::query_as!` macros.
-- `QueryContext.db()` returns `ForgeDb` (works with `query_as!` directly).
+- `MutationContext.conn().await?` returns `ForgeConn<'_>`. Must bind to `let mut conn` before passing to sqlx: `sqlx::query_as::<_, T>("...").fetch_one(&mut conn)`. Passing `ctx.conn().await?` directly fails because sqlx needs `&mut ForgeConn`, not owned `ForgeConn`.
+- `QueryContext.db()` returns `ForgeDb` (works with query methods directly, no `&mut` needed).
 - `MutationContext.http()` returns raw `&reqwest::Client`. Use `http_with_circuit_breaker()` for CB protection.
 - Job async methods: `heartbeat()`, `save()`, `saved()`, `set_saved()`, `is_cancel_requested()`, `check_cancelled()` are all async.
 - `WorkflowContext.elapsed()` returns `chrono::Duration`, not `std::time::Duration`.
