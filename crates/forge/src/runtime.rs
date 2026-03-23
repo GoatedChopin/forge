@@ -69,6 +69,7 @@ pub mod prelude {
     pub use forge_core::daemon::{DaemonContext, ForgeDaemon};
     pub use forge_core::env::EnvAccess;
     pub use forge_core::error::{ForgeError, Result};
+    pub use forge_core::auth::TokenPair;
     pub use forge_core::function::{
         AuthContext, ForgeMutation, ForgeQuery, MutationContext, QueryContext,
     };
@@ -458,6 +459,10 @@ impl Forge {
                     .map_err(|e| ForgeError::Config(e.to_string()))?,
                 mcp: self.config.mcp.clone(),
                 quiet_routes: self.config.gateway.quiet_routes.clone(),
+                token_ttl: forge_core::AuthTokenTtl {
+                    access_token_secs: self.config.auth.access_token_ttl_secs(),
+                    refresh_token_days: self.config.auth.refresh_token_ttl_days(),
+                },
             };
 
             // Build gateway server (pass Database wrapper for read replica routing)
@@ -740,6 +745,25 @@ impl ForgeBuilder {
     /// ```
     pub fn custom_routes(mut self, router: Router) -> Self {
         self.custom_routes = Some(router);
+        self
+    }
+
+    /// Automatically register all functions discovered via `#[forge::query]`,
+    /// `#[forge::mutation]`, `#[forge::job]`, `#[forge::cron]`, `#[forge::workflow]`,
+    /// `#[forge::daemon]`, `#[forge::webhook]`, and `#[forge::mcp_tool]` macros.
+    ///
+    /// This replaces the need to manually call `.register_query::<T>()` etc.
+    /// for every function in your application.
+    pub fn auto_register(mut self) -> Self {
+        crate::auto_register::auto_register_all(
+            &mut self.function_registry,
+            &mut self.job_registry,
+            &mut self.cron_registry,
+            &mut self.workflow_registry,
+            &mut self.daemon_registry,
+            &mut self.webhook_registry,
+            &mut self.mcp_registry,
+        );
         self
     }
 

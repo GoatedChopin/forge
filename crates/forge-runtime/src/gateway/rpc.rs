@@ -59,6 +59,13 @@ impl RpcHandler {
         }
     }
 
+    /// Set the token TTL config. Must be called before any requests are handled.
+    pub fn set_token_ttl(&mut self, ttl: forge_core::AuthTokenTtl) {
+        if let Some(executor) = Arc::get_mut(&mut self.executor) {
+            executor.set_token_ttl(ttl);
+        }
+    }
+
     /// Handle an RPC request.
     pub async fn handle(
         &self,

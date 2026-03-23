@@ -38,5 +38,7 @@
 //! - [`ClaimsBuilder`] - Builder for constructing claims (testing)
 
 mod claims;
+pub mod tokens;
 
 pub use claims::{Claims, ClaimsBuilder};
+pub use tokens::TokenPair;

@@ -129,6 +129,10 @@ pub fn daemon_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                 Box::pin(async move #block)
             }
         }
+
+        forge::inventory::submit!(forge::AutoDaemon(|registry| {
+            registry.register::<#struct_name>();
+        }));
     };
 
     TokenStream::from(expanded)

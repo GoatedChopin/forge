@@ -56,9 +56,13 @@ axum = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
 include_dir = "0.7"
+inventory = { workspace = true }
+rust-embed = { workspace = true, optional = true }
+mime_guess = { workspace = true, optional = true }
 
 [features]
 testcontainers = ["forge-core/testcontainers"]
+embedded-frontend = ["dep:rust-embed", "dep:mime_guess"]
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", features = ["signal", "hostname"] }

@@ -75,6 +75,11 @@ impl FunctionExecutor {
         }
     }
 
+    /// Set the token TTL config on the underlying router.
+    pub fn set_token_ttl(&mut self, ttl: forge_core::AuthTokenTtl) {
+        self.router.set_token_ttl(ttl);
+    }
+
     /// Execute a function call.
     pub async fn execute(
         &self,

@@ -210,6 +210,10 @@ pub fn webhook_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                 Box::pin(async move #block)
             }
         }
+
+        forge::inventory::submit!(forge::AutoWebhook(|registry| {
+            registry.register::<#struct_name>();
+        }));
     };
 
     TokenStream::from(expanded)

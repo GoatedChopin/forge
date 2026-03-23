@@ -509,6 +509,10 @@ fn expand_mcp_tool_impl(input: ItemFn, attrs: McpToolAttrs) -> syn::Result<Token
                 })
             }
         }
+
+        forge::inventory::submit!(forge::AutoMcpTool(|registry| {
+            registry.register::<#struct_name>();
+        }));
     })
 }
 

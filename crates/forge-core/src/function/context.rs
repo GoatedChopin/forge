@@ -707,6 +707,24 @@ impl EnvAccess for QueryContext {
 /// Callback type for looking up job info by name.
 pub type JobInfoLookup = Arc<dyn Fn(&str) -> Option<JobInfo> + Send + Sync>;
 
+/// Token TTL configuration resolved from `[auth]` in forge.toml.
+#[derive(Debug, Clone)]
+pub struct AuthTokenTtl {
+    /// Access token lifetime in seconds (default 3600).
+    pub access_token_secs: i64,
+    /// Refresh token lifetime in days (default 30).
+    pub refresh_token_days: i64,
+}
+
+impl Default for AuthTokenTtl {
+    fn default() -> Self {
+        Self {
+            access_token_secs: 3600,
+            refresh_token_days: 30,
+        }
+    }
+}
+
 /// Context for mutation functions (transactional database access).
 pub struct MutationContext {
     /// Authentication context.
@@ -731,6 +749,8 @@ pub struct MutationContext {
     job_info_lookup: Option<JobInfoLookup>,
     /// Optional token issuer for signing JWTs (available when HMAC auth is configured).
     token_issuer: Option<Arc<dyn TokenIssuer>>,
+    /// Token TTL config from forge.toml.
+    token_ttl: AuthTokenTtl,
 }
 
 impl MutationContext {
@@ -748,6 +768,7 @@ impl MutationContext {
             outbox: None,
             job_info_lookup: None,
             token_issuer: None,
+            token_ttl: AuthTokenTtl::default(),
         }
     }
 
@@ -772,6 +793,7 @@ impl MutationContext {
             outbox: None,
             job_info_lookup: None,
             token_issuer: None,
+            token_ttl: AuthTokenTtl::default(),
         }
     }
 
@@ -797,6 +819,7 @@ impl MutationContext {
             outbox: None,
             job_info_lookup: None,
             token_issuer: None,
+            token_ttl: AuthTokenTtl::default(),
         }
     }
 
@@ -829,6 +852,7 @@ impl MutationContext {
             outbox: Some(outbox.clone()),
             job_info_lookup: Some(job_info_lookup),
             token_issuer: None,
+            token_ttl: AuthTokenTtl::default(),
         };
 
         (ctx, tx_handle, outbox)
@@ -888,6 +912,11 @@ impl MutationContext {
         self.token_issuer = Some(issuer);
     }
 
+    /// Set the token TTL configuration (from forge.toml `[auth]`).
+    pub fn set_token_ttl(&mut self, ttl: AuthTokenTtl) {
+        self.token_ttl = ttl;
+    }
+
     /// Issue a signed JWT from the given claims.
     ///
     /// Only available when HMAC auth is configured in `forge.toml`.
@@ -910,6 +939,96 @@ impl MutationContext {
             )
         })?;
         issuer.sign(claims)
+    }
+
+    /// Issue an access + refresh token pair for the given user.
+    ///
+    /// Stores the refresh token hash in `forge_refresh_tokens` and returns
+    /// both tokens. Use `rotate_refresh_token()` to exchange a refresh token
+    /// for a new pair, and `revoke_refresh_token()` to invalidate one.
+    ///
+    /// TTLs come from `[auth]` in forge.toml:
+    /// - `access_token_ttl` (default "1h")
+    /// - `refresh_token_ttl` (default "30d")
+    pub async fn issue_token_pair(
+        &self,
+        user_id: Uuid,
+        roles: &[&str],
+    ) -> crate::error::Result<crate::auth::TokenPair> {
+        let issuer = self.token_issuer.clone().ok_or_else(|| {
+            crate::error::ForgeError::Internal(
+                "Token issuer not available. Configure [auth] in forge.toml".into(),
+            )
+        })?;
+        let access_ttl = self.token_ttl.access_token_secs;
+        let refresh_ttl = self.token_ttl.refresh_token_days;
+        crate::auth::tokens::issue_token_pair(
+            &self.db_pool,
+            user_id,
+            roles,
+            access_ttl,
+            refresh_ttl,
+            move |uid, r, ttl| {
+                let claims = Claims::builder()
+                    .subject(uid)
+                    .roles(r.iter().map(|s| s.to_string()).collect())
+                    .duration_secs(ttl)
+                    .build()
+                    .map_err(crate::error::ForgeError::Internal)?;
+                issuer.sign(&claims)
+            },
+        )
+        .await
+    }
+
+    /// Rotate a refresh token: validate the old one, issue a new pair.
+    ///
+    /// The old token is atomically deleted and a new access + refresh pair
+    /// is returned. Fails if the token is invalid or expired.
+    pub async fn rotate_refresh_token(
+        &self,
+        old_refresh_token: &str,
+    ) -> crate::error::Result<crate::auth::TokenPair> {
+        let issuer = self.token_issuer.clone().ok_or_else(|| {
+            crate::error::ForgeError::Internal(
+                "Token issuer not available. Configure [auth] in forge.toml".into(),
+            )
+        })?;
+        let access_ttl = self.token_ttl.access_token_secs;
+        let refresh_ttl = self.token_ttl.refresh_token_days;
+        crate::auth::tokens::rotate_refresh_token(
+            &self.db_pool,
+            old_refresh_token,
+            &["user"],
+            access_ttl,
+            refresh_ttl,
+            move |uid, r, ttl| {
+                let claims = Claims::builder()
+                    .subject(uid)
+                    .roles(r.iter().map(|s| s.to_string()).collect())
+                    .duration_secs(ttl)
+                    .build()
+                    .map_err(crate::error::ForgeError::Internal)?;
+                issuer.sign(&claims)
+            },
+        )
+        .await
+    }
+
+    /// Revoke a specific refresh token (e.g., on logout).
+    pub async fn revoke_refresh_token(
+        &self,
+        refresh_token: &str,
+    ) -> crate::error::Result<()> {
+        crate::auth::tokens::revoke_refresh_token(&self.db_pool, refresh_token).await
+    }
+
+    /// Revoke all refresh tokens for a user (e.g., on password change or account deletion).
+    pub async fn revoke_all_refresh_tokens(
+        &self,
+        user_id: Uuid,
+    ) -> crate::error::Result<()> {
+        crate::auth::tokens::revoke_all_refresh_tokens(&self.db_pool, user_id).await
     }
 
     /// In transactional mode, buffers for atomic commit; otherwise dispatches immediately.

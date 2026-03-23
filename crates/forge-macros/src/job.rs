@@ -449,6 +449,10 @@ pub fn job_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
 
             #compensate
         }
+
+        forge::inventory::submit!(forge::AutoJob(|registry| {
+            registry.register::<#struct_name>();
+        }));
     };
 
     TokenStream::from(expanded)

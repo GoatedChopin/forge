@@ -53,6 +53,13 @@ fn same_principal(a: &AuthContext, b: &AuthContext) -> bool {
     }
 }
 
+fn resolve_sse_auth_context(
+    request_auth: &AuthContext,
+    query_auth: Option<AuthContext>,
+) -> AuthContext {
+    query_auth.unwrap_or_else(|| request_auth.clone())
+}
+
 fn authorize_session_access(
     session: &SseSessionData,
     session_secret: &str,
@@ -340,6 +347,7 @@ fn unsubscribe_error(
 /// SSE handler for GET /events.
 pub async fn sse_handler(
     State(state): State<Arc<SseState>>,
+    Extension(request_auth): Extension<AuthContext>,
     Query(query): Query<SseQuery>,
 ) -> impl IntoResponse {
     // Check session limit
@@ -357,9 +365,9 @@ pub async fn sse_handler(
     let (tx, mut rx) = mpsc::channel::<SseMessage>(buffer_size);
     let cancel_token = CancellationToken::new();
 
-    let auth_context = if let Some(token) = &query.token {
+    let query_auth = if let Some(token) = &query.token {
         match state.auth_middleware.validate_token_async(token).await {
-            Ok(claims) => super::auth::build_auth_context_from_claims(claims),
+            Ok(claims) => Some(super::auth::build_auth_context_from_claims(claims)),
             Err(e) => {
                 tracing::warn!("SSE token validation failed: {}", e);
                 return (
@@ -370,8 +378,9 @@ pub async fn sse_handler(
             }
         }
     } else {
-        forge_core::function::AuthContext::unauthenticated()
+        None
     };
+    let auth_context = resolve_sse_auth_context(&request_auth, query_auth);
     let session_secret = uuid::Uuid::new_v4().to_string();
 
     // Register session with reactor
@@ -979,6 +988,9 @@ pub async fn sse_workflow_subscribe_handler(
 #[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+
+    use uuid::Uuid;
 
     #[test]
     fn test_sse_payload_serialization() {
@@ -1001,5 +1013,37 @@ mod tests {
         let json = serde_json::to_string(&payload).unwrap();
         assert!(json.contains("\"type\":\"error\""));
         assert!(json.contains("NOT_FOUND"));
+    }
+
+    #[test]
+    fn resolve_sse_auth_context_prefers_request_auth_when_query_token_absent() {
+        let request_auth = AuthContext::authenticated(
+            Uuid::new_v4(),
+            vec!["user".to_string()],
+            HashMap::new(),
+        );
+
+        let resolved = resolve_sse_auth_context(&request_auth, None);
+
+        assert!(resolved.is_authenticated());
+        assert_eq!(resolved.principal_id(), request_auth.principal_id());
+    }
+
+    #[test]
+    fn resolve_sse_auth_context_prefers_query_token_when_present() {
+        let request_auth = AuthContext::authenticated(
+            Uuid::new_v4(),
+            vec!["user".to_string()],
+            HashMap::new(),
+        );
+        let query_auth = AuthContext::authenticated(
+            Uuid::new_v4(),
+            vec!["user".to_string()],
+            HashMap::new(),
+        );
+
+        let resolved = resolve_sse_auth_context(&request_auth, Some(query_auth.clone()));
+
+        assert_eq!(resolved.principal_id(), query_auth.principal_id());
     }
 }

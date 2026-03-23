@@ -1071,6 +1071,7 @@ dependencies = [
  "schemars 0.8.22",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "testcontainers",
  "testcontainers-modules",
@@ -1087,12 +1088,10 @@ dependencies = [
 name = "forge-dioxus-demo-template"
 version = "0.7.2"
 dependencies = [
- "axum",
  "chrono",
  "dotenvy",
  "forgex",
  "futures-util",
- "mime_guess",
  "reqwest",
  "rust-embed",
  "serde",
@@ -1109,13 +1108,9 @@ dependencies = [
 name = "forge-dioxus-minimal-template"
 version = "0.7.2"
 dependencies = [
- "axum",
- "bcrypt",
  "chrono",
  "dotenvy",
  "forgex",
- "jsonwebtoken 9.3.1",
- "mime_guess",
  "rust-embed",
  "serde",
  "serde_json",
@@ -1178,12 +1173,10 @@ dependencies = [
 name = "forge-svelte-demo-template"
 version = "0.7.2"
 dependencies = [
- "axum",
  "chrono",
  "dotenvy",
  "forgex",
  "futures-util",
- "mime_guess",
  "reqwest",
  "rust-embed",
  "serde",
@@ -1200,13 +1193,9 @@ dependencies = [
 name = "forge-svelte-minimal-template"
 version = "0.7.2"
 dependencies = [
- "axum",
- "bcrypt",
  "chrono",
  "dotenvy",
  "forgex",
- "jsonwebtoken 9.3.1",
- "mime_guess",
  "rust-embed",
  "serde",
  "serde_json",
@@ -1232,11 +1221,14 @@ dependencies = [
  "forge-macros",
  "forge-runtime",
  "include_dir",
+ "inventory",
+ "mime_guess",
  "nix",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "reqwest",
+ "rust-embed",
  "serde",
  "serde_json",
  "sqlx",
@@ -1884,6 +1876,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "inventory"
+version = "0.3.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "009ae045c87e7082cb72dab0ccd01ae075dd00141ddc108f43a0ea150a9e7227"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "ipnet"
 version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1972,13 +1973,10 @@ dependencies = [
 name = "kanban-board"
 version = "0.7.2"
 dependencies = [
- "axum",
  "bcrypt",
  "chrono",
  "dotenvy",
  "forgex",
- "jsonwebtoken 9.3.1",
- "mime_guess",
  "rust-embed",
  "serde",
  "serde_json",
@@ -3843,13 +3841,9 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 name = "support-desk"
 version = "0.7.2"
 dependencies = [
- "axum",
- "bcrypt",
  "chrono",
  "dotenvy",
  "forgex",
- "jsonwebtoken 9.3.1",
- "mime_guess",
  "rust-embed",
  "schemars 0.8.22",
  "serde",
@@ -4086,11 +4080,9 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 name = "todo"
 version = "0.7.2"
 dependencies = [
- "axum",
  "chrono",
  "dotenvy",
  "forgex",
- "mime_guess",
  "rust-embed",
  "serde",
  "serde_json",
@@ -4105,11 +4097,9 @@ dependencies = [
 name = "todo-dioxus"
 version = "0.7.2"
 dependencies = [
- "axum",
  "chrono",
  "dotenvy",
  "forgex",
- "mime_guess",
  "rust-embed",
  "serde",
  "serde_json",

@@ -434,5 +434,9 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
                 })
             }
         }
+
+        forge::inventory::submit!(forge::AutoMutation(|registry| {
+            registry.register_mutation::<#struct_name>();
+        }));
     })
 }

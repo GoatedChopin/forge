@@ -501,6 +501,10 @@ fn expand_query_impl(input: ItemFn, attrs: QueryAttrs) -> syn::Result<TokenStrea
                 })
             }
         }
+
+        forge::inventory::submit!(forge::AutoQuery(|registry| {
+            registry.register_query::<#struct_name>();
+        }));
     })
 }
 

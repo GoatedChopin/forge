@@ -41,6 +41,7 @@ pub struct FunctionRouter {
     rate_limiter: HybridRateLimiter,
     query_cache: QueryCache,
     token_issuer: Option<Arc<dyn forge_core::TokenIssuer>>,
+    token_ttl: forge_core::AuthTokenTtl,
 }
 
 impl FunctionRouter {
@@ -56,6 +57,7 @@ impl FunctionRouter {
             rate_limiter,
             query_cache: QueryCache::new(),
             token_issuer: None,
+            token_ttl: forge_core::AuthTokenTtl::default(),
         }
     }
 
@@ -75,6 +77,7 @@ impl FunctionRouter {
             rate_limiter,
             query_cache: QueryCache::new(),
             token_issuer: None,
+            token_ttl: forge_core::AuthTokenTtl::default(),
         }
     }
 
@@ -82,6 +85,17 @@ impl FunctionRouter {
     pub fn with_token_issuer(mut self, issuer: Arc<dyn forge_core::TokenIssuer>) -> Self {
         self.token_issuer = Some(issuer);
         self
+    }
+
+    /// Set the token TTL config for this router (configures `ctx.issue_token_pair()` durations).
+    pub fn with_token_ttl(mut self, ttl: forge_core::AuthTokenTtl) -> Self {
+        self.token_ttl = ttl;
+        self
+    }
+
+    /// Set the token TTL config (mutable reference version).
+    pub fn set_token_ttl(&mut self, ttl: forge_core::AuthTokenTtl) {
+        self.token_ttl = ttl;
     }
 
     /// Set the job dispatcher for this router.
@@ -164,6 +178,7 @@ impl FunctionRouter {
                         if let Some(ref issuer) = self.token_issuer {
                             ctx.set_token_issuer(issuer.clone());
                         }
+                        ctx.set_token_ttl(self.token_ttl.clone());
                         let result = handler(&ctx, args).await?;
                         Ok(RouteResult::Mutation(result))
                     }
@@ -388,6 +403,7 @@ impl FunctionRouter {
             if let Some(ref issuer) = self.token_issuer {
                 ctx.set_token_issuer(issuer.clone());
             }
+            ctx.set_token_ttl(self.token_ttl.clone());
 
             match handler(&ctx, args).await {
                 Ok(value) => {

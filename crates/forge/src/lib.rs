@@ -3,11 +3,29 @@
 //! A batteries-included framework for building full-stack web applications
 //! with a Rust backend and generated SvelteKit or Dioxus frontends.
 
+mod auto_register;
+#[cfg(feature = "embedded-frontend")]
+mod embedded;
 mod runtime;
 
 // Re-export forge_core for macro-generated code
 #[doc(hidden)]
 pub use forge_core;
+
+// Re-export inventory for macro-generated auto-registration
+#[doc(hidden)]
+pub use inventory;
+
+// Re-export auto-registration types for macro-generated code
+#[doc(hidden)]
+pub use auto_register::{
+    AutoCron, AutoDaemon, AutoJob, AutoMcpTool, AutoMutation, AutoQuery, AutoWebhook,
+    AutoWorkflow,
+};
+
+// Re-export embedded frontend handler
+#[cfg(feature = "embedded-frontend")]
+pub use embedded::serve_embedded_assets;
 
 // Re-export proc macros at crate root
 pub use forge_macros::{

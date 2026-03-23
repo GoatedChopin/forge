@@ -43,11 +43,12 @@ pub mod types;
 
 pub use api::*;
 pub use forge_dioxus::{
-    ConnectionState, ForgeClient, ForgeClientConfig, ForgeClientError, ForgeError,
-    ForgeProvider, ForgeUpload, JobExecutionState, Mutation, QueryState, SubscriptionHandle,
-    SubscriptionState, WorkflowExecutionState, use_connection_state, use_forge_client,
-    use_forge_job, use_forge_mutation, use_forge_query, use_forge_subscription,
-    use_forge_workflow,
+    ConnectionState, ForgeAuth, ForgeAuthProvider, ForgeClient, ForgeClientConfig,
+    ForgeClientError, ForgeError, ForgeProvider, ForgeUpload, JobExecutionState, Mutation,
+    QueryState, SubscriptionHandle, SubscriptionState, WorkflowExecutionState,
+    use_auth_key, use_connection_state, use_forge_auth, use_forge_client, use_forge_job,
+    use_forge_mutation, use_forge_query, use_forge_subscription, use_forge_workflow,
+    use_require_auth, use_viewer,
 };
 pub use types::*;
 "#

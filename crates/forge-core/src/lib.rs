@@ -21,7 +21,7 @@ pub mod workflow;
 // Testing utilities
 pub mod testing;
 
-pub use auth::{Claims, ClaimsBuilder};
+pub use auth::{Claims, ClaimsBuilder, TokenPair};
 pub use cluster::{ClusterInfo, LeaderInfo, LeaderRole, NodeId, NodeInfo, NodeRole, NodeStatus};
 pub use config::{ForgeConfig, McpConfig};
 pub use cron::{CronContext, CronInfo, CronSchedule, ForgeCron};
@@ -29,9 +29,9 @@ pub use daemon::{DaemonContext, DaemonInfo, DaemonStatus, ForgeDaemon};
 pub use env::{EnvAccess, EnvProvider, MockEnvProvider, RealEnvProvider};
 pub use error::{ForgeError, Result};
 pub use function::{
-    AuthContext, ForgeConn, ForgeDb, ForgeMutation, ForgeQuery, FunctionInfo, FunctionKind,
-    JobDispatch, JobInfoLookup, MutationContext, OutboxBuffer, PendingJob, PendingWorkflow,
-    QueryContext, RequestMetadata, TokenIssuer, WorkflowDispatch,
+    AuthContext, AuthTokenTtl, ForgeConn, ForgeDb, ForgeMutation, ForgeQuery, FunctionInfo,
+    FunctionKind, JobDispatch, JobInfoLookup, MutationContext, OutboxBuffer, PendingJob,
+    PendingWorkflow, QueryContext, RequestMetadata, TokenIssuer, WorkflowDispatch,
 };
 pub use http::{
     CircuitBreakerClient, CircuitBreakerConfig, CircuitBreakerError, CircuitBreakerOpen,

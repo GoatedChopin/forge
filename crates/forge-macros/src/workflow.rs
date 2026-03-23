@@ -309,6 +309,10 @@ pub fn workflow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                 Box::pin(async move #block)
             }
         }
+
+        forge::inventory::submit!(forge::AutoWorkflow(|registry| {
+            registry.register::<#struct_name>();
+        }));
     };
 
     TokenStream::from(expanded)

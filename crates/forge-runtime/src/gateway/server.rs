@@ -65,6 +65,8 @@ pub struct GatewayConfig {
     pub mcp: McpConfig,
     /// Routes excluded from request logs, metrics, and traces.
     pub quiet_routes: Vec<String>,
+    /// Token TTL configuration for refresh token management.
+    pub token_ttl: forge_core::AuthTokenTtl,
 }
 
 impl Default for GatewayConfig {
@@ -79,6 +81,7 @@ impl Default for GatewayConfig {
             auth: AuthConfig::default(),
             mcp: McpConfig::default(),
             quiet_routes: Vec::new(),
+            token_ttl: forge_core::AuthTokenTtl::default(),
         }
     }
 }
@@ -115,6 +118,7 @@ pub struct GatewayServer {
     job_dispatcher: Option<Arc<dyn JobDispatch>>,
     workflow_dispatcher: Option<Arc<dyn WorkflowDispatch>>,
     mcp_registry: Option<McpToolRegistry>,
+    token_ttl: forge_core::AuthTokenTtl,
 }
 
 impl GatewayServer {
@@ -128,6 +132,7 @@ impl GatewayServer {
             ReactorConfig::default(),
         ));
 
+        let token_ttl = config.token_ttl.clone();
         Self {
             config,
             registry,
@@ -136,6 +141,7 @@ impl GatewayServer {
             job_dispatcher: None,
             workflow_dispatcher: None,
             mcp_registry: None,
+            token_ttl,
         }
     }
 
@@ -167,13 +173,15 @@ impl GatewayServer {
         let token_issuer = HmacTokenIssuer::from_config(&self.config.auth)
             .map(|issuer| Arc::new(issuer) as Arc<dyn forge_core::TokenIssuer>);
 
-        let rpc_handler_state = Arc::new(RpcHandler::with_dispatch_and_issuer(
+        let mut rpc = RpcHandler::with_dispatch_and_issuer(
             self.registry.clone(),
             self.db.clone(),
             self.job_dispatcher.clone(),
             self.workflow_dispatcher.clone(),
             token_issuer,
-        ));
+        );
+        rpc.set_token_ttl(self.token_ttl.clone());
+        let rpc_handler_state = Arc::new(rpc);
 
         let auth_middleware_state = Arc::new(AuthMiddleware::new(self.config.auth.clone()));
 

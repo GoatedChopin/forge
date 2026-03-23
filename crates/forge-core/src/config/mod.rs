@@ -384,7 +384,16 @@ pub struct AuthConfig {
     pub jwt_audience: Option<String>,
 
     /// Token expiry duration (e.g., "15m", "1h", "7d").
+    /// Deprecated: use `access_token_ttl` instead.
     pub token_expiry: Option<String>,
+
+    /// Access token lifetime (e.g., "15m", "1h").
+    /// Used by `ctx.issue_token_pair()`. Defaults to "1h".
+    pub access_token_ttl: Option<String>,
+
+    /// Refresh token lifetime (e.g., "7d", "30d").
+    /// Used by `ctx.issue_token_pair()`. Defaults to "30d".
+    pub refresh_token_ttl: Option<String>,
 
     /// JWKS URL for RSA algorithms (RS256, RS384, RS512).
     /// Keys are fetched and cached automatically.
@@ -407,6 +416,8 @@ impl Default for AuthConfig {
             jwt_issuer: None,
             jwt_audience: None,
             token_expiry: None,
+            access_token_ttl: None,
+            refresh_token_ttl: None,
             jwks_url: None,
             jwks_cache_ttl_secs: default_jwks_cache_ttl(),
             session_ttl_secs: default_session_ttl(),
@@ -415,6 +426,28 @@ impl Default for AuthConfig {
 }
 
 impl AuthConfig {
+    /// Resolved access token TTL in seconds.
+    /// Checks `access_token_ttl`, falls back to `token_expiry`, then default 3600s (1h).
+    pub fn access_token_ttl_secs(&self) -> i64 {
+        self.access_token_ttl
+            .as_deref()
+            .or(self.token_expiry.as_deref())
+            .and_then(crate::util::parse_duration)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(3600)
+    }
+
+    /// Resolved refresh token TTL in days.
+    /// Parses `refresh_token_ttl`, default 30 days.
+    pub fn refresh_token_ttl_days(&self) -> i64 {
+        self.refresh_token_ttl
+            .as_deref()
+            .and_then(crate::util::parse_duration)
+            .map(|d| (d.as_secs() / 86400) as i64)
+            .map(|d| if d == 0 { 1 } else { d })
+            .unwrap_or(30)
+    }
+
     /// Check if auth is configured (any credential or claim validation is set).
     fn is_configured(&self) -> bool {
         self.jwt_secret.is_some()
