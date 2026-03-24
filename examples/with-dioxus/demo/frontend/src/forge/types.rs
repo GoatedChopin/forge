@@ -4,6 +4,27 @@
 
 use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuthResponse {
+    pub access_token: String,
+    pub refresh_token: String,
+    pub user: UserPublic,
+}
+
+impl AuthResponse {
+    pub fn new(
+        access_token: impl Into<String>,
+        refresh_token: impl Into<String>,
+        user: UserPublic,
+    ) -> Self {
+        Self {
+            access_token: access_token.into(),
+            refresh_token: refresh_token.into(),
+            user: user,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BinanceTrade {
     pub symbol: String,
     pub price: String,
@@ -26,6 +47,30 @@ impl BinanceTrade {
             quantity: quantity.into(),
             trade_time: trade_time,
             is_buyer_maker: is_buyer_maker,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DemoStats {
+    pub total_users: i64,
+    pub total_trades: i64,
+    pub total_webhooks: i64,
+    pub computed_at: String,
+}
+
+impl DemoStats {
+    pub fn new(
+        total_users: i64,
+        total_trades: i64,
+        total_webhooks: i64,
+        computed_at: impl Into<String>,
+    ) -> Self {
+        Self {
+            total_users: total_users,
+            total_trades: total_trades,
+            total_webhooks: total_webhooks,
+            computed_at: computed_at.into(),
         }
     }
 }
@@ -120,6 +165,92 @@ impl IssPosition {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LoginInput {
+    pub email: String,
+    pub password: String,
+}
+
+impl LoginInput {
+    pub fn new(email: impl Into<String>, password: impl Into<String>) -> Self {
+        Self {
+            email: email.into(),
+            password: password.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct McpGetUserInput {
+    pub email: String,
+}
+
+impl McpGetUserInput {
+    pub fn new(email: impl Into<String>) -> Self {
+        Self {
+            email: email.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct McpUserInfo {
+    pub id: String,
+    pub email: String,
+    pub name: String,
+    pub role: UserRole,
+}
+
+impl McpUserInfo {
+    pub fn new(
+        id: impl Into<String>,
+        email: impl Into<String>,
+        name: impl Into<String>,
+        role: UserRole,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            email: email.into(),
+            name: name.into(),
+            role: role,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RefreshInput {
+    pub refresh_token: String,
+}
+
+impl RefreshInput {
+    pub fn new(refresh_token: impl Into<String>) -> Self {
+        Self {
+            refresh_token: refresh_token.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RegisterInput {
+    pub email: String,
+    pub name: String,
+    pub password: String,
+}
+
+impl RegisterInput {
+    pub fn new(
+        email: impl Into<String>,
+        name: impl Into<String>,
+        password: impl Into<String>,
+    ) -> Self {
+        Self {
+            email: email.into(),
+            name: name.into(),
+            password: password.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Trade {
     pub id: String,
     pub symbol: String,
@@ -160,9 +291,46 @@ pub struct User {
     pub role: UserRole,
     pub created_at: String,
     pub updated_at: String,
+    pub password_hash: Option<String>,
 }
 
 impl User {
+    pub fn new(
+        id: impl Into<String>,
+        email: impl Into<String>,
+        name: impl Into<String>,
+        role: UserRole,
+        created_at: impl Into<String>,
+        updated_at: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            email: email.into(),
+            name: name.into(),
+            role: role,
+            created_at: created_at.into(),
+            updated_at: updated_at.into(),
+            password_hash: None,
+        }
+    }
+
+    pub fn password_hash(mut self, password_hash: impl Into<String>) -> Self {
+        self.password_hash = Some(password_hash.into());
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UserPublic {
+    pub id: String,
+    pub email: String,
+    pub name: String,
+    pub role: UserRole,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl UserPublic {
     pub fn new(
         id: impl Into<String>,
         email: impl Into<String>,
@@ -234,80 +402,6 @@ impl WebhookEvent {
             processed_at: processed_at.into(),
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct UserPublic {
-    pub id: String,
-    pub email: String,
-    pub name: String,
-    pub role: UserRole,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AuthResponse {
-    pub access_token: String,
-    pub refresh_token: String,
-    pub user: UserPublic,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RegisterInput {
-    pub email: String,
-    pub name: String,
-    pub password: String,
-}
-
-impl RegisterInput {
-    pub fn new(
-        email: impl Into<String>,
-        name: impl Into<String>,
-        password: impl Into<String>,
-    ) -> Self {
-        Self {
-            email: email.into(),
-            name: name.into(),
-            password: password.into(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct LoginInput {
-    pub email: String,
-    pub password: String,
-}
-
-impl LoginInput {
-    pub fn new(email: impl Into<String>, password: impl Into<String>) -> Self {
-        Self {
-            email: email.into(),
-            password: password.into(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RefreshInput {
-    pub refresh_token: String,
-}
-
-impl RefreshInput {
-    pub fn new(refresh_token: impl Into<String>) -> Self {
-        Self {
-            refresh_token: refresh_token.into(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct DemoStats {
-    pub total_users: i64,
-    pub total_trades: i64,
-    pub total_webhooks: i64,
-    pub computed_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
