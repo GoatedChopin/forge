@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use tracing::Span;
@@ -6,6 +7,7 @@ use uuid::Uuid;
 
 use crate::env::{EnvAccess, EnvProvider, RealEnvProvider};
 use crate::function::AuthContext;
+use crate::http::CircuitBreakerClient;
 
 /// Context available to cron handlers.
 pub struct CronContext {
@@ -26,7 +28,10 @@ pub struct CronContext {
     /// Database pool.
     db_pool: sqlx::PgPool,
     /// HTTP client.
-    http_client: reqwest::Client,
+    http_client: CircuitBreakerClient,
+    /// Default timeout for outbound HTTP requests made through the
+    /// circuit-breaker client. `None` means unlimited.
+    http_timeout: Option<Duration>,
     /// Structured logger.
     pub log: CronLog,
     /// Environment variable provider.
@@ -44,7 +49,7 @@ impl CronContext {
         timezone: String,
         is_catch_up: bool,
         db_pool: sqlx::PgPool,
-        http_client: reqwest::Client,
+        http_client: CircuitBreakerClient,
     ) -> Self {
         Self {
             run_id,
@@ -56,6 +61,7 @@ impl CronContext {
             auth: AuthContext::unauthenticated(),
             db_pool,
             http_client,
+            http_timeout: None,
             log: CronLog::new(cron_name),
             env_provider: Arc::new(RealEnvProvider::new()),
             span: Span::current(),
@@ -79,8 +85,20 @@ impl CronContext {
         ))
     }
 
-    pub fn http(&self) -> &reqwest::Client {
-        &self.http_client
+    pub fn http(&self) -> crate::http::HttpClient {
+        self.http_client.with_timeout(self.http_timeout)
+    }
+
+    pub fn raw_http(&self) -> &reqwest::Client {
+        self.http_client.inner()
+    }
+
+    pub fn http_with_circuit_breaker(&self) -> crate::http::HttpClient {
+        self.http()
+    }
+
+    pub fn set_http_timeout(&mut self, timeout: Option<Duration>) {
+        self.http_timeout = timeout;
     }
 
     /// Get the delay between scheduled and actual execution time.
@@ -198,7 +216,7 @@ mod tests {
             "UTC".to_string(),
             false,
             pool,
-            reqwest::Client::new(),
+            CircuitBreakerClient::with_defaults(reqwest::Client::new()),
         );
 
         assert_eq!(ctx.run_id, run_id);
@@ -222,7 +240,7 @@ mod tests {
             "UTC".to_string(),
             false,
             pool,
-            reqwest::Client::new(),
+            CircuitBreakerClient::with_defaults(reqwest::Client::new()),
         );
 
         assert!(ctx.is_late());

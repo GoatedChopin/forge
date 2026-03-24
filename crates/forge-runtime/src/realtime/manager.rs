@@ -256,9 +256,9 @@ impl SubscriptionManager {
     /// Remove a subscriber by its subscription ID.
     pub fn unsubscribe(&self, subscription_id: SubscriptionId) {
         let mut store = self.subscribers.lock().unwrap_or_else(|e| {
-                tracing::error!("Subscriber store lock was poisoned, recovering");
-                e.into_inner()
-            });
+            tracing::error!("Subscriber store lock was poisoned, recovering");
+            e.into_inner()
+        });
 
         // Find the subscriber by subscription_id
         let sub_key = store
@@ -305,9 +305,9 @@ impl SubscriptionManager {
 
         let mut removed_sub_ids = Vec::new();
         let mut store = self.subscribers.lock().unwrap_or_else(|e| {
-                tracing::error!("Subscriber store lock was poisoned, recovering");
-                e.into_inner()
-            });
+            tracing::error!("Subscriber store lock was poisoned, recovering");
+            e.into_inner()
+        });
 
         for sid in subscriber_ids {
             let key = sid.0 as usize;
@@ -370,9 +370,9 @@ impl SubscriptionManager {
             .unwrap_or_default();
 
         let store = self.subscribers.lock().unwrap_or_else(|e| {
-                tracing::error!("Subscriber store lock was poisoned, recovering");
-                e.into_inner()
-            });
+            tracing::error!("Subscriber store lock was poisoned, recovering");
+            e.into_inner()
+        });
         subscriber_ids
             .iter()
             .filter_map(|sid| {

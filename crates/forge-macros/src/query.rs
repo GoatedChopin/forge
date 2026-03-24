@@ -5,7 +5,7 @@ use syn::visit::Visit;
 use syn::{FnArg, ItemFn, Pat, ReturnType, Type, parse_macro_input};
 
 use crate::sql_extractor::{SqlStringExtractor, extract_columns_from_sql, extract_tables_from_sql};
-use crate::utils::{has_attr_flag, parse_duration_secs, to_pascal_case};
+use crate::utils::{has_attr_flag, parse_attr_value, parse_duration_secs, to_pascal_case};
 
 /// Expand the #[forge::query] attribute.
 ///
@@ -70,20 +70,10 @@ fn parse_query_attrs(attr: TokenStream) -> QueryAttrs {
         }
     }
 
-    if let Some(timeout_start) = attr_str.find("timeout")
-        && let Some(eq_pos) = attr_str[timeout_start..].find('=')
+    if let Some(timeout) = parse_attr_value(&attr_str, "timeout")
+        && let Ok(secs) = timeout.parse::<u64>()
     {
-        let remaining = &attr_str[timeout_start + eq_pos + 1..];
-        let trimmed = remaining.trim();
-        if let Ok(secs) = trimmed
-            .split(&[',', ')'])
-            .next()
-            .unwrap_or("")
-            .trim()
-            .parse::<u64>()
-        {
-            attrs.timeout = Some(secs);
-        }
+        attrs.timeout = Some(secs);
     }
 
     if let Some(rl_start) = attr_str.find("rate_limit")
@@ -480,6 +470,7 @@ fn expand_query_impl(input: ItemFn, attrs: QueryAttrs) -> syn::Result<TokenStrea
                     is_public: #is_public,
                     cache_ttl: #cache_ttl,
                     timeout: #timeout,
+                    http_timeout: None,
                     rate_limit_requests: #rate_limit_requests,
                     rate_limit_per_secs: #rate_limit_per_secs,
                     rate_limit_key: #rate_limit_key,

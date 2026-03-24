@@ -222,9 +222,10 @@ pub async fn webhook_handler(
         request_id.clone(),
         header_map,
         state.pool.clone(),
-        state.http_client.inner().clone(),
+        state.http_client.clone(),
     )
     .with_idempotency_key(idempotency_key.clone());
+    ctx.set_http_timeout(info.http_timeout);
 
     if let Some(ref dispatcher) = state.job_dispatcher {
         ctx = ctx.with_job_dispatch(dispatcher.clone());

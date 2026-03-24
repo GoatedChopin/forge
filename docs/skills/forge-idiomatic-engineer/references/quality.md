@@ -42,7 +42,7 @@ Check in this order (P0 first):
 | AP-17 | `log` as bare flag (`log` instead of `log = "info"`) | Use quoted string |
 | AP-18 | Function named with macro suffix (`heartbeat_daemon`) | Just `heartbeat` |
 | AP-19 | Claiming completion without running tests | Run tests first |
-| AP-20 | `ctx.http()` when circuit breaker needed | Use `ctx.http_with_circuit_breaker()` |
+| AP-20 | `ctx.raw_http()` used without a concrete reason | Prefer breaker-backed `ctx.http()` |
 | AP-21 | Same SQL/validation duplicated across handlers | Extract to `pub(crate) async fn helper(db: DbConn<'_>, ...)` |
 | AP-22 | Deferring required tooling steps to the user | If the task depends on `forge generate` or migrations, execute them |
 | AP-23 | Behavior changed without new tests | `forge check` and lint are not tests. Add handler/unit tests. |

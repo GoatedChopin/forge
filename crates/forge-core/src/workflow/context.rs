@@ -14,6 +14,7 @@ use super::step::StepStatus;
 use super::suspend::{SuspendReason, WorkflowEvent};
 use crate::env::{EnvAccess, EnvProvider, RealEnvProvider};
 use crate::function::AuthContext;
+use crate::http::CircuitBreakerClient;
 use crate::{ForgeError, Result};
 
 /// Type alias for compensation handler function.
@@ -94,7 +95,10 @@ pub struct WorkflowContext {
     /// Database pool.
     db_pool: sqlx::PgPool,
     /// HTTP client.
-    http_client: reqwest::Client,
+    http_client: CircuitBreakerClient,
+    /// Default timeout for outbound HTTP requests made through the
+    /// circuit-breaker client. `None` means unlimited.
+    http_timeout: Option<Duration>,
     /// Step states (for resumption).
     step_states: Arc<RwLock<HashMap<String, StepState>>>,
     /// Completed steps in order (for compensation).
@@ -120,7 +124,7 @@ impl WorkflowContext {
         workflow_name: String,
         version: u32,
         db_pool: sqlx::PgPool,
-        http_client: reqwest::Client,
+        http_client: CircuitBreakerClient,
     ) -> Self {
         let now = Utc::now();
         Self {
@@ -132,6 +136,7 @@ impl WorkflowContext {
             auth: AuthContext::unauthenticated(),
             db_pool,
             http_client,
+            http_timeout: None,
             step_states: Arc::new(RwLock::new(HashMap::new())),
             completed_steps: Arc::new(RwLock::new(Vec::new())),
             compensation_handlers: Arc::new(RwLock::new(HashMap::new())),
@@ -150,7 +155,7 @@ impl WorkflowContext {
         version: u32,
         started_at: DateTime<Utc>,
         db_pool: sqlx::PgPool,
-        http_client: reqwest::Client,
+        http_client: CircuitBreakerClient,
     ) -> Self {
         Self {
             run_id,
@@ -161,6 +166,7 @@ impl WorkflowContext {
             auth: AuthContext::unauthenticated(),
             db_pool,
             http_client,
+            http_timeout: None,
             step_states: Arc::new(RwLock::new(HashMap::new())),
             completed_steps: Arc::new(RwLock::new(Vec::new())),
             compensation_handlers: Arc::new(RwLock::new(HashMap::new())),
@@ -219,8 +225,20 @@ impl WorkflowContext {
         ))
     }
 
-    pub fn http(&self) -> &reqwest::Client {
-        &self.http_client
+    pub fn http(&self) -> crate::http::HttpClient {
+        self.http_client.with_timeout(self.http_timeout)
+    }
+
+    pub fn raw_http(&self) -> &reqwest::Client {
+        self.http_client.inner()
+    }
+
+    pub fn http_with_circuit_breaker(&self) -> crate::http::HttpClient {
+        self.http()
+    }
+
+    pub fn set_http_timeout(&mut self, timeout: Option<Duration>) {
+        self.http_timeout = timeout;
     }
 
     /// Set authentication context.
@@ -687,13 +705,7 @@ impl WorkflowContext {
         event_name: &str,
         correlation_id: &str,
     ) -> Result<Option<WorkflowEvent>> {
-        let result: Option<(
-            Uuid,
-            String,
-            String,
-            Option<serde_json::Value>,
-            DateTime<Utc>,
-        )> = sqlx::query_as(
+        let result = sqlx::query!(
             r#"
                 UPDATE forge_workflow_events
                 SET consumed_at = NOW(), consumed_by = $3
@@ -705,23 +717,21 @@ impl WorkflowContext {
                 )
                 RETURNING id, event_name, correlation_id, payload, created_at
                 "#,
+            event_name,
+            correlation_id,
+            self.run_id
         )
-        .bind(event_name)
-        .bind(correlation_id)
-        .bind(self.run_id)
         .fetch_optional(&self.db_pool)
         .await
         .map_err(|e| ForgeError::Database(e.to_string()))?;
 
-        Ok(result.map(
-            |(id, event_name, correlation_id, payload, created_at)| WorkflowEvent {
-                id,
-                event_name,
-                correlation_id,
-                payload,
-                created_at,
-            },
-        ))
+        Ok(result.map(|row| WorkflowEvent {
+            id: row.id,
+            event_name: row.event_name,
+            correlation_id: row.correlation_id,
+            payload: row.payload,
+            created_at: row.created_at,
+        }))
     }
 
     /// Persist wake time to database.
@@ -876,7 +886,7 @@ mod tests {
             "test_workflow".to_string(),
             1,
             pool,
-            reqwest::Client::new(),
+            CircuitBreakerClient::with_defaults(reqwest::Client::new()),
         );
 
         assert_eq!(ctx.run_id, run_id);
@@ -896,7 +906,7 @@ mod tests {
             "test".to_string(),
             1,
             pool,
-            reqwest::Client::new(),
+            CircuitBreakerClient::with_defaults(reqwest::Client::new()),
         );
 
         ctx.record_step_start("step1");

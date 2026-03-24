@@ -1018,11 +1018,8 @@ mod tests {
 
     #[test]
     fn resolve_sse_auth_context_prefers_request_auth_when_query_token_absent() {
-        let request_auth = AuthContext::authenticated(
-            Uuid::new_v4(),
-            vec!["user".to_string()],
-            HashMap::new(),
-        );
+        let request_auth =
+            AuthContext::authenticated(Uuid::new_v4(), vec!["user".to_string()], HashMap::new());
 
         let resolved = resolve_sse_auth_context(&request_auth, None);
 
@@ -1032,16 +1029,10 @@ mod tests {
 
     #[test]
     fn resolve_sse_auth_context_prefers_query_token_when_present() {
-        let request_auth = AuthContext::authenticated(
-            Uuid::new_v4(),
-            vec!["user".to_string()],
-            HashMap::new(),
-        );
-        let query_auth = AuthContext::authenticated(
-            Uuid::new_v4(),
-            vec!["user".to_string()],
-            HashMap::new(),
-        );
+        let request_auth =
+            AuthContext::authenticated(Uuid::new_v4(), vec!["user".to_string()], HashMap::new());
+        let query_auth =
+            AuthContext::authenticated(Uuid::new_v4(), vec!["user".to_string()], HashMap::new());
 
         let resolved = resolve_sse_auth_context(&request_auth, Some(query_auth.clone()));
 

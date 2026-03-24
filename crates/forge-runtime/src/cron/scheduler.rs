@@ -370,15 +370,16 @@ impl CronRunner {
                 );
             }
 
-            let ctx = CronContext::new(
+            let mut ctx = CronContext::new(
                 run_id,
                 info.name.to_string(),
                 scheduled_time,
                 info.timezone.to_string(),
                 is_catch_up,
                 self.pool.clone(),
-                self.http_client.inner().clone(),
+                self.http_client.clone(),
             );
+            ctx.set_http_timeout(info.http_timeout);
 
             // Execute with timeout
             let handler = entry.handler.clone();
@@ -469,7 +470,7 @@ impl CronRunner {
 
         async {
             // Find the last completed run
-            let last_run: Option<(DateTime<Utc>,)> = sqlx::query_as(
+            let last_run = sqlx::query_scalar!(
                 r#"
                 SELECT scheduled_time
                 FROM forge_cron_runs
@@ -477,15 +478,13 @@ impl CronRunner {
                 ORDER BY scheduled_time DESC
                 LIMIT 1
                 "#,
+                info.name
             )
-            .bind(info.name)
             .fetch_optional(&self.pool)
             .await
             .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
 
-            let start_time = last_run
-                .map(|(t,)| t)
-                .unwrap_or(now - chrono::Duration::days(1));
+            let start_time = last_run.unwrap_or(now - chrono::Duration::days(1));
 
             // Get all scheduled times between last run and now
             let missed_times = info.schedule.between_in_tz(start_time, now, info.timezone);

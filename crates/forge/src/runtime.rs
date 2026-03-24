@@ -63,13 +63,13 @@ pub mod prelude {
     pub type Timestamp = DateTime<Utc>;
 
     // Core types
+    pub use forge_core::auth::TokenPair;
     pub use forge_core::cluster::NodeRole;
     pub use forge_core::config::ForgeConfig;
     pub use forge_core::cron::{CronContext, ForgeCron};
     pub use forge_core::daemon::{DaemonContext, ForgeDaemon};
     pub use forge_core::env::EnvAccess;
     pub use forge_core::error::{ForgeError, Result};
-    pub use forge_core::auth::TokenPair;
     pub use forge_core::function::{
         AuthContext, ForgeMutation, ForgeQuery, MutationContext, QueryContext,
     };

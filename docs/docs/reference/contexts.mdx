@@ -24,7 +24,7 @@ Write helper functions that accept `DbConn` to share logic between queries, muta
 
 ```rust
 pub async fn list_items(db: DbConn<'_>) -> Result<Vec<Item>> {
-    db.fetch_all(sqlx::query_as("SELECT * FROM items ORDER BY created_at DESC")).await.map_err(Into::into)
+    db.fetch_all(sqlx::query_as!(Item, "SELECT * FROM items ORDER BY created_at DESC")).await.map_err(Into::into)
 }
 
 // Works from any context via DbConn helpers
@@ -133,7 +133,8 @@ Transactional database access with HTTP client and job/workflow dispatch.
 | `db` | `fn db(&self) -> DbConn<'_>` | Database connection (transaction or pool) |
 | `conn` | `async fn conn(&self) -> sqlx::Result<ForgeConn<'_>>` | Connection for `query_as!` macros (transaction-aware) |
 | `pool` | `fn pool(&self) -> &PgPool` | Direct pool access for non-transactional operations |
-| `http` | `fn http(&self) -> &Client` | HTTP client for external calls |
+| `http` | `fn http(&self) -> HttpClient` | Circuit-breaker-backed HTTP client for external calls |
+| `raw_http` | `fn raw_http(&self) -> &Client` | Raw reqwest client (bypasses circuit breaker) |
 | `require_user_id` | `fn require_user_id(&self) -> Result<Uuid>` | Get user ID or return error |
 | `require_subject` | `fn require_subject(&self) -> Result<&str>` | Get subject or return error |
 | `dispatch_job` | `async fn dispatch_job<T: Serialize>(&self, job_type: &str, args: T) -> Result<Uuid>` | Dispatch a background job |
@@ -141,7 +142,7 @@ Transactional database access with HTTP client and job/workflow dispatch.
 | `cancel_job` | `async fn cancel_job(&self, job_id: Uuid, reason: Option<String>) -> Result<bool>` | Request cancellation for a job |
 | `start_workflow` | `async fn start_workflow<T: Serialize>(&self, workflow_name: &str, input: T) -> Result<Uuid>` | Start a workflow |
 | `issue_token` | `fn issue_token(&self, claims: &Claims) -> Result<String>` | Issue HMAC-signed JWT (requires HMAC auth config) |
-| `http_with_circuit_breaker` | `fn http_with_circuit_breaker(&self) -> &CircuitBreakerClient` | HTTP client with circuit breaker |
+| `http_with_circuit_breaker` | `fn http_with_circuit_breaker(&self) -> HttpClient` | Explicit alias for the circuit-breaker-backed HTTP client |
 | `is_transactional` | `fn is_transactional(&self) -> bool` | Check if running inside a transaction |
 | `env` | `fn env(&self, key: &str) -> Option<String>` | Get environment variable |
 | `env_or` | `fn env_or(&self, key: &str, default: &str) -> String` | Get env var with default |
@@ -173,7 +174,8 @@ Background job execution context with progress reporting and heartbeats.
 | `db` | `fn db(&self) -> &PgPool` | Database connection pool |
 | `conn` | `async fn conn(&self) -> sqlx::Result<ForgeConn<'static>>` | Connection for `query_as!` macros |
 | `db_conn` | `fn db_conn(&self) -> DbConn<'_>` | Database connection as `DbConn` for shared helpers |
-| `http` | `fn http(&self) -> &Client` | HTTP client for external calls |
+| `http` | `fn http(&self) -> HttpClient` | Circuit-breaker-backed HTTP client for external calls |
+| `raw_http` | `fn raw_http(&self) -> &Client` | Raw reqwest client (bypasses circuit breaker) |
 | `progress` | `fn progress(&self, percentage: u8, message: impl Into<String>) -> Result<()>` | Report progress (0-100, clamped) |
 | `heartbeat` | `async fn heartbeat(&self) -> Result<()>` | Send heartbeat to prevent stale reclaim |
 | `save` | `async fn save(&self, key: &str, value: Value) -> Result<()>` | Save data for retries/compensation |
@@ -234,7 +236,8 @@ Scheduled task execution context with timing information.
 | `db` | `fn db(&self) -> &PgPool` | Database connection pool |
 | `conn` | `async fn conn(&self) -> sqlx::Result<ForgeConn<'static>>` | Connection for `query_as!` macros |
 | `db_conn` | `fn db_conn(&self) -> DbConn<'_>` | Database connection as `DbConn` for shared helpers |
-| `http` | `fn http(&self) -> &Client` | HTTP client for external calls |
+| `http` | `fn http(&self) -> HttpClient` | Circuit-breaker-backed HTTP client for external calls |
+| `raw_http` | `fn raw_http(&self) -> &Client` | Raw reqwest client (bypasses circuit breaker) |
 | `delay` | `fn delay(&self) -> chrono::Duration` | Time between scheduled and actual execution |
 | `is_late` | `fn is_late(&self) -> bool` | Check if delay exceeds 1 minute |
 | `env` | `fn env(&self, key: &str) -> Option<String>` | Get environment variable |
@@ -276,7 +279,8 @@ Durable workflow execution with step tracking, sleep, events, and compensation.
 | `db` | `fn db(&self) -> &PgPool` | Database connection pool |
 | `conn` | `async fn conn(&self) -> sqlx::Result<ForgeConn<'static>>` | Connection for `query_as!` macros |
 | `db_conn` | `fn db_conn(&self) -> DbConn<'_>` | Database connection as `DbConn` for shared helpers |
-| `http` | `fn http(&self) -> &Client` | HTTP client for external calls |
+| `http` | `fn http(&self) -> HttpClient` | Circuit-breaker-backed HTTP client for external calls |
+| `raw_http` | `fn raw_http(&self) -> &Client` | Raw reqwest client (bypasses circuit breaker) |
 | `workflow_time` | `fn workflow_time(&self) -> DateTime<Utc>` | Deterministic time (consistent across replays) |
 | `elapsed` | `fn elapsed(&self) -> chrono::Duration` | Time since workflow started |
 | `is_resumed` | `fn is_resumed(&self) -> bool` | Check if this is a resumed execution |
@@ -377,7 +381,8 @@ Long-running service context with shutdown signaling and heartbeats.
 | `db` | `fn db(&self) -> &PgPool` | Database connection pool |
 | `conn` | `async fn conn(&self) -> sqlx::Result<ForgeConn<'static>>` | Connection for `query_as!` macros |
 | `db_conn` | `fn db_conn(&self) -> DbConn<'_>` | Database connection as `DbConn` for shared helpers |
-| `http` | `fn http(&self) -> &Client` | HTTP client for external calls |
+| `http` | `fn http(&self) -> HttpClient` | Circuit-breaker-backed HTTP client for external calls |
+| `raw_http` | `fn raw_http(&self) -> &Client` | Raw reqwest client (bypasses circuit breaker) |
 | `dispatch_job` | `async fn dispatch_job<T: Serialize>(&self, job_type: &str, args: T) -> Result<Uuid>` | Dispatch a background job |
 | `start_workflow` | `async fn start_workflow<T: Serialize>(&self, workflow_name: &str, input: T) -> Result<Uuid>` | Start a workflow |
 | `is_shutdown_requested` | `fn is_shutdown_requested(&self) -> bool` | Check if shutdown was requested |
@@ -422,7 +427,8 @@ Incoming webhook handler context with headers, job dispatch, and idempotency.
 | `db` | `fn db(&self) -> &PgPool` | Database connection pool |
 | `conn` | `async fn conn(&self) -> sqlx::Result<ForgeConn<'static>>` | Connection for `query_as!` macros |
 | `db_conn` | `fn db_conn(&self) -> DbConn<'_>` | Database connection as `DbConn` for shared helpers |
-| `http` | `fn http(&self) -> &Client` | HTTP client for external calls |
+| `http` | `fn http(&self) -> HttpClient` | Circuit-breaker-backed HTTP client for external calls |
+| `raw_http` | `fn raw_http(&self) -> &Client` | Raw reqwest client (bypasses circuit breaker) |
 | `header` | `fn header(&self, name: &str) -> Option<&str>` | Get request header (case-insensitive) |
 | `headers` | `fn headers(&self) -> &HashMap<String, String>` | Get all headers |
 | `dispatch_job` | `async fn dispatch_job<T: Serialize>(&self, job_type: &str, args: T) -> Result<Uuid>` | Dispatch background job for async processing |

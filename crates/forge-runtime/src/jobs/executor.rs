@@ -95,16 +95,17 @@ impl JobExecutor {
         });
 
         // Create job context with progress channel
-        let ctx = JobContext::new(
+        let mut ctx = JobContext::new(
             job.id,
             job.job_type.clone(),
             job.attempts as u32,
             job.max_attempts as u32,
             self.db_pool.clone(),
-            self.http_client.inner().clone(),
+            self.http_client.clone(),
         )
         .with_saved(job.job_context.clone())
         .with_progress(progress_tx);
+        ctx.set_http_timeout(entry.info.http_timeout);
 
         // Keepalive heartbeat prevents stale cleanup from reclaiming healthy long jobs.
         let heartbeat_queue = self.queue.clone();

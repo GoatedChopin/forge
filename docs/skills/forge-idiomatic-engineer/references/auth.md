@@ -90,7 +90,7 @@ pub async fn register(ctx: &MutationContext, input: AuthInput) -> Result<AuthRes
     let hash = bcrypt::hash(&input.password, bcrypt::DEFAULT_COST)
         .map_err(|e| ForgeError::Internal(e.to_string()))?;
 
-    let user: User = sqlx::query_as("INSERT INTO users ...")
+    let user: User = sqlx::query_as!(User, "INSERT INTO users ...")
         .fetch_one(ctx.pool()).await?;
 
     // Framework handles token generation, hashing, storage, and expiry.

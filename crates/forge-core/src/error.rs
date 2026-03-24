@@ -101,5 +101,19 @@ impl From<serde_json::Error> for ForgeError {
     }
 }
 
+impl From<crate::http::CircuitBreakerError> for ForgeError {
+    fn from(e: crate::http::CircuitBreakerError) -> Self {
+        match e {
+            crate::http::CircuitBreakerError::CircuitOpen(open) => {
+                ForgeError::Timeout(open.to_string())
+            }
+            crate::http::CircuitBreakerError::Request(err) if err.is_timeout() => {
+                ForgeError::Timeout(err.to_string())
+            }
+            crate::http::CircuitBreakerError::Request(err) => ForgeError::Internal(err.to_string()),
+        }
+    }
+}
+
 /// Result type alias using ForgeError.
 pub type Result<T> = std::result::Result<T, ForgeError>;

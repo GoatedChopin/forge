@@ -125,13 +125,14 @@ impl WorkflowExecutor {
             .await?;
 
         // Create workflow context
-        let ctx = WorkflowContext::new(
+        let mut ctx = WorkflowContext::new(
             run_id,
             entry.info.name.to_string(),
             entry.info.version,
             self.pool.clone(),
-            self.http_client.inner().clone(),
+            self.http_client.clone(),
         );
+        ctx.set_http_timeout(entry.info.http_timeout);
 
         // Execute workflow with timeout
         let handler = entry.handler.clone();
@@ -217,9 +218,10 @@ impl WorkflowExecutor {
             entry.info.version,
             started_at,
             self.pool.clone(),
-            self.http_client.inner().clone(),
+            self.http_client.clone(),
         )
         .with_step_states(step_states);
+        ctx.set_http_timeout(entry.info.http_timeout);
 
         // If resuming from a sleep timer, mark the context so sleep() returns immediately
         if from_sleep {

@@ -34,6 +34,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use futures_core::future::BoxFuture;
 use futures_core::stream::BoxStream;
@@ -735,6 +736,9 @@ pub struct MutationContext {
     db_pool: sqlx::PgPool,
     /// HTTP client with circuit breaker for external requests.
     http_client: CircuitBreakerClient,
+    /// Default timeout for outbound HTTP requests made through the
+    /// circuit-breaker client. `None` means unlimited.
+    http_timeout: Option<Duration>,
     /// Optional job dispatcher for dispatching background jobs.
     job_dispatch: Option<Arc<dyn JobDispatch>>,
     /// Optional workflow dispatcher for starting workflows.
@@ -761,6 +765,7 @@ impl MutationContext {
             request,
             db_pool,
             http_client: CircuitBreakerClient::with_defaults(reqwest::Client::new()),
+            http_timeout: None,
             job_dispatch: None,
             workflow_dispatch: None,
             env_provider: Arc::new(RealEnvProvider::new()),
@@ -786,6 +791,7 @@ impl MutationContext {
             request,
             db_pool,
             http_client,
+            http_timeout: None,
             job_dispatch,
             workflow_dispatch,
             env_provider: Arc::new(RealEnvProvider::new()),
@@ -812,6 +818,7 @@ impl MutationContext {
             request,
             db_pool,
             http_client,
+            http_timeout: None,
             job_dispatch,
             workflow_dispatch,
             env_provider,
@@ -845,6 +852,7 @@ impl MutationContext {
             request,
             db_pool,
             http_client,
+            http_timeout: None,
             job_dispatch: None,
             workflow_dispatch: None,
             env_provider: Arc::new(RealEnvProvider::new()),
@@ -887,16 +895,26 @@ impl MutationContext {
 
     /// Get the HTTP client for external requests.
     ///
-    /// The client includes circuit breaker protection that tracks failure rates
-    /// per host. After repeated failures, requests fail fast to prevent cascade
-    /// failures when downstream services are unhealthy.
-    pub fn http(&self) -> &reqwest::Client {
+    /// Requests go through the circuit breaker automatically. When the handler
+    /// declared an explicit `timeout`, that timeout is also applied to outbound
+    /// HTTP requests unless the request overrides it.
+    pub fn http(&self) -> crate::http::HttpClient {
+        self.http_client.with_timeout(self.http_timeout)
+    }
+
+    /// Get the raw reqwest client, bypassing circuit breaker execution.
+    pub fn raw_http(&self) -> &reqwest::Client {
         self.http_client.inner()
     }
 
-    /// Get the circuit breaker client directly for advanced usage.
-    pub fn http_with_circuit_breaker(&self) -> &CircuitBreakerClient {
-        &self.http_client
+    /// Get the circuit-breaker-backed HTTP client explicitly.
+    pub fn http_with_circuit_breaker(&self) -> crate::http::HttpClient {
+        self.http()
+    }
+
+    /// Set the default outbound HTTP request timeout for this context.
+    pub fn set_http_timeout(&mut self, timeout: Option<Duration>) {
+        self.http_timeout = timeout;
     }
 
     pub fn require_user_id(&self) -> crate::error::Result<Uuid> {
@@ -1016,18 +1034,12 @@ impl MutationContext {
     }
 
     /// Revoke a specific refresh token (e.g., on logout).
-    pub async fn revoke_refresh_token(
-        &self,
-        refresh_token: &str,
-    ) -> crate::error::Result<()> {
+    pub async fn revoke_refresh_token(&self, refresh_token: &str) -> crate::error::Result<()> {
         crate::auth::tokens::revoke_refresh_token(&self.db_pool, refresh_token).await
     }
 
     /// Revoke all refresh tokens for a user (e.g., on password change or account deletion).
-    pub async fn revoke_all_refresh_tokens(
-        &self,
-        user_id: Uuid,
-    ) -> crate::error::Result<()> {
+    pub async fn revoke_all_refresh_tokens(&self, user_id: Uuid) -> crate::error::Result<()> {
         crate::auth::tokens::revoke_all_refresh_tokens(&self.db_pool, user_id).await
     }
 

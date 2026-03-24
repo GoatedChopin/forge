@@ -153,8 +153,7 @@ Most queries tolerate replication lag (typically under 100ms). For queries that 
 ```rust
 #[forge::query(consistent)]
 pub async fn get_order_receipt(ctx: &QueryContext, order_id: Uuid) -> Result<Order> {
-    sqlx::query_as("SELECT * FROM orders WHERE id = $1")
-        .bind(order_id)
+    sqlx::query_as!(Order, "SELECT * FROM orders WHERE id = $1", order_id)
         .fetch_one(ctx.db())
         .await
         .map_err(Into::into)

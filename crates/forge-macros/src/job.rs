@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{ItemFn, parse_macro_input};
 
-use crate::utils::{has_attr_flag, parse_duration_tokens, to_pascal_case};
+use crate::utils::{has_attr_flag, parse_attr_value, parse_duration_tokens, to_pascal_case};
 
 #[derive(Debug, Default)]
 struct JobAttrs {
@@ -97,16 +97,8 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
         }
     }
 
-    if let Some(timeout_start) = attr_str.find("timeout")
-        && let Some(eq_pos) = attr_str[timeout_start..].find('=')
-    {
-        let after_eq = &attr_str[timeout_start + eq_pos + 1..];
-        if let Some(quote_start) = after_eq.find('"') {
-            let after_quote = &after_eq[quote_start + 1..];
-            if let Some(quote_end) = after_quote.find('"') {
-                result.timeout = Some(after_quote[..quote_end].to_string());
-            }
-        }
+    if let Some(timeout) = parse_attr_value(&attr_str, "timeout") {
+        result.timeout = Some(timeout);
     }
 
     if let Some(priority_start) = attr_str.find("priority")
@@ -339,6 +331,12 @@ pub fn job_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     } else {
         quote! { std::time::Duration::from_secs(3600) }
     };
+    let http_timeout = if let Some(ref t) = attrs.timeout {
+        let timeout = parse_duration_tokens(t, 0);
+        quote! { Some(#timeout) }
+    } else {
+        quote! { None }
+    };
 
     let priority = if let Some(ref p) = attrs.priority {
         let p_lower = p.to_lowercase();
@@ -429,6 +427,7 @@ pub fn job_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                 forge::forge_core::job::JobInfo {
                     name: #fn_name_str,
                     timeout: #timeout,
+                    http_timeout: #http_timeout,
                     priority: #priority,
                     retry: forge::forge_core::job::RetryConfig {
                         max_attempts: #max_attempts,

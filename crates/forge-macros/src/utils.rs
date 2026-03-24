@@ -88,12 +88,19 @@ pub fn parse_duration_tokens(s: &str, default_secs: u64) -> TokenStream {
 /// This avoids false positives from substring matching inside quoted values,
 /// e.g. `require_role("public_api")` should not match `public`.
 pub fn has_attr_flag(attr_str: &str, flag: &str) -> bool {
-    if flag.is_empty() {
-        return false;
+    find_attr_key(attr_str, flag).is_some()
+}
+
+/// Find a standalone attribute key outside quoted strings.
+///
+/// Returns the byte index of the first match if found.
+pub fn find_attr_key(attr_str: &str, key: &str) -> Option<usize> {
+    if key.is_empty() {
+        return None;
     }
 
     let bytes = attr_str.as_bytes();
-    let flag_bytes = flag.as_bytes();
+    let flag_bytes = key.as_bytes();
     let mut i = 0usize;
     let mut in_quote: Option<u8> = None;
     let mut escaped = false;
@@ -130,14 +137,36 @@ pub fn has_attr_flag(attr_str: &str, flag: &str) -> bool {
             let prev_is_ident = prev.is_some_and(is_ident_char);
             let next_is_ident = next.is_some_and(is_ident_char);
             if !prev_is_ident && !next_is_ident {
-                return true;
+                return Some(i);
             }
         }
 
         i += 1;
     }
 
-    false
+    None
+}
+
+/// Parse a named attribute value, supporting quoted strings or bare tokens.
+pub fn parse_attr_value(attr_str: &str, key: &str) -> Option<String> {
+    let key_start = find_attr_key(attr_str, key)?;
+    let eq_pos = attr_str[key_start..].find('=')?;
+    let remaining = attr_str[key_start + eq_pos + 1..].trim_start();
+
+    if let Some(after_quote) = remaining.strip_prefix('"') {
+        let quote_end = after_quote.find('"')?;
+        return Some(after_quote[..quote_end].to_string());
+    }
+
+    Some(
+        remaining
+            .split(&[',', ')'])
+            .next()
+            .unwrap_or("")
+            .trim()
+            .trim_matches('"')
+            .to_string(),
+    )
 }
 
 fn is_ident_char(b: u8) -> bool {
@@ -193,5 +222,23 @@ mod tests {
         assert!(!has_attr_flag("require_role(\"public_api\")", "public"));
         assert!(!has_attr_flag("my_public_flag", "public"));
         assert!(!has_attr_flag("public_api = true", "public"));
+    }
+
+    #[test]
+    fn test_find_attr_key_matches_exact_key() {
+        let attr = r#"max_timeout = "5s", timeout = 30"#;
+        let timeout_idx = find_attr_key(attr, "timeout").unwrap();
+        let max_timeout_idx = find_attr_key(attr, "max_timeout").unwrap();
+
+        assert!(max_timeout_idx < timeout_idx);
+        assert_eq!(&attr[timeout_idx..timeout_idx + "timeout".len()], "timeout");
+    }
+
+    #[test]
+    fn test_parse_attr_value_supports_quoted_and_bare_values() {
+        let attr = r#"timeout = 30, max_timeout = "5s""#;
+
+        assert_eq!(parse_attr_value(attr, "timeout").as_deref(), Some("30"));
+        assert_eq!(parse_attr_value(attr, "max_timeout").as_deref(), Some("5s"));
     }
 }

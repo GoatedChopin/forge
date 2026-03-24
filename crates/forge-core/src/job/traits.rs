@@ -42,6 +42,8 @@ pub struct JobInfo {
     pub name: &'static str,
     /// Job timeout.
     pub timeout: Duration,
+    /// Default timeout for outbound HTTP requests made by this job.
+    pub http_timeout: Option<Duration>,
     /// Default priority.
     pub priority: JobPriority,
     /// Retry configuration.
@@ -66,6 +68,7 @@ impl Default for JobInfo {
         Self {
             name: "",
             timeout: Duration::from_secs(3600), // 1 hour default
+            http_timeout: None,
             priority: JobPriority::Normal,
             retry: RetryConfig::default(),
             worker_capability: None,

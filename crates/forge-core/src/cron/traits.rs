@@ -31,6 +31,8 @@ pub struct CronInfo {
     pub catch_up_limit: u32,
     /// Timeout for execution.
     pub timeout: std::time::Duration,
+    /// Default timeout for outbound HTTP requests made by this cron.
+    pub http_timeout: Option<std::time::Duration>,
 }
 
 impl Default for CronInfo {
@@ -43,6 +45,7 @@ impl Default for CronInfo {
             catch_up: false,
             catch_up_limit: 10,
             timeout: std::time::Duration::from_secs(3600),
+            http_timeout: None,
         }
     }
 }

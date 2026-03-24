@@ -19,8 +19,7 @@ pub use inventory;
 // Re-export auto-registration types for macro-generated code
 #[doc(hidden)]
 pub use auto_register::{
-    AutoCron, AutoDaemon, AutoJob, AutoMcpTool, AutoMutation, AutoQuery, AutoWebhook,
-    AutoWorkflow,
+    AutoCron, AutoDaemon, AutoJob, AutoMcpTool, AutoMutation, AutoQuery, AutoWebhook, AutoWorkflow,
 };
 
 // Re-export embedded frontend handler

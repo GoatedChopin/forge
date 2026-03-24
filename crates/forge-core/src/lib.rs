@@ -35,7 +35,7 @@ pub use function::{
 };
 pub use http::{
     CircuitBreakerClient, CircuitBreakerConfig, CircuitBreakerError, CircuitBreakerOpen,
-    CircuitState, CircuitStatus,
+    CircuitState, CircuitStatus, HttpClient, HttpRequestBuilder,
 };
 pub use job::{ForgeJob, JobContext, JobInfo, JobPriority, JobStatus, RetryConfig};
 pub use mcp::{

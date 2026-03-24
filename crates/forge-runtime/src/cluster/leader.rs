@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use forge_core::cluster::{LeaderInfo, LeaderRole, NodeId};
 use tokio::sync::{Mutex, watch};
 
@@ -104,13 +104,13 @@ impl LeaderElection {
             .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
 
         // Try to acquire advisory lock (non-blocking)
-        let result: Option<(bool,)> = sqlx::query_as("SELECT pg_try_advisory_lock($1) as acquired")
-            .bind(self.role.lock_id())
-            .fetch_optional(&mut *conn)
-            .await
-            .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
-
-        let acquired = result.map(|(v,)| v).unwrap_or(false);
+        let acquired = sqlx::query_scalar!(
+            r#"SELECT pg_try_advisory_lock($1) as "acquired!""#,
+            self.role.lock_id()
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
 
         super::metrics::record_leader_election_attempt(self.role.as_str(), acquired);
 
@@ -215,15 +215,16 @@ impl LeaderElection {
 
     /// Check if the current leader is healthy.
     pub async fn check_leader_health(&self) -> forge_core::Result<bool> {
-        let result: Option<(DateTime<Utc>,)> =
-            sqlx::query_as("SELECT lease_until FROM forge_leaders WHERE role = $1")
-                .bind(self.role.as_str())
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+        let result = sqlx::query_scalar!(
+            "SELECT lease_until FROM forge_leaders WHERE role = $1",
+            self.role.as_str()
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
 
         match result {
-            Some((lease_until,)) => Ok(lease_until > Utc::now()),
+            Some(lease_until) => Ok(lease_until > Utc::now()),
             None => Ok(false), // No leader
         }
     }

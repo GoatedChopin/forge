@@ -256,14 +256,14 @@ impl MigrationRunner {
     }
 
     async fn get_applied_migrations(&self) -> Result<HashSet<String>> {
-        let rows: Vec<(String,)> = sqlx::query_as("SELECT name FROM forge_migrations")
+        let rows = sqlx::query!("SELECT name FROM forge_migrations")
             .fetch_all(&self.pool)
             .await
             .map_err(|e| {
                 ForgeError::Database(format!("Failed to get applied migrations: {}", e))
             })?;
 
-        Ok(rows.into_iter().map(|(name,)| name).collect())
+        Ok(rows.into_iter().map(|row| row.name).collect())
     }
 
     async fn apply_migration(&self, migration: &Migration) -> Result<()> {
@@ -336,10 +336,10 @@ impl MigrationRunner {
         self.ensure_migrations_table().await?;
 
         // Get the N most recent migrations with their down_sql
-        let rows: Vec<(i32, String, Option<String>)> = sqlx::query_as(
+        let rows = sqlx::query!(
             "SELECT id, name, down_sql FROM forge_migrations ORDER BY id DESC LIMIT $1",
+            count as i32
         )
-        .bind(count as i32)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| ForgeError::Database(format!("Failed to get migrations: {}", e)))?;
@@ -351,7 +351,10 @@ impl MigrationRunner {
 
         let mut rolled_back = Vec::new();
 
-        for (id, name, down_sql) in rows {
+        for row in rows {
+            let id = row.id;
+            let name = row.name;
+            let down_sql = row.down_sql;
             info!("Rolling back migration: {}", name);
 
             if let Some(down) = down_sql {
@@ -408,19 +411,18 @@ impl MigrationRunner {
         let applied = self.get_applied_migrations().await?;
 
         let applied_list: Vec<AppliedMigration> = {
-            let rows: Vec<(String, chrono::DateTime<chrono::Utc>, Option<String>)> =
-                sqlx::query_as(
-                    "SELECT name, applied_at, down_sql FROM forge_migrations ORDER BY id ASC",
-                )
-                .fetch_all(&self.pool)
-                .await
-                .map_err(|e| ForgeError::Database(format!("Failed to get migrations: {}", e)))?;
+            let rows = sqlx::query!(
+                "SELECT name, applied_at, down_sql FROM forge_migrations ORDER BY id ASC"
+            )
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| ForgeError::Database(format!("Failed to get migrations: {}", e)))?;
 
             rows.into_iter()
-                .map(|(name, applied_at, down_sql)| AppliedMigration {
-                    name,
-                    applied_at,
-                    has_down: down_sql.is_some(),
+                .map(|row| AppliedMigration {
+                    name: row.name,
+                    applied_at: row.applied_at,
+                    has_down: row.down_sql.is_some(),
                 })
                 .collect()
         };

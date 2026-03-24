@@ -8,7 +8,7 @@ Write helpers that work across query, mutation, MCP, and tests:
 
 ```rust
 pub async fn list_items(db: DbConn<'_>) -> Result<Vec<Item>> {
-    db.fetch_all(sqlx::query_as("SELECT * FROM items ORDER BY created_at DESC"))
+    db.fetch_all(sqlx::query_as!(Item, "SELECT * FROM items ORDER BY created_at DESC"))
         .await
         .map_err(Into::into)
 }

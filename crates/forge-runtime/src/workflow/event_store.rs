@@ -64,13 +64,7 @@ impl EventStore {
         correlation_id: &str,
         workflow_run_id: Uuid,
     ) -> Result<Option<WorkflowEvent>> {
-        let result: Option<(
-            Uuid,
-            String,
-            String,
-            Option<serde_json::Value>,
-            DateTime<Utc>,
-        )> = sqlx::query_as(
+        let result = sqlx::query!(
             r#"
                 UPDATE forge_workflow_events
                 SET consumed_at = NOW(), consumed_by = $3
@@ -82,75 +76,65 @@ impl EventStore {
                 )
                 RETURNING id, event_name, correlation_id, payload, created_at
                 "#,
+            event_name,
+            correlation_id,
+            workflow_run_id
         )
-        .bind(event_name)
-        .bind(correlation_id)
-        .bind(workflow_run_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| ForgeError::Database(e.to_string()))?;
 
-        Ok(result.map(
-            |(id, event_name, correlation_id, payload, created_at)| WorkflowEvent {
-                id,
-                event_name,
-                correlation_id,
-                payload,
-                created_at,
-            },
-        ))
+        Ok(result.map(|row| WorkflowEvent {
+            id: row.id,
+            event_name: row.event_name,
+            correlation_id: row.correlation_id,
+            payload: row.payload,
+            created_at: row.created_at,
+        }))
     }
 
     /// Check if an event exists for a workflow (without consuming).
     pub async fn has_event(&self, event_name: &str, correlation_id: &str) -> Result<bool> {
-        let result: (i64,) = sqlx::query_as(
+        let result = sqlx::query_scalar!(
             r#"
             SELECT COUNT(*) FROM forge_workflow_events
             WHERE event_name = $1 AND correlation_id = $2 AND consumed_at IS NULL
             "#,
+            event_name,
+            correlation_id
         )
-        .bind(event_name)
-        .bind(correlation_id)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| ForgeError::Database(e.to_string()))?;
 
-        Ok(result.0 > 0)
+        Ok(result.unwrap_or(0) > 0)
     }
 
     /// List pending events for a workflow.
     #[allow(clippy::type_complexity)]
     pub async fn list_pending_events(&self, correlation_id: &str) -> Result<Vec<WorkflowEvent>> {
-        let results: Vec<(
-            Uuid,
-            String,
-            String,
-            Option<serde_json::Value>,
-            DateTime<Utc>,
-        )> = sqlx::query_as(
+        let results = sqlx::query!(
             r#"
                 SELECT id, event_name, correlation_id, payload, created_at
                 FROM forge_workflow_events
                 WHERE correlation_id = $1 AND consumed_at IS NULL
                 ORDER BY created_at ASC
                 "#,
+            correlation_id
         )
-        .bind(correlation_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| ForgeError::Database(e.to_string()))?;
 
         Ok(results
             .into_iter()
-            .map(
-                |(id, event_name, correlation_id, payload, created_at)| WorkflowEvent {
-                    id,
-                    event_name,
-                    correlation_id,
-                    payload,
-                    created_at,
-                },
-            )
+            .map(|row| WorkflowEvent {
+                id: row.id,
+                event_name: row.event_name,
+                correlation_id: row.correlation_id,
+                payload: row.payload,
+                created_at: row.created_at,
+            })
             .collect())
     }
 

@@ -373,9 +373,10 @@ async fn run_daemon_loop(
                     name.clone(),
                     instance_id,
                     pool.clone(),
-                    http_client.inner().clone(),
+                    http_client.clone(),
                     daemon_shutdown_rx,
                 );
+                ctx.set_http_timeout(entry.info.http_timeout);
                 if let Some(ref jd) = job_dispatch {
                     ctx = ctx.with_job_dispatch(jd.clone());
                 }
@@ -497,13 +498,12 @@ async fn try_acquire_leadership(pool: &PgPool, daemon_name: &str, node_id: Uuid)
         .bytes()
         .fold(0i64, |acc, b| acc.wrapping_add(b as i64).wrapping_mul(31));
 
-    let result: (bool,) = sqlx::query_as("SELECT pg_try_advisory_lock($1)")
-        .bind(lock_id)
+    let result = sqlx::query_scalar!(r#"SELECT pg_try_advisory_lock($1) as "acquired!""#, lock_id)
         .fetch_one(pool)
         .await
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
 
-    if result.0 {
+    if result {
         // Update daemon record with our node_id
         sqlx::query("UPDATE forge_daemons SET node_id = $1 WHERE name = $2")
             .bind(node_id)
@@ -513,7 +513,7 @@ async fn try_acquire_leadership(pool: &PgPool, daemon_name: &str, node_id: Uuid)
             .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
     }
 
-    Ok(result.0)
+    Ok(result)
 }
 
 async fn release_leadership(pool: &PgPool, daemon_name: &str, _node_id: Uuid) -> Result<()> {

@@ -784,31 +784,25 @@ impl Reactor {
         job_id: Uuid,
         db_pool: &sqlx::PgPool,
     ) -> forge_core::Result<JobData> {
-        let row: Option<(
-            String,
-            Option<i32>,
-            Option<String>,
-            Option<serde_json::Value>,
-            Option<String>,
-        )> = sqlx::query_as(
+        let row = sqlx::query!(
             r#"
                 SELECT status, progress_percent, progress_message, output, last_error
                 FROM forge_jobs WHERE id = $1
                 "#,
+            job_id
         )
-        .bind(job_id)
         .fetch_optional(db_pool)
         .await
         .map_err(forge_core::ForgeError::Sql)?;
 
         match row {
-            Some((status, progress_percent, progress_message, output, error)) => Ok(JobData {
+            Some(row) => Ok(JobData {
                 job_id: job_id.to_string(),
-                status,
-                progress_percent,
-                progress_message,
-                output,
-                error,
+                status: row.status,
+                progress_percent: row.progress_percent,
+                progress_message: row.progress_message,
+                output: row.output,
+                error: row.last_error,
             }),
             None => Err(forge_core::ForgeError::NotFound(format!(
                 "Job {} not found",
@@ -837,23 +831,18 @@ impl Reactor {
         workflow_id: Uuid,
         db_pool: &sqlx::PgPool,
     ) -> forge_core::Result<WorkflowData> {
-        let row: Option<(
-            String,
-            Option<String>,
-            Option<serde_json::Value>,
-            Option<String>,
-        )> = sqlx::query_as(
+        let row = sqlx::query!(
             r#"
                 SELECT status, current_step, output, error
                 FROM forge_workflow_runs WHERE id = $1
                 "#,
+            workflow_id
         )
-        .bind(workflow_id)
         .fetch_optional(db_pool)
         .await
         .map_err(forge_core::ForgeError::Sql)?;
 
-        let (status, current_step, output, error) = match row {
+        let row = match row {
             Some(r) => r,
             None => {
                 return Err(forge_core::ForgeError::NotFound(format!(
@@ -863,35 +852,35 @@ impl Reactor {
             }
         };
 
-        let step_rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        let step_rows = sqlx::query!(
             r#"
             SELECT step_name, status, error
             FROM forge_workflow_steps
             WHERE workflow_run_id = $1
             ORDER BY started_at ASC NULLS LAST
             "#,
+            workflow_id
         )
-        .bind(workflow_id)
         .fetch_all(db_pool)
         .await
         .map_err(forge_core::ForgeError::Sql)?;
 
         let steps = step_rows
             .into_iter()
-            .map(|(name, status, error)| WorkflowStepData {
-                name,
-                status,
-                error,
+            .map(|row| WorkflowStepData {
+                name: row.step_name,
+                status: row.status,
+                error: row.error,
             })
             .collect();
 
         Ok(WorkflowData {
             workflow_id: workflow_id.to_string(),
-            status,
-            current_step,
+            status: row.status,
+            current_step: row.current_step,
             steps,
-            output,
-            error,
+            output: row.output,
+            error: row.error,
         })
     }
 
@@ -1007,16 +996,16 @@ impl Reactor {
         job_id: Uuid,
         auth: &forge_core::function::AuthContext,
     ) -> forge_core::Result<()> {
-        let owner_subject_row: Option<(Option<String>,)> =
-            sqlx::query_as(r#"SELECT owner_subject FROM forge_jobs WHERE id = $1"#)
-                .bind(job_id)
-                .fetch_optional(db_pool)
-                .await
-                .map_err(forge_core::ForgeError::Sql)?;
+        let owner_subject_row = sqlx::query_scalar!(
+            r#"SELECT owner_subject FROM forge_jobs WHERE id = $1"#,
+            job_id
+        )
+        .fetch_optional(db_pool)
+        .await
+        .map_err(forge_core::ForgeError::Sql)?;
 
         let owner_subject = owner_subject_row
-            .ok_or_else(|| forge_core::ForgeError::NotFound(format!("Job {} not found", job_id)))?
-            .0;
+            .ok_or_else(|| forge_core::ForgeError::NotFound(format!("Job {} not found", job_id)))?;
 
         Self::check_owner_access(owner_subject, auth)
     }
@@ -1026,18 +1015,17 @@ impl Reactor {
         workflow_id: Uuid,
         auth: &forge_core::function::AuthContext,
     ) -> forge_core::Result<()> {
-        let owner_subject_row: Option<(Option<String>,)> =
-            sqlx::query_as(r#"SELECT owner_subject FROM forge_workflow_runs WHERE id = $1"#)
-                .bind(workflow_id)
-                .fetch_optional(db_pool)
-                .await
-                .map_err(forge_core::ForgeError::Sql)?;
+        let owner_subject_row = sqlx::query_scalar!(
+            r#"SELECT owner_subject FROM forge_workflow_runs WHERE id = $1"#,
+            workflow_id
+        )
+        .fetch_optional(db_pool)
+        .await
+        .map_err(forge_core::ForgeError::Sql)?;
 
-        let owner_subject = owner_subject_row
-            .ok_or_else(|| {
-                forge_core::ForgeError::NotFound(format!("Workflow {} not found", workflow_id))
-            })?
-            .0;
+        let owner_subject = owner_subject_row.ok_or_else(|| {
+            forge_core::ForgeError::NotFound(format!("Workflow {} not found", workflow_id))
+        })?;
 
         Self::check_owner_access(owner_subject, auth)
     }

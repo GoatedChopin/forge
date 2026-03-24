@@ -1,9 +1,11 @@
 use std::sync::{Arc, mpsc};
+use std::time::Duration;
 
 use uuid::Uuid;
 
 use crate::env::{EnvAccess, EnvProvider, RealEnvProvider};
 use crate::function::AuthContext;
+use crate::http::CircuitBreakerClient;
 
 /// Returns an empty JSON object for initializing job saved data.
 pub fn empty_saved_data() -> serde_json::Value {
@@ -27,7 +29,10 @@ pub struct JobContext {
     /// Database pool.
     db_pool: sqlx::PgPool,
     /// HTTP client for external calls.
-    http_client: reqwest::Client,
+    http_client: CircuitBreakerClient,
+    /// Default timeout for outbound HTTP requests made through the
+    /// circuit-breaker client. `None` means unlimited.
+    http_timeout: Option<Duration>,
     /// Progress reporter (sync channel for simplicity).
     progress_tx: Option<mpsc::Sender<ProgressUpdate>>,
     /// Environment variable provider.
@@ -53,7 +58,7 @@ impl JobContext {
         attempt: u32,
         max_attempts: u32,
         db_pool: sqlx::PgPool,
-        http_client: reqwest::Client,
+        http_client: CircuitBreakerClient,
     ) -> Self {
         Self {
             job_id,
@@ -64,6 +69,7 @@ impl JobContext {
             saved_data: Arc::new(tokio::sync::RwLock::new(empty_saved_data())),
             db_pool,
             http_client,
+            http_timeout: None,
             progress_tx: None,
             env_provider: Arc::new(RealEnvProvider::new()),
         }
@@ -105,9 +111,22 @@ impl JobContext {
         ))
     }
 
-    /// Get HTTP client.
-    pub fn http(&self) -> &reqwest::Client {
-        &self.http_client
+    /// Get the HTTP client for external requests.
+    pub fn http(&self) -> crate::http::HttpClient {
+        self.http_client.with_timeout(self.http_timeout)
+    }
+
+    /// Get the raw reqwest client, bypassing circuit breaker execution.
+    pub fn raw_http(&self) -> &reqwest::Client {
+        self.http_client.inner()
+    }
+
+    pub fn http_with_circuit_breaker(&self) -> crate::http::HttpClient {
+        self.http()
+    }
+
+    pub fn set_http_timeout(&mut self, timeout: Option<Duration>) {
+        self.http_timeout = timeout;
     }
 
     /// Report job progress.
@@ -172,20 +191,20 @@ impl JobContext {
 
     /// Check if cancellation has been requested for this job.
     pub async fn is_cancel_requested(&self) -> crate::Result<bool> {
-        let row: Option<(String,)> = sqlx::query_as(
+        let row = sqlx::query_scalar!(
             r#"
             SELECT status
             FROM forge_jobs
             WHERE id = $1
             "#,
+            self.job_id
         )
-        .bind(self.job_id)
         .fetch_optional(&self.db_pool)
         .await
         .map_err(|e| crate::ForgeError::Database(e.to_string()))?;
 
         Ok(matches!(
-            row.as_ref().map(|(status,)| status.as_str()),
+            row.as_deref(),
             Some("cancel_requested") | Some("cancelled")
         ))
     }
@@ -289,7 +308,7 @@ mod tests {
             1,
             3,
             pool,
-            reqwest::Client::new(),
+            CircuitBreakerClient::with_defaults(reqwest::Client::new()),
         );
 
         assert_eq!(ctx.job_id, job_id);
@@ -313,7 +332,7 @@ mod tests {
             2,
             3,
             pool,
-            reqwest::Client::new(),
+            CircuitBreakerClient::with_defaults(reqwest::Client::new()),
         );
 
         assert!(ctx.is_retry());
@@ -332,7 +351,7 @@ mod tests {
             3,
             3,
             pool,
-            reqwest::Client::new(),
+            CircuitBreakerClient::with_defaults(reqwest::Client::new()),
         );
 
         assert!(ctx.is_last_attempt());
@@ -363,7 +382,7 @@ mod tests {
             1,
             3,
             pool,
-            reqwest::Client::new(),
+            CircuitBreakerClient::with_defaults(reqwest::Client::new()),
         )
         .with_saved(serde_json::json!({"foo": "bar"}));
 
@@ -384,7 +403,7 @@ mod tests {
             1,
             3,
             pool,
-            reqwest::Client::new(),
+            CircuitBreakerClient::with_defaults(reqwest::Client::new()),
         );
 
         ctx.save("charge_id", serde_json::json!("ch_123"))

@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{ItemFn, parse_macro_input};
 
-use crate::utils::{has_attr_flag, parse_duration_tokens, to_pascal_case};
+use crate::utils::{has_attr_flag, parse_attr_value, parse_duration_tokens, to_pascal_case};
 
 #[derive(Debug, Default)]
 struct WebhookAttrs {
@@ -92,16 +92,8 @@ fn parse_webhook_attrs(attr: TokenStream) -> syn::Result<WebhookAttrs> {
         }
     }
 
-    if let Some(timeout_start) = attr_str.find("timeout")
-        && let Some(eq_pos) = attr_str[timeout_start..].find('=')
-    {
-        let after_eq = &attr_str[timeout_start + eq_pos + 1..];
-        if let Some(quote_start) = after_eq.find('"') {
-            let after_quote = &after_eq[quote_start + 1..];
-            if let Some(quote_end) = after_quote.find('"') {
-                result.timeout = Some(after_quote[..quote_end].to_string());
-            }
-        }
+    if let Some(timeout) = parse_attr_value(&attr_str, "timeout") {
+        result.timeout = Some(timeout);
     }
 
     match &result.path {
@@ -144,6 +136,12 @@ pub fn webhook_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
         parse_duration_tokens(t, 30)
     } else {
         quote! { std::time::Duration::from_secs(30) }
+    };
+    let http_timeout = if let Some(ref t) = attrs.timeout {
+        let timeout = parse_duration_tokens(t, 0);
+        quote! { Some(#timeout) }
+    } else {
+        quote! { None }
     };
 
     let signature = if let (Some(alg), Some(header), Some(secret_env)) = (
@@ -209,6 +207,7 @@ pub fn webhook_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                     allow_unsigned: #allow_unsigned,
                     idempotency: #idempotency,
                     timeout: #timeout,
+                    http_timeout: #http_timeout,
                 }
             }
 

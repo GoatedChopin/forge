@@ -3,7 +3,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{FnArg, ItemFn, Pat, ReturnType, Type, parse_macro_input};
 
-use crate::utils::{has_attr_flag, parse_duration_secs, to_pascal_case};
+use crate::utils::{has_attr_flag, parse_attr_value, parse_duration_secs, to_pascal_case};
 
 /// Expand the #[forge::mutation] attribute.
 ///
@@ -56,20 +56,10 @@ fn parse_mutation_attrs(attr: TokenStream) -> MutationAttrs {
         }
     }
 
-    if let Some(timeout_start) = attr_str.find("timeout")
-        && let Some(eq_pos) = attr_str[timeout_start..].find('=')
+    if let Some(timeout) = parse_attr_value(&attr_str, "timeout")
+        && let Ok(secs) = timeout.parse::<u64>()
     {
-        let remaining = &attr_str[timeout_start + eq_pos + 1..];
-        let trimmed = remaining.trim();
-        if let Ok(secs) = trimmed
-            .split(&[',', ')'])
-            .next()
-            .unwrap_or("")
-            .trim()
-            .parse::<u64>()
-        {
-            attrs.timeout = Some(secs);
-        }
+        attrs.timeout = Some(secs);
     }
 
     if let Some(rl_start) = attr_str.find("rate_limit")
@@ -269,6 +259,7 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
         Some(t) => quote! { Some(#t) },
         None => quote! { None },
     };
+    let http_timeout = timeout.clone();
 
     let required_role = match &attrs.required_role {
         Some(role) => quote! { Some(#role) },
@@ -413,6 +404,7 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
                     is_public: #is_public,
                     cache_ttl: None,
                     timeout: #timeout,
+                    http_timeout: #http_timeout,
                     rate_limit_requests: #rate_limit_requests,
                     rate_limit_per_secs: #rate_limit_per_secs,
                     rate_limit_key: #rate_limit_key,

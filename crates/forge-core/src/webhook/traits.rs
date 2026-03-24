@@ -46,6 +46,8 @@ pub struct WebhookInfo {
     pub idempotency: Option<IdempotencyConfig>,
     /// Request timeout.
     pub timeout: Duration,
+    /// Default timeout for outbound HTTP requests made by the webhook.
+    pub http_timeout: Option<Duration>,
 }
 
 impl Default for WebhookInfo {
@@ -57,6 +59,7 @@ impl Default for WebhookInfo {
             allow_unsigned: false,
             idempotency: None,
             timeout: Duration::from_secs(30),
+            http_timeout: None,
         }
     }
 }
@@ -113,6 +116,7 @@ mod tests {
         assert!(!info.allow_unsigned);
         assert!(info.idempotency.is_none());
         assert_eq!(info.timeout, Duration::from_secs(30));
+        assert_eq!(info.http_timeout, None);
     }
 
     #[test]

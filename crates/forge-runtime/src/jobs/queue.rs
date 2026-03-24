@@ -132,18 +132,18 @@ impl JobQueue {
     pub async fn enqueue(&self, job: JobRecord) -> Result<Uuid, sqlx::Error> {
         // Check for duplicate if idempotency key is set
         if let Some(ref key) = job.idempotency_key {
-            let existing: Option<(Uuid,)> = sqlx::query_as(
+            let existing = sqlx::query_scalar!(
                 r#"
                 SELECT id FROM forge_jobs
                 WHERE idempotency_key = $1
                   AND status NOT IN ('completed', 'failed', 'dead_letter', 'cancelled')
                 "#,
+                key
             )
-            .bind(key)
             .fetch_optional(&self.pool)
             .await?;
 
-            if let Some((id,)) = existing {
+            if let Some(id) = existing {
                 return Ok(id); // Return existing job ID
             }
         }
@@ -443,19 +443,19 @@ impl JobQueue {
         job_id: Uuid,
         reason: Option<&str>,
     ) -> Result<bool, sqlx::Error> {
-        let row: Option<(String,)> = sqlx::query_as(
+        let row = sqlx::query_scalar!(
             r#"
             SELECT status
             FROM forge_jobs
             WHERE id = $1
             "#,
+            job_id
         )
-        .bind(job_id)
         .fetch_optional(&self.pool)
         .await?;
 
         let status = match row {
-            Some((status,)) => status,
+            Some(status) => status,
             None => return Ok(false),
         };
 

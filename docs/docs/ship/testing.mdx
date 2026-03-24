@@ -803,4 +803,4 @@ Isolated databases are created fresh per test. Manual cleanup or transaction rol
 
 ### Production Parity
 
-Test contexts mirror production contexts. The same methods (`ctx.db()`, `ctx.db_conn()`, `ctx.http()`, `ctx.env()`) work identically. Tests written against test contexts run against production contexts without modification.
+Test contexts mirror production intent. The same access points (`ctx.db()`, `ctx.db_conn()`, `ctx.http()`, `ctx.env()`) exist in both places; tests use `MockHttp`, while production `ctx.http()` runs through Forge's circuit-breaker-backed client.

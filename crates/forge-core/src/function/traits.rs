@@ -23,6 +23,9 @@ pub struct FunctionInfo {
     pub cache_ttl: Option<u64>,
     /// Timeout in seconds.
     pub timeout: Option<u64>,
+    /// Default timeout in seconds for outbound HTTP requests made via the
+    /// circuit-breaker client. `None` means no request timeout is applied.
+    pub http_timeout: Option<u64>,
     /// Rate limit: requests per time window.
     pub rate_limit_requests: Option<u32>,
     /// Rate limit: time window in seconds.
@@ -137,6 +140,7 @@ mod tests {
             is_public: false,
             cache_ttl: Some(300),
             timeout: Some(30),
+            http_timeout: Some(5),
             rate_limit_requests: Some(100),
             rate_limit_per_secs: Some(60),
             rate_limit_key: Some("user"),
@@ -151,6 +155,7 @@ mod tests {
         assert_eq!(info.name, "get_user");
         assert_eq!(info.kind, FunctionKind::Query);
         assert_eq!(info.cache_ttl, Some(300));
+        assert_eq!(info.http_timeout, Some(5));
         assert_eq!(info.rate_limit_requests, Some(100));
         assert_eq!(info.log_level, Some("debug"));
         assert_eq!(info.table_dependencies, &["users"]);

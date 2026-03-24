@@ -75,23 +75,23 @@ pub async fn rotate_refresh_token(
 
     // Atomically delete only non-expired tokens. Expired tokens stay for audit
     // and get cleaned up by the periodic purge.
-    let row: Option<(Uuid,)> = sqlx::query_as(
+    let row = sqlx::query_scalar!(
         "DELETE FROM forge_refresh_tokens WHERE token_hash = $1 AND expires_at > now()
          RETURNING user_id",
+        hash
     )
-    .bind(&hash)
     .fetch_optional(pool)
     .await
     .map_err(|e| ForgeError::Internal(format!("Failed to rotate refresh token: {e}")))?;
 
-    let (user_id,) = match row {
+    let user_id = match row {
         Some(r) => r,
         None => {
             // Distinguish between "not found" and "expired" for clearer errors
-            let expired: Option<(Uuid,)> = sqlx::query_as(
+            let expired = sqlx::query_scalar!(
                 "SELECT user_id FROM forge_refresh_tokens WHERE token_hash = $1",
+                hash
             )
-            .bind(&hash)
             .fetch_optional(pool)
             .await
             .map_err(|e| ForgeError::Internal(format!("Failed to check token: {e}")))?;

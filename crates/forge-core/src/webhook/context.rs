@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use uuid::Uuid;
 
 use crate::env::{EnvAccess, EnvProvider, RealEnvProvider};
 use crate::function::JobDispatch;
+use crate::http::CircuitBreakerClient;
 
 /// Context available to webhook handlers.
 pub struct WebhookContext {
@@ -19,7 +21,10 @@ pub struct WebhookContext {
     /// Database pool.
     db_pool: sqlx::PgPool,
     /// HTTP client for external calls.
-    http_client: reqwest::Client,
+    http_client: CircuitBreakerClient,
+    /// Default timeout for outbound HTTP requests made through the
+    /// circuit-breaker client. `None` means unlimited.
+    http_timeout: Option<Duration>,
     /// Job dispatcher for async processing.
     job_dispatch: Option<Arc<dyn JobDispatch>>,
     /// Environment variable provider.
@@ -33,7 +38,7 @@ impl WebhookContext {
         request_id: String,
         headers: HashMap<String, String>,
         db_pool: sqlx::PgPool,
-        http_client: reqwest::Client,
+        http_client: CircuitBreakerClient,
     ) -> Self {
         Self {
             webhook_name,
@@ -42,6 +47,7 @@ impl WebhookContext {
             headers,
             db_pool,
             http_client,
+            http_timeout: None,
             job_dispatch: None,
             env_provider: Arc::new(RealEnvProvider::new()),
         }
@@ -77,9 +83,22 @@ impl WebhookContext {
         ))
     }
 
-    /// Get HTTP client.
-    pub fn http(&self) -> &reqwest::Client {
-        &self.http_client
+    /// Get the HTTP client for external requests.
+    pub fn http(&self) -> crate::http::HttpClient {
+        self.http_client.with_timeout(self.http_timeout)
+    }
+
+    /// Get the raw reqwest client, bypassing circuit breaker execution.
+    pub fn raw_http(&self) -> &reqwest::Client {
+        self.http_client.inner()
+    }
+
+    pub fn http_with_circuit_breaker(&self) -> crate::http::HttpClient {
+        self.http()
+    }
+
+    pub fn set_http_timeout(&mut self, timeout: Option<Duration>) {
+        self.http_timeout = timeout;
     }
 
     /// Get a request header value.
@@ -159,7 +178,7 @@ mod tests {
             "req-123".to_string(),
             headers,
             pool,
-            reqwest::Client::new(),
+            CircuitBreakerClient::with_defaults(reqwest::Client::new()),
         )
         .with_idempotency_key(Some("abc-123".to_string()));
 

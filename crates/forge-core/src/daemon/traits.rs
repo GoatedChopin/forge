@@ -46,6 +46,8 @@ pub struct DaemonInfo {
     pub restart_delay: Duration,
     /// Delay before first execution after startup.
     pub startup_delay: Duration,
+    /// Default timeout for outbound HTTP requests made by the daemon.
+    pub http_timeout: Option<Duration>,
     /// Maximum number of restarts (None = unlimited).
     pub max_restarts: Option<u32>,
 }
@@ -58,6 +60,7 @@ impl Default for DaemonInfo {
             restart_on_panic: true,
             restart_delay: Duration::from_secs(5),
             startup_delay: Duration::from_secs(0),
+            http_timeout: None,
             max_restarts: None,
         }
     }
@@ -122,6 +125,7 @@ mod tests {
         assert!(info.restart_on_panic);
         assert_eq!(info.restart_delay, Duration::from_secs(5));
         assert_eq!(info.startup_delay, Duration::from_secs(0));
+        assert_eq!(info.http_timeout, None);
         assert!(info.max_restarts.is_none());
     }
 

@@ -14,7 +14,7 @@ Generated struct: `{PascalCase}Query`. Trait: `ForgeQuery`.
 | `consistent` | flag | false | Force read from primary, bypass replicas |
 | `require_role("x")` | string | — | Returns 403 if missing |
 | `cache = "30s"` | duration | — | TTL-based, per-identity cache. Key = hash(fn + args + auth_scope) |
-| `timeout = 30` | u64 | — | Seconds (bare integer, not quoted) |
+| `timeout = 30` | u64 | — | Seconds (bare integer, not quoted). For HTTP-capable handlers, an explicit timeout also becomes the default outbound HTTP timeout for `ctx.http()` |
 | `rate_limit(requests=100, per="1m", key="user")` | group | — | Keys: `user`, `ip`, `tenant`, `user_action`, `global` |
 | `log = "info"` | string | — | Must be quoted string, not bare flag |
 | `tables = ["t1","t2"]` | array | auto | Override auto-extracted SQL table deps |
@@ -36,6 +36,8 @@ Generated struct: `{PascalCase}Mutation`. Trait: `ForgeMutation`.
 
 Signature: `async fn name(ctx: &MutationContext, ...) -> Result<T>`. Compile-time check: if body contains `dispatch_job` or `start_workflow` without `transactional`, hard error.
 
+If `timeout` is omitted, outbound HTTP requests from `ctx.http()` remain unlimited by default.
+
 ### `#[forge::job]`
 
 Generated struct: `{PascalCase}Job`. Trait: `ForgeJob`.
@@ -56,6 +58,7 @@ Generated struct: `{PascalCase}Job`. Trait: `ForgeJob`.
 | `public` / `require_role(...)` | — | — |
 
 Priority values: `background`(0), `low`(25), `normal`(50), `high`(75), `critical`(100). Backoff: `fixed`, `linear`, `exponential`. Signature: `async fn name(ctx: &JobContext, args: T) -> Result<R>`.
+When explicitly set, `timeout` also becomes the default outbound HTTP timeout for `ctx.http()`.
 
 ### `#[forge::cron("0 9 * * *")]`
 
@@ -70,6 +73,7 @@ Generated struct: `{PascalCase}Cron`. First quoted string = schedule.
 | `catch_up_limit = 10` | u32 | 10 |
 
 Signature: `async fn name(ctx: &CronContext) -> Result<()>`. No input args.
+When explicitly set, `timeout` also becomes the default outbound HTTP timeout for `ctx.http()`.
 
 ### `#[forge::workflow]`
 
@@ -83,6 +87,7 @@ Generated struct: `{PascalCase}Workflow`.
 | `public` / `require_role(...)` | — | — |
 
 Compile-time: detects `tokio::sleep` > 100s and errors (must use `ctx.sleep()`). Signature: `async fn name(ctx: &WorkflowContext, input: T) -> Result<R>`.
+When explicitly set, `timeout` also becomes the default outbound HTTP timeout for `ctx.http()`.
 
 ### `#[forge::daemon]`
 
@@ -92,11 +97,13 @@ Generated struct: `{PascalCase}Daemon`.
 |---|---|---|
 | `leader_elected = true` | bool | `true` |
 | `restart_on_panic = true` | bool | `true` |
+| `timeout = "30s"` | duration | — |
 | `restart_delay = "5s"` | duration | `"5s"` |
 | `startup_delay = "0s"` | duration | `"0s"` |
 | `max_restarts = 10` | u32 | unlimited |
 
 Signature: `async fn name(ctx: &DaemonContext) -> Result<()>`.
+`timeout` on daemons sets the default outbound HTTP timeout for `ctx.http()`.
 
 ### `#[forge::webhook(path = "/hooks/stripe")]`
 
@@ -111,6 +118,7 @@ Generated struct: `{PascalCase}Webhook`. `path` is required.
 | `timeout = "30s"` | duration | `"30s"` |
 
 Algorithms: `hmac_sha256`, `hmac_sha1`, `hmac_sha512`. Webhooks mount under `/_api/webhooks`.
+When explicitly set, `timeout` also becomes the default outbound HTTP timeout for `ctx.http()`.
 
 ### `#[forge::model]`
 
@@ -128,7 +136,7 @@ Generated struct: `{PascalCase}McpTool` (strips `_mcp_tool` / `_tool` suffix fro
 | `rate_limit(...)` | group | — |
 | `read_only`, `destructive`, `idempotent`, `open_world` | flag | — |
 
-No HTTP client available on McpToolContext. Parameters with `#[schemars(...)]` and `#[serde(...)]` attributes are preserved on the generated Args struct for JSON Schema generation. Use `#[schemars(description = "...")]` for parameter descriptions visible to MCP clients.
+No HTTP client available on McpToolContext. Parameters with `#[schemars(...)]` and `#[serde(...)]` attributes are preserved on the generated Args struct for JSON Schema generation. Use `#[schemars(description = "...")]` for parameter descriptions visible to MCP clients. MCP tools are authenticated by default; only add `public` when unauthenticated access is intentional, and use `require_role("...")` for role-gated tools.
 
 ## Duration Formats
 
@@ -141,6 +149,7 @@ All duration strings: `500ms`, `30s`, `5m`, `2h`, `7d`, or bare number (= second
 | `db()` ForgeDb | yes | — | yes | yes | yes | yes | yes | yes |
 | `conn()` ForgeConn | — | yes | yes | yes | yes | yes | yes | yes |
 | `http()` | — | yes | yes | yes | yes | yes | yes | — |
+| `raw_http()` | — | yes | yes | yes | yes | yes | yes | — |
 | `auth` field | yes | yes | yes | yes | yes | — | — | yes |
 | `request` metadata | yes | yes | — | — | — | — | — | yes |
 | `dispatch_job` | — | yes | — | — | — | yes | yes | yes |
@@ -160,7 +169,8 @@ All duration strings: `500ms`, `30s`, `5m`, `2h`, `7d`, or bare number (= second
 
 - `MutationContext.conn().await?` returns `ForgeConn<'_>`. Must bind to `let mut conn` before passing to sqlx: `sqlx::query_as::<_, T>("...").fetch_one(&mut conn)`. Passing `ctx.conn().await?` directly fails because sqlx needs `&mut ForgeConn`, not owned `ForgeConn`.
 - `QueryContext.db()` returns `ForgeDb` (works with query methods directly, no `&mut` needed).
-- `MutationContext.http()` returns raw `&reqwest::Client`. Use `http_with_circuit_breaker()` for CB protection.
+- Production `ctx.http()` is circuit-breaker-backed by default. Use `raw_http()` only when you intentionally need bare `reqwest`.
+- An explicit handler `timeout` also becomes the default outbound HTTP timeout for `ctx.http()`. If omitted, outbound requests stay unlimited unless the request sets its own timeout.
 - Job async methods: `heartbeat()`, `save()`, `saved()`, `set_saved()`, `is_cancel_requested()`, `check_cancelled()` are all async.
 - `WorkflowContext.elapsed()` returns `chrono::Duration`, not `std::time::Duration`.
 - `StepRunner.run()` returns `Result<Option<T>>`. `Some(T)` on success, `None` if step was optional and failed.

@@ -53,13 +53,11 @@ impl SystemMigration {
 ///
 /// These are applied in order before any user migrations.
 pub fn get_system_migrations() -> Vec<SystemMigration> {
-    vec![
-        SystemMigration {
-            version: 1,
-            sql: V001_INITIAL,
-            description: "Initial FORGE schema with jobs, workflows, crons, daemons, webhooks, and auth",
-        },
-    ]
+    vec![SystemMigration {
+        version: 1,
+        sql: V001_INITIAL,
+        description: "Initial FORGE schema with jobs, workflows, crons, daemons, webhooks, and auth",
+    }]
 }
 
 /// Get system migrations as Migration structs.

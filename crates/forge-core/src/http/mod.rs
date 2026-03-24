@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
 
-use reqwest::{Request, Response};
+use reqwest::{IntoUrl, Method, Request, RequestBuilder, Response};
 
 /// Circuit breaker state for a single host.
 #[derive(Debug, Clone)]
@@ -128,6 +128,11 @@ impl CircuitBreakerClient {
         &self.inner
     }
 
+    /// Create a request client view with an optional default request timeout.
+    pub fn with_timeout(&self, timeout: Option<Duration>) -> HttpClient {
+        HttpClient::new(self.clone(), timeout)
+    }
+
     /// Extract host from URL for tracking.
     fn extract_host(url: &reqwest::Url) -> String {
         format!(
@@ -145,9 +150,9 @@ impl CircuitBreakerClient {
         }
 
         let states = self.states.read().unwrap_or_else(|e| {
-                tracing::error!("Circuit breaker lock was poisoned, recovering");
-                e.into_inner()
-            });
+            tracing::error!("Circuit breaker lock was poisoned, recovering");
+            e.into_inner()
+        });
         let state = match states.get(host) {
             Some(s) => s,
             None => return Ok(()), // No state = first request, allow
@@ -180,9 +185,9 @@ impl CircuitBreakerClient {
         }
 
         let mut states = self.states.write().unwrap_or_else(|e| {
-                tracing::error!("Circuit breaker lock was poisoned, recovering");
-                e.into_inner()
-            });
+            tracing::error!("Circuit breaker lock was poisoned, recovering");
+            e.into_inner()
+        });
         let state = states.entry(host.to_string()).or_default();
 
         match state.state {
@@ -218,9 +223,9 @@ impl CircuitBreakerClient {
         }
 
         let mut states = self.states.write().unwrap_or_else(|e| {
-                tracing::error!("Circuit breaker lock was poisoned, recovering");
-                e.into_inner()
-            });
+            tracing::error!("Circuit breaker lock was poisoned, recovering");
+            e.into_inner()
+        });
         let state = states.entry(host.to_string()).or_default();
 
         match state.state {
@@ -371,6 +376,190 @@ impl From<reqwest::Error> for CircuitBreakerError {
     }
 }
 
+/// HTTP client facade that routes requests through a circuit breaker and can
+/// apply a default timeout to requests that do not set one explicitly.
+#[derive(Clone)]
+pub struct HttpClient {
+    circuit_breaker: CircuitBreakerClient,
+    default_timeout: Option<Duration>,
+}
+
+impl HttpClient {
+    /// Create a new HTTP client facade.
+    pub fn new(circuit_breaker: CircuitBreakerClient, default_timeout: Option<Duration>) -> Self {
+        Self {
+            circuit_breaker,
+            default_timeout,
+        }
+    }
+
+    /// Get the underlying reqwest client.
+    pub fn inner(&self) -> &reqwest::Client {
+        self.circuit_breaker.inner()
+    }
+
+    /// Get the underlying circuit breaker client.
+    pub fn circuit_breaker(&self) -> &CircuitBreakerClient {
+        &self.circuit_breaker
+    }
+
+    /// Get the default timeout applied to requests that do not override it.
+    pub fn default_timeout(&self) -> Option<Duration> {
+        self.default_timeout
+    }
+
+    /// Create a request builder.
+    pub fn request<U: IntoUrl>(&self, method: Method, url: U) -> HttpRequestBuilder {
+        HttpRequestBuilder::new(self.clone(), self.inner().request(method, url))
+    }
+
+    pub fn get<U: IntoUrl>(&self, url: U) -> HttpRequestBuilder {
+        self.request(Method::GET, url)
+    }
+
+    pub fn post<U: IntoUrl>(&self, url: U) -> HttpRequestBuilder {
+        self.request(Method::POST, url)
+    }
+
+    pub fn put<U: IntoUrl>(&self, url: U) -> HttpRequestBuilder {
+        self.request(Method::PUT, url)
+    }
+
+    pub fn patch<U: IntoUrl>(&self, url: U) -> HttpRequestBuilder {
+        self.request(Method::PATCH, url)
+    }
+
+    pub fn delete<U: IntoUrl>(&self, url: U) -> HttpRequestBuilder {
+        self.request(Method::DELETE, url)
+    }
+
+    pub fn head<U: IntoUrl>(&self, url: U) -> HttpRequestBuilder {
+        self.request(Method::HEAD, url)
+    }
+
+    /// Execute a pre-built request through the circuit breaker.
+    pub async fn execute(&self, mut request: Request) -> crate::Result<Response> {
+        self.apply_default_timeout(&mut request);
+        self.circuit_breaker
+            .execute(request)
+            .await
+            .map_err(Into::into)
+    }
+
+    fn apply_default_timeout(&self, request: &mut Request) {
+        if request.timeout().is_none()
+            && let Some(timeout) = self.default_timeout
+        {
+            *request.timeout_mut() = Some(timeout);
+        }
+    }
+}
+
+/// Request builder paired with a circuit-breaker-backed HTTP client.
+pub struct HttpRequestBuilder {
+    client: HttpClient,
+    request: RequestBuilder,
+}
+
+impl HttpRequestBuilder {
+    fn new(client: HttpClient, request: RequestBuilder) -> Self {
+        Self { client, request }
+    }
+
+    pub fn header(self, key: impl AsRef<str>, value: impl AsRef<str>) -> Self {
+        Self {
+            request: self.request.header(key.as_ref(), value.as_ref()),
+            ..self
+        }
+    }
+
+    pub fn headers(self, headers: reqwest::header::HeaderMap) -> Self {
+        Self {
+            request: self.request.headers(headers),
+            ..self
+        }
+    }
+
+    pub fn bearer_auth(self, token: impl std::fmt::Display) -> Self {
+        Self {
+            request: self.request.bearer_auth(token),
+            ..self
+        }
+    }
+
+    pub fn basic_auth(
+        self,
+        username: impl std::fmt::Display,
+        password: Option<impl std::fmt::Display>,
+    ) -> Self {
+        Self {
+            request: self.request.basic_auth(username, password),
+            ..self
+        }
+    }
+
+    pub fn body(self, body: impl Into<reqwest::Body>) -> Self {
+        Self {
+            request: self.request.body(body),
+            ..self
+        }
+    }
+
+    pub fn json(self, json: &impl serde::Serialize) -> Self {
+        Self {
+            request: self.request.json(json),
+            ..self
+        }
+    }
+
+    pub fn form(self, form: &impl serde::Serialize) -> Self {
+        Self {
+            request: self.request.form(form),
+            ..self
+        }
+    }
+
+    pub fn query(self, query: &impl serde::Serialize) -> Self {
+        Self {
+            request: self.request.query(query),
+            ..self
+        }
+    }
+
+    pub fn timeout(self, timeout: Duration) -> Self {
+        Self {
+            request: self.request.timeout(timeout),
+            ..self
+        }
+    }
+
+    pub fn version(self, version: reqwest::Version) -> Self {
+        Self {
+            request: self.request.version(version),
+            ..self
+        }
+    }
+
+    pub fn try_clone(&self) -> Option<Self> {
+        self.request.try_clone().map(|request| Self {
+            client: self.client.clone(),
+            request,
+        })
+    }
+
+    pub fn build(self) -> crate::Result<Request> {
+        self.request
+            .build()
+            .map_err(|e| crate::ForgeError::Internal(e.to_string()))
+    }
+
+    pub async fn send(self) -> crate::Result<Response> {
+        let client = self.client.clone();
+        let request = self.build()?;
+        client.execute(request).await
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
@@ -423,5 +612,34 @@ mod tests {
             CircuitBreakerClient::extract_host(&url2),
             "http://localhost"
         );
+    }
+
+    #[test]
+    fn test_http_client_applies_default_timeout_when_missing() {
+        let breaker = CircuitBreakerClient::with_defaults(reqwest::Client::new());
+        let client = breaker.with_timeout(Some(Duration::from_secs(5)));
+        let mut request = reqwest::Request::new(
+            Method::GET,
+            reqwest::Url::parse("https://example.com").unwrap(),
+        );
+
+        client.apply_default_timeout(&mut request);
+
+        assert_eq!(request.timeout(), Some(&Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn test_http_client_preserves_explicit_timeout() {
+        let breaker = CircuitBreakerClient::with_defaults(reqwest::Client::new());
+        let client = breaker.with_timeout(Some(Duration::from_secs(5)));
+        let mut request = reqwest::Request::new(
+            Method::GET,
+            reqwest::Url::parse("https://example.com").unwrap(),
+        );
+        *request.timeout_mut() = Some(Duration::from_secs(1));
+
+        client.apply_default_timeout(&mut request);
+
+        assert_eq!(request.timeout(), Some(&Duration::from_secs(1)));
     }
 }

@@ -90,9 +90,9 @@ Don't compare `input.user_id != ctx.require_user_id()`. The router's scope enfor
 
 Forge's testing philosophy follows sqlx: test against real databases. `TestQueryContext` and `TestMutationContext` accept real database connections. Mocking hides migration bugs, constraint violations, and query plan issues. Use `IsolatedTestDb` from testcontainers for clean per-test databases.
 
-### 22. Use `ctx.http()` for external calls that might fail
+### 22. Bypass the breaker-backed `ctx.http()` without a reason
 
-`ctx.http()` has no retry or circuit breaking. Use `ctx.http_with_circuit_breaker()` for anything external. Defaults: 5 failures to open, 30s initial backoff. Without this, a flaky external service takes down your handler.
+Production `ctx.http()` already uses the circuit breaker. Only use `ctx.raw_http()` when you intentionally need bare `reqwest` behavior. Defaults: 5 failures to open, 30s initial backoff. Without the breaker, a flaky external service takes down your handler.
 
 ### 23. Use `CREATE TABLE IF NOT EXISTS` in migrations
 

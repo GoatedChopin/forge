@@ -107,6 +107,7 @@ fn default_limit() -> Option<u32> { Some(20) }
 The `#[schemars(...)]` and `#[serde(...)]` attributes are preserved on the generated `SearchProjectsParams` struct. `schemars` generates the JSON Schema that MCP clients use for input validation and UI generation. Doc comments on parameters also become schema descriptions.
 
 McpToolContext has no HTTP client. Dispatch jobs for external API work.
+MCP tools are authenticated by default. Only mark a tool `public` when the requirement is explicit, and use `require_role("...")` for sensitive tools.
 
 ## Custom HTTP Routes
 
@@ -134,19 +135,16 @@ Custom routes bypass Forge's entire middleware stack: no JWT auth, no rate limit
 
 ## External APIs
 
-Use `ctx.http()` for raw `reqwest::Client`. Use `ctx.http_with_circuit_breaker()` for circuit breaker protection.
+Use `ctx.http()` for circuit-breaker-backed requests. Reach for `ctx.raw_http()` only when you intentionally need bare `reqwest`.
 
 Circuit breaker defaults: 5 failures → open, 30s initial backoff, 1.5x multiplier, 10min max, 2 successes to close from half-open. Tracks per host.
+If the handler declares an explicit `timeout`, that timeout also becomes the default outbound HTTP timeout for `ctx.http()` unless the request overrides it.
 
 ```rust
-// With circuit breaker
-let cb = ctx.http_with_circuit_breaker();
-let response = cb.execute(
-    reqwest::Request::new(Method::POST, url.parse()?)
-).await?;
-
-// Without (raw client, no circuit breaker)
 let response = ctx.http().post(url).json(&body).send().await?;
+
+// Raw reqwest escape hatch
+let response = ctx.raw_http().post(url).json(&body).send().await?;
 ```
 
 ## OAuth Integration

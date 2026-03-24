@@ -20,11 +20,7 @@ use crate::db::Database;
 use crate::rate_limit::HybridRateLimiter;
 
 /// Shared auth enforcement: checks public flag, authentication, and role.
-fn require_auth(
-    is_public: bool,
-    required_role: Option<&str>,
-    auth: &AuthContext,
-) -> Result<()> {
+fn require_auth(is_public: bool, required_role: Option<&str>, auth: &AuthContext) -> Result<()> {
     if is_public {
         return Ok(());
     }
@@ -183,7 +179,7 @@ impl FunctionRouter {
                 }
                 FunctionEntry::Mutation { handler, info } => {
                     if info.transactional {
-                        self.execute_transactional(handler, args, auth, request)
+                        self.execute_transactional(info, handler, args, auth, request)
                             .await
                     } else {
                         // Use primary for mutations
@@ -199,6 +195,7 @@ impl FunctionRouter {
                             ctx.set_token_issuer(issuer.clone());
                         }
                         ctx.set_token_ttl(self.token_ttl.clone());
+                        ctx.set_http_timeout(info.http_timeout.map(Duration::from_secs));
                         let result = handler(&ctx, args).await?;
                         Ok(RouteResult::Mutation(result))
                     }
@@ -352,6 +349,7 @@ impl FunctionRouter {
 
     async fn execute_transactional(
         &self,
+        info: &FunctionInfo,
         handler: &BoxedMutationFn,
         args: Value,
         auth: AuthContext,
@@ -382,6 +380,7 @@ impl FunctionRouter {
                 ctx.set_token_issuer(issuer.clone());
             }
             ctx.set_token_ttl(self.token_ttl.clone());
+            ctx.set_http_timeout(info.http_timeout.map(Duration::from_secs));
 
             match handler(&ctx, args).await {
                 Ok(value) => {
@@ -511,6 +510,7 @@ mod tests {
             is_public: true,
             cache_ttl: None,
             timeout: None,
+            http_timeout: None,
             rate_limit_requests: None,
             rate_limit_per_secs: None,
             rate_limit_key: None,

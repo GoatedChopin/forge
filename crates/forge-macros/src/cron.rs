@@ -4,7 +4,7 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{ItemFn, parse_macro_input};
 
-use crate::utils::{has_attr_flag, parse_duration_tokens, to_pascal_case};
+use crate::utils::{has_attr_flag, parse_attr_value, parse_duration_tokens, to_pascal_case};
 
 #[derive(Debug, Default)]
 struct CronAttrs {
@@ -49,15 +49,8 @@ fn parse_cron_attrs(attr: TokenStream) -> CronAttrs {
         }
     }
 
-    if let Some(timeout_start) = attr_str.find("timeout")
-        && let Some(eq_pos) = attr_str[timeout_start..].find('=')
-    {
-        let after_eq = &attr_str[timeout_start + eq_pos + 1..];
-        if let Some(quote_start) = after_eq.find('"')
-            && let Some(quote_end) = after_eq[quote_start + 1..].find('"')
-        {
-            result.timeout = Some(after_eq[quote_start + 1..][..quote_end].to_string());
-        }
+    if let Some(timeout) = parse_attr_value(&attr_str, "timeout") {
+        result.timeout = Some(timeout);
     }
 
     // Parse catch_up_limit = 5 first (so catch_up doesn't match it)
@@ -124,6 +117,12 @@ pub fn cron_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     } else {
         quote! { std::time::Duration::from_secs(3600) }
     };
+    let http_timeout = if let Some(ref t) = attrs.timeout {
+        let timeout = parse_duration_tokens(t, 0);
+        quote! { Some(#timeout) }
+    } else {
+        quote! { None }
+    };
 
     let other_attrs = &input.attrs;
 
@@ -142,6 +141,7 @@ pub fn cron_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                     catch_up: #catch_up,
                     catch_up_limit: #catch_up_limit,
                     timeout: #timeout,
+                    http_timeout: #http_timeout,
                 }
             }
 

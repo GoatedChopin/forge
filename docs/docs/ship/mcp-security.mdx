@@ -30,8 +30,9 @@ require_protocol_version_header = true
 Forge MCP tools reuse Forge auth middleware:
 
 - JWT verification via HMAC or RSA/JWKS
+- tools are private by default unless marked `public`
 - issuer/audience validation
-- role-based authorization
+- role-based authorization via `require_role("...")`
 
 Recommended RSA/JWKS setup:
 

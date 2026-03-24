@@ -59,7 +59,8 @@ pub fn forge_enum(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// # Attributes
 /// - `cache = "5m"` - Cache TTL (duration like "30s", "5m", "1h")
 /// - `log` - Enable logging for this query
-/// - `timeout = 30` - Timeout in seconds
+/// - `timeout = 30` - Timeout in seconds. For HTTP-capable handlers, an
+///   explicit timeout also becomes the default outbound HTTP timeout for `ctx.http()`
 /// - `tables = ["users", "projects"]` - Explicit table dependencies (for dynamic SQL)
 ///
 /// # Table Dependency Extraction
@@ -108,7 +109,8 @@ pub fn query(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// # Attributes
 /// - `log` - Enable logging for this mutation
-/// - `timeout = 30` - Timeout in seconds
+/// - `timeout = 30` - Timeout in seconds. Also becomes the default outbound
+///   HTTP timeout for `ctx.http()` when explicitly set
 ///
 /// # Example
 /// ```ignore
@@ -165,7 +167,8 @@ pub fn mcp_tool(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// - `require_role("admin")` - Requires specific role to dispatch
 ///
 /// # Attributes
-/// - `timeout = "30m"` - Job timeout (supports s, m, h suffixes)
+/// - `timeout = "30m"` - Job timeout (supports s, m, h suffixes). Also becomes
+///   the default outbound HTTP timeout for `ctx.http()` when explicitly set
 /// - `priority = "normal"` - background, low, normal, high, critical
 /// - `max_attempts = 3` - Maximum retry attempts
 /// - `backoff = "exponential"` - fixed, linear, or exponential
@@ -206,7 +209,8 @@ pub fn job(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// All attributes are specified inline within the macro:
 /// - First argument: Cron schedule expression (required)
 /// - `timezone = "UTC"` - Timezone for the schedule
-/// - `timeout = "1h"` - Execution timeout
+/// - `timeout = "1h"` - Execution timeout. Also becomes the default outbound
+///   HTTP timeout for `ctx.http()` when explicitly set
 /// - `catch_up` - Run missed executions after downtime
 /// - `catch_up_limit = 10` - Maximum number of catch-up runs
 ///
@@ -233,7 +237,8 @@ pub fn cron(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// # Attributes
 /// - `version = 1` - Workflow version (increment for breaking changes)
-/// - `timeout = "24h"` - Maximum execution time
+/// - `timeout = "24h"` - Maximum execution time. Also becomes the default
+///   outbound HTTP timeout for `ctx.http()` when explicitly set
 /// - `name = "custom_name"` - Override workflow name
 ///
 /// # Example
@@ -269,6 +274,7 @@ pub fn workflow(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// # Attributes
 /// - `leader_elected = true` - Only one instance runs across cluster (default: true)
 /// - `restart_on_panic = true` - Restart if daemon panics (default: true)
+/// - `timeout = "30s"` - Default outbound HTTP timeout for `ctx.http()`
 /// - `restart_delay = "5s"` - Delay before restart after failure
 /// - `startup_delay = "10s"` - Delay before first execution after startup
 /// - `max_restarts = 10` - Maximum restart attempts (default: unlimited)
@@ -321,7 +327,8 @@ pub fn daemon(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// - `path = "/webhooks/stripe"` - URL path (required)
 /// - `signature = WebhookSignature::hmac_sha256("Header", "SECRET_ENV")` - Signature validation
 /// - `idempotency = "header:X-Request-Id"` - Idempotency key source
-/// - `timeout = "30s"` - Request timeout
+/// - `timeout = "30s"` - Request timeout. Also becomes the default outbound
+///   HTTP timeout for `ctx.http()` when explicitly set
 ///
 /// # Signature Validation
 /// Use `WebhookSignature` helper for common patterns:

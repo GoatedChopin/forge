@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::sync::{Mutex, watch};
 use tracing::Span;
@@ -6,6 +7,7 @@ use uuid::Uuid;
 
 use crate::env::{EnvAccess, EnvProvider, RealEnvProvider};
 use crate::function::{JobDispatch, WorkflowDispatch};
+use crate::http::CircuitBreakerClient;
 
 /// Context available to daemon handlers.
 pub struct DaemonContext {
@@ -16,7 +18,10 @@ pub struct DaemonContext {
     /// Database pool.
     db_pool: sqlx::PgPool,
     /// HTTP client for external calls.
-    http_client: reqwest::Client,
+    http_client: CircuitBreakerClient,
+    /// Default timeout for outbound HTTP requests made through the
+    /// circuit-breaker client. `None` means unlimited.
+    http_timeout: Option<Duration>,
     /// Shutdown signal receiver (wrapped in Mutex for interior mutability).
     shutdown_rx: Mutex<watch::Receiver<bool>>,
     /// Job dispatcher for background jobs.
@@ -35,7 +40,7 @@ impl DaemonContext {
         daemon_name: String,
         instance_id: Uuid,
         db_pool: sqlx::PgPool,
-        http_client: reqwest::Client,
+        http_client: CircuitBreakerClient,
         shutdown_rx: watch::Receiver<bool>,
     ) -> Self {
         Self {
@@ -43,6 +48,7 @@ impl DaemonContext {
             instance_id,
             db_pool,
             http_client,
+            http_timeout: None,
             shutdown_rx: Mutex::new(shutdown_rx),
             job_dispatch: None,
             workflow_dispatch: None,
@@ -80,8 +86,20 @@ impl DaemonContext {
         ))
     }
 
-    pub fn http(&self) -> &reqwest::Client {
-        &self.http_client
+    pub fn http(&self) -> crate::http::HttpClient {
+        self.http_client.with_timeout(self.http_timeout)
+    }
+
+    pub fn raw_http(&self) -> &reqwest::Client {
+        self.http_client.inner()
+    }
+
+    pub fn http_with_circuit_breaker(&self) -> crate::http::HttpClient {
+        self.http()
+    }
+
+    pub fn set_http_timeout(&mut self, timeout: Option<Duration>) {
+        self.http_timeout = timeout;
     }
 
     /// Dispatch a background job.
@@ -204,7 +222,7 @@ mod tests {
             "test_daemon".to_string(),
             instance_id,
             pool,
-            reqwest::Client::new(),
+            CircuitBreakerClient::with_defaults(reqwest::Client::new()),
             shutdown_rx,
         );
 
@@ -230,7 +248,7 @@ mod tests {
             "test_daemon".to_string(),
             Uuid::new_v4(),
             pool,
-            reqwest::Client::new(),
+            CircuitBreakerClient::with_defaults(reqwest::Client::new()),
             shutdown_rx,
         );
 

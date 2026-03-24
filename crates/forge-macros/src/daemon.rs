@@ -2,12 +2,13 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{ItemFn, parse_macro_input};
 
-use crate::utils::{parse_duration_tokens, to_pascal_case};
+use crate::utils::{parse_attr_value, parse_duration_tokens, to_pascal_case};
 
 #[derive(Debug, Default)]
 struct DaemonAttrs {
     leader_elected: Option<bool>,
     restart_on_panic: Option<bool>,
+    timeout: Option<String>,
     restart_delay: Option<String>,
     startup_delay: Option<String>,
     max_restarts: Option<u32>,
@@ -31,6 +32,10 @@ fn parse_daemon_attrs(attr: TokenStream) -> DaemonAttrs {
         let after_eq = &attr_str[rop_start + eq_pos + 1..];
         let value = after_eq.split(&[',', ')']).next().unwrap_or("").trim();
         result.restart_on_panic = Some(value == "true");
+    }
+
+    if let Some(timeout) = parse_attr_value(&attr_str, "timeout") {
+        result.timeout = Some(timeout);
     }
 
     if let Some(rd_start) = attr_str.find("restart_delay")
@@ -98,6 +103,12 @@ pub fn daemon_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     } else {
         quote! { std::time::Duration::from_secs(0) }
     };
+    let http_timeout = if let Some(ref t) = attrs.timeout {
+        let timeout = parse_duration_tokens(t, 0);
+        quote! { Some(#timeout) }
+    } else {
+        quote! { None }
+    };
 
     let max_restarts = if let Some(n) = attrs.max_restarts {
         quote! { Some(#n) }
@@ -119,6 +130,7 @@ pub fn daemon_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                     restart_on_panic: #restart_on_panic,
                     restart_delay: #restart_delay,
                     startup_delay: #startup_delay,
+                    http_timeout: #http_timeout,
                     max_restarts: #max_restarts,
                 }
             }

@@ -72,7 +72,7 @@ Transactional write operations.
 | `public` | flag | `false` | Bypass authentication requirement |
 | `require_role("name")` | `string` | none | Require specific role (returns 403 if missing) |
 | `transactional` | flag | `false` | Wrap in database transaction (required if dispatching jobs) |
-| `timeout` | `u64` | none | Statement timeout in seconds |
+| `timeout` | `u64` | none | Handler timeout in seconds; if explicitly set it also becomes the default outbound HTTP timeout for `ctx.http()` |
 | `log` | `"level"` | none | Log level (`trace`, `debug`, `info`, `warn`, `error`, `off`) |
 | `rate_limit(...)` | config | none | Rate limiting configuration (same as query) |
 
@@ -97,6 +97,8 @@ pub async fn create_order(ctx: &MutationContext, input: OrderInput) -> Result<Or
 }
 ````
 
+If you omit `timeout`, outbound HTTP requests made through `ctx.http()` stay unlimited by default. If you set it, Forge applies that timeout to both the handler and its outbound HTTP requests unless a request overrides its own timeout.
+
 ---
 
 ## `#[forge::mcp_tool]`
@@ -116,6 +118,8 @@ Explicitly exposes a function as an MCP tool (Streamable HTTP endpoint).
 | `destructive`          | flag     | none    | Modifies external state irreversibly              |
 | `idempotent`           | flag     | none    | Repeated calls with same args produce same result |
 | `open_world`           | flag     | none    | Interacts with entities beyond its dataset        |
+
+MCP tools participate in Forge auth by default: omit `public` to require a valid JWT, and add `require_role("...")` for role-gated tools.
 
 ### Example
 
@@ -197,7 +201,7 @@ Background tasks with retries and worker routing.
 | `public`                  | flag         | `false`         | Allow dispatch without authentication                 |
 | `require_role("name")`    | `string`     | none            | Require role to dispatch                              |
 | `name`                    | `"string"`   | fn name         | Override job name                                     |
-| `timeout`                 | `"duration"` | `"1h"`          | Job timeout (`"30s"`, `"10m"`, `"2h"`)                |
+| `timeout`                 | `"duration"` | `"1h"`          | Job timeout (`"30s"`, `"10m"`, `"2h"`); if explicitly set it also becomes the default outbound HTTP timeout for `ctx.http()` |
 | `priority`                | `"level"`    | `"normal"`      | `background`, `low`, `normal`, `high`, `critical`     |
 | `max_attempts`            | `u32`        | `3`             | Maximum retry attempts                                |
 | `backoff`                 | `"strategy"` | `"exponential"` | `fixed`, `linear`, `exponential`                      |
@@ -282,7 +286,7 @@ Scheduled tasks with exactly-once execution.
 | ---------------- | ------------- | ----------- | ------------------------------------------ |
 | (first arg)      | `"cron expr"` | required    | Cron schedule (5-part: `"0 9 * * *"`)      |
 | `timezone`       | `"string"`    | `"UTC"`     | IANA timezone (e.g., `"America/New_York"`) |
-| `timeout`        | `"duration"`  | `"1h"`      | Execution timeout                          |
+| `timeout`        | `"duration"`  | `"1h"`      | Execution timeout; if explicitly set it also becomes the default outbound HTTP timeout for `ctx.http()` |
 | `catch_up`       | flag          | `false`     | Run missed executions after downtime       |
 | `catch_up_limit` | `u32`         | `10`        | Maximum catch-up runs                      |
 | `group`          | `"string"`    | `"default"` | Sharded leader election group              |
@@ -333,7 +337,7 @@ Multi-step durable processes with compensation.
 | `public`               | flag         | `false` | Allow start without authentication                  |
 | `require_role("name")` | `string`     | none    | Require role to start                               |
 | `version`              | `u32`        | `1`     | Workflow version (increment for breaking changes)   |
-| `timeout`              | `"duration"` | `"24h"` | Maximum workflow duration (`"1h"`, `"7d"`, `"30d"`) |
+| `timeout`              | `"duration"` | `"24h"` | Maximum workflow duration (`"1h"`, `"7d"`, `"30d"`); if explicitly set it also becomes the default outbound HTTP timeout for `ctx.http()` |
 | `deprecated`           | flag         | `false` | Mark workflow as deprecated                         |
 
 ### Duration Format
@@ -391,6 +395,7 @@ Long-running singleton services with leader election.
 | ------------------ | ------------ | --------- | ------------------------------------------ |
 | `leader_elected`   | `bool`       | `true`    | Single leader instance runs across cluster |
 | `restart_on_panic` | `bool`       | `true`    | Restart daemon if it panics                |
+| `timeout`          | `"duration"` | none      | Default outbound HTTP timeout for `ctx.http()` |
 | `restart_delay`    | `"duration"` | `"5s"`    | Delay before restart after failure         |
 | `startup_delay`    | `"duration"` | `"0s"`    | Delay before first execution               |
 | `max_restarts`     | `u32`        | unlimited | Maximum restart attempts                   |
@@ -441,7 +446,7 @@ HTTP endpoints for external events with signature verification.
 | Attribute        | Type                    | Default  | Description                             |
 | ---------------- | ----------------------- | -------- | --------------------------------------- |
 | `path`           | `"string"`              | required | URL path (e.g., `"/webhooks/stripe"`)   |
-| `timeout`        | `"duration"`            | `"30s"`  | Request timeout                         |
+| `timeout`        | `"duration"`            | `"30s"`  | Request timeout; if explicitly set it also becomes the default outbound HTTP timeout for `ctx.http()` |
 | `signature`      | `WebhookSignature::...` | none     | Signature verification config           |
 | `idempotency`    | `"source:key"`          | none     | Idempotency key source                  |
 | `allow_unsigned` | flag                    | `false`  | Accept requests without valid signature |

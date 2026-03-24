@@ -3,7 +3,7 @@ use quote::{format_ident, quote};
 use syn::visit::Visit;
 use syn::{ExprAwait, ExprCall, ItemFn, Lit, parse_macro_input};
 
-use crate::utils::{has_attr_flag, parse_duration_tokens, to_pascal_case};
+use crate::utils::{has_attr_flag, parse_attr_value, parse_duration_tokens, to_pascal_case};
 
 /// Minimum sleep duration (in seconds) that triggers the tokio::sleep warning.
 /// Sleeps shorter than this are allowed since they're typically used for polling/retry loops.
@@ -165,14 +165,8 @@ fn parse_workflow_attrs(attr: TokenStream) -> WorkflowAttrs {
         }
     }
 
-    if let Some(timeout_start) = attr_str.find("timeout")
-        && let Some(quote_start) = attr_str[timeout_start..].find('"')
-    {
-        let remaining = &attr_str[timeout_start + quote_start + 1..];
-        if let Some(quote_end) = remaining.find('"') {
-            let timeout_str = &remaining[..quote_end];
-            result.timeout = Some(timeout_str.to_string());
-        }
+    if let Some(timeout) = parse_attr_value(&attr_str, "timeout") {
+        result.timeout = Some(timeout);
     }
 
     if has_attr_flag(&attr_str, "deprecated") {
@@ -280,6 +274,12 @@ pub fn workflow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     } else {
         quote! { std::time::Duration::from_secs(86400) } // 24 hours default
     };
+    let http_timeout = if let Some(ref t) = attrs.timeout {
+        let timeout = parse_duration_tokens(t, 0);
+        quote! { Some(#timeout) }
+    } else {
+        quote! { None }
+    };
 
     let fn_attrs = &input.attrs;
 
@@ -296,6 +296,7 @@ pub fn workflow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                     name: #fn_name_str,
                     version: #version,
                     timeout: #timeout,
+                    http_timeout: #http_timeout,
                     deprecated: #deprecated,
                     is_public: #is_public,
                     required_role: #required_role,

@@ -30,7 +30,7 @@ impl RateLimiter {
         let refill_rate = config.refill_rate();
 
         // Atomic upsert with token bucket logic
-        let result: (f64, i32, DateTime<Utc>, bool) = sqlx::query_as(
+        let result = sqlx::query!(
             r#"
             INSERT INTO forge_rate_limits (bucket_key, tokens, last_refill, max_tokens, refill_rate)
             VALUES ($1, $2 - 1, NOW(), $2, $3)
@@ -41,17 +41,19 @@ impl RateLimiter {
                         (EXTRACT(EPOCH FROM (NOW() - forge_rate_limits.last_refill)) * forge_rate_limits.refill_rate)
                 ) - 1,
                 last_refill = NOW()
-            RETURNING tokens, max_tokens, last_refill, (tokens >= 0) as allowed
+            RETURNING tokens, max_tokens, last_refill, (tokens >= 0) as "allowed!"
             "#,
+            bucket_key,
+            max_tokens as i32,
+            refill_rate
         )
-        .bind(bucket_key)
-        .bind(max_tokens as i32)
-        .bind(refill_rate)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| ForgeError::Database(e.to_string()))?;
 
-        let (tokens, _max, last_refill, allowed) = result;
+        let tokens = result.tokens;
+        let last_refill = result.last_refill;
+        let allowed = result.allowed;
 
         let remaining = tokens.max(0.0) as u32;
         let reset_at =

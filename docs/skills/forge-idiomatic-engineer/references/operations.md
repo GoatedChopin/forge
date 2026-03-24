@@ -164,7 +164,7 @@ Keepalive: 30s ping. Max sessions: 10,000 (configurable via `gateway.sse_max_ses
 
 Defaults: 5 failures → open, 30s base backoff, 1.5x multiplier, 10min max, 2 successes → close from half-open. Tracks per host (`scheme://host:port`).
 
-Use `ctx.http_with_circuit_breaker()` on MutationContext. Raw `ctx.http()` bypasses the circuit breaker.
+Production `ctx.http()` is breaker-backed by default. Use `ctx.raw_http()` only when you intentionally need bare `reqwest`.
 
 ## Caching
 

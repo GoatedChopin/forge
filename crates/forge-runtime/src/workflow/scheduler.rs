@@ -140,7 +140,7 @@ impl WorkflowScheduler {
     /// Process workflows that are ready to resume.
     async fn process_ready_workflows(&self) -> Result<()> {
         // Query for workflows ready to wake (timer or event timeout)
-        let workflows: Vec<(Uuid, Option<String>)> = sqlx::query_as(
+        let workflows = sqlx::query!(
             r#"
             SELECT id, waiting_for_event FROM forge_workflow_runs
             WHERE status = 'waiting' AND (
@@ -151,8 +151,8 @@ impl WorkflowScheduler {
             LIMIT $1
             FOR UPDATE SKIP LOCKED
             "#,
+            self.config.batch_size as i64
         )
-        .bind(self.config.batch_size)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
@@ -162,13 +162,13 @@ impl WorkflowScheduler {
             tracing::trace!(count, "Processing ready workflows");
         }
 
-        for (workflow_id, waiting_for_event) in workflows {
-            if waiting_for_event.is_some() {
+        for workflow in workflows {
+            if workflow.waiting_for_event.is_some() {
                 // Event timeout - resume with timeout error
-                self.resume_with_timeout(workflow_id).await;
+                self.resume_with_timeout(workflow.id).await;
             } else {
                 // Timer expired - normal resume
-                self.resume_workflow(workflow_id).await;
+                self.resume_workflow(workflow.id).await;
             }
         }
 
@@ -184,7 +184,7 @@ impl WorkflowScheduler {
     async fn process_event_wakeups(&self) -> Result<()> {
         // Find workflows waiting for events that have matching events
         // Use a subquery to avoid DISTINCT with FOR UPDATE
-        let workflows: Vec<(Uuid, String)> = sqlx::query_as(
+        let workflows = sqlx::query!(
             r#"
             SELECT wr.id, wr.waiting_for_event
             FROM forge_workflow_runs wr
@@ -199,13 +199,17 @@ impl WorkflowScheduler {
             LIMIT $1
             FOR UPDATE OF wr SKIP LOCKED
             "#,
+            self.config.batch_size as i64
         )
-        .bind(self.config.batch_size)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
 
-        for (workflow_id, event_name) in workflows {
+        for workflow in workflows {
+            let workflow_id = workflow.id;
+            let Some(event_name) = workflow.waiting_for_event else {
+                continue;
+            };
             // Consume the event via event_store so it's marked as processed
             match self
                 .event_store

@@ -34,6 +34,8 @@ pub struct WorkflowInfo {
     pub version: u32,
     /// Default timeout for the entire workflow.
     pub timeout: Duration,
+    /// Default timeout for outbound HTTP requests made by the workflow.
+    pub http_timeout: Option<Duration>,
     /// Whether the workflow is deprecated.
     pub deprecated: bool,
     /// Whether the workflow is public (no auth required).
@@ -48,6 +50,7 @@ impl Default for WorkflowInfo {
             name: "",
             version: 1,
             timeout: Duration::from_secs(86400), // 24 hours
+            http_timeout: None,
             deprecated: false,
             is_public: false,
             required_role: None,
