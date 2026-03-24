@@ -12,8 +12,6 @@ members = [
     "examples/with-dioxus/minimal",
     "examples/with-dioxus/demo",
     "examples/with-dioxus/realtime-todo-list",
-    "examples/with-svelte/kanban-board",
-    "examples/with-svelte/support-desk-with-mcp",
     "benchmarks/app",
 ]
 exclude = [

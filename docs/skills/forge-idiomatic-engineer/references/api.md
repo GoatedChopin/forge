@@ -303,7 +303,7 @@ Unconfigured pools fall back to primary.
 | `forge check` | Validate config, structure, linting, bindings |
 | `forge migrate up` / `down [N]` / `status` / `prepare` | Database migrations |
 
-Templates: `with-svelte/minimal`, `with-svelte/demo`, `with-svelte/realtime-todo-list`, `with-svelte/support-desk-with-mcp`, `with-svelte/kanban-board`, `with-dioxus/minimal`, `with-dioxus/demo`, `with-dioxus/realtime-todo-list`.
+Templates: `with-svelte/minimal`, `with-svelte/demo`, `with-svelte/realtime-todo-list`, `with-dioxus/minimal`, `with-dioxus/demo`, `with-dioxus/realtime-todo-list`.
 
 ## Project Structure
 

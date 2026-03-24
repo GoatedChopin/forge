@@ -12,8 +12,6 @@ const SUPPORTED_TEMPLATE_IDS: &[&str] = &[
     "with-svelte/minimal",
     "with-svelte/demo",
     "with-svelte/realtime-todo-list",
-    "with-svelte/support-desk-with-mcp",
-    "with-svelte/kanban-board",
     "with-dioxus/minimal",
     "with-dioxus/demo",
     "with-dioxus/realtime-todo-list",

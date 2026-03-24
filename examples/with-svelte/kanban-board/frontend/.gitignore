@@ -1,8 +1,0 @@
-node_modules/
-.svelte-kit/
-build/
-dist/
-playwright-report/
-test-results/
-.env.local
-.env.*.local

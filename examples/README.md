@@ -9,8 +9,6 @@ Runnable FORGE apps grouped by frontend framework. These directories are also th
 | [with-svelte/minimal](with-svelte/minimal/) | Starter, Playwright | Smallest Svelte starter that passes `forge check` out of the box |
 | [with-svelte/demo](with-svelte/demo/) | Queries, mutations, jobs, crons, workflows | Feature tour app used for end-to-end regression coverage |
 | [with-svelte/realtime-todo-list](with-svelte/realtime-todo-list/) | Queries, mutations, reactivity | Real-time todo list with generated Svelte bindings |
-| [with-svelte/support-desk-with-mcp](with-svelte/support-desk-with-mcp/) | MCP, real-time | Ticket system exposing domain logic as MCP tools |
-| [with-svelte/kanban-board](with-svelte/kanban-board/) | Auth, jobs, workflows | Full-featured board with JWT auth and background exports |
 
 ## Dioxus
 
