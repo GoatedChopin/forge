@@ -11,7 +11,7 @@ export default defineConfig({
   // WASM cold start on CI can take 60-90s (download + compile + init)
   timeout: process.env.CI ? 120_000 : 30_000,
   use: {
-    baseURL: "http://localhost:5173",
+    baseURL: "http://localhost:9080",
     trace: "on-first-retry",
   },
   projects: [
@@ -22,7 +22,7 @@ export default defineConfig({
   ],
   webServer: {
     command: "bun run dev",
-    url: "http://localhost:5173",
+    url: "http://localhost:9080",
     reuseExistingServer: true,
     timeout: 120 * 1000,
   },
