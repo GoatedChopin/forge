@@ -33,7 +33,13 @@ echo "=== Scaffold ==="
 
 perl -0pi -e "s/\\[gateway\\]\\nport = 9081/[gateway]\\nport = $BACKEND_PORT/" "$DIR/forge.toml"
 
-# Patch npm packages to local source (Rust patches are handled by debug build)
+# Patch Dioxus frontend to use local forge-dioxus source
+if [ -f "$DIR/frontend/Cargo.toml" ] && grep -q 'forge-dioxus' "$DIR/frontend/Cargo.toml"; then
+  sed -i.bak "s|forge_dioxus = .*|forge_dioxus = { package = \"forge-dioxus\", path = \"$WORKSPACE/packages/forge-dioxus\" }|" "$DIR/frontend/Cargo.toml"
+  rm -f "$DIR/frontend/Cargo.toml.bak"
+fi
+
+# Patch npm packages to local source
 if [ -f "$DIR/frontend/package.json" ] && grep -q '@forge-rs/svelte' "$DIR/frontend/package.json"; then
   jq --arg p "file:$WORKSPACE/packages/forge-svelte" '
     if .dependencies["@forge-rs/svelte"] then .dependencies["@forge-rs/svelte"] = $p

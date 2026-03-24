@@ -450,7 +450,7 @@ test.describe("Forge Demo", () => {
   test("webhook event appears in recent events via SSE", async ({
     page,
     gotoReady,
-    rpc,
+    rpc: _rpc,
   }) => {
     // Fire a webhook via API so we don't depend on UI timing
     const key = `sse-test-${Date.now()}`;

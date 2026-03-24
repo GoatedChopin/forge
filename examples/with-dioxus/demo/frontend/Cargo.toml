@@ -12,7 +12,7 @@ mobile = ["dioxus/mobile"]
 
 [dependencies]
 dioxus = { version = "=0.7.3" }
-forge_dioxus = { package = "forge-dioxus", path = "../../../../packages/forge-dioxus" }
+forge_dioxus = { package = "forge-dioxus", version = "=0.7.2" }
 base64 = "0.22"
 hex = "0.4"
 hmac = "0.12"

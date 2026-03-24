@@ -121,8 +121,8 @@
       authRefreshToken = res.refresh_token;
       authUser = res.user;
       refreshCount = 0;
-    } catch (err: any) {
-      authError = err?.message || String(err);
+    } catch (err: unknown) {
+      authError = err instanceof Error ? err.message : String(err);
     } finally {
       authLoading = false;
     }
@@ -137,8 +137,8 @@
       accessToken = pair.access_token;
       authRefreshToken = pair.refresh_token;
       refreshCount++;
-    } catch (err: any) {
-      authError = err?.message || String(err);
+    } catch (err: unknown) {
+      authError = err instanceof Error ? err.message : String(err);
     }
   }
 
@@ -218,8 +218,8 @@
       await createUser({ email: em, name: n, role: null });
       name = "";
       email = "";
-    } catch (err: any) {
-      crudError = err?.message || String(err);
+    } catch (err: unknown) {
+      crudError = err instanceof Error ? err.message : String(err);
     }
     isSubmitting = false;
   }
@@ -239,8 +239,8 @@
     try {
       await updateUser({ id: editingUserId, name: editName, email: editEmail, role: null });
       editingUserId = null;
-    } catch (err: any) {
-      crudError = err?.message || String(err);
+    } catch (err: unknown) {
+      crudError = err instanceof Error ? err.message : String(err);
     }
     isEditing = false;
   }
@@ -255,8 +255,8 @@
     try {
       await deleteUser({ id });
       if (selectedUser?.id === id) selectedUser = null;
-    } catch (err: any) {
-      crudError = err?.message || String(err);
+    } catch (err: unknown) {
+      crudError = err instanceof Error ? err.message : String(err);
     }
   }
 
