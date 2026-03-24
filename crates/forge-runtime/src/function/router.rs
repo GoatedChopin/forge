@@ -19,6 +19,26 @@ use super::registry::{BoxedMutationFn, FunctionEntry, FunctionRegistry};
 use crate::db::Database;
 use crate::rate_limit::HybridRateLimiter;
 
+/// Shared auth enforcement: checks public flag, authentication, and role.
+fn require_auth(
+    is_public: bool,
+    required_role: Option<&str>,
+    auth: &AuthContext,
+) -> Result<()> {
+    if is_public {
+        return Ok(());
+    }
+    if !auth.is_authenticated() {
+        return Err(ForgeError::Unauthorized("Authentication required".into()));
+    }
+    if let Some(role) = required_role
+        && !auth.has_role(role)
+    {
+        return Err(ForgeError::Forbidden(format!("Role '{role}' required")));
+    }
+    Ok(())
+}
+
 /// Result of routing a function call.
 pub enum RouteResult {
     /// Query execution result.
@@ -229,39 +249,11 @@ impl FunctionRouter {
     }
 
     fn check_auth(&self, info: &FunctionInfo, auth: &AuthContext) -> Result<()> {
-        if info.is_public {
-            return Ok(());
-        }
-
-        if !auth.is_authenticated() {
-            return Err(ForgeError::Unauthorized("Authentication required".into()));
-        }
-
-        if let Some(role) = info.required_role
-            && !auth.has_role(role)
-        {
-            return Err(ForgeError::Forbidden(format!("Role '{}' required", role)));
-        }
-
-        Ok(())
+        require_auth(info.is_public, info.required_role, auth)
     }
 
     fn check_job_auth(&self, info: &forge_core::job::JobInfo, auth: &AuthContext) -> Result<()> {
-        if info.is_public {
-            return Ok(());
-        }
-
-        if !auth.is_authenticated() {
-            return Err(ForgeError::Unauthorized("Authentication required".into()));
-        }
-
-        if let Some(role) = info.required_role
-            && !auth.has_role(role)
-        {
-            return Err(ForgeError::Forbidden(format!("Role '{}' required", role)));
-        }
-
-        Ok(())
+        require_auth(info.is_public, info.required_role, auth)
     }
 
     fn check_workflow_auth(
@@ -269,21 +261,7 @@ impl FunctionRouter {
         info: &forge_core::workflow::WorkflowInfo,
         auth: &AuthContext,
     ) -> Result<()> {
-        if info.is_public {
-            return Ok(());
-        }
-
-        if !auth.is_authenticated() {
-            return Err(ForgeError::Unauthorized("Authentication required".into()));
-        }
-
-        if let Some(role) = info.required_role
-            && !auth.has_role(role)
-        {
-            return Err(ForgeError::Forbidden(format!("Role '{}' required", role)));
-        }
-
-        Ok(())
+        require_auth(info.is_public, info.required_role, auth)
     }
 
     /// Check rate limit for a function call.
@@ -305,7 +283,7 @@ impl FunctionRouter {
         let key_type: RateLimitKey = match key_str.parse() {
             Ok(k) => k,
             Err(_) => {
-                tracing::warn!(
+                tracing::error!(
                     function = %function_name,
                     key = %key_str,
                     "Invalid rate limit key, falling back to 'user'"
@@ -408,7 +386,10 @@ impl FunctionRouter {
             match handler(&ctx, args).await {
                 Ok(value) => {
                     let buffer = {
-                        let guard = outbox.lock().expect("outbox mutex poisoned");
+                        let guard = outbox.lock().unwrap_or_else(|poisoned| {
+                            tracing::error!("Outbox mutex was poisoned, recovering");
+                            poisoned.into_inner()
+                        });
                         OutboxBuffer {
                             jobs: guard.jobs.clone(),
                             workflows: guard.workflows.clone(),

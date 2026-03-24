@@ -33,7 +33,8 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
     }
 
     if let Some(idem_start) = attr_str.find("idempotent") {
-        result.idempotent = true;
+        // Set idempotent only after we've finished key extraction
+        // to avoid half-configured state.
         if let Some(paren_start) = attr_str[idem_start..].find('(') {
             let remaining = &attr_str[idem_start + paren_start + 1..];
             if let Some(paren_end) = remaining.find(')') {
@@ -43,11 +44,15 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
                 {
                     let after_quote = &content[key_start + quote_start + 1..];
                     if let Some(quote_end) = after_quote.find('"') {
-                        result.idempotency_key = Some(after_quote[..quote_end].to_string());
+                        let key = after_quote[..quote_end].to_string();
+                        if !key.trim().is_empty() {
+                            result.idempotency_key = Some(key);
+                        }
                     }
                 }
             }
         }
+        result.idempotent = true;
     }
 
     if let Some(role_start) = attr_str.find("require_role")

@@ -388,3 +388,27 @@ BEGIN
     RETURN deleted_count;
 END;
 $$ LANGUAGE plpgsql;
+
+-- Auth: Refresh token storage for built-in token rotation
+CREATE TABLE IF NOT EXISTS forge_refresh_tokens (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     UUID NOT NULL,
+    token_hash  TEXT NOT NULL UNIQUE,
+    expires_at  TIMESTAMPTZ NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_forge_refresh_tokens_user_id
+    ON forge_refresh_tokens (user_id);
+
+CREATE INDEX IF NOT EXISTS idx_forge_refresh_tokens_expires_at
+    ON forge_refresh_tokens (expires_at);
+
+-- Periodically purge expired tokens to prevent table bloat.
+-- Runs every hour, deleting tokens that expired more than 24 hours ago
+-- (keeps recently-expired tokens for audit/error-reporting purposes).
+CREATE OR REPLACE FUNCTION forge_purge_expired_refresh_tokens()
+RETURNS void LANGUAGE sql AS $$
+    DELETE FROM forge_refresh_tokens
+    WHERE expires_at < now() - interval '24 hours';
+$$;

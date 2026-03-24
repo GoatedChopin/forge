@@ -790,6 +790,48 @@ mod tests {
     }
 
     #[test]
+    fn test_all_templates_rewrite_volume_mounts_to_standalone() {
+        for template_id in supported_template_ids() {
+            let dir = tempdir().unwrap();
+            let path = dir.path().join("my-app");
+            fs::create_dir_all(&path).unwrap();
+
+            let template = load_template_definition(template_id).unwrap();
+            create_project_from_template(&path, "my-app", &template).unwrap();
+
+            let dc = fs::read_to_string(path.join("docker-compose.yml")).unwrap();
+
+            assert!(
+                !dc.contains("../../..:/workspace"),
+                "{template_id}: workspace volume mount not rewritten"
+            );
+            assert!(
+                !dc.contains("/workspace/examples/"),
+                "{template_id}: workspace working_dir or target path not rewritten"
+            );
+            assert!(
+                dc.contains("- .:/app"),
+                "{template_id}: missing standalone volume mount .:/app"
+            );
+            assert!(
+                dc.contains("- ./target:/app/target"),
+                "{template_id}: missing standalone target mount"
+            );
+            assert!(
+                dc.contains("working_dir: /app"),
+                "{template_id}: missing standalone working_dir"
+            );
+
+            if template_id.starts_with("with-svelte/") {
+                assert!(
+                    !dc.contains("packages/forge-svelte"),
+                    "{template_id}: workspace forge-svelte volume not removed"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn test_invalid_template_error_lists_supported_templates() {
         let error = invalid_template_error("with-svelte/unknown");
         let message = error.to_string();

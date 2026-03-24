@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{ItemFn, parse_macro_input};
@@ -93,6 +95,25 @@ pub fn cron_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let block = &input.block;
 
     let schedule = attrs.schedule.unwrap_or_else(|| "* * * * *".to_string());
+
+    // Validate cron expression at compile time to prevent runtime panics.
+    // Normalize 5-part to 6-part (prepend seconds) to match what CronSchedule::new does.
+    {
+        let parts: Vec<&str> = schedule.split_whitespace().collect();
+        let normalized = if parts.len() == 5 {
+            format!("0 {schedule}")
+        } else {
+            schedule.clone()
+        };
+        if cron::Schedule::from_str(&normalized).is_err() {
+            return syn::Error::new_spanned(
+                &input.sig.ident,
+                format!("Invalid cron schedule: \"{schedule}\""),
+            )
+            .to_compile_error()
+            .into();
+        }
+    }
     let timezone = attrs.timezone.unwrap_or_else(|| "UTC".to_string());
     let group = attrs.group.unwrap_or_else(|| "default".to_string());
     let catch_up = attrs.catch_up;

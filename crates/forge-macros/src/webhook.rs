@@ -104,11 +104,20 @@ fn parse_webhook_attrs(attr: TokenStream) -> syn::Result<WebhookAttrs> {
         }
     }
 
-    if result.path.is_none() {
-        return Err(syn::Error::new(
-            proc_macro2::Span::call_site(),
-            "webhook requires path attribute",
-        ));
+    match &result.path {
+        None => {
+            return Err(syn::Error::new(
+                proc_macro2::Span::call_site(),
+                "webhook requires path attribute",
+            ));
+        }
+        Some(p) if p.trim().is_empty() || !p.starts_with('/') => {
+            return Err(syn::Error::new(
+                proc_macro2::Span::call_site(),
+                "webhook path must start with '/' (example: path = \"/webhooks/stripe\")",
+            ));
+        }
+        _ => {}
     }
 
     Ok(result)

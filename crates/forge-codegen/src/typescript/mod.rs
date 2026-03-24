@@ -218,7 +218,9 @@ class AuthStore {
     getForgeClient()?.reconnect();
   }
 
-  /** Attempt to refresh tokens using the backend refresh mutation. */
+  /** Attempt to refresh tokens using the backend refresh mutation.
+   *  Only clears auth on definitive failures (401/403). Network errors
+   *  are silently ignored so transient issues don't force logouts. */
   async tryRefresh(): Promise<boolean> {
     if (!this.#state.refreshToken || !this.#apiUrl) return false;
     try {
@@ -228,7 +230,9 @@ class AuthStore {
         body: JSON.stringify({ args: { refresh_token: this.#state.refreshToken } }),
       });
       if (!res.ok) {
-        this.clearAuth();
+        if (res.status === 401 || res.status === 403) {
+          this.clearAuth();
+        }
         return false;
       }
       const envelope = await res.json();
@@ -239,7 +243,7 @@ class AuthStore {
       this.clearAuth();
       return false;
     } catch {
-      this.clearAuth();
+      // Network error - keep tokens and retry later
       return false;
     }
   }

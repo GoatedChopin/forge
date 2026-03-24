@@ -291,6 +291,10 @@ pub fn ForgeAuthProvider(
 }
 
 /// Attempt to refresh tokens using an anonymous client.
+///
+/// Only logs out on definitive auth failures (401/403). Network errors
+/// are silently ignored so transient connectivity issues in hospital
+/// networks don't force unnecessary logouts.
 async fn try_refresh_tokens(api_url: &str, auth: &mut ForgeAuth) {
     let refresh_token = match auth.refresh_token() {
         Some(t) => t,
@@ -322,8 +326,17 @@ async fn try_refresh_tokens(api_url: &str, auth: &mut ForgeAuth) {
         Ok(resp) => {
             auth.update_tokens(resp.access_token, resp.refresh_token);
         }
-        Err(_) => {
+        Err(ref e)
+            if e.code == "UNAUTHORIZED"
+                || e.code == "FORBIDDEN"
+                || e.code == "NOT_FOUND" =>
+        {
+            // Definitive auth failure: token is invalid/expired/revoked.
             auth.logout();
+        }
+        Err(_) => {
+            // Network or transient error. Keep current tokens and retry
+            // on the next refresh cycle rather than forcing a logout.
         }
     }
 }

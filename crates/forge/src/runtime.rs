@@ -469,7 +469,9 @@ impl Forge {
             let gateway = GatewayServer::new(
                 gateway_config,
                 self.function_registry.clone(),
-                self.db.clone().expect("Database must be initialized"),
+                self.db
+                    .clone()
+                    .ok_or_else(|| ForgeError::Internal("Database not initialized".into()))?,
             )
             .with_job_dispatcher(job_dispatcher.clone())
             .with_workflow_dispatcher(workflow_executor.clone())

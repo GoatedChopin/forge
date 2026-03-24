@@ -196,8 +196,9 @@ impl TestCommand {
     async fn stop_dev_environment(&self) {
         println!();
         println!("  {} Stopping dev environment...", ui::step());
+        // Use -v to remove volumes so the next test run starts with a clean DB
         let _ = Command::new("docker")
-            .args(["compose", "down"])
+            .args(["compose", "down", "-v"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()

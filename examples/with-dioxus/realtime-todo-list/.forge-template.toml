@@ -68,33 +68,18 @@ files = ["README.md"]
 
 # Convert workspace-relative docker-compose to standalone
 [[replacement]]
-from = "context: ../.."
-to = "context: ."
-files = ["docker-compose.yml"]
-
-[[replacement]]
-from = "dockerfile: examples/todo-dioxus/Dockerfile"
-to = "dockerfile: Dockerfile"
-files = ["docker-compose.yml"]
-
-[[replacement]]
-from = "\n    working_dir: /app/examples/todo-dioxus"
-to = ""
-files = ["docker-compose.yml"]
-
-[[replacement]]
-from = " -w ../../crates/"
-to = ""
-files = ["docker-compose.yml"]
-
-[[replacement]]
-from = "- ../..:/app"
+from = "- ../../..:/workspace"
 to = "- .:/app"
 files = ["docker-compose.yml"]
 
 [[replacement]]
-from = "- ../../target:/app/target"
+from = "- ./target:/workspace/examples/with-dioxus/realtime-todo-list/target"
 to = "- ./target:/app/target"
+files = ["docker-compose.yml"]
+
+[[replacement]]
+from = "working_dir: /workspace/examples/with-dioxus/realtime-todo-list"
+to = "working_dir: /app"
 files = ["docker-compose.yml"]
 
 # Convert workspace-relative Dockerfile to standalone

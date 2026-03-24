@@ -111,6 +111,18 @@ fn extract_user_agent(headers: &HeaderMap) -> Option<String> {
         .map(String::from)
 }
 
+/// Build request metadata from tracing state and headers.
+fn build_metadata(tracing: TracingState, headers: &HeaderMap) -> RequestMetadata {
+    RequestMetadata {
+        request_id: uuid::Uuid::parse_str(&tracing.request_id)
+            .unwrap_or_else(|_| uuid::Uuid::new_v4()),
+        trace_id: tracing.trace_id,
+        client_ip: extract_client_ip(headers),
+        user_agent: extract_user_agent(headers),
+        timestamp: chrono::Utc::now(),
+    }
+}
+
 /// Axum handler for POST /rpc.
 pub async fn rpc_handler(
     State(handler): State<Arc<RpcHandler>>,
@@ -119,16 +131,9 @@ pub async fn rpc_handler(
     headers: HeaderMap,
     Json(request): Json<RpcRequest>,
 ) -> RpcResponse {
-    let metadata = RequestMetadata {
-        request_id: uuid::Uuid::parse_str(&tracing.request_id)
-            .unwrap_or_else(|_| uuid::Uuid::new_v4()),
-        trace_id: tracing.trace_id,
-        client_ip: extract_client_ip(&headers),
-        user_agent: extract_user_agent(&headers),
-        timestamp: chrono::Utc::now(),
-    };
-
-    handler.handle(request, auth, metadata).await
+    handler
+        .handle(request, auth, build_metadata(tracing, &headers))
+        .await
 }
 
 /// Request body wrapper for REST-style RPC calls.
@@ -149,17 +154,9 @@ pub async fn rpc_function_handler(
     Json(body): Json<RpcFunctionBody>,
 ) -> RpcResponse {
     let request = RpcRequest::new(function, body.args);
-
-    let metadata = RequestMetadata {
-        request_id: uuid::Uuid::parse_str(&tracing.request_id)
-            .unwrap_or_else(|_| uuid::Uuid::new_v4()),
-        trace_id: tracing.trace_id,
-        client_ip: extract_client_ip(&headers),
-        user_agent: extract_user_agent(&headers),
-        timestamp: chrono::Utc::now(),
-    };
-
-    handler.handle(request, auth, metadata).await
+    handler
+        .handle(request, auth, build_metadata(tracing, &headers))
+        .await
 }
 
 /// Axum handler for POST /rpc/batch.

@@ -73,33 +73,23 @@ files = ["README.md"]
 
 # Convert workspace-relative docker-compose to standalone
 [[replacement]]
-from = "context: ../.."
-to = "context: ."
-files = ["docker-compose.yml"]
-
-[[replacement]]
-from = "dockerfile: examples/todo/Dockerfile"
-to = "dockerfile: Dockerfile"
-files = ["docker-compose.yml"]
-
-[[replacement]]
-from = "\n    working_dir: /app/examples/todo"
-to = ""
-files = ["docker-compose.yml"]
-
-[[replacement]]
-from = " -w ../../crates/"
-to = ""
-files = ["docker-compose.yml"]
-
-[[replacement]]
-from = "- ../..:/app"
+from = "- ../../..:/workspace"
 to = "- .:/app"
 files = ["docker-compose.yml"]
 
 [[replacement]]
-from = "- ../../target:/app/target"
+from = "- ./target:/workspace/examples/with-svelte/realtime-todo-list/target"
 to = "- ./target:/app/target"
+files = ["docker-compose.yml"]
+
+[[replacement]]
+from = "working_dir: /workspace/examples/with-svelte/realtime-todo-list"
+to = "working_dir: /app"
+files = ["docker-compose.yml"]
+
+[[replacement]]
+from = "\n      - ../../../packages/forge-svelte:/packages/forge-svelte"
+to = ""
 files = ["docker-compose.yml"]
 
 # Dockerfile binary name

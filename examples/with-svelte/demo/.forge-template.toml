@@ -70,3 +70,24 @@ files = ["README.md"]
 from = "forge-svelte-demo-template"
 to = "{{project_slug}}"
 files = ["Dockerfile"]
+
+# Convert workspace-relative docker-compose to standalone
+[[replacement]]
+from = "- ../../..:/workspace"
+to = "- .:/app"
+files = ["docker-compose.yml"]
+
+[[replacement]]
+from = "- ./target:/workspace/examples/with-svelte/demo/target"
+to = "- ./target:/app/target"
+files = ["docker-compose.yml"]
+
+[[replacement]]
+from = "working_dir: /workspace/examples/with-svelte/demo"
+to = "working_dir: /app"
+files = ["docker-compose.yml"]
+
+[[replacement]]
+from = "\n      - ../../../packages/forge-svelte:/packages/forge-svelte"
+to = ""
+files = ["docker-compose.yml"]

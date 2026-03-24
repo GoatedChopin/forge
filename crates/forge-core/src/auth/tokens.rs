@@ -62,7 +62,7 @@ pub async fn issue_token_pair(
     })
 }
 
-/// Rotate a refresh token: validate and delete the old one, issue a new pair.
+/// Rotate a refresh token: validate expiry, delete the old one, issue a new pair.
 pub async fn rotate_refresh_token(
     pool: &sqlx::PgPool,
     old_refresh_token: &str,
@@ -73,24 +73,37 @@ pub async fn rotate_refresh_token(
 ) -> Result<TokenPair> {
     let hash = hash_token(old_refresh_token);
 
-    // Atomically delete the old token and get its user_id
-    let row: Option<(Uuid, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
-        "DELETE FROM forge_refresh_tokens WHERE token_hash = $1
-         RETURNING user_id, expires_at",
+    // Atomically delete only non-expired tokens. Expired tokens stay for audit
+    // and get cleaned up by the periodic purge.
+    let row: Option<(Uuid,)> = sqlx::query_as(
+        "DELETE FROM forge_refresh_tokens WHERE token_hash = $1 AND expires_at > now()
+         RETURNING user_id",
     )
     .bind(&hash)
     .fetch_optional(pool)
     .await
     .map_err(|e| ForgeError::Internal(format!("Failed to rotate refresh token: {e}")))?;
 
-    let (user_id, expires_at) =
-        row.ok_or_else(|| ForgeError::Unauthorized("Invalid refresh token".into()))?;
+    let (user_id,) = match row {
+        Some(r) => r,
+        None => {
+            // Distinguish between "not found" and "expired" for clearer errors
+            let expired: Option<(Uuid,)> = sqlx::query_as(
+                "SELECT user_id FROM forge_refresh_tokens WHERE token_hash = $1",
+            )
+            .bind(&hash)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| ForgeError::Internal(format!("Failed to check token: {e}")))?;
 
-    if expires_at < chrono::Utc::now() {
-        return Err(ForgeError::Unauthorized("Refresh token expired".into()));
-    }
+            return if expired.is_some() {
+                Err(ForgeError::Unauthorized("Refresh token expired".into()))
+            } else {
+                Err(ForgeError::Unauthorized("Invalid refresh token".into()))
+            };
+        }
+    };
 
-    // Issue a new pair
     issue_token_pair(
         pool,
         user_id,

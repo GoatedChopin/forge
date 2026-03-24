@@ -486,8 +486,9 @@ pub async fn sse_handler(
             }
         }
 
-        // Clean shutdown
+        // Clean shutdown: decrement counter and clean up session state
         _guard.mark_closed();
+        crate::observability::set_active_connections("sse", -1);
         reactor.remove_session(session_id).await;
         sessions.write().await.remove(&session_id);
     });

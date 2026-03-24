@@ -77,3 +77,19 @@ files = ["frontend/src/main.rs", "frontend/tests/home.spec.ts"]
 from = "forge-dioxus-minimal-template"
 to = "{{project_slug}}"
 files = ["Dockerfile"]
+
+# Convert workspace-relative docker-compose to standalone
+[[replacement]]
+from = "- ../../..:/workspace"
+to = "- .:/app"
+files = ["docker-compose.yml"]
+
+[[replacement]]
+from = "- ./target:/workspace/examples/with-dioxus/minimal/target"
+to = "- ./target:/app/target"
+files = ["docker-compose.yml"]
+
+[[replacement]]
+from = "working_dir: /workspace/examples/with-dioxus/minimal"
+to = "working_dir: /app"
+files = ["docker-compose.yml"]

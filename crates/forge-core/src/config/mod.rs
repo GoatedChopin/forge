@@ -428,12 +428,13 @@ impl Default for AuthConfig {
 impl AuthConfig {
     /// Resolved access token TTL in seconds.
     /// Checks `access_token_ttl`, falls back to `token_expiry`, then default 3600s (1h).
+    /// Minimum 1 second to prevent zero-lifetime tokens.
     pub fn access_token_ttl_secs(&self) -> i64 {
         self.access_token_ttl
             .as_deref()
             .or(self.token_expiry.as_deref())
             .and_then(crate::util::parse_duration)
-            .map(|d| d.as_secs() as i64)
+            .map(|d| (d.as_secs() as i64).max(1))
             .unwrap_or(3600)
     }
 
@@ -622,6 +623,19 @@ impl Default for McpConfig {
 }
 
 impl McpConfig {
+    /// Paths reserved by the gateway that MCP must not collide with.
+    const RESERVED_PATHS: &[&str] = &[
+        "/health",
+        "/ready",
+        "/rpc",
+        "/events",
+        "/subscribe",
+        "/unsubscribe",
+        "/subscribe-job",
+        "/subscribe-workflow",
+        "/metrics",
+    ];
+
     pub fn validate(&self) -> Result<()> {
         if self.path.is_empty() || !self.path.starts_with('/') {
             return Err(ForgeError::Config(
@@ -632,6 +646,12 @@ impl McpConfig {
             return Err(ForgeError::Config(
                 "mcp.path cannot contain spaces".to_string(),
             ));
+        }
+        if Self::RESERVED_PATHS.contains(&self.path.as_str()) {
+            return Err(ForgeError::Config(format!(
+                "mcp.path '{}' conflicts with a reserved gateway route",
+                self.path
+            )));
         }
         if self.session_ttl_secs == 0 {
             return Err(ForgeError::Config(
@@ -980,5 +1000,67 @@ mod tests {
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("mcp.path must start with '/'"));
+    }
+
+    #[test]
+    fn test_access_token_ttl_defaults() {
+        let auth = AuthConfig::default();
+        assert_eq!(auth.access_token_ttl_secs(), 3600);
+        assert_eq!(auth.refresh_token_ttl_days(), 30);
+    }
+
+    #[test]
+    fn test_access_token_ttl_custom() {
+        let auth = AuthConfig {
+            access_token_ttl: Some("15m".into()),
+            refresh_token_ttl: Some("7d".into()),
+            ..Default::default()
+        };
+        assert_eq!(auth.access_token_ttl_secs(), 900);
+        assert_eq!(auth.refresh_token_ttl_days(), 7);
+    }
+
+    #[test]
+    fn test_access_token_ttl_minimum_enforced() {
+        let auth = AuthConfig {
+            access_token_ttl: Some("0s".into()),
+            ..Default::default()
+        };
+        // Should floor at 1, not 0
+        assert_eq!(auth.access_token_ttl_secs(), 1);
+    }
+
+    #[test]
+    fn test_refresh_token_ttl_minimum_enforced() {
+        let auth = AuthConfig {
+            refresh_token_ttl: Some("1h".into()),
+            ..Default::default()
+        };
+        // 1 hour < 1 day, so should floor at 1 day
+        assert_eq!(auth.refresh_token_ttl_days(), 1);
+    }
+
+    #[test]
+    fn test_mcp_config_rejects_reserved_paths() {
+        for reserved in McpConfig::RESERVED_PATHS {
+            let toml = format!(
+                r#"
+                [database]
+                url = "postgres://localhost/test"
+
+                [mcp]
+                enabled = true
+                path = "{reserved}"
+                "#
+            );
+
+            let result = ForgeConfig::parse_toml(&toml);
+            assert!(result.is_err(), "Expected {reserved} to be rejected");
+            let err_msg = result.unwrap_err().to_string();
+            assert!(
+                err_msg.contains("conflicts with a reserved gateway route"),
+                "Wrong error for {reserved}: {err_msg}"
+            );
+        }
     }
 }

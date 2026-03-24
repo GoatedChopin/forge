@@ -115,14 +115,18 @@ test.describe("Kanban Board UI E2E", () => {
     await createTask(uniqueId("task-a"));
     await createTask(uniqueId("task-b"));
 
+    // Job completion can be slow (worker poll + execution + SSE push).
+    // Use a generous fixed timeout rather than a multiple of ACTION_TIMEOUT.
+    const JOB_TIMEOUT = 60_000;
+
     await page.getByRole("button", { name: "Export JSON" }).click();
     await expect(page.locator(".job-status")).toContainText("tasks exported", {
-      timeout: ACTION_TIMEOUT,
+      timeout: JOB_TIMEOUT,
     });
 
     await page.getByRole("button", { name: "Export CSV" }).click();
     await expect(page.locator(".job-status")).toContainText("Export:", {
-      timeout: ACTION_TIMEOUT,
+      timeout: JOB_TIMEOUT,
     });
   });
 

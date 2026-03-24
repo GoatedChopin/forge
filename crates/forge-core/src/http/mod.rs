@@ -144,7 +144,10 @@ impl CircuitBreakerClient {
             return Ok(());
         }
 
-        let states = self.states.read().expect("circuit breaker lock poisoned");
+        let states = self.states.read().unwrap_or_else(|e| {
+                tracing::error!("Circuit breaker lock was poisoned, recovering");
+                e.into_inner()
+            });
         let state = match states.get(host) {
             Some(s) => s,
             None => return Ok(()), // No state = first request, allow
@@ -176,7 +179,10 @@ impl CircuitBreakerClient {
             return;
         }
 
-        let mut states = self.states.write().expect("circuit breaker lock poisoned");
+        let mut states = self.states.write().unwrap_or_else(|e| {
+                tracing::error!("Circuit breaker lock was poisoned, recovering");
+                e.into_inner()
+            });
         let state = states.entry(host.to_string()).or_default();
 
         match state.state {
@@ -211,7 +217,10 @@ impl CircuitBreakerClient {
             return;
         }
 
-        let mut states = self.states.write().expect("circuit breaker lock poisoned");
+        let mut states = self.states.write().unwrap_or_else(|e| {
+                tracing::error!("Circuit breaker lock was poisoned, recovering");
+                e.into_inner()
+            });
         let state = states.entry(host.to_string()).or_default();
 
         match state.state {
@@ -261,7 +270,10 @@ impl CircuitBreakerClient {
 
         // If circuit is open but timeout expired, transition to half-open
         {
-            let mut states = self.states.write().expect("circuit breaker lock poisoned");
+            let mut states = self.states.write().unwrap_or_else(|e| {
+                tracing::error!("Circuit breaker lock was poisoned, recovering");
+                e.into_inner()
+            });
             if let Some(state) = states.get_mut(&host)
                 && state.state == CircuitStatus::Open
                 && let Some(opened_at) = state.opened_at
@@ -295,7 +307,10 @@ impl CircuitBreakerClient {
     pub fn get_state(&self, host: &str) -> Option<CircuitState> {
         self.states
             .read()
-            .expect("circuit breaker lock poisoned")
+            .unwrap_or_else(|e| {
+                tracing::error!("Circuit breaker lock was poisoned, recovering");
+                e.into_inner()
+            })
             .get(host)
             .cloned()
     }
@@ -304,7 +319,10 @@ impl CircuitBreakerClient {
     pub fn reset(&self, host: &str) {
         self.states
             .write()
-            .expect("circuit breaker lock poisoned")
+            .unwrap_or_else(|e| {
+                tracing::error!("Circuit breaker lock was poisoned, recovering");
+                e.into_inner()
+            })
             .remove(host);
     }
 
@@ -312,7 +330,10 @@ impl CircuitBreakerClient {
     pub fn reset_all(&self) {
         self.states
             .write()
-            .expect("circuit breaker lock poisoned")
+            .unwrap_or_else(|e| {
+                tracing::error!("Circuit breaker lock was poisoned, recovering");
+                e.into_inner()
+            })
             .clear();
     }
 }

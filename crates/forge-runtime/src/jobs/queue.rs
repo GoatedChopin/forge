@@ -230,7 +230,7 @@ impl JobQueue {
                     status: row
                         .get::<String, _>("status")
                         .parse()
-                        .expect("valid job status from database"),
+                        .unwrap_or(forge_core::job::JobStatus::Failed),
                     priority: row.get("priority"),
                     attempts: row.get("attempts"),
                     max_attempts: row.get("max_attempts"),

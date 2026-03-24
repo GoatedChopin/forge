@@ -149,14 +149,8 @@ impl SubscriberStore {
         self.entries.get(&key)
     }
 
-    fn remove(&mut self, key: usize) -> Subscriber {
-        self.entries
-            .remove(&key)
-            .expect("key not found in subscriber store")
-    }
-
-    fn contains(&self, key: usize) -> bool {
-        self.entries.contains_key(&key)
+    fn remove(&mut self, key: usize) -> Option<Subscriber> {
+        self.entries.remove(&key)
     }
 
     fn iter(&self) -> impl Iterator<Item = (usize, &Subscriber)> {
@@ -229,7 +223,10 @@ impl SubscriptionManager {
         // Create subscriber in the store
         let subscription_id = SubscriptionId::new();
         let subscriber_id = {
-            let mut store = self.subscribers.lock().expect("subscriber store poisoned");
+            let mut store = self.subscribers.lock().unwrap_or_else(|e| {
+                tracing::error!("Subscriber store lock was poisoned, recovering");
+                e.into_inner()
+            });
             let key = store.next_key;
             let sid = SubscriberId(key as u32);
             store.insert(Subscriber {
@@ -258,7 +255,10 @@ impl SubscriptionManager {
 
     /// Remove a subscriber by its subscription ID.
     pub fn unsubscribe(&self, subscription_id: SubscriptionId) {
-        let mut store = self.subscribers.lock().expect("subscriber store poisoned");
+        let mut store = self.subscribers.lock().unwrap_or_else(|e| {
+                tracing::error!("Subscriber store lock was poisoned, recovering");
+                e.into_inner()
+            });
 
         // Find the subscriber by subscription_id
         let sub_key = store
@@ -304,12 +304,14 @@ impl SubscriptionManager {
             .unwrap_or_default();
 
         let mut removed_sub_ids = Vec::new();
-        let mut store = self.subscribers.lock().expect("subscriber store poisoned");
+        let mut store = self.subscribers.lock().unwrap_or_else(|e| {
+                tracing::error!("Subscriber store lock was poisoned, recovering");
+                e.into_inner()
+            });
 
         for sid in subscriber_ids {
             let key = sid.0 as usize;
-            if store.contains(key) {
-                let sub = store.remove(key);
+            if let Some(sub) = store.remove(key) {
                 removed_sub_ids.push(sub.subscription_id);
 
                 // Remove from group
@@ -367,7 +369,10 @@ impl SubscriptionManager {
             .map(|g| g.subscribers.clone())
             .unwrap_or_default();
 
-        let store = self.subscribers.lock().expect("subscriber store poisoned");
+        let store = self.subscribers.lock().unwrap_or_else(|e| {
+                tracing::error!("Subscriber store lock was poisoned, recovering");
+                e.into_inner()
+            });
         subscriber_ids
             .iter()
             .filter_map(|sid| {

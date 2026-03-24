@@ -179,7 +179,7 @@ WARN forge_runtime::gateway::server: Request rejected duration_ms=0 http.status_
 
 **Fix**: Two things must be true:
 
-1. **Auth error handler must trigger a refresh, not a logout.** Use a `needs_refresh` signal that a `use_effect` watches, then call `try_refresh`. Only log out if refresh fails. See `references/frontend/dioxus.md` "Auth Error Handler Must Refresh, Not Logout" for the full pattern.
+1. **Auth error handler must trigger a refresh, not a logout.** The built-in `ForgeAuthProvider` (Dioxus) and generated `auth.svelte.ts` (Svelte) now handle this correctly: network errors during refresh are silently ignored (tokens kept), and only definitive auth failures (401/403) trigger logout. If you have custom auth handling, match this pattern.
 
 2. **Proactive refresh timer must fire well before token expiry.** Rule of thumb: refresh at ~2/3 of the token lifetime. For a 15-minute token, use a 10-minute timer. A 12-minute timer with a 15-minute token leaves only 3 minutes of buffer, which is too tight if the timer drifts or the refresh request is slow.
 

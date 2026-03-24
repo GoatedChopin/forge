@@ -150,17 +150,23 @@ impl From<forge_core::error::ForgeError> for RpcError {
             }
             forge_core::error::ForgeError::Timeout(msg) => Self::new("TIMEOUT", msg),
             forge_core::error::ForgeError::JobCancelled(msg) => Self::new("JOB_CANCELLED", msg),
-            forge_core::error::ForgeError::Database(_)
-            | forge_core::error::ForgeError::Sql(_)
-            | forge_core::error::ForgeError::Internal(_)
+            forge_core::error::ForgeError::Deserialization(msg) => {
+                Self::new("INVALID_ARGUMENT", format!("Invalid input: {msg}"))
+            }
+            ref e @ forge_core::error::ForgeError::Database(_)
+            | ref e @ forge_core::error::ForgeError::Sql(_) => {
+                tracing::error!(error = %e, "Database error in RPC handler");
+                Self::internal("Internal server error")
+            }
+            ref e @ (forge_core::error::ForgeError::Internal(_)
             | forge_core::error::ForgeError::Serialization(_)
-            | forge_core::error::ForgeError::Deserialization(_)
             | forge_core::error::ForgeError::Function(_)
             | forge_core::error::ForgeError::Config(_)
             | forge_core::error::ForgeError::Io(_)
             | forge_core::error::ForgeError::Cluster(_)
             | forge_core::error::ForgeError::InvalidState(_)
-            | forge_core::error::ForgeError::WorkflowSuspended => {
+            | forge_core::error::ForgeError::WorkflowSuspended) => {
+                tracing::error!(error = %e, "Internal error in RPC handler");
                 Self::internal("Internal server error")
             }
             forge_core::error::ForgeError::Job(msg) => {
