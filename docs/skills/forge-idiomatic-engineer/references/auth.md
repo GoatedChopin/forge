@@ -43,22 +43,36 @@ CREATE TABLE users (
 ### Schema
 
 ```rust
-#[forge::model]
+// Internal: used for DB queries. NOT in handler return types.
+// #[serde(skip)] does NOT hide fields from forge generate.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct User {
     pub id: Uuid,
     pub email: String,
-    #[serde(skip_serializing)]
     pub password_hash: String,
     pub display_name: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AuthInput { pub email: String, pub password: String }
+// Public: used in API responses. This is what forge generate sees.
+// Omit sensitive fields entirely instead of using serde skip.
+#[forge::model]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublicUser {
+    pub id: Uuid,
+    pub email: String,
+    pub display_name: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+impl From<User> for PublicUser {
+    fn from(u: User) -> Self {
+        Self { id: u.id, email: u.email, display_name: u.display_name, created_at: u.created_at }
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct AuthResponse { pub token: String, pub user: User }
+pub struct AuthInput { pub email: String, pub password: String }
 ```
 
 ### Handlers (with built-in refresh tokens)
@@ -68,7 +82,7 @@ pub struct AuthResponse { pub token: String, pub user: User }
 pub struct AuthResponse {
     pub access_token: String,
     pub refresh_token: String,
-    pub user: User,
+    pub user: PublicUser,  // Never expose User with password_hash
 }
 
 #[forge::mutation(public)]
@@ -85,15 +99,15 @@ pub async fn register(ctx: &MutationContext, input: AuthInput) -> Result<AuthRes
     Ok(AuthResponse {
         access_token: pair.access_token,
         refresh_token: pair.refresh_token,
-        user,
+        user: user.into(),  // Convert User → PublicUser
     })
 }
 
 #[forge::mutation(public)]
 pub async fn login(ctx: &MutationContext, input: AuthInput) -> Result<AuthResponse> {
-    let user = /* verify credentials */;
+    let user: User = /* verify credentials */;
     let pair = ctx.issue_token_pair(user.id, &["user"]).await?;
-    Ok(AuthResponse { access_token: pair.access_token, refresh_token: pair.refresh_token, user })
+    Ok(AuthResponse { access_token: pair.access_token, refresh_token: pair.refresh_token, user: user.into() })
 }
 
 // Refresh: framework rotates the token atomically (delete old, insert new)

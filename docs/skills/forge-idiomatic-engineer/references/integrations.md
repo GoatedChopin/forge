@@ -79,7 +79,32 @@ path = "/mcp"
 session_ttl_secs = 3600
 ```
 
-Annotation flags: `read_only`, `destructive`, `idempotent`, `open_world`. These set MCP tool hints.
+Annotation flags: `read_only`, `destructive`, `idempotent`, `open_world`. These set MCP tool hints for client UIs.
+
+### Parameter Metadata
+
+Use `#[schemars(...)]` on the generated Args struct's fields (applied via function parameters) for rich JSON Schema output:
+
+```rust
+#[forge::mcp_tool(
+    title = "Search Projects",
+    description = "Search projects by name or tag",
+    read_only
+)]
+pub async fn search_projects(
+    ctx: &McpToolContext,
+    /// The search query string
+    #[schemars(description = "Search query (min 2 chars)", min_length = 2)]
+    query: String,
+    #[schemars(description = "Maximum results to return")]
+    #[serde(default = "default_limit")]
+    limit: Option<u32>,
+) -> Result<Vec<Project>> { ... }
+
+fn default_limit() -> Option<u32> { Some(20) }
+```
+
+The `#[schemars(...)]` and `#[serde(...)]` attributes are preserved on the generated `SearchProjectsParams` struct. `schemars` generates the JSON Schema that MCP clients use for input validation and UI generation. Doc comments on parameters also become schema descriptions.
 
 McpToolContext has no HTTP client. Dispatch jobs for external API work.
 

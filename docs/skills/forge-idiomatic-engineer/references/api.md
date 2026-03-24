@@ -128,7 +128,7 @@ Generated struct: `{PascalCase}McpTool` (strips `_mcp_tool` / `_tool` suffix fro
 | `rate_limit(...)` | group | — |
 | `read_only`, `destructive`, `idempotent`, `open_world` | flag | — |
 
-No HTTP client available on McpToolContext.
+No HTTP client available on McpToolContext. Parameters with `#[schemars(...)]` and `#[serde(...)]` attributes are preserved on the generated Args struct for JSON Schema generation. Use `#[schemars(description = "...")]` for parameter descriptions visible to MCP clients.
 
 ## Duration Formats
 
@@ -165,6 +165,17 @@ All duration strings: `500ms`, `30s`, `5m`, `2h`, `7d`, or bare number (= second
 - `WorkflowContext.elapsed()` returns `chrono::Duration`, not `std::time::Duration`.
 - `StepRunner.run()` returns `Result<Option<T>>`. `Some(T)` on success, `None` if step was optional and failed.
 - `StepRunner.retry(count, delay)`: count = retries, so total attempts = count + 1.
+
+### DbConn Abstraction
+
+Write shared helpers using `DbConn<'_>` to work across all context types:
+```rust
+pub async fn get_item(db: DbConn<'_>, id: Uuid) -> Result<Item> { ... }
+```
+- `QueryContext.db_conn()` returns `DbConn`
+- `MutationContext.db()` returns `DbConn`
+- `JobContext`, `CronContext`, `WorkflowContext`, `DaemonContext`, `WebhookContext`, `McpToolContext` all provide `db()` → `DbConn`
+- See `references/patterns.md` for the full pattern
 
 ### EnvAccess (all contexts)
 

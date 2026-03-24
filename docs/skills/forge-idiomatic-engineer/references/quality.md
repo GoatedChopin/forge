@@ -59,6 +59,11 @@ Check in this order (P0 first):
 | FP-4 | Missing loading/error states | Handle all three states |
 | FP-5 | `$effect` / `use_effect` for data fetching | Use reactive stores/hooks |
 | FP-6 | Forgetting `ForgeProvider` in root | Required for client setup |
+| FP-7 | Reusing authenticated ForgeClient for refresh calls | Use anonymous client (no token provider) for refresh |
+| FP-8 | Calling `logout` in Dioxus `with_auth_error_handler` | Signal refresh attempt instead; logout kills the refresh timer |
+| FP-9 | Setting refresh timer > 80% of token lifetime | Use ~2/3 of token lifetime (10min for 15min tokens) |
+| FP-10 | Token toggling on existing ForgeClient (Dioxus) | Keyed remount via `use_auth_key()` to recreate client |
+| FP-11 | Not handling rate limit `retry_after_secs` in error details | Show countdown or implement exponential backoff |
 
 ## Security Checklist
 

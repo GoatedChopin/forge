@@ -133,10 +133,11 @@ Key categories covered: sqlx offline mode, struct visibility, ForgeConn borrowin
 
 ## Reference loading
 
-Most small tasks need only this file. Load one when the task needs it:
+Most small tasks need only this file. **Always load `donts.md` before implementation.**
 
 | Signal | Load |
 |---|---|
+| Starting any implementation task | `references/donts.md` |
 | Macro attributes, context methods, error types, config fields | `references/api.md` |
 | Auth, JWT, login/register, protected routes | `references/auth.md` |
 | Frontend patterns (shared principles) | `references/frontend.md` |

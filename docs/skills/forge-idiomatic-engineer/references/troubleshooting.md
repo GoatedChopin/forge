@@ -243,6 +243,79 @@ impl From<User> for PublicUser { ... }
 
 Use `PublicUser` in all handler return types (`AuthResponse`, `me` query, etc). The code generator picks up the return types and only generates frontend types for structs that appear in the API surface.
 
+## Pool Exhaustion
+
+```
+error: pool timed out waiting for an available connection
+```
+
+**Cause**: All connections in the pool are in use. Common culprits: long-running analytics queries on the default pool, forgotten transactions that hold connections, or too many concurrent requests for the pool size.
+
+**Fix**:
+1. Check which pool is exhausted: `SELECT application_name, state, count(*) FROM pg_stat_activity WHERE application_name LIKE 'forge%' GROUP BY 1, 2;`
+2. If analytics queries: configure `[database.pools.analytics]` with separate pool and longer `statement_timeout_secs`
+3. If job workers: configure `[database.pools.jobs]` to isolate from user request pool
+4. If default pool: increase `pool_size` in `[database]` or reduce `pool_timeout_secs` to fail faster
+5. Check for leaked connections: mutations that call `.conn().await?` but don't drop the connection before long-running non-DB work
+
+## Job Debugging
+
+### Jobs stuck in `running` state
+
+**Cause**: Worker crashed or was killed without clean shutdown. The stale reclaim timer (5 minutes) hasn't fired yet, or the job's heartbeat is still within the window.
+
+**Fix**: Wait 5 minutes for automatic reclaim, or manually:
+```sql
+UPDATE forge_jobs SET status = 'pending', worker_id = NULL, started_at = NULL
+WHERE status = 'running' AND started_at < now() - interval '5 minutes';
+```
+
+### Jobs not executing
+
+Check in order:
+1. Worker enabled? `[worker]` section exists in `forge.toml` and node has `worker` role
+2. Job registered? Check `main.rs` for `.register_job::<...>()`
+3. Capability match? Job's `worker_capability` matches node's `worker_capabilities`
+4. Queue depth? `SELECT status, count(*) FROM forge_jobs GROUP BY status;`
+5. Errors? `SELECT id, error, attempt FROM forge_jobs WHERE status = 'failed' ORDER BY updated_at DESC LIMIT 10;`
+
+## Workflow Issues
+
+### Workflow stuck in `waiting` state
+
+**Cause**: `wait_for_event` is waiting for an external event that hasn't arrived. Or the workflow timeout hasn't been reached yet.
+
+**Fix**: Check if the external system sent the event. Events are stored in `forge_workflow_events`. If the event was sent but not consumed:
+```sql
+SELECT * FROM forge_workflow_events WHERE correlation_id = '<run_id>' AND consumed_at IS NULL;
+```
+
+### Steps re-executing on resume
+
+**Cause**: Step names changed between code versions. Steps are cached by name, so a renamed step looks like a new step.
+
+**Fix**: Step names must be stable across versions. If you need to change behavior, increment the workflow version and handle both old and new runs.
+
+## Cluster Coordination
+
+### Multiple leaders running the same cron
+
+**Cause**: Advisory lock not acquired (network partition or PG connection drop). Each node thinks it's the leader.
+
+**Fix**: Check cluster health:
+```sql
+SELECT node_id, status, last_heartbeat, now() - last_heartbeat as age
+FROM forge_nodes ORDER BY last_heartbeat DESC;
+```
+
+Nodes with `age > 15s` are considered dead. If multiple nodes show as alive, check PG connectivity. The leader refreshes its lock every 30s (half the 60s lease). If the refresh fails, the lock releases and another node acquires it.
+
+### Nodes not discovering each other
+
+**Cause**: `[cluster]` not configured, or nodes using different `discovery` settings.
+
+**Fix**: All nodes must share the same database and have `[cluster]` configured. Check `discovery` setting matches (default: `postgres`). Nodes register on startup and heartbeat every 5s.
+
 ## Formatting / forge check
 
 `forge check` runs `cargo fmt`, `clippy`, and `prettier`. If it fails on formatting alone, run the fixers before investigating further:

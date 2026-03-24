@@ -170,6 +170,70 @@ Use `ctx.http_with_circuit_breaker()` on MutationContext. Raw `ctx.http()` bypas
 
 Content-addressable: `hash(function_name + args + auth_scope)`. TTL-based with lazy eviction. Max 10,000 entries. Different users get separate cache entries via auth_scope_hash. Invalidate programmatically via `cache.invalidate(fn, args)` or `cache.invalidate_function(fn)`.
 
+## Zero-Downtime Migrations
+
+Non-breaking migrations (add column, add table, add index) can run while the app is live. Breaking migrations (drop column, rename column, change type) need a multi-step approach:
+
+1. **Add**: Deploy new column alongside old one
+2. **Backfill**: Write to both columns, backfill existing rows
+3. **Switch**: Update app to read from new column
+4. **Drop**: Remove old column after verification
+
+Never drop columns or tables in the same deployment that stops using them. Advisory lock `0x464F524745` prevents concurrent migration runs, but two app versions can be running simultaneously during a rolling deploy.
+
+Test rollbacks: `forge migrate down` should cleanly undo each migration. If a migration can't be rolled back (e.g., data backfill), document it in the migration file.
+
+## Secret Rotation
+
+### JWT Secret
+
+1. Deploy new version that accepts both old and new secrets (validation tries both)
+2. Wait for all old tokens to expire (max access_token_ttl)
+3. Remove old secret from config
+
+Forge validates with the configured secret only. For rotation, temporarily deploy with the new secret and let old tokens expire naturally. Refresh token rotation handles this: expired access tokens trigger refresh, which issues tokens with the new secret.
+
+### Webhook Secrets
+
+Webhook providers typically send with both old and new signatures during rotation. Forge validates against the configured secret. Update the env var and redeploy. Missed webhooks during the switch will be retried by the provider.
+
+## Monitoring Queries
+
+Useful PostgreSQL queries for operational visibility:
+
+```sql
+-- Active connections by pool (application_name set by Forge)
+SELECT application_name, state, count(*)
+FROM pg_stat_activity
+WHERE application_name LIKE 'forge%'
+GROUP BY application_name, state;
+
+-- Job queue depth by status
+SELECT status, count(*) FROM forge_jobs GROUP BY status;
+
+-- Stuck jobs (running longer than timeout)
+SELECT id, job_type, started_at, now() - started_at as duration
+FROM forge_jobs
+WHERE status = 'running' AND started_at < now() - interval '30 minutes';
+
+-- Cron execution history
+SELECT cron_name, status, scheduled_time, completed_at - started_at as duration
+FROM forge_cron_runs
+ORDER BY scheduled_time DESC LIMIT 20;
+
+-- Workflow runs by status
+SELECT status, count(*) FROM forge_workflow_runs GROUP BY status;
+```
+
+## OTEL Sampling
+
+```toml
+[observability]
+sampling_ratio = 1.0   # 1.0 = trace everything, 0.1 = 10% sampling
+```
+
+In production with high traffic, start with `0.1` (10%) and increase if you need more visibility. Health/ready endpoints are excluded via `quiet_routes` regardless of sampling ratio. Per-request decisions are made at the gateway, so all spans within a request share the same sampling decision.
+
 ## Operational Checklist
 
 - [ ] `DATABASE_URL` set (not embedded PG in production)

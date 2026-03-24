@@ -221,6 +221,79 @@ db.cleanup().await?;
 
 `IsolatedTestDb` methods: `pool()`, `execute(sql)`, `run_sql(multi_statement_sql)`, `migrate(Path)`, `cleanup()`.
 
+### TestMcpToolContext
+
+```rust
+TestMcpToolContext::builder("export_data")
+    .as_user(uuid)
+    .with_role("admin")
+    .with_pool(pool)
+    .with_env("KEY", "val")
+    .with_job_dispatch(Arc::new(MockJobDispatch::new()))
+    .build()
+```
+
+Access: `ctx.db()`, `ctx.auth`, `ctx.dispatch_job(...)`. No HTTP client (matches production McpToolContext). If the tool needs external calls, dispatch a job.
+
+## Testing Rate Limits
+
+Rate limiting is enforced at the gateway layer, not inside handlers. Handler tests don't need to test rate limiting directly. To verify rate limit configuration:
+
+```rust
+#[test]
+fn export_tool_has_rate_limit() {
+    let info = ExportDataMcpTool::info();
+    assert_eq!(info.rate_limit_requests, Some(10));
+    assert_eq!(info.rate_limit_per_secs, Some(60));
+}
+```
+
+For integration tests that verify rate limiting end-to-end, send N+1 requests and assert the last returns 429.
+
+## Testing Daemon Shutdown
+
+```rust
+#[tokio::test]
+async fn daemon_shuts_down_gracefully() {
+    let ctx = TestDaemonContext::builder("queue_processor").build();
+    let ctx_clone = ctx.clone();
+
+    let handle = tokio::spawn(async move {
+        queue_processor(&ctx_clone).await
+    });
+
+    // Let it run briefly
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Signal shutdown
+    ctx.request_shutdown();
+
+    // Should exit within reasonable time
+    let result = tokio::time::timeout(Duration::from_secs(5), handle).await;
+    assert!(result.is_ok(), "daemon should exit after shutdown signal");
+}
+```
+
+## Testing Workflow Compensation
+
+```rust
+#[tokio::test]
+async fn compensation_runs_on_failure() {
+    let ctx = TestWorkflowContext::builder("order_fulfillment")
+        .with_completed_step("charge", json!({"charge_id": "ch_123"}))
+        .build();
+
+    // Step "ship" will fail, triggering compensation for "charge"
+    let result = order_fulfillment(&ctx, order_id).await;
+    assert!(result.is_err());
+
+    // Verify compensation was recorded
+    assert!(ctx.is_step_completed("charge_compensate"));
+}
+```
+
+For resumed workflows, use `.with_completed_step()` to pre-populate cached step results. The workflow skips those steps on replay and continues from where it left off.
+
 ## Playwright
 
 Always import from generated fixtures:

@@ -113,9 +113,77 @@ Key behaviors:
 - Steps are cached: on resume, completed steps return cached result without re-executing
 - Compensation runs in reverse order on failure
 - `ctx.workflow_time()` for deterministic replay (not wall clock)
-- `ctx.parallel().step("a", ...).step("b", ...).run().await?` for parallel execution
 - Parallel steps use `FnOnce` (no retry). Sequential steps use `Fn` (supports retry).
-- `wait_for_event::<T>(name, timeout)` for external event correlation
+- Step names must be stable across versions (used as cache keys for replay)
+
+### Parallel Steps
+
+```rust
+let (payment, inventory) = ctx.parallel()
+    .step("charge", || async { charge_card(order_id).await })
+    .step("reserve", || async { reserve_stock(order_id).await })
+    .run()
+    .await?;
+```
+
+Parallel steps run concurrently. All must succeed or all compensate. No retry on parallel steps (FnOnce). If one fails, the other's compensation runs. Results return as a tuple matching declaration order.
+
+### Wait for External Event
+
+```rust
+#[forge::workflow(version = 1, timeout = "7d")]
+pub async fn approval_flow(ctx: &WorkflowContext, request_id: Uuid) -> Result<()> {
+    ctx.step("notify", || async { send_approval_request(request_id).await })
+        .run()
+        .await?;
+
+    // Blocks until an external system sends the event or timeout (returns None)
+    let decision: Option<ApprovalDecision> = ctx.wait_for_event("approval", Duration::from_days(3)).await?;
+
+    match decision {
+        Some(d) if d.approved => { /* proceed */ }
+        _ => return Err(ForgeError::Validation("Approval denied or timed out".into())),
+    }
+    Ok(())
+}
+```
+
+External systems send events via the workflow event API. `wait_for_event` is durable: survives restarts, resumes where it left off. The type parameter `T` must impl `DeserializeOwned`.
+
+### Compensation Ordering
+
+Compensation runs in **reverse** order of completed steps:
+1. Steps A, B, C complete
+2. Step D fails
+3. Compensation runs: C.compensate → B.compensate → A.compensate
+
+Each compensation handler receives the step's original output. Steps marked `.optional()` do NOT trigger compensation on failure (they return `Ok(None)` instead).
+
+### Dispatching Workflows
+
+```rust
+// From a mutation (requires transactional)
+#[forge::mutation(transactional)]
+pub async fn start_onboarding(ctx: &MutationContext, input: Input) -> Result<Uuid> {
+    let run_id = ctx.start_workflow("onboarding", json!({"user_id": input.user_id})).await?;
+    Ok(run_id)
+}
+
+// From a daemon or webhook (no transactional needed)
+ctx.start_workflow("cleanup", json!({"batch_id": id})).await?;
+```
+
+## Job Status and Cancellation
+
+Query job status from mutations:
+```rust
+#[forge::mutation]
+pub async fn cancel_export(ctx: &MutationContext, input: CancelInput) -> Result<()> {
+    ctx.cancel_job(input.job_id).await
+}
+```
+
+Frontend tracks job progress via `JobStore` / `use_forge_job`. The store receives SSE updates with `status`, `progress`, `message`, and `output` as the job executes.
 
 ## Daemons
 
@@ -134,6 +202,24 @@ pub async fn queue_processor(ctx: &DaemonContext) -> Result<()> {
 ```
 
 Advisory lock-based leadership via `pg_try_advisory_lock`. Lock released on connection drop (automatic failover). Dispatch jobs/workflows from daemons (no auth context, owner = None).
+
+### Replicated Daemons
+
+```rust
+#[forge::daemon(leader_elected = false, restart_on_panic = true)]
+pub async fn metrics_collector(ctx: &DaemonContext) -> Result<()> {
+    loop {
+        tokio::select! {
+            _ = collect_node_metrics() => {}
+            _ = ctx.shutdown_signal() => break,
+        }
+        tokio::time::sleep(Duration::from_secs(30)).await;
+    }
+    Ok(())
+}
+```
+
+With `leader_elected = false`, one instance runs per node (not cluster-wide singleton). Use for node-local concerns like metrics collection or health monitoring.
 
 ## Design Patterns
 

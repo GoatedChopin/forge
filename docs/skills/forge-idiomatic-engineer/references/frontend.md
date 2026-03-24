@@ -58,7 +58,15 @@ Backend errors serialize to `{ code, message, details? }`. Frontend gets typed `
 
 Pattern: check `error.code` for control flow (`NOT_FOUND`, `VALIDATION_ERROR`, `UNAUTHORIZED`, `RATE_LIMITED`), show `error.message` for user display.
 
-Rate limit errors include `details.retry_after_secs`.
+Rate limit errors include `details.retry_after_secs`. Implement a countdown or disable the action until the cooldown expires:
+```typescript
+if (error.code === 'RATE_LIMITED') {
+  const retryAfter = error.details?.retry_after_secs ?? 60;
+  // disable button for retryAfter seconds
+}
+```
+
+For network errors during data fetching, the generated client retries SSE connections with exponential backoff (1s base, 30s cap, max 10 attempts) automatically. Don't add your own retry logic on top.
 
 ## File Uploads
 
@@ -66,7 +74,9 @@ Mutations with `Upload`-typed parameters automatically use multipart/form-data. 
 
 SvelteKit: pass `File` from `<input>` directly. Dioxus: use `ForgeUpload` type.
 
-Limits: 10 MB per file, 20 fields max, 1 MB max JSON field.
+Backend types: `Upload` (single file), `Vec<Upload>` (batch uploads), `Option<Upload>` (optional file). Upload serializes as base64 for JSON compatibility but the generated client handles multipart/form-data automatically when it detects `File`/`Blob` values.
+
+Limits: 10 MB per file, 20 fields max, 1 MB max JSON field, 255 char max field name. For files > 10 MB, use presigned URLs (mutation returns upload URL, client uploads directly to storage, then calls confirm mutation).
 
 ## Performance
 
