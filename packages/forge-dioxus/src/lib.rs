@@ -17,7 +17,7 @@ pub use hooks::{
 };
 pub use types::{
     ConnectionState, ForgeClientError, ForgeError, JobExecutionState, JobState, JobStatus,
-    Mutation, QueryState, StreamEvent, SubscriptionState, WorkflowExecutionState, WorkflowState,
-    WorkflowStatus, WorkflowStepState,
+    Mutation, QueryState, StreamEvent, SubscriptionState, TokenPair, WorkflowExecutionState,
+    WorkflowState, WorkflowStatus, WorkflowStepState,
 };
 pub use upload::ForgeUpload;

@@ -254,12 +254,6 @@ pub struct AuthResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TokenPair {
-    pub access_token: String,
-    pub refresh_token: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RegisterInput {
     pub email: String,
     pub name: String,

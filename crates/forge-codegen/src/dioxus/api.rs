@@ -17,7 +17,8 @@ pub fn generate(bindings: &BindingSet) -> Result<String, Error> {
     );
     output.push_str("use forge_dioxus::{\n");
     output.push_str("    ForgeClient, ForgeClientError, Mutation, QueryState,\n");
-    output.push_str("    SubscriptionState, JobExecutionState, WorkflowExecutionState,\n");
+    output
+        .push_str("    SubscriptionState, JobExecutionState, TokenPair, WorkflowExecutionState,\n");
     output.push_str("};\n\n");
     output.push_str("use super::types::*;\n");
     output.push_str(

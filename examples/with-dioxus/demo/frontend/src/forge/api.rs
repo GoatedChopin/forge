@@ -4,7 +4,7 @@
 
 use forge_dioxus::{
     ForgeClient, ForgeClientError, JobExecutionState, Mutation, QueryState, SubscriptionState,
-    WorkflowExecutionState,
+    TokenPair, WorkflowExecutionState,
 };
 
 use super::types::*;

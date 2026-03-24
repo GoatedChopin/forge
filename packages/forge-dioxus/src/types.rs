@@ -229,6 +229,13 @@ impl<TOutput> Default for WorkflowExecutionState<TOutput> {
     }
 }
 
+/// An access token + refresh token pair returned by auth endpoints.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenPair {
+    pub access_token: String,
+    pub refresh_token: String,
+}
+
 /// Mutation handle returned by `use_forge_mutation`. Clone into event handlers,
 /// call `.call(args)` to execute.
 #[derive(Clone)]

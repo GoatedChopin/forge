@@ -45,7 +45,7 @@ pub use api::*;
 pub use forge_dioxus::{
     ConnectionState, ForgeAuth, ForgeAuthProvider, ForgeClient, ForgeClientConfig,
     ForgeClientError, ForgeError, ForgeProvider, ForgeUpload, JobExecutionState, Mutation,
-    QueryState, SubscriptionHandle, SubscriptionState, WorkflowExecutionState,
+    QueryState, SubscriptionHandle, SubscriptionState, TokenPair, WorkflowExecutionState,
     use_auth_key, use_connection_state, use_forge_auth, use_forge_client, use_forge_job,
     use_forge_mutation, use_forge_query, use_forge_subscription, use_forge_workflow,
     use_require_auth, use_viewer,
