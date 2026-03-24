@@ -383,10 +383,10 @@ fn handle_tools_list(state: &Arc<McpState>, id: Option<Value>, params: &Value) -
     // Build result: omit nextCursor when null (Claude Code expects string or absent)
     let mut result = serde_json::json!({ "tools": page });
     if end < tools.len() {
-        result
-            .as_object_mut()
-            .unwrap()
-            .insert("nextCursor".into(), serde_json::Value::String(end.to_string()));
+        result.as_object_mut().unwrap().insert(
+            "nextCursor".into(),
+            serde_json::Value::String(end.to_string()),
+        );
     }
 
     (StatusCode::OK, Json(json_rpc_success(id, result))).into_response()
@@ -410,10 +410,16 @@ fn normalize_output_schema(schema: &Value) -> Value {
 
     // Hoist $schema and definitions to the wrapper level
     if let Some(s) = schema.get("$schema") {
-        wrapper.as_object_mut().unwrap().insert("$schema".into(), s.clone());
+        wrapper
+            .as_object_mut()
+            .unwrap()
+            .insert("$schema".into(), s.clone());
     }
     if let Some(d) = schema.get("definitions") {
-        wrapper.as_object_mut().unwrap().insert("definitions".into(), d.clone());
+        wrapper
+            .as_object_mut()
+            .unwrap()
+            .insert("definitions".into(), d.clone());
         // Remove from the nested copy to avoid duplication
         if let Some(inner) = wrapper.pointer_mut("/properties/result") {
             inner.as_object_mut().map(|o| o.remove("definitions"));
