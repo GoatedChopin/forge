@@ -209,7 +209,7 @@ pub fn use_require_auth(redirect_path: &str) -> bool {
 ///
 /// ```ignore
 /// ForgeAuthProvider {
-///     url: "http://localhost:8080",
+///     url: "http://localhost:9081",
 ///     app_name: "my-app",
 ///     children: rsx! { Router::<Route> {} }
 /// }

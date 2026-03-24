@@ -229,7 +229,7 @@ impl Default for GatewayConfig {
 }
 
 fn default_http_port() -> u16 {
-    8080
+    9081
 }
 
 fn default_grpc_port() -> u16 {

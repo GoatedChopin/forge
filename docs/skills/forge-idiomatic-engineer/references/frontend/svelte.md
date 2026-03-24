@@ -68,7 +68,7 @@ Root layout (`+layout.svelte`):
   import { getToken } from '$lib/auth';
 </script>
 
-<ForgeProvider url="http://localhost:8080" getToken={getToken}>
+<ForgeProvider url="http://localhost:9081" getToken={getToken}>
   {@render children()}
 </ForgeProvider>
 ```
@@ -102,7 +102,7 @@ export function getToken(): string | null;
 auth.setAuth(response.access_token, response.refresh_token, response.user);
 
 // In root layout (once):
-auth.startRefreshLoop("http://localhost:8080");
+auth.startRefreshLoop("http://localhost:9081");
 
 // Logout:
 auth.clearAuth();

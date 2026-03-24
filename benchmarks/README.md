@@ -34,9 +34,9 @@ The `benchmarks/app/` directory contains a small Forge app plus one Rust load ge
 # external Forge run, e.g. a GCP load balancer or explicit Forge VM URLs
 ./benchmarks/app/run.sh --forge-url 'https://forge-bench.example.com'
 ./benchmarks/app/run.sh \
-  --forge-url 'http://vm-1:8080' \
-  --forge-url 'http://vm-2:8080' \
-  --forge-url 'http://vm-3:8080'
+  --forge-url 'http://vm-1:9081' \
+  --forge-url 'http://vm-2:9081' \
+  --forge-url 'http://vm-3:9081'
 ```
 
 ## Prerequisites

@@ -9,7 +9,7 @@ export default defineConfig({
   reporter: "html",
   globalSetup: "./tests/global-setup.ts",
   use: {
-    baseURL: "http://localhost:5173",
+    baseURL: "http://localhost:9080",
     trace: "on-first-retry",
   },
   projects: [
@@ -19,8 +19,8 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "bun run dev",
-    url: "http://localhost:5173",
+    command: "bun run dev --port 9080",
+    url: "http://localhost:9080",
     reuseExistingServer: true,
     timeout: 120 * 1000,
   },

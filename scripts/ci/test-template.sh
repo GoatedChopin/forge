@@ -31,7 +31,7 @@ trap cleanup EXIT
 echo "=== Scaffold ==="
 "$FORGE" new "test-$SLUG" --template "$TEMPLATE" --output "$DIR" --no-lock --include-skill
 
-perl -0pi -e "s/\\[gateway\\]\\nport = 8080/[gateway]\\nport = $BACKEND_PORT/" "$DIR/forge.toml"
+perl -0pi -e "s/\\[gateway\\]\\nport = 9081/[gateway]\\nport = $BACKEND_PORT/" "$DIR/forge.toml"
 
 # Patch npm packages to local source (Rust patches are handled by debug build)
 if [ -f "$DIR/frontend/package.json" ] && grep -q '@forge-rs/svelte' "$DIR/frontend/package.json"; then
@@ -129,7 +129,7 @@ done
 if [ "$PRESTART_DIOXUS" = true ]; then
   echo "=== Wait for Dioxus WASM build ==="
   for i in $(seq 1 300); do
-    PAGE=$(curl -sf http://localhost:5173 2>/dev/null || true)
+    PAGE=$(curl -sf http://localhost:9080 2>/dev/null || true)
     if [ -n "$PAGE" ] \
       && ! printf '%s' "$PAGE" | command grep -q 'Forge Dioxus Dev Placeholder' \
       && ! printf '%s' "$PAGE" | command grep -q 'Err 404 - dx is not serving a web app' \

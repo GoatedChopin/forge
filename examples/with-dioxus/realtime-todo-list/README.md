@@ -10,8 +10,8 @@ forge dev
 
 Starts PostgreSQL, the Rust backend, and the Dioxus web frontend.
 
-- Frontend: http://localhost:5173
-- Backend: http://localhost:8080
+- Frontend: http://localhost:9080
+- Backend: http://localhost:9081
 - PostgreSQL: localhost:5432
 
 ### iOS Simulator

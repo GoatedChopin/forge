@@ -580,8 +580,14 @@ impl Forge {
                     )
                 }
                 router = router
-                    .route("/.well-known/oauth-authorization-server", get(oauth_not_supported))
-                    .route("/.well-known/oauth-protected-resource", get(oauth_not_supported));
+                    .route(
+                        "/.well-known/oauth-authorization-server",
+                        get(oauth_not_supported),
+                    )
+                    .route(
+                        "/.well-known/oauth-protected-resource",
+                        get(oauth_not_supported),
+                    );
             }
 
             // Merge custom routes before frontend fallback so they take precedence

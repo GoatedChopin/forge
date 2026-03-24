@@ -310,7 +310,7 @@ fn backend_base_url_from_env(get_env: impl Fn(&str) -> Option<String>) -> String
     get_env("VITE_API_URL")
         .or_else(|| get_env("PUBLIC_API_URL"))
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "http://localhost:8080".to_string())
+        .unwrap_or_else(|| "http://localhost:9081".to_string())
 }
 
 fn backend_base_url() -> String {
@@ -354,7 +354,7 @@ async fn wait_for_backend_health(timeout: Duration) -> bool {
 
 async fn check_frontend_health() -> bool {
     let result = Command::new("curl")
-        .args(["-sf", "--max-time", "2", "http://localhost:5173"])
+        .args(["-sf", "--max-time", "2", "http://localhost:9080"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
@@ -461,6 +461,6 @@ mod tests {
     fn test_backend_base_url_defaults_to_localhost() {
         let url = backend_base_url_from_env(|_| None);
 
-        assert_eq!(url, "http://localhost:8080");
+        assert_eq!(url, "http://localhost:9081");
     }
 }

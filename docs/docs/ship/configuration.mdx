@@ -14,7 +14,7 @@ pool_size = 50
 replica_urls = ["${DATABASE_REPLICA_URL}"]
 
 [gateway]
-port = 8080
+port = 9081
 
 [worker]
 max_concurrent_jobs = 10
@@ -380,7 +380,7 @@ name = "my-app"
 url = "${DATABASE_URL}"
 
 [gateway]
-port = 8080
+port = 9081
 ```
 
 ### Production Single Node
@@ -394,7 +394,7 @@ url = "${DATABASE_URL}"
 pool_size = 100
 
 [gateway]
-port = 8080
+port = 9081
 
 [auth]
 jwt_algorithm = "RS256"

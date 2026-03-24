@@ -25,7 +25,7 @@ cd examples/with-svelte/realtime-todo-list
 docker compose up
 ```
 
-Backend at `http://localhost:8080`, frontend at `http://localhost:5173`.
+Backend at `http://localhost:9081`, frontend at `http://localhost:9080`.
 
 Postgres binds to `127.0.0.1:5432` so you can connect from host tools (psql, rust-analyzer, sqlx) without exposing it to the network.
 

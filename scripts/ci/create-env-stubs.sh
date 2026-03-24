@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 for dir in examples/with-*/*/frontend; do
   [ -d "$dir" ] || continue
-  [ -f "$dir/.env" ] || echo 'PUBLIC_API_URL=http://localhost:8080' > "$dir/.env"
+  [ -f "$dir/.env" ] || echo 'PUBLIC_API_URL=http://localhost:9081' > "$dir/.env"
 done

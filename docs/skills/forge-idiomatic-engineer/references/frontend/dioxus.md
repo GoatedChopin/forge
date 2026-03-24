@@ -61,7 +61,7 @@ fn main() {
 fn app() -> Element {
     rsx! {
         ForgeProvider {
-            url: "http://localhost:8080",
+            url: "http://localhost:9081",
             Router::<Route> {}
         }
     }
@@ -71,7 +71,7 @@ fn app() -> Element {
 fn app() -> Element {
     rsx! {
         ForgeAuthProvider {
-            url: "http://localhost:8080",
+            url: "http://localhost:9081",
             app_name: "my-app",
             refresh_interval_secs: 2400,  // ~2/3 of access_token_ttl
             Router::<Route> {}

@@ -232,10 +232,10 @@ read_from_replica = false
 size = 10
 
 [gateway]
-port = 8080
+port = 9081
 sse_max_sessions = 10000
 request_timeout_secs = 30
-cors_origins = ["http://localhost:5173"]
+cors_origins = ["http://localhost:9080", "http://127.0.0.1:9080"]
 quiet_routes = ["/_api/health", "/_api/ready"]
 
 [function]

@@ -10,7 +10,7 @@ Start the backend and database:
 forge dev
 ```
 
-- Backend: http://localhost:8080
+- Backend: http://localhost:9081
 - PostgreSQL: localhost:5432
 
 ### Running the Frontend
@@ -37,7 +37,7 @@ cd frontend && dx serve --platform ios
 cd frontend && dx serve --platform android
 ```
 
-The frontend connects to the backend at `http://localhost:8080` by default.
+The frontend connects to the backend at `http://localhost:9081` by default.
 
 ### Useful Commands
 

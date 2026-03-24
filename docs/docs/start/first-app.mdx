@@ -24,8 +24,8 @@ This runs Docker Compose with the frontend and backend exposed on your host:
 
 | Service  | URL                   |
 | -------- | --------------------- |
-| Frontend | http://localhost:5173 |
-| Backend  | http://localhost:8080 |
+| Frontend | http://localhost:9080 |
+| Backend  | http://localhost:9081 |
 
 PostgreSQL runs inside the Docker network by default and is not published on `localhost:5432`. Use `docker compose exec db psql ...` if you want to inspect it directly.
 
@@ -107,7 +107,7 @@ DROP TABLE IF EXISTS todos;
 ## Test It
 
 ```bash
-curl -X POST http://localhost:8080/_api/rpc/list_todos \
+curl -X POST http://localhost:9081/_api/rpc/list_todos \
   -H "Content-Type: application/json" \
   -d '{}'
 ```
@@ -148,7 +148,7 @@ Forge::builder()
 Test it:
 
 ```bash
-curl -X POST http://localhost:8080/_api/rpc/create_todo \
+curl -X POST http://localhost:9081/_api/rpc/create_todo \
   -H "Content-Type: application/json" \
   -d '{"args": {"title": "Learn Forge"}}'
 ```

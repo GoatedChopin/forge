@@ -49,7 +49,7 @@ find docs -name "*.mdx" -o -name "*.md" | xargs -I {} sed -i "s/forgex = { versi
 # Create frontend .env files and regenerate types
 for dir in examples/with-*/*/frontend; do
   [ -d "$dir" ] || continue
-  [ -f "$dir/.env" ] || echo 'PUBLIC_API_URL=http://localhost:8080' > "$dir/.env"
+  [ -f "$dir/.env" ] || echo 'PUBLIC_API_URL=http://localhost:9081' > "$dir/.env"
 done
 
 for example_dir in examples/with-*/*/; do

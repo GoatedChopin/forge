@@ -42,7 +42,7 @@ terminationGracePeriodSeconds: 45  # > drain timeout (30s)
 readinessProbe:
   httpGet:
     path: /_api/ready
-    port: 8080
+    port: 9081
 ```
 
 ## Scaling

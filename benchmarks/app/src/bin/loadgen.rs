@@ -46,9 +46,9 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             forge_urls: vec![
-                "http://127.0.0.1:8080".to_string(),
-                "http://127.0.0.1:8081".to_string(),
-                "http://127.0.0.1:8082".to_string(),
+                "http://127.0.0.1:9081".to_string(),
+                "http://127.0.0.1:9082".to_string(),
+                "http://127.0.0.1:9083".to_string(),
             ],
             max_duration: None,
             start_users: DEFAULT_START_USERS,
@@ -862,7 +862,7 @@ fn print_help() {
     println!("Examples:");
     println!("  loadgen");
     println!("  loadgen --max-duration 30m");
-    println!("  loadgen http://127.0.0.1:8080 http://127.0.0.1:8081 http://127.0.0.1:8082");
+    println!("  loadgen http://127.0.0.1:9081 http://127.0.0.1:9082 http://127.0.0.1:9083");
     println!("  loadgen https://forge-bench.example.com");
 }
 

@@ -13,9 +13,9 @@ url = "${DATABASE_URL}"
 # read_from_replica = false
 
 [gateway]
-port = 8080
+port = 9081
 # host = "0.0.0.0"
-cors_origins = ["http://localhost:5173"]
+cors_origins = ["http://localhost:9080", "http://127.0.0.1:9080"]
 # quiet_routes = ["/_api/health", "/_api/ready"]  # Routes excluded from traces/metrics/logs
 
 [observability]

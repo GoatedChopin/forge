@@ -72,7 +72,7 @@ pub struct GatewayConfig {
 impl Default for GatewayConfig {
     fn default() -> Self {
         Self {
-            port: 8080,
+            port: 9081,
             max_connections: 512,
             sse_max_sessions: 10_000,
             request_timeout_secs: 30,
@@ -503,7 +503,7 @@ mod tests {
     #[test]
     fn test_gateway_config_default() {
         let config = GatewayConfig::default();
-        assert_eq!(config.port, 8080);
+        assert_eq!(config.port, 9081);
         assert_eq!(config.max_connections, 512);
         assert!(!config.cors_enabled);
     }

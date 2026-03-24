@@ -556,10 +556,12 @@ impl NewCommand {
         );
 
         ui::section("Default Service URLs");
-        if template.frontend != FrontendTarget::Dioxus {
-            ui::kv("Frontend", "http://localhost:5173");
+        if template.frontend == FrontendTarget::Dioxus {
+            ui::kv("Frontend", "dx serve --port 9080");
+        } else {
+            ui::kv("Frontend", "http://localhost:9080");
         }
-        ui::kv("Backend", "http://localhost:8080");
+        ui::kv("Backend", "http://localhost:9081");
         ui::kv("Grafana", "http://localhost:3000");
 
         ui::section("Docs");

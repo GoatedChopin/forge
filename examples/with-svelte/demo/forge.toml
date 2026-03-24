@@ -13,9 +13,9 @@ url = "${DATABASE_URL}"
 # read_from_replica = false
 
 [gateway]
-port = 8080
+port = 9081
 # host = "0.0.0.0"
-cors_origins = ["http://localhost:5173"]
+cors_origins = ["http://localhost:9080", "http://127.0.0.1:9080"]
 # quiet_routes = ["/_api/health", "/_api/ready"]  # Routes excluded from traces/metrics/logs
 
 [observability]
@@ -44,7 +44,7 @@ jwt_secret = "${JWT_SECRET}"
 enabled = true
 path = "/mcp"
 session_ttl_secs = 3600
-allowed_origins = ["http://localhost:5173"]
+allowed_origins = ["http://localhost:9080", "http://127.0.0.1:9080"]
 require_protocol_version_header = true
 
 # [rate_limit]

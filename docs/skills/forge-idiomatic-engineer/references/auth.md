@@ -205,7 +205,7 @@ auth.setAuth(response.access_token, response.refresh_token, response.user);
 auth.updateTokens(response.access_token, response.refresh_token);
 
 // Start periodic refresh (call once in root layout):
-auth.startRefreshLoop("http://localhost:8080", 40 * 60 * 1000);
+auth.startRefreshLoop("http://localhost:9081", 40 * 60 * 1000);
 
 // Logout (clears localStorage, stops refresh loop, reconnects SSE):
 auth.clearAuth();
@@ -228,7 +228,7 @@ Use `ForgeAuthProvider` instead of `ForgeProvider` for built-in token + viewer s
 ```rust
 rsx! {
     ForgeAuthProvider {
-        url: "http://localhost:8080",
+        url: "http://localhost:9081",
         app_name: "my-app",
         refresh_interval_secs: 2400,   // default 40min, ~2/3 of access_token_ttl
         Router::<Route> {}
