@@ -19,7 +19,7 @@ use crate::rate_limit::RateLimiter;
 
 const SUPPORTED_VERSIONS: &[&str] = &["2025-11-25", "2025-03-26", "2024-11-05"];
 #[cfg(test)]
-const MCP_PROTOCOL_VERSION: &str = SUPPORTED_VERSIONS[0];
+const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 const MCP_SESSION_HEADER: &str = "mcp-session-id";
 const MCP_PROTOCOL_HEADER: &str = "mcp-protocol-version";
 const DEFAULT_PAGE_SIZE: usize = 50;
@@ -286,7 +286,7 @@ async fn handle_initialize(state: &Arc<McpState>, id: Option<Value>, params: &Va
         .into_response();
 
     set_header(&mut response, MCP_SESSION_HEADER, &session_id);
-    set_header(&mut response, MCP_PROTOCOL_HEADER, &requested_version);
+    set_header(&mut response, MCP_PROTOCOL_HEADER, requested_version);
     response
 }
 
@@ -343,7 +343,8 @@ fn handle_tools_list(state: &Arc<McpState>, id: Option<Value>, params: &Value) -
                 "description": entry.info.description,
                 "inputSchema": entry.input_schema,
             });
-            let obj = value.as_object_mut().unwrap();
+            // json!({}) always produces Value::Object
+            let obj = value.as_object_mut().expect("json! object literal");
 
             if let Some(title) = &entry.info.title {
                 obj.insert("title".into(), serde_json::Value::String(title.to_string()));
@@ -382,11 +383,15 @@ fn handle_tools_list(state: &Arc<McpState>, id: Option<Value>, params: &Value) -
 
     // Build result: omit nextCursor when null (Claude Code expects string or absent)
     let mut result = serde_json::json!({ "tools": page });
-    if end < tools.len() {
-        result.as_object_mut().unwrap().insert(
-            "nextCursor".into(),
-            serde_json::Value::String(end.to_string()),
-        );
+    if end < tools.len() && result.is_object() {
+        // json!({}) always produces Value::Object
+        result
+            .as_object_mut()
+            .expect("json! object literal")
+            .insert(
+                "nextCursor".into(),
+                serde_json::Value::String(end.to_string()),
+            );
     }
 
     (StatusCode::OK, Json(json_rpc_success(id, result))).into_response()
@@ -409,17 +414,11 @@ fn normalize_output_schema(schema: &Value) -> Value {
     });
 
     // Hoist $schema and definitions to the wrapper level
-    if let Some(s) = schema.get("$schema") {
-        wrapper
-            .as_object_mut()
-            .unwrap()
-            .insert("$schema".into(), s.clone());
+    if let (Some(s), Some(obj)) = (schema.get("$schema"), wrapper.as_object_mut()) {
+        obj.insert("$schema".into(), s.clone());
     }
-    if let Some(d) = schema.get("definitions") {
-        wrapper
-            .as_object_mut()
-            .unwrap()
-            .insert("definitions".into(), d.clone());
+    if let (Some(d), Some(obj)) = (schema.get("definitions"), wrapper.as_object_mut()) {
+        obj.insert("definitions".into(), d.clone());
         // Remove from the nested copy to avoid duplication
         if let Some(inner) = wrapper.pointer_mut("/properties/result") {
             inner.as_object_mut().map(|o| o.remove("definitions"));
