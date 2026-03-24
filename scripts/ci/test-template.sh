@@ -134,7 +134,7 @@ done
 # is ready, that placeholder disappears.
 if [ "$PRESTART_DIOXUS" = true ]; then
   echo "=== Wait for Dioxus WASM build ==="
-  for i in $(seq 1 300); do
+  for i in $(seq 1 600); do
     PAGE=$(curl -sf http://localhost:9080 2>/dev/null || true)
     if [ -n "$PAGE" ] \
       && ! printf '%s' "$PAGE" | command grep -q 'Forge Dioxus Dev Placeholder' \
@@ -143,7 +143,7 @@ if [ "$PRESTART_DIOXUS" = true ]; then
       echo "Dioxus WASM build complete"
       break
     fi
-    [ "$i" -eq 300 ] && { echo "Dioxus WASM build timed out after 300s"; exit 1; }
+    [ "$i" -eq 600 ] && { echo "Dioxus WASM build timed out after 600s"; exit 1; }
     sleep 1
   done
 fi
