@@ -7,9 +7,15 @@ import {
   createWorkflowStore,
 } from "@forge-rs/svelte";
 import type {
+  AuthResponse,
+  DemoStats,
   ExportInput,
   ExportOutput,
   IssLocation,
+  LoginInput,
+  RefreshInput,
+  RegisterInput,
+  TokenPair,
   Trade,
   User,
   UserRole,
@@ -18,7 +24,19 @@ import type {
   WebhookEvent,
 } from "./types";
 
+// Auth mutations
+export const register = (args: RegisterInput): Promise<AuthResponse> =>
+  getForgeClient().call("register", args);
+export const login = (args: LoginInput): Promise<AuthResponse> =>
+  getForgeClient().call("login", args);
+export const refreshToken = (args: RefreshInput): Promise<TokenPair> =>
+  getForgeClient().call("refresh_token", args);
+
 // Queries
+export const getDemoStats = (): Promise<DemoStats> =>
+  getForgeClient().call("get_demo_stats", null);
+export const getDemoStatsStore$ = () =>
+  createSubscriptionStore<null, DemoStats>("get_demo_stats", null);
 export const getIssLocation = (): Promise<IssLocation | null> =>
   getForgeClient().call("get_iss_location", null);
 export const getTrades = (): Promise<Trade[]> =>

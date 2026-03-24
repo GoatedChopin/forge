@@ -1,5 +1,8 @@
+mod auth;
 mod export;
 mod iss;
+mod mcp;
+mod stats;
 mod trades;
 mod users;
 mod verification;

@@ -14,7 +14,7 @@ services:
       - FORGE_OTEL_ENABLED=true
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel:4318
     working_dir: /workspace/examples/with-svelte/kanban-board
-    command: cargo watch --poll -w src -w migrations -w Cargo.toml -x "run --no-default-features"
+    command: cargo watch --poll -x "run --no-default-features"
     volumes:
       - ../../..:/workspace
       - cargo_cache:/usr/local/cargo/registry

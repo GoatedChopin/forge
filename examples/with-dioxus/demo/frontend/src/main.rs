@@ -3,7 +3,10 @@ mod forge;
 
 use dioxus::prelude::*;
 
-use components::{ExportCard, IssCard, TradesCard, UsersSection, VerificationCard, WebhookCard};
+use components::{
+    AuthCard, CacheCard, ExportCard, IssCard, McpCard, TradesCard, UsersSection,
+    VerificationCard, WebhookCard,
+};
 use forge::{ForgeProvider, User};
 
 const API_URL: &str = match option_env!("FORGE_API_URL") {
@@ -31,17 +34,22 @@ fn DemoPage() -> Element {
     rsx! {
         main { class: "shell",
             h1 { "Forge Demo" }
-            div { class: "grid",
-                div { class: "stack",
+
+            div { class: "columns",
+                div { class: "col",
                     IssCard {}
+                    CacheCard {}
                     ExportCard {}
+                    McpCard { api_url: API_URL.to_string() }
+                }
+                div { class: "col",
+                    TradesCard {}
+                    AuthCard {}
+                    WebhookCard { api_url: API_URL.to_string() }
                     VerificationCard { selected_user }
                 }
-                div { class: "stack",
-                    TradesCard {}
-                    WebhookCard { api_url: API_URL.to_string() }
-                }
             }
+
             UsersSection { selected_user }
         }
     }

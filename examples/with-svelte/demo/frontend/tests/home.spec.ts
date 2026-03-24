@@ -16,6 +16,9 @@ test.describe("Forge Demo", () => {
     await expect(page.getByText("Export Job")).toBeVisible();
     await expect(page.getByText("Verification")).toBeVisible();
     await expect(page.getByText("Webhook").first()).toBeVisible();
+    await expect(page.getByText("refresh tokens")).toBeVisible();
+    await expect(page.getByText("Cached Query")).toBeVisible();
+    await expect(page.getByRole("heading", { name: /MCP Tools/ })).toBeVisible();
     await expect(page.getByRole("heading", { name: /users/i })).toBeVisible();
   });
 
@@ -411,5 +414,117 @@ test.describe("Forge Demo", () => {
     const data = await response.json();
     expect(data.success).toBe(true);
     expect(data.data).toBe(false);
+  });
+
+  test("auth, cache, and MCP sections are visible", async ({ page }) => {
+    await page.goto("/");
+
+    await expect(page.getByText("refresh tokens")).toBeVisible();
+    await expect(page.getByText("Cached Query")).toBeVisible();
+    await expect(page.getByRole("heading", { name: /MCP Tools/ })).toBeVisible();
+  });
+
+  test("auth login with demo credentials via API", async ({ rpc }) => {
+    const data = (await rpc("login", {
+      input: { email: "demo@example.com", password: "password123" },
+    })) as { access_token: string; refresh_token: string; user: { email: string } };
+
+    expect(data.access_token).toBeDefined();
+    expect(data.refresh_token).toBeDefined();
+    expect(data.user.email).toBe("demo@example.com");
+  });
+
+  test("auth register and login flow via API", async ({ rpc }) => {
+    const email = `pw-test-${Date.now()}@example.com`;
+
+    const registerData = (await rpc("register", {
+      input: { email, name: "PW Test", password: "testpassword123" },
+    })) as { access_token: string };
+    expect(registerData.access_token).toBeDefined();
+
+    const loginData = (await rpc("login", {
+      input: { email, password: "testpassword123" },
+    })) as { user: { email: string } };
+    expect(loginData.user.email).toBe(email);
+  });
+
+  test("auth refresh token rotation via API", async ({ rpc }) => {
+    const loginData = (await rpc("login", {
+      input: { email: "demo@example.com", password: "password123" },
+    })) as { refresh_token: string };
+
+    const refreshData = (await rpc("refresh_token", {
+      input: { refresh_token: loginData.refresh_token },
+    })) as { access_token: string; refresh_token: string };
+
+    expect(refreshData.access_token).toBeDefined();
+    expect(refreshData.refresh_token).toBeDefined();
+    expect(refreshData.refresh_token).not.toBe(loginData.refresh_token);
+  });
+
+  test("auth login shows token metadata in UI", async ({
+    page,
+    gotoReady,
+  }) => {
+    await gotoReady();
+
+    const authSection = page.locator("section", {
+      has: page.getByText("refresh tokens"),
+    });
+
+    // Default credentials are pre-filled, click the submit button
+    await authSection.locator('button[type="submit"]').click();
+
+    // Should show token metadata
+    await expect(authSection.getByText("sub")).toBeVisible({
+      timeout: ACTION_TIMEOUT,
+    });
+    await expect(authSection.getByText("exp")).toBeVisible();
+    await expect(authSection.getByText("Logged in as")).toBeVisible();
+  });
+
+  test("cached query returns stats via API", async ({ rpc }) => {
+    const data = (await rpc("get_demo_stats")) as {
+      total_users: number;
+      total_trades: number;
+      total_webhooks: number;
+      computed_at: string;
+    };
+
+    expect(typeof data.total_users).toBe("number");
+    expect(typeof data.total_trades).toBe("number");
+    expect(typeof data.total_webhooks).toBe("number");
+    expect(data.computed_at).toBeDefined();
+  });
+
+  test("cached query shows stats in UI", async ({ page, gotoReady }) => {
+    await gotoReady();
+
+    const cacheSection = page.locator("section", {
+      has: page.getByText("Cached Query"),
+    });
+
+    await expect(cacheSection.getByText("Users")).toBeVisible({
+      timeout: ACTION_TIMEOUT,
+    });
+    await expect(cacheSection.getByText("Trades")).toBeVisible();
+    await expect(cacheSection.getByText("Webhooks")).toBeVisible();
+    await expect(cacheSection.getByText("Computed")).toBeVisible();
+  });
+
+  test("MCP tools section shows configuration", async ({ page }) => {
+    await page.goto("/");
+
+    const mcpSection = page.locator("section", {
+      has: page.getByRole("heading", { name: /MCP Tools/ }),
+    });
+
+    await expect(
+      mcpSection.getByText("claude mcp add forge-demo"),
+    ).toBeVisible();
+    await expect(mcpSection.getByText("demo.list_users")).toBeVisible();
+    await expect(
+      mcpSection.getByText("demo.get_user_by_email"),
+    ).toBeVisible();
   });
 });

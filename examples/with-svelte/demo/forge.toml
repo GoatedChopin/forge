@@ -36,14 +36,16 @@ otlp_endpoint = "http://localhost:4318"
 # concurrency = 4       # max concurrent jobs
 # poll_interval = 1000  # milliseconds
 
-# [auth]
-# jwt_algorithm = "HS256"           # HS256, HS384, HS512, RS256, RS384, RS512
-#
-# --- HMAC (HS256/HS384/HS512) - symmetric, use for self-issued tokens ---
-# jwt_secret = "${JWT_SECRET}"
-#
-# --- RSA (RS256/RS384/RS512) - asymmetric, use for external providers ---
-# jwks_url = ""                     # Provider JWKS URLs: see auth reference docs
+[auth]
+jwt_algorithm = "HS256"
+jwt_secret = "${JWT_SECRET}"
+
+[mcp]
+enabled = true
+path = "/mcp"
+session_ttl_secs = 3600
+allowed_origins = ["http://localhost:5173"]
+require_protocol_version_header = true
 
 # [rate_limit]
 # enabled = true

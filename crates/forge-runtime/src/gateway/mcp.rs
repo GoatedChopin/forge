@@ -17,7 +17,9 @@ use tokio::sync::RwLock;
 use crate::mcp::McpToolRegistry;
 use crate::rate_limit::RateLimiter;
 
-const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
+const SUPPORTED_VERSIONS: &[&str] = &["2025-11-25", "2025-03-26", "2024-11-05"];
+#[cfg(test)]
+const MCP_PROTOCOL_VERSION: &str = SUPPORTED_VERSIONS[0];
 const MCP_SESSION_HEADER: &str = "mcp-session-id";
 const MCP_PROTOCOL_HEADER: &str = "mcp-protocol-version";
 const DEFAULT_PAGE_SIZE: usize = 50;
@@ -235,7 +237,7 @@ async fn handle_initialize(state: &Arc<McpState>, id: Option<Value>, params: &Va
             .into_response();
     };
 
-    if requested_version != MCP_PROTOCOL_VERSION {
+    if !SUPPORTED_VERSIONS.contains(&requested_version) {
         return (
             StatusCode::OK,
             Json(json_rpc_error(
@@ -243,7 +245,7 @@ async fn handle_initialize(state: &Arc<McpState>, id: Option<Value>, params: &Va
                 -32602,
                 "Unsupported protocolVersion",
                 Some(serde_json::json!({
-                    "supported": MCP_PROTOCOL_VERSION
+                    "supported": SUPPORTED_VERSIONS
                 })),
             )),
         )
@@ -257,7 +259,7 @@ async fn handle_initialize(state: &Arc<McpState>, id: Option<Value>, params: &Va
             session_id.clone(),
             McpSession {
                 initialized: false,
-                protocol_version: MCP_PROTOCOL_VERSION.to_string(),
+                protocol_version: requested_version.to_string(),
                 expires_at: Instant::now() + state.session_ttl(),
             },
         );
@@ -268,9 +270,11 @@ async fn handle_initialize(state: &Arc<McpState>, id: Option<Value>, params: &Va
         Json(json_rpc_success(
             id,
             serde_json::json!({
-                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "protocolVersion": requested_version,
                 "capabilities": {
-                    "tools": {}
+                    "tools": {
+                        "listChanged": false
+                    }
                 },
                 "serverInfo": {
                     "name": "forge",
@@ -282,7 +286,7 @@ async fn handle_initialize(state: &Arc<McpState>, id: Option<Value>, params: &Va
         .into_response();
 
     set_header(&mut response, MCP_SESSION_HEADER, &session_id);
-    set_header(&mut response, MCP_PROTOCOL_HEADER, MCP_PROTOCOL_VERSION);
+    set_header(&mut response, MCP_PROTOCOL_HEADER, &requested_version);
     response
 }
 
@@ -315,63 +319,108 @@ fn handle_tools_list(state: &Arc<McpState>, id: Option<Value>, params: &Value) -
         .skip(start)
         .take(DEFAULT_PAGE_SIZE)
         .map(|entry| {
-            let annotations = serde_json::json!({
-                "title": entry.info.annotations.title,
-                "readOnlyHint": entry.info.annotations.read_only_hint,
-                "destructiveHint": entry.info.annotations.destructive_hint,
-                "idempotentHint": entry.info.annotations.idempotent_hint,
-                "openWorldHint": entry.info.annotations.open_world_hint
-            });
-
-            let icons: Vec<_> = entry
-                .info
-                .icons
-                .iter()
-                .map(|icon| {
-                    serde_json::json!({
-                        "src": icon.src,
-                        "mimeType": icon.mime_type,
-                        "sizes": icon.sizes,
-                        "theme": icon.theme
-                    })
-                })
-                .collect();
+            // Only include annotation fields that are set (non-null).
+            // Claude Code's MCP client rejects null booleans.
+            let mut annotations = serde_json::Map::new();
+            if let Some(title) = &entry.info.annotations.title {
+                annotations.insert("title".into(), serde_json::Value::String(title.to_string()));
+            }
+            if let Some(v) = entry.info.annotations.read_only_hint {
+                annotations.insert("readOnlyHint".into(), serde_json::Value::Bool(v));
+            }
+            if let Some(v) = entry.info.annotations.destructive_hint {
+                annotations.insert("destructiveHint".into(), serde_json::Value::Bool(v));
+            }
+            if let Some(v) = entry.info.annotations.idempotent_hint {
+                annotations.insert("idempotentHint".into(), serde_json::Value::Bool(v));
+            }
+            if let Some(v) = entry.info.annotations.open_world_hint {
+                annotations.insert("openWorldHint".into(), serde_json::Value::Bool(v));
+            }
 
             let mut value = serde_json::json!({
                 "name": entry.info.name,
-                "title": entry.info.title,
                 "description": entry.info.description,
                 "inputSchema": entry.input_schema,
-                "annotations": annotations,
-                "icons": icons
             });
-            if let Some(output_schema) = &entry.output_schema
-                && let Some(obj) = value.as_object_mut()
-            {
-                obj.insert("outputSchema".to_string(), output_schema.clone());
+            let obj = value.as_object_mut().unwrap();
+
+            if let Some(title) = &entry.info.title {
+                obj.insert("title".into(), serde_json::Value::String(title.to_string()));
+            }
+            if !annotations.is_empty() {
+                obj.insert("annotations".into(), serde_json::Value::Object(annotations));
+            }
+            if !entry.info.icons.is_empty() {
+                let icons: Vec<_> = entry
+                    .info
+                    .icons
+                    .iter()
+                    .map(|icon| {
+                        serde_json::json!({
+                            "src": icon.src,
+                            "mimeType": icon.mime_type,
+                            "sizes": icon.sizes,
+                            "theme": icon.theme
+                        })
+                    })
+                    .collect();
+                obj.insert("icons".into(), serde_json::Value::Array(icons));
+            }
+            if let Some(output_schema) = &entry.output_schema {
+                // MCP spec requires outputSchema to have type: "object".
+                // schemars may generate type: "array" (Vec<T>) or anyOf (Option<T>).
+                // Wrap non-object schemas so they conform.
+                let schema = normalize_output_schema(output_schema);
+                obj.insert("outputSchema".into(), schema);
             }
             value
         })
         .collect();
 
     let end = start.saturating_add(page.len());
-    let next_cursor = if end < tools.len() {
-        Some(end.to_string())
-    } else {
-        None
-    };
 
-    (
-        StatusCode::OK,
-        Json(json_rpc_success(
-            id,
-            serde_json::json!({
-                "tools": page,
-                "nextCursor": next_cursor
-            }),
-        )),
-    )
-        .into_response()
+    // Build result: omit nextCursor when null (Claude Code expects string or absent)
+    let mut result = serde_json::json!({ "tools": page });
+    if end < tools.len() {
+        result
+            .as_object_mut()
+            .unwrap()
+            .insert("nextCursor".into(), serde_json::Value::String(end.to_string()));
+    }
+
+    (StatusCode::OK, Json(json_rpc_success(id, result))).into_response()
+}
+
+/// MCP spec requires outputSchema to be `type: "object"`. Wrap schemas that
+/// schemars generates as arrays or union types (anyOf/oneOf for Option<T>).
+fn normalize_output_schema(schema: &Value) -> Value {
+    let type_str = schema.get("type").and_then(Value::as_str).unwrap_or("");
+    if type_str == "object" {
+        return schema.clone();
+    }
+
+    // Wrap non-object schemas: put the original under a "result" property
+    let mut wrapper = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "result": schema
+        }
+    });
+
+    // Hoist $schema and definitions to the wrapper level
+    if let Some(s) = schema.get("$schema") {
+        wrapper.as_object_mut().unwrap().insert("$schema".into(), s.clone());
+    }
+    if let Some(d) = schema.get("definitions") {
+        wrapper.as_object_mut().unwrap().insert("definitions".into(), d.clone());
+        // Remove from the nested copy to avoid duplication
+        if let Some(inner) = wrapper.pointer_mut("/properties/result") {
+            inner.as_object_mut().map(|o| o.remove("definitions"));
+        }
+    }
+
+    wrapper
 }
 
 async fn handle_tools_call(
@@ -559,7 +608,7 @@ async fn required_session_id(
     let sessions = state.sessions.read().await;
     match sessions.get(session_id) {
         Some(session) => {
-            if session.protocol_version != MCP_PROTOCOL_VERSION {
+            if !SUPPORTED_VERSIONS.contains(&session.protocol_version.as_str()) {
                 return Err((
                     StatusCode::BAD_REQUEST,
                     Json(json_rpc_error(
@@ -653,7 +702,7 @@ fn enforce_protocol_header(
         ));
     };
 
-    if version != MCP_PROTOCOL_VERSION {
+    if !SUPPORTED_VERSIONS.contains(&version) {
         return Err(Box::new(
             (
                 StatusCode::BAD_REQUEST,
@@ -661,7 +710,7 @@ fn enforce_protocol_header(
                     None,
                     -32600,
                     "Unsupported MCP-Protocol-Version",
-                    Some(serde_json::json!({ "supported": MCP_PROTOCOL_VERSION })),
+                    Some(serde_json::json!({ "supported": SUPPORTED_VERSIONS })),
                 )),
             )
                 .into_response(),

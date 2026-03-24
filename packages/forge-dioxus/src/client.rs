@@ -1,20 +1,58 @@
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use dioxus::prelude::{Signal, WritableExt, dioxus_core::Task};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::types::{
-    ConnectionState, ForgeClientError, ForgeError, RpcEnvelopeRaw, SseEnvelopeRaw, StreamEvent,
+    ConnectionState, ForgeClientError, ForgeError, RpcEnvelopeRaw, StreamEvent,
 };
 
 type TokenProvider = Rc<dyn Fn() -> Option<String>>;
 type AuthErrorHandler = Rc<dyn Fn(ForgeError)>;
+type EventSender = futures_channel::mpsc::UnboundedSender<SseDispatch>;
+type ConnectWaiter = futures_channel::oneshot::Sender<Result<(), ForgeClientError>>;
 
 static NEXT_SUBSCRIPTION_ID: AtomicU64 = AtomicU64::new(1);
+
+enum SseDispatch {
+    Data(serde_json::Value),
+    Error { code: String, message: String },
+}
+
+struct RegistrationMeta {
+    endpoint: &'static str,
+    payload: serde_json::Value,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+enum SseState {
+    #[default]
+    Idle,
+    Connecting,
+    Connected,
+}
+
+/// Shared SSE connection state, one per ForgeClient.
+#[derive(Default)]
+struct SseManager {
+    session_id: Option<String>,
+    session_secret: Option<String>,
+    state: SseState,
+    ever_connected: bool,
+    listeners: HashMap<String, EventSender>,
+    registrations: HashMap<String, RegistrationMeta>,
+    event_loop_task: Option<Task>,
+    reconnect_attempts: u32,
+    connect_waiters: Vec<ConnectWaiter>,
+}
+
+const MAX_RECONNECT_ATTEMPTS: u32 = 10;
 
 #[derive(Clone)]
 pub struct ForgeClientConfig {
@@ -63,6 +101,7 @@ struct ForgeClientInner {
     get_token: Option<TokenProvider>,
     on_auth_error: Option<AuthErrorHandler>,
     connection_state: Option<Signal<ConnectionState>>,
+    sse: RefCell<SseManager>,
 }
 
 impl ForgeClient {
@@ -73,6 +112,7 @@ impl ForgeClient {
                 get_token: config.get_token,
                 on_auth_error: config.on_auth_error,
                 connection_state: config.connection_state,
+                sse: RefCell::new(SseManager::default()),
             }),
         }
     }
@@ -143,7 +183,32 @@ impl ForgeClient {
         TResult: DeserializeOwned + Clone + 'static,
         F: FnMut(StreamEvent<TResult>) + 'static,
     {
-        platform::subscribe_query(self.clone(), function_name.to_string(), args, callback)
+        let sub_id = self.random_id("sub");
+        let target = format!("sub:{sub_id}");
+
+        let (tx, rx) = futures_channel::mpsc::unbounded::<SseDispatch>();
+        self.inner.sse.borrow_mut().listeners.insert(target.clone(), tx);
+
+        let args_value = serde_json::to_value(&args).unwrap_or(serde_json::Value::Null);
+        let reg_payload = serde_json::json!({
+            "id": sub_id,
+            "function": function_name,
+            "args": args_value,
+        });
+        self.inner.sse.borrow_mut().registrations.insert(
+            sub_id.clone(),
+            RegistrationMeta {
+                endpoint: "/_api/subscribe",
+                payload: reg_payload,
+            },
+        );
+
+        self.spawn_subscription(sub_id, target, rx, callback, |client, envelope, cb| {
+            match client.decode_envelope::<TResult>(envelope) {
+                Ok(data) => cb(StreamEvent::Data(data)),
+                Err(err) => cb(StreamEvent::Error(err)),
+            }
+        })
     }
 
     pub fn subscribe_job<TResult, F>(&self, job_id: String, callback: F) -> SubscriptionHandle
@@ -151,12 +216,7 @@ impl ForgeClient {
         TResult: DeserializeOwned + Clone + 'static,
         F: FnMut(StreamEvent<TResult>) + 'static,
     {
-        self.subscribe_tracker(
-            "job",
-            serde_json::json!({ "job_id": job_id }),
-            "/_api/subscribe-job",
-            callback,
-        )
+        self.subscribe_tracker("job", serde_json::json!({ "job_id": job_id }), "/_api/subscribe-job", callback)
     }
 
     pub fn subscribe_workflow<TResult, F>(
@@ -180,20 +240,289 @@ impl ForgeClient {
         &self,
         prefix: &str,
         payload: serde_json::Value,
-        endpoint: &str,
+        endpoint: &'static str,
         callback: F,
     ) -> SubscriptionHandle
     where
         TResult: DeserializeOwned + Clone + 'static,
         F: FnMut(StreamEvent<TResult>) + 'static,
     {
-        platform::subscribe_tracker(
-            self.clone(),
-            prefix.to_string(),
-            payload,
-            endpoint.to_string(),
-            callback,
-        )
+        let sub_id = self.random_id(prefix);
+        let target = format!("{prefix}:{sub_id}");
+
+        let (tx, rx) = futures_channel::mpsc::unbounded::<SseDispatch>();
+        self.inner.sse.borrow_mut().listeners.insert(target.clone(), tx);
+
+        let mut reg_payload = payload;
+        reg_payload
+            .as_object_mut()
+            .expect("tracker payload must be an object")
+            .insert("id".to_string(), serde_json::Value::String(sub_id.clone()));
+        self.inner.sse.borrow_mut().registrations.insert(
+            sub_id.clone(),
+            RegistrationMeta {
+                endpoint,
+                payload: reg_payload,
+            },
+        );
+
+        self.spawn_subscription(sub_id, target, rx, callback, |_client, envelope, cb| {
+            if envelope.success {
+                if let Some(data) = envelope.data {
+                    match serde_json::from_value::<TResult>(data) {
+                        Ok(parsed) => cb(StreamEvent::Data(parsed)),
+                        Err(e) => cb(StreamEvent::Error(ForgeClientError::new(
+                            "DESERIALIZATION_ERROR",
+                            e.to_string(),
+                            None,
+                        ))),
+                    }
+                }
+            }
+        })
+    }
+
+    fn spawn_subscription<TResult, F>(
+        &self,
+        sub_id: String,
+        target: String,
+        mut rx: futures_channel::mpsc::UnboundedReceiver<SseDispatch>,
+        mut callback: F,
+        on_initial: impl FnOnce(&ForgeClient, RpcEnvelopeRaw, &mut F) + 'static,
+    ) -> SubscriptionHandle
+    where
+        TResult: DeserializeOwned + Clone + 'static,
+        F: FnMut(StreamEvent<TResult>) + 'static,
+    {
+        let client = self.clone();
+        let handle = SubscriptionHandle::new(sub_id.clone(), target, self.clone());
+        let handle_task = handle.clone();
+
+        let task = dioxus::prelude::spawn(async move {
+            callback(StreamEvent::Connection(ConnectionState::Connecting));
+
+            if let Err(e) = client.ensure_connected().await {
+                callback(StreamEvent::Error(e));
+                callback(StreamEvent::Connection(ConnectionState::Disconnected));
+                handle_task.finish();
+                return;
+            }
+
+            match client.register_subscription(&sub_id).await {
+                Ok(envelope) => {
+                    callback(StreamEvent::Connection(ConnectionState::Connected));
+                    on_initial(&client, envelope, &mut callback);
+                }
+                Err(err) => {
+                    callback(StreamEvent::Error(err));
+                    callback(StreamEvent::Connection(ConnectionState::Disconnected));
+                    handle_task.finish();
+                    return;
+                }
+            }
+
+            while let Some(event) = futures_util::StreamExt::next(&mut rx).await {
+                Self::deliver_event::<TResult, F>(&mut callback, &client, event);
+            }
+
+            handle_task.finish();
+        });
+
+        handle.set_task(task);
+        handle
+    }
+
+    fn deliver_event<TResult, F>(
+        callback: &mut F,
+        client: &ForgeClient,
+        event: SseDispatch,
+    ) where
+        TResult: DeserializeOwned,
+        F: FnMut(StreamEvent<TResult>),
+    {
+        match event {
+            SseDispatch::Data(value) => match serde_json::from_value::<TResult>(value) {
+                Ok(data) => callback(StreamEvent::Data(data)),
+                Err(e) => {
+                    callback(StreamEvent::Error(ForgeClientError::new(
+                        "DESERIALIZATION_ERROR",
+                        e.to_string(),
+                        None,
+                    )));
+                }
+            },
+            SseDispatch::Error { code, message } => {
+                let err = ForgeClientError::new(&code, &message, None);
+                if code == "UNAUTHORIZED" {
+                    if let Some(handler) = &client.inner.on_auth_error {
+                        handler(err.as_forge_error());
+                    }
+                }
+                callback(StreamEvent::Error(err));
+            }
+        }
+    }
+
+    /// Ensure the shared SSE connection is established. Spawns the event loop on first call.
+    async fn ensure_connected(&self) -> Result<(), ForgeClientError> {
+        let rx = {
+            let mut sse = self.inner.sse.borrow_mut();
+            if sse.state == SseState::Connected {
+                return Ok(());
+            }
+
+            let (tx, rx) = futures_channel::oneshot::channel();
+            sse.connect_waiters.push(tx);
+
+            if sse.state == SseState::Idle {
+                sse.state = SseState::Connecting;
+                drop(sse);
+                platform::start_event_loop(self.clone());
+            }
+
+            rx
+        };
+
+        rx.await.unwrap_or_else(|_| {
+            Err(ForgeClientError::new(
+                "SSE_CONNECTION_FAILED",
+                "Connection attempt cancelled",
+                None,
+            ))
+        })
+    }
+
+    /// Register a subscription with the server via POST.
+    /// If the server returns SESSION_NOT_FOUND, forces a reconnect and retries once.
+    async fn register_subscription(
+        &self,
+        sub_id: &str,
+    ) -> Result<RpcEnvelopeRaw, ForgeClientError> {
+        let envelope = self.try_register_subscription(sub_id).await?;
+
+        // Stale session: force reconnect and retry once
+        let needs_retry = !envelope.success
+            && envelope
+                .error
+                .as_ref()
+                .is_some_and(|e| e.code == "SESSION_NOT_FOUND" || e.code == "SESSION_PRINCIPAL_MISMATCH");
+
+        if needs_retry {
+            self.force_reconnect().await;
+            self.ensure_connected().await?;
+            return self.try_register_subscription(sub_id).await;
+        }
+
+        Ok(envelope)
+    }
+
+    async fn try_register_subscription(
+        &self,
+        sub_id: &str,
+    ) -> Result<RpcEnvelopeRaw, ForgeClientError> {
+        let (endpoint, payload) = {
+            let sse = self.inner.sse.borrow();
+            let meta = sse
+                .registrations
+                .get(sub_id)
+                .ok_or_else(|| {
+                    ForgeClientError::new("INTERNAL_ERROR", "Registration metadata not found", None)
+                })?;
+            let session_id = sse.session_id.clone().unwrap_or_default();
+            let session_secret = sse.session_secret.clone().unwrap_or_default();
+            let mut payload = meta.payload.clone();
+            let obj = payload
+                .as_object_mut()
+                .expect("registration payload must be an object");
+            obj.insert("session_id".into(), serde_json::Value::String(session_id));
+            obj.insert("session_secret".into(), serde_json::Value::String(session_secret));
+            (meta.endpoint, payload)
+        };
+
+        let url = format!("{}{}", self.inner.url, endpoint);
+        platform::request_json(self, &url, payload).await
+    }
+
+    async fn force_reconnect(&self) {
+        let task = {
+            let mut sse = self.inner.sse.borrow_mut();
+            sse.session_id = None;
+            sse.session_secret = None;
+            sse.state = SseState::Idle;
+            // No need to drain waiters; force_reconnect is only called mid-registration
+            // where the caller already passed ensure_connected
+            sse.event_loop_task.take()
+        };
+        if let Some(task) = task {
+            task.cancel();
+        }
+        sleep(Duration::from_millis(10)).await;
+    }
+
+    async fn reregister_all(&self) {
+        let sub_ids: Vec<String> = {
+            let sse = self.inner.sse.borrow();
+            sse.registrations.keys().cloned().collect()
+        };
+
+        for sub_id in sub_ids {
+            let _ = self.register_subscription(&sub_id).await;
+        }
+    }
+
+    fn dispatch_event(&self, target: &str, event: SseDispatch) {
+        let tx = {
+            let sse = self.inner.sse.borrow();
+            sse.listeners.get(target).cloned()
+        };
+        if let Some(tx) = tx {
+            let _ = tx.unbounded_send(event);
+        }
+    }
+
+    fn broadcast_connection(&self, state: ConnectionState) {
+        if let Some(mut signal) = self.inner.connection_state {
+            signal.set(state);
+        }
+    }
+
+    fn mark_connected(&self, session_id: String, session_secret: String) -> bool {
+        let mut sse = self.inner.sse.borrow_mut();
+        let is_reconnect = sse.ever_connected;
+        sse.session_id = Some(session_id);
+        sse.session_secret = Some(session_secret);
+        sse.state = SseState::Connected;
+        sse.reconnect_attempts = 0;
+        sse.ever_connected = true;
+        for waiter in sse.connect_waiters.drain(..) {
+            let _ = waiter.send(Ok(()));
+        }
+        is_reconnect
+    }
+
+    fn mark_disconnected(&self) {
+        let mut sse = self.inner.sse.borrow_mut();
+        sse.session_id = None;
+        sse.session_secret = None;
+        sse.state = SseState::Idle;
+        sse.event_loop_task = None;
+        let err = || ForgeClientError::new("SSE_CONNECTION_FAILED", "SSE connection lost", None);
+        for waiter in sse.connect_waiters.drain(..) {
+            let _ = waiter.send(Err(err()));
+        }
+    }
+
+    fn should_reconnect(&self) -> Option<u32> {
+        let mut sse = self.inner.sse.borrow_mut();
+        if sse.listeners.is_empty() {
+            return None;
+        }
+        let attempts = sse.reconnect_attempts;
+        if attempts >= MAX_RECONNECT_ATTEMPTS {
+            return None;
+        }
+        sse.reconnect_attempts = attempts + 1;
+        Some(attempts)
     }
 
     fn get_token(&self) -> Option<String> {
@@ -202,28 +531,6 @@ impl ForgeClient {
             .as_ref()
             .and_then(|provider| provider())
             .filter(|t| !t.is_empty())
-    }
-
-    fn emit_connection<TValue, T>(&self, callback: &Rc<RefCell<T>>, state: ConnectionState)
-    where
-        T: FnMut(StreamEvent<TValue>),
-    {
-        if let Some(mut signal) = self.inner.connection_state {
-            signal.set(state);
-        }
-        (callback.borrow_mut())(StreamEvent::Connection(state));
-    }
-
-    fn emit_error<TValue, T>(&self, callback: &Rc<RefCell<T>>, error: ForgeClientError)
-    where
-        T: FnMut(StreamEvent<TValue>),
-    {
-        if error.code == "UNAUTHORIZED" {
-            if let Some(handler) = &self.inner.on_auth_error {
-                handler(error.as_forge_error());
-            }
-        }
-        (callback.borrow_mut())(StreamEvent::Error(error));
     }
 
     fn decode_envelope<TResult>(
@@ -255,17 +562,55 @@ impl ForgeClient {
     }
 }
 
+async fn sleep(duration: Duration) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        gloo_timers::future::sleep(duration).await;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        tokio::time::sleep(duration).await;
+    }
+}
+
 #[derive(Clone)]
 pub struct SubscriptionHandle {
     closed: Rc<Cell<bool>>,
     task: Rc<RefCell<Option<Task>>>,
+    cleanup: Rc<RefCell<Option<Box<dyn FnOnce()>>>>,
 }
 
 impl SubscriptionHandle {
-    fn new() -> Self {
+    fn new(sub_id: String, target: String, client: ForgeClient) -> Self {
+        let cleanup: Box<dyn FnOnce()> = Box::new(move || {
+            let mut sse = client.inner.sse.borrow_mut();
+            sse.listeners.remove(&target);
+            sse.registrations.remove(&sub_id);
+            // Jobs/workflows have server-managed lifecycles; only query subs need explicit unsubscribe
+            if target.starts_with("sub:") {
+                let session_id = sse.session_id.clone();
+                let session_secret = sse.session_secret.clone();
+                drop(sse);
+                if let (Some(sid), Some(ss)) = (session_id, session_secret) {
+                    let url = format!("{}/_api/unsubscribe", client.inner.url);
+                    let payload = serde_json::json!({
+                        "session_id": sid,
+                        "session_secret": ss,
+                        "id": sub_id,
+                    });
+                    let client = client.clone();
+                    dioxus::prelude::spawn(async move {
+                        let _ = platform::request_json(&client, &url, payload).await;
+                    });
+                }
+            }
+        });
+
         Self {
             closed: Rc::new(Cell::new(false)),
             task: Rc::new(RefCell::new(None)),
+            cleanup: Rc::new(RefCell::new(Some(cleanup))),
         }
     }
 
@@ -273,14 +618,19 @@ impl SubscriptionHandle {
         *self.task.borrow_mut() = Some(task);
     }
 
-    fn finish(&self) {
-        self.closed.set(true);
+    pub(crate) fn finish(&self) {
+        if self.closed.replace(true) {
+            return;
+        }
+        if let Some(cleanup) = self.cleanup.borrow_mut().take() {
+            cleanup();
+        }
         self.task.borrow_mut().take();
     }
 
     pub fn close(&self) {
-        self.closed.set(true);
-        let task = { self.task.borrow_mut().take() };
+        let task = { self.task.borrow_mut().clone() };
+        self.finish();
         if let Some(task) = task {
             task.cancel();
         }
@@ -297,50 +647,19 @@ impl Drop for SubscriptionHandle {
     }
 }
 
-fn parse_json_str<T>(raw: &str) -> Result<T, ForgeClientError>
-where
-    T: DeserializeOwned,
-{
-    serde_json::from_str(raw)
-        .map_err(|err| ForgeClientError::new("INVALID_SSE_PAYLOAD", err.to_string(), None))
-}
-
-fn emit_sse_error<TValue, T>(
-    client: &ForgeClient,
-    callback: &Rc<RefCell<T>>,
-    envelope: SseEnvelopeRaw,
-) where
-    T: FnMut(StreamEvent<TValue>),
-{
-    client.emit_error(
-        callback,
-        ForgeClientError::new(
-            envelope.code.unwrap_or_else(|| "SSE_ERROR".to_string()),
-            envelope
-                .message
-                .unwrap_or_else(|| "Subscription error".to_string()),
-            None,
-        ),
-    );
-}
+// ── WASM platform ───────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "wasm32")]
 mod platform {
-    use std::cell::RefCell;
-    use std::rc::Rc;
-
     use dioxus::prelude::spawn;
     use futures_util::{StreamExt, stream};
-    use gloo_net::eventsource::futures::{EventSource, EventSourceSubscription};
+    use gloo_net::eventsource::futures::EventSource;
     use gloo_net::http::Request;
     use js_sys::{JSON, encode_uri_component};
-    use serde::Serialize;
-    use serde::de::DeserializeOwned;
 
-    use super::{ForgeClient, SubscriptionHandle, emit_sse_error, parse_json_str};
+    use super::{ForgeClient, SseDispatch, sleep};
     use crate::types::{
         ConnectedEvent, ConnectionState, ForgeClientError, RpcEnvelopeRaw, SseEnvelopeRaw,
-        StreamEvent,
     };
 
     pub(super) async fn request_json(
@@ -383,378 +702,14 @@ mod platform {
             .map_err(request_error)
     }
 
-    struct SseConnection {
-        event_source: EventSource,
-        update_stream: EventSourceSubscription,
-        error_stream: EventSourceSubscription,
-    }
-
     fn message_data_as_string(message: &web_sys::MessageEvent) -> Option<String> {
         let data = message.data();
         data.as_string().or_else(|| {
             JSON::stringify(&data)
                 .ok()
                 .and_then(|value| value.as_string())
-                .map(|raw| {
-                    serde_json::from_str::<String>(&raw).unwrap_or(raw)
-                })
+                .map(|raw| serde_json::from_str::<String>(&raw).unwrap_or(raw))
         })
-    }
-
-    async fn open_sse_connection<TValue, F>(
-        client: &ForgeClient,
-        callback: &Rc<RefCell<F>>,
-        handle_task: &SubscriptionHandle,
-    ) -> Option<(SseConnection, ConnectedEvent)>
-    where
-        F: FnMut(StreamEvent<TValue>),
-    {
-        let mut event_source = match EventSource::new(&events_url(client)) {
-            Ok(source) => source,
-            Err(err) => {
-                client.emit_error(
-                    callback,
-                    ForgeClientError::new("SSE_CONNECTION_FAILED", err.to_string(), None),
-                );
-                client.emit_connection(callback, ConnectionState::Disconnected);
-                handle_task.finish();
-                return None;
-            }
-        };
-
-        macro_rules! subscribe_or_bail {
-            ($event_type:expr) => {
-                match event_source.subscribe($event_type) {
-                    Ok(stream) => stream,
-                    Err(err) => {
-                        client.emit_error(
-                            callback,
-                            ForgeClientError::new(
-                                "SSE_SUBSCRIBE_FAILED",
-                                err.to_string(),
-                                None,
-                            ),
-                        );
-                        client.emit_connection(callback, ConnectionState::Disconnected);
-                        handle_task.finish();
-                        return None;
-                    }
-                }
-            };
-        }
-
-        let mut connected_stream = subscribe_or_bail!("connected");
-        let update_stream = subscribe_or_bail!("update");
-        let error_stream = subscribe_or_bail!("error");
-
-        let connected_event = match connected_stream.next().await {
-            Some(Ok((_kind, message))) => {
-                let Some(raw) = message_data_as_string(&message) else {
-                    client.emit_error(
-                        callback,
-                        ForgeClientError::new(
-                            "INVALID_SSE_PAYLOAD",
-                            "SSE payload was not a string",
-                            None,
-                        ),
-                    );
-                    client.emit_connection(callback, ConnectionState::Disconnected);
-                    handle_task.finish();
-                    return None;
-                };
-                match parse_json_str::<ConnectedEvent>(&raw) {
-                    Ok(event) => event,
-                    Err(err) => {
-                        client.emit_error(callback, err);
-                        client.emit_connection(callback, ConnectionState::Disconnected);
-                        handle_task.finish();
-                        return None;
-                    }
-                }
-            }
-            Some(Err(err)) => {
-                client.emit_error(
-                    callback,
-                    ForgeClientError::new("SSE_CONNECTION_FAILED", err.to_string(), None),
-                );
-                client.emit_connection(callback, ConnectionState::Disconnected);
-                handle_task.finish();
-                return None;
-            }
-            None => {
-                client.emit_connection(callback, ConnectionState::Disconnected);
-                handle_task.finish();
-                return None;
-            }
-        };
-
-        if handle_task.is_closed() {
-            event_source.close();
-            handle_task.finish();
-            return None;
-        }
-
-        Some((SseConnection { event_source, update_stream, error_stream }, connected_event))
-    }
-
-    async fn process_sse_events<TResult, F>(
-        update_stream: EventSourceSubscription,
-        error_stream: EventSourceSubscription,
-        client: &ForgeClient,
-        callback: &Rc<RefCell<F>>,
-        handle_task: &SubscriptionHandle,
-    ) where
-        TResult: DeserializeOwned + 'static,
-        F: FnMut(StreamEvent<TResult>),
-    {
-        let mut events = stream::select(update_stream, error_stream);
-        while !handle_task.is_closed() {
-            let Some(event) = events.next().await else {
-                break;
-            };
-
-            match event {
-                Ok((kind, message)) if kind == "update" => {
-                    let Some(raw) = message_data_as_string(&message) else {
-                        client.emit_error(
-                            callback,
-                            ForgeClientError::new(
-                                "INVALID_SSE_PAYLOAD",
-                                "SSE payload was not a string",
-                                None,
-                            ),
-                        );
-                        continue;
-                    };
-                    let envelope = match parse_json_str::<SseEnvelopeRaw>(&raw) {
-                        Ok(value) => value,
-                        Err(err) => {
-                            client.emit_error(callback, err);
-                            continue;
-                        }
-                    };
-                    if let Some(data) = envelope.payload {
-                        let parsed = match serde_json::from_value::<TResult>(data) {
-                            Ok(value) => value,
-                            Err(err) => {
-                                client.emit_error(
-                                    callback,
-                                    ForgeClientError::new(
-                                        "INVALID_SSE_PAYLOAD",
-                                        err.to_string(),
-                                        None,
-                                    ),
-                                );
-                                continue;
-                            }
-                        };
-                        (callback.borrow_mut())(StreamEvent::Data(parsed));
-                    }
-                }
-                Ok((_kind, message)) => {
-                    let Some(raw) = message_data_as_string(&message) else {
-                        client.emit_error(
-                            callback,
-                            ForgeClientError::new(
-                                "INVALID_SSE_PAYLOAD",
-                                "SSE payload was not a string",
-                                None,
-                            ),
-                        );
-                        continue;
-                    };
-                    let envelope = match parse_json_str::<SseEnvelopeRaw>(&raw) {
-                        Ok(value) => value,
-                        Err(err) => {
-                            client.emit_error(callback, err);
-                            continue;
-                        }
-                    };
-                    emit_sse_error(client, callback, envelope);
-                }
-                Err(err) => {
-                    client.emit_error(
-                        callback,
-                        ForgeClientError::new("SSE_CONNECTION_FAILED", err.to_string(), None),
-                    );
-                    break;
-                }
-            }
-        }
-    }
-
-    pub(super) fn subscribe_query<TArgs, TResult, F>(
-        client: ForgeClient,
-        function_name: String,
-        args: TArgs,
-        callback: F,
-    ) -> SubscriptionHandle
-    where
-        TArgs: Serialize + Clone + 'static,
-        TResult: DeserializeOwned + Clone + 'static,
-        F: FnMut(StreamEvent<TResult>) + 'static,
-    {
-        let handle = SubscriptionHandle::new();
-        let handle_task = handle.clone();
-        let callback = Rc::new(RefCell::new(callback));
-
-        let task = spawn(async move {
-            client.emit_connection(&callback, ConnectionState::Connecting);
-
-            let args_value = match serde_json::to_value(args) {
-                Ok(value) => value,
-                Err(err) => {
-                    client.emit_error(
-                        &callback,
-                        ForgeClientError::new("SERIALIZATION_ERROR", err.to_string(), None),
-                    );
-                    client.emit_connection(&callback, ConnectionState::Disconnected);
-                    handle_task.finish();
-                    return;
-                }
-            };
-
-            let Some((sse, connected)) =
-                open_sse_connection(&client, &callback, &handle_task).await
-            else {
-                return;
-            };
-
-            let register_payload = serde_json::json!({
-                "session_id": connected.session_id,
-                "session_secret": connected.session_secret,
-                "id": client.random_id("sub"),
-                "function": function_name,
-                "args": args_value,
-            });
-
-            match request_json(
-                &client,
-                &format!("{}/_api/subscribe", client.inner.url),
-                register_payload,
-            )
-            .await
-            {
-                Ok(envelope) => match client.decode_envelope::<TResult>(envelope) {
-                    Ok(data) => {
-                        client.emit_connection(&callback, ConnectionState::Connected);
-                        (callback.borrow_mut())(StreamEvent::Data(data));
-                    }
-                    Err(err) => {
-                        client.emit_error(&callback, err);
-                        client.emit_connection(&callback, ConnectionState::Disconnected);
-                        handle_task.finish();
-                        return;
-                    }
-                },
-                Err(err) => {
-                    client.emit_error(&callback, err);
-                    client.emit_connection(&callback, ConnectionState::Disconnected);
-                    handle_task.finish();
-                    return;
-                }
-            }
-
-            process_sse_events::<TResult, _>(
-                sse.update_stream,
-                sse.error_stream,
-                &client,
-                &callback,
-                &handle_task,
-            )
-            .await;
-
-            sse.event_source.close();
-            client.emit_connection(&callback, ConnectionState::Disconnected);
-            handle_task.finish();
-        });
-
-        handle.set_task(task);
-        handle
-    }
-
-    pub(super) fn subscribe_tracker<TResult, F>(
-        client: ForgeClient,
-        prefix: String,
-        payload: serde_json::Value,
-        endpoint: String,
-        callback: F,
-    ) -> SubscriptionHandle
-    where
-        TResult: DeserializeOwned + Clone + 'static,
-        F: FnMut(StreamEvent<TResult>) + 'static,
-    {
-        let handle = SubscriptionHandle::new();
-        let handle_task = handle.clone();
-        let callback = Rc::new(RefCell::new(callback));
-
-        let task = spawn(async move {
-            client.emit_connection(&callback, ConnectionState::Connecting);
-
-            let Some((sse, connected)) =
-                open_sse_connection(&client, &callback, &handle_task).await
-            else {
-                return;
-            };
-
-            let mut register_payload = payload;
-            let register_object = register_payload
-                .as_object_mut()
-                .expect("tracker payload must be an object");
-            register_object.insert(
-                "session_id".to_string(),
-                serde_json::Value::String(connected.session_id.unwrap_or_default()),
-            );
-            register_object.insert(
-                "session_secret".to_string(),
-                serde_json::Value::String(connected.session_secret.unwrap_or_default()),
-            );
-            register_object.insert(
-                "id".to_string(),
-                serde_json::Value::String(client.random_id(&prefix)),
-            );
-
-            match request_json(
-                &client,
-                &format!("{}{}", client.inner.url, endpoint),
-                register_payload,
-            )
-            .await
-            {
-                Ok(envelope) => {
-                    client.emit_connection(&callback, ConnectionState::Connected);
-                    if envelope.success {
-                        if let Some(data) = envelope.data {
-                            if let Ok(parsed) = serde_json::from_value::<TResult>(data) {
-                                (callback.borrow_mut())(StreamEvent::Data(parsed));
-                            }
-                        }
-                    }
-                }
-                Err(err) => {
-                    client.emit_error(&callback, err);
-                    client.emit_connection(&callback, ConnectionState::Disconnected);
-                    handle_task.finish();
-                    return;
-                }
-            }
-
-            process_sse_events::<TResult, _>(
-                sse.update_stream,
-                sse.error_stream,
-                &client,
-                &callback,
-                &handle_task,
-            )
-            .await;
-
-            sse.event_source.close();
-            client.emit_connection(&callback, ConnectionState::Disconnected);
-            handle_task.finish();
-        });
-
-        handle.set_task(task);
-        handle
     }
 
     fn events_url(client: &ForgeClient) -> String {
@@ -768,27 +723,128 @@ mod platform {
         }
     }
 
+    /// Start the single shared SSE event loop.
+    pub(super) fn start_event_loop(client: ForgeClient) {
+        let client_for_task = client.clone();
+        let task = spawn(async move {
+            run_event_loop(&client_for_task).await;
+
+            // Disconnected. Try to reconnect.
+            client_for_task.mark_disconnected();
+            client_for_task.broadcast_connection(ConnectionState::Disconnected);
+
+            if let Some(attempts) = client_for_task.should_reconnect() {
+                let delay = 1000 * (1u64 << attempts.min(4));
+                let jitter = (js_sys::Math::random() * 500.0) as u64;
+                sleep(std::time::Duration::from_millis(delay + jitter)).await;
+
+                client_for_task.inner.sse.borrow_mut().state = super::SseState::Connecting;
+                start_event_loop(client_for_task);
+            }
+        });
+
+        client.inner.sse.borrow_mut().event_loop_task = Some(task);
+    }
+
+    async fn run_event_loop(client: &ForgeClient) {
+        let mut event_source = match EventSource::new(&events_url(client)) {
+            Ok(source) => source,
+            Err(_) => {
+                return;
+            }
+        };
+
+        let mut connected_stream = match event_source.subscribe("connected") {
+            Ok(stream) => stream,
+            Err(_) => return,
+        };
+        let update_stream = match event_source.subscribe("update") {
+            Ok(stream) => stream,
+            Err(_) => return,
+        };
+        let error_stream = match event_source.subscribe("error") {
+            Ok(stream) => stream,
+            Err(_) => return,
+        };
+
+        // Wait for the connected event
+        let connected_event = match connected_stream.next().await {
+            Some(Ok((_kind, message))) => {
+                let Some(raw) = message_data_as_string(&message) else {
+                    return;
+                };
+                match serde_json::from_str::<ConnectedEvent>(&raw) {
+                    Ok(event) => event,
+                    Err(_) => return,
+                }
+            }
+            _ => return,
+        };
+
+        let session_id = connected_event.session_id.unwrap_or_default();
+        let session_secret = connected_event.session_secret.unwrap_or_default();
+
+        if session_id.is_empty() || session_secret.is_empty() {
+            return;
+        }
+
+        let is_reconnect = client.mark_connected(session_id, session_secret);
+        client.broadcast_connection(ConnectionState::Connected);
+
+        // Only re-register on reconnect; initial registrations are handled by each subscription task
+        if is_reconnect {
+            client.reregister_all().await;
+        }
+
+        let mut events = stream::select(update_stream, error_stream);
+        while let Some(event) = events.next().await {
+            match event {
+                Ok((kind, message)) => {
+                    let Some(raw) = message_data_as_string(&message) else {
+                        continue;
+                    };
+                    let Ok(envelope) = serde_json::from_str::<SseEnvelopeRaw>(&raw) else {
+                        continue;
+                    };
+
+                    let Some(target) = envelope.target else {
+                        continue;
+                    };
+
+                    if kind == "update" {
+                        if let Some(payload) = envelope.payload {
+                            client.dispatch_event(&target, SseDispatch::Data(payload));
+                        }
+                    } else {
+                        let code = envelope.code.unwrap_or_else(|| "SSE_ERROR".to_string());
+                        let message = envelope.message.unwrap_or_else(|| "Subscription error".to_string());
+                        client.dispatch_event(&target, SseDispatch::Error { code, message });
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+
+        event_source.close();
+    }
+
     fn request_error(err: gloo_net::Error) -> ForgeClientError {
         ForgeClientError::new("REQUEST_FAILED", err.to_string(), None)
     }
 }
 
+// ── Native platform ─────────────────────────────────────────────────────────
+
 #[cfg(not(target_arch = "wasm32"))]
 mod platform {
-    use std::cell::RefCell;
-    use std::rc::Rc;
-
     use dioxus::prelude::spawn;
     use futures_util::StreamExt;
     use reqwest::Client;
     use reqwest_eventsource::{Event, EventSource};
-    use serde::Serialize;
-    use serde::de::DeserializeOwned;
 
-    use super::{ForgeClient, SubscriptionHandle, emit_sse_error, parse_json_str};
+    use super::{ForgeClient, SseDispatch, sleep};
     use crate::types::{
         ConnectedEvent, ConnectionState, ForgeClientError, RpcEnvelopeRaw, SseEnvelopeRaw,
-        StreamEvent,
     };
 
     pub(super) async fn request_json(
@@ -829,325 +885,98 @@ mod platform {
             .map_err(request_error)
     }
 
-    async fn process_sse_events<TResult, F>(
-        event_source: &mut EventSource,
-        client: &ForgeClient,
-        callback: &Rc<RefCell<F>>,
-        handle_task: &SubscriptionHandle,
-    ) where
-        TResult: DeserializeOwned + 'static,
-        F: FnMut(StreamEvent<TResult>),
-    {
-        while !handle_task.is_closed() {
-            let Some(event) = event_source.next().await else {
-                break;
-            };
-
-            match event {
-                Ok(Event::Open) => {}
-                Ok(Event::Message(message)) if message.event == "update" => {
-                    let envelope = match parse_json_str::<SseEnvelopeRaw>(&message.data) {
-                        Ok(value) => value,
-                        Err(err) => {
-                            client.emit_error(callback, err);
-                            continue;
-                        }
-                    };
-                    if let Some(data) = envelope.payload {
-                        let parsed = match serde_json::from_value::<TResult>(data) {
-                            Ok(value) => value,
-                            Err(err) => {
-                                client.emit_error(
-                                    callback,
-                                    ForgeClientError::new(
-                                        "INVALID_SSE_PAYLOAD",
-                                        err.to_string(),
-                                        None,
-                                    ),
-                                );
-                                continue;
-                            }
-                        };
-                        (callback.borrow_mut())(StreamEvent::Data(parsed));
-                    }
-                }
-                Ok(Event::Message(message)) if message.event == "error" => {
-                    let envelope = match parse_json_str::<SseEnvelopeRaw>(&message.data) {
-                        Ok(value) => value,
-                        Err(err) => {
-                            client.emit_error(callback, err);
-                            continue;
-                        }
-                    };
-                    emit_sse_error(client, callback, envelope);
-                }
-                Ok(Event::Message(_)) => {}
-                Err(err) => {
-                    client.emit_error(
-                        callback,
-                        ForgeClientError::new("SSE_CONNECTION_FAILED", err.to_string(), None),
-                    );
-                    break;
-                }
-            }
-        }
-    }
-
-    async fn open_and_connect<TValue, F>(
-        client: &ForgeClient,
-        callback: &Rc<RefCell<F>>,
-        handle_task: &SubscriptionHandle,
-    ) -> Option<(EventSource, ConnectedEvent)>
-    where
-        F: FnMut(StreamEvent<TValue>),
-    {
-        let mut event_source = match open_event_source(client) {
-            Ok(source) => source,
-            Err(err) => {
-                client.emit_error(callback, err);
-                client.emit_connection(callback, ConnectionState::Disconnected);
-                handle_task.finish();
-                return None;
-            }
-        };
-
-        let connected_event =
-            match next_connected_event(&mut event_source, client, callback).await {
-                Ok(Some(event)) => event,
-                Ok(None) => {
-                    client.emit_connection(callback, ConnectionState::Disconnected);
-                    handle_task.finish();
-                    return None;
-                }
-                Err(err) => {
-                    client.emit_error(callback, err);
-                    client.emit_connection(callback, ConnectionState::Disconnected);
-                    handle_task.finish();
-                    return None;
-                }
-            };
-
-        if handle_task.is_closed() {
-            event_source.close();
-            handle_task.finish();
-            return None;
-        }
-
-        Some((event_source, connected_event))
-    }
-
-    pub(super) fn subscribe_query<TArgs, TResult, F>(
-        client: ForgeClient,
-        function_name: String,
-        args: TArgs,
-        callback: F,
-    ) -> SubscriptionHandle
-    where
-        TArgs: Serialize + Clone + 'static,
-        TResult: DeserializeOwned + Clone + 'static,
-        F: FnMut(StreamEvent<TResult>) + 'static,
-    {
-        let handle = SubscriptionHandle::new();
-        let handle_task = handle.clone();
-        let callback = Rc::new(RefCell::new(callback));
-
+    /// Start the single shared SSE event loop.
+    pub(super) fn start_event_loop(client: ForgeClient) {
+        let client_for_task = client.clone();
         let task = spawn(async move {
-            client.emit_connection(&callback, ConnectionState::Connecting);
+            run_event_loop(&client_for_task).await;
 
-            let args_value = match serde_json::to_value(args) {
-                Ok(value) => value,
-                Err(err) => {
-                    client.emit_error(
-                        &callback,
-                        ForgeClientError::new("SERIALIZATION_ERROR", err.to_string(), None),
-                    );
-                    client.emit_connection(&callback, ConnectionState::Disconnected);
-                    handle_task.finish();
-                    return;
-                }
-            };
+            client_for_task.mark_disconnected();
+            client_for_task.broadcast_connection(ConnectionState::Disconnected);
 
-            let Some((mut event_source, connected)) =
-                open_and_connect(&client, &callback, &handle_task).await
-            else {
-                return;
-            };
+            if let Some(attempts) = client_for_task.should_reconnect() {
+                let delay = 1000 * (1u64 << attempts.min(4));
+                sleep(std::time::Duration::from_millis(delay)).await;
 
-            let register_payload = serde_json::json!({
-                "session_id": connected.session_id,
-                "session_secret": connected.session_secret,
-                "id": client.random_id("sub"),
-                "function": function_name,
-                "args": args_value,
-            });
-
-            match request_json(
-                &client,
-                &format!("{}/_api/subscribe", client.inner.url),
-                register_payload,
-            )
-            .await
-            {
-                Ok(envelope) => match client.decode_envelope::<TResult>(envelope) {
-                    Ok(data) => {
-                        client.emit_connection(&callback, ConnectionState::Connected);
-                        (callback.borrow_mut())(StreamEvent::Data(data));
-                    }
-                    Err(err) => {
-                        client.emit_error(&callback, err);
-                        client.emit_connection(&callback, ConnectionState::Disconnected);
-                        handle_task.finish();
-                        return;
-                    }
-                },
-                Err(err) => {
-                    client.emit_error(&callback, err);
-                    client.emit_connection(&callback, ConnectionState::Disconnected);
-                    handle_task.finish();
-                    return;
-                }
+                client_for_task.inner.sse.borrow_mut().state = super::SseState::Connecting;
+                start_event_loop(client_for_task);
             }
-
-            process_sse_events::<TResult, _>(
-                &mut event_source,
-                &client,
-                &callback,
-                &handle_task,
-            )
-            .await;
-
-            event_source.close();
-            client.emit_connection(&callback, ConnectionState::Disconnected);
-            handle_task.finish();
         });
 
-        handle.set_task(task);
-        handle
+        client.inner.sse.borrow_mut().event_loop_task = Some(task);
     }
 
-    pub(super) fn subscribe_tracker<TResult, F>(
-        client: ForgeClient,
-        prefix: String,
-        payload: serde_json::Value,
-        endpoint: String,
-        callback: F,
-    ) -> SubscriptionHandle
-    where
-        TResult: DeserializeOwned + Clone + 'static,
-        F: FnMut(StreamEvent<TResult>) + 'static,
-    {
-        let handle = SubscriptionHandle::new();
-        let handle_task = handle.clone();
-        let callback = Rc::new(RefCell::new(callback));
-
-        let task = spawn(async move {
-            client.emit_connection(&callback, ConnectionState::Connecting);
-
-            let Some((mut event_source, connected)) =
-                open_and_connect(&client, &callback, &handle_task).await
-            else {
-                return;
-            };
-
-            let mut register_payload = payload;
-            let register_object = register_payload
-                .as_object_mut()
-                .expect("tracker payload must be an object");
-            register_object.insert(
-                "session_id".to_string(),
-                serde_json::Value::String(connected.session_id.unwrap_or_default()),
-            );
-            register_object.insert(
-                "session_secret".to_string(),
-                serde_json::Value::String(connected.session_secret.unwrap_or_default()),
-            );
-            register_object.insert(
-                "id".to_string(),
-                serde_json::Value::String(client.random_id(&prefix)),
-            );
-
-            match request_json(
-                &client,
-                &format!("{}{}", client.inner.url, endpoint),
-                register_payload,
-            )
-            .await
-            {
-                Ok(envelope) => {
-                    client.emit_connection(&callback, ConnectionState::Connected);
-                    if envelope.success {
-                        if let Some(data) = envelope.data {
-                            if let Ok(parsed) = serde_json::from_value::<TResult>(data) {
-                                (callback.borrow_mut())(StreamEvent::Data(parsed));
-                            }
-                        }
-                    }
-                }
-                Err(err) => {
-                    client.emit_error(&callback, err);
-                    client.emit_connection(&callback, ConnectionState::Disconnected);
-                    handle_task.finish();
-                    return;
-                }
-            }
-
-            process_sse_events::<TResult, _>(
-                &mut event_source,
-                &client,
-                &callback,
-                &handle_task,
-            )
-            .await;
-
-            event_source.close();
-            client.emit_connection(&callback, ConnectionState::Disconnected);
-            handle_task.finish();
-        });
-
-        handle.set_task(task);
-        handle
-    }
-
-    fn open_event_source(client: &ForgeClient) -> Result<EventSource, ForgeClientError> {
+    async fn run_event_loop(client: &ForgeClient) {
         let mut request = Client::new().get(format!("{}/_api/events", client.inner.url));
         if let Some(token) = client.get_token() {
             request = request.bearer_auth(token);
         }
 
-        EventSource::new(request)
-            .map_err(|err| ForgeClientError::new("SSE_CONNECTION_FAILED", err.to_string(), None))
-    }
+        let mut event_source = match EventSource::new(request) {
+            Ok(source) => source,
+            Err(_) => return,
+        };
 
-    async fn next_connected_event<TValue, T>(
-        event_source: &mut EventSource,
-        client: &ForgeClient,
-        callback: &Rc<RefCell<T>>,
-    ) -> Result<Option<ConnectedEvent>, ForgeClientError>
-    where
-        T: FnMut(StreamEvent<TValue>),
-    {
-        while let Some(event) = event_source.next().await {
+        // Wait for connected event
+        let connected_event = loop {
+            let Some(event) = event_source.next().await else {
+                return;
+            };
             match event {
                 Ok(Event::Open) => continue,
-                Ok(Event::Message(message)) if message.event == "connected" => {
-                    return parse_json_str::<ConnectedEvent>(&message.data).map(Some);
+                Ok(Event::Message(msg)) if msg.event == "connected" => {
+                    match serde_json::from_str::<ConnectedEvent>(&msg.data) {
+                        Ok(event) => break event,
+                        Err(_) => return,
+                    }
                 }
-                Ok(Event::Message(message)) if message.event == "error" => {
-                    let envelope = parse_json_str::<SseEnvelopeRaw>(&message.data)?;
-                    emit_sse_error(client, callback, envelope);
+                Ok(Event::Message(_)) => continue,
+                Err(_) => return,
+            }
+        };
+
+        let session_id = connected_event.session_id.unwrap_or_default();
+        let session_secret = connected_event.session_secret.unwrap_or_default();
+
+        if session_id.is_empty() || session_secret.is_empty() {
+            return;
+        }
+
+        let is_reconnect = client.mark_connected(session_id, session_secret);
+        client.broadcast_connection(ConnectionState::Connected);
+
+        if is_reconnect {
+            client.reregister_all().await;
+        }
+
+        while let Some(event) = event_source.next().await {
+            match event {
+                Ok(Event::Open) => {}
+                Ok(Event::Message(msg)) if msg.event == "update" || msg.event == "error" => {
+                    let Ok(envelope) = serde_json::from_str::<SseEnvelopeRaw>(&msg.data) else {
+                        continue;
+                    };
+                    let Some(target) = envelope.target else {
+                        continue;
+                    };
+
+                    if msg.event == "update" {
+                        if let Some(payload) = envelope.payload {
+                            client.dispatch_event(&target, SseDispatch::Data(payload));
+                        }
+                    } else {
+                        let code = envelope.code.unwrap_or_else(|| "SSE_ERROR".to_string());
+                        let message =
+                            envelope.message.unwrap_or_else(|| "Subscription error".to_string());
+                        client.dispatch_event(&target, SseDispatch::Error { code, message });
+                    }
                 }
                 Ok(Event::Message(_)) => {}
-                Err(err) => {
-                    return Err(ForgeClientError::new(
-                        "SSE_CONNECTION_FAILED",
-                        err.to_string(),
-                        None,
-                    ));
-                }
+                Err(_) => break,
             }
         }
 
-        Ok(None)
+        event_source.close();
     }
 
     fn request_error(err: reqwest::Error) -> ForgeClientError {

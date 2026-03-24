@@ -18,7 +18,7 @@ services:
     volumes:
       - ../../..:/workspace
       - cargo_cache:/usr/local/cargo/registry
-      - target_cache:/workspace/target
+      - ./target:/workspace/examples/with-dioxus/demo/target
     depends_on:
       db:
         condition: service_healthy
@@ -27,7 +27,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 30
-      start_period: 120s
+      start_period: 60s
 
   db:
     image: postgres:18
@@ -49,4 +49,3 @@ services:
 volumes:
   postgres_data:
   cargo_cache:
-  target_cache:

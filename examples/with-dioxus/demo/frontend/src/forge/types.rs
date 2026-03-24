@@ -236,6 +236,86 @@ impl WebhookEvent {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UserPublic {
+    pub id: String,
+    pub email: String,
+    pub name: String,
+    pub role: UserRole,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuthResponse {
+    pub access_token: String,
+    pub refresh_token: String,
+    pub user: UserPublic,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TokenPair {
+    pub access_token: String,
+    pub refresh_token: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RegisterInput {
+    pub email: String,
+    pub name: String,
+    pub password: String,
+}
+
+impl RegisterInput {
+    pub fn new(
+        email: impl Into<String>,
+        name: impl Into<String>,
+        password: impl Into<String>,
+    ) -> Self {
+        Self {
+            email: email.into(),
+            name: name.into(),
+            password: password.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LoginInput {
+    pub email: String,
+    pub password: String,
+}
+
+impl LoginInput {
+    pub fn new(email: impl Into<String>, password: impl Into<String>) -> Self {
+        Self {
+            email: email.into(),
+            password: password.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RefreshInput {
+    pub refresh_token: String,
+}
+
+impl RefreshInput {
+    pub fn new(refresh_token: impl Into<String>) -> Self {
+        Self {
+            refresh_token: refresh_token.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DemoStats {
+    pub total_users: i64,
+    pub total_trades: i64,
+    pub total_webhooks: i64,
+    pub computed_at: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UserRole {

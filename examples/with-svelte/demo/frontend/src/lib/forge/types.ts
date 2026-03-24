@@ -73,6 +73,48 @@ export interface WebhookEvent {
   processed_at: string;
 }
 
+export interface UserPublic {
+  id: string;
+  email: string;
+  name: string;
+  role: UserRole;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AuthResponse {
+  access_token: string;
+  refresh_token: string;
+  user: UserPublic;
+}
+
+export interface TokenPair {
+  access_token: string;
+  refresh_token: string;
+}
+
+export interface RegisterInput {
+  email: string;
+  name: string;
+  password: string;
+}
+
+export interface LoginInput {
+  email: string;
+  password: string;
+}
+
+export interface RefreshInput {
+  refresh_token: string;
+}
+
+export interface DemoStats {
+  total_users: number;
+  total_trades: number;
+  total_webhooks: number;
+  computed_at: string;
+}
+
 export type UserRole = "admin" | "member" | "guest";
 
 export type {

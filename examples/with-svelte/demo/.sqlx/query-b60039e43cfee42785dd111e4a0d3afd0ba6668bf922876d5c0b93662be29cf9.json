@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            id,\n            email,\n            name,\n            role as \"role: UserRole\",\n            created_at,\n            updated_at\n        FROM users\n        WHERE id = $1\n        ",
+  "query": "\n        SELECT\n            id, email, name,\n            role as \"role: UserRole\",\n            password_hash,\n            created_at, updated_at\n        FROM users WHERE email = $1\n        ",
   "describe": {
     "columns": [
       {
@@ -36,18 +36,23 @@
       },
       {
         "ordinal": 4,
+        "name": "password_hash",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 5,
+        "ordinal": 6,
         "name": "updated_at",
         "type_info": "Timestamptz"
       }
     ],
     "parameters": {
       "Left": [
-        "Uuid"
+        "Text"
       ]
     },
     "nullable": [
@@ -55,9 +60,10 @@
       false,
       false,
       false,
+      true,
       false,
       false
     ]
   },
-  "hash": "8ea80ba396e4e6a385bee95159dfabadc864a74e9ed6ab5696e86bb02f599148"
+  "hash": "b60039e43cfee42785dd111e4a0d3afd0ba6668bf922876d5c0b93662be29cf9"
 }

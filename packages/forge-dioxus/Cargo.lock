@@ -504,6 +504,7 @@ version = "0.7.1"
 dependencies = [
  "dioxus",
  "dirs",
+ "futures-channel",
  "futures-util",
  "gloo-net",
  "gloo-timers",

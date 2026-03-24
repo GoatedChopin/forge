@@ -85,16 +85,11 @@ to = "- .:/app"
 files = ["docker-compose.yml"]
 
 [[replacement]]
-from = "- target_cache:/workspace/target"
+from = "- ./target:/workspace/examples/with-dioxus/demo/target"
 to = "- ./target:/app/target"
 files = ["docker-compose.yml"]
 
 [[replacement]]
 from = "working_dir: /workspace/examples/with-dioxus/demo"
 to = "working_dir: /app"
-files = ["docker-compose.yml"]
-
-[[replacement]]
-from = "\n  target_cache:"
-to = ""
 files = ["docker-compose.yml"]

@@ -281,6 +281,8 @@ pub(crate) struct ConnectedEvent {
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct SseEnvelopeRaw {
     #[serde(default)]
+    pub target: Option<String>,
+    #[serde(default)]
     pub payload: Option<serde_json::Value>,
     #[serde(default)]
     pub code: Option<String>,

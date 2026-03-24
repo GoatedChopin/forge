@@ -12,6 +12,53 @@ use super::{
     use_forge_job, use_forge_mutation, use_forge_query, use_forge_subscription, use_forge_workflow,
 };
 
+// Auth mutations
+pub async fn register_user(
+    client: &ForgeClient,
+    args: RegisterInput,
+) -> Result<AuthResponse, ForgeClientError> {
+    client.call("register", args).await
+}
+
+pub fn use_register() -> Mutation<RegisterInput, AuthResponse> {
+    use_forge_mutation("register")
+}
+
+pub async fn login_user(
+    client: &ForgeClient,
+    args: LoginInput,
+) -> Result<AuthResponse, ForgeClientError> {
+    client.call("login", args).await
+}
+
+pub fn use_login() -> Mutation<LoginInput, AuthResponse> {
+    use_forge_mutation("login")
+}
+
+pub async fn refresh_token(
+    client: &ForgeClient,
+    args: RefreshInput,
+) -> Result<TokenPair, ForgeClientError> {
+    client.call("refresh_token", args).await
+}
+
+pub fn use_refresh_token() -> Mutation<RefreshInput, TokenPair> {
+    use_forge_mutation("refresh_token")
+}
+
+// Cached query
+pub async fn get_demo_stats(client: &ForgeClient) -> Result<DemoStats, ForgeClientError> {
+    client.call("get_demo_stats", ()).await
+}
+
+pub fn use_get_demo_stats() -> QueryState<DemoStats> {
+    use_forge_query("get_demo_stats", ())
+}
+
+pub fn use_get_demo_stats_live() -> SubscriptionState<DemoStats> {
+    use_forge_subscription("get_demo_stats", ())
+}
+
 pub async fn get_iss_location(
     client: &ForgeClient,
 ) -> Result<Option<IssLocation>, ForgeClientError> {

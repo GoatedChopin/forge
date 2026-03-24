@@ -12,6 +12,7 @@ pub async fn get_users(ctx: &QueryContext) -> Result<Vec<User>> {
             email,
             name,
             role as "role: UserRole",
+            password_hash,
             created_at,
             updated_at
         FROM users
@@ -34,6 +35,7 @@ pub async fn get_user(ctx: &QueryContext, id: Uuid) -> Result<Option<User>> {
             email,
             name,
             role as "role: UserRole",
+            password_hash,
             created_at,
             updated_at
         FROM users
@@ -72,6 +74,7 @@ pub async fn create_user(
             email,
             name,
             role as "role: UserRole",
+            password_hash,
             created_at,
             updated_at
         "#,
@@ -115,6 +118,7 @@ pub async fn update_user(
             email,
             name,
             role as "role: UserRole",
+            password_hash,
             created_at,
             updated_at
         "#,

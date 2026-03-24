@@ -565,6 +565,25 @@ impl Forge {
                 );
             }
 
+            // MCP OAuth/resource discovery: return JSON 404 so MCP clients
+            // (like Claude Code) get a parseable response instead of an empty
+            // HTML page from the frontend fallback, and gracefully skip auth.
+            if self.config.mcp.enabled {
+                use axum::routing::get;
+                async fn oauth_not_supported() -> impl axum::response::IntoResponse {
+                    (
+                        axum::http::StatusCode::NOT_FOUND,
+                        axum::Json(serde_json::json!({
+                            "error": "oauth_not_supported",
+                            "error_description": "This server does not support OAuth. Connect without authentication."
+                        })),
+                    )
+                }
+                router = router
+                    .route("/.well-known/oauth-authorization-server", get(oauth_not_supported))
+                    .route("/.well-known/oauth-protected-resource", get(oauth_not_supported));
+            }
+
             // Merge custom routes before frontend fallback so they take precedence
             if let Some(custom) = self.custom_routes.take() {
                 router = router.merge(custom);

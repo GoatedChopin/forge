@@ -1,2 +1,2 @@
 pub mod user;
-pub use user::{User, UserRole};
+pub use user::{AuthResponse, DemoStats, McpUserInfo, User, UserPublic, UserRole};

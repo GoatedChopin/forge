@@ -7,6 +7,7 @@ CREATE TABLE users (
     email VARCHAR(255) NOT NULL,
     name VARCHAR(255) NOT NULL,
     role user_role NOT NULL DEFAULT 'member',
+    password_hash TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -48,13 +49,23 @@ SELECT forge_enable_reactivity('iss_location');
 SELECT forge_enable_reactivity('trades');
 SELECT forge_enable_reactivity('webhook_events');
 
--- Sample user for demo
-INSERT INTO users (id, email, name, role, created_at, updated_at)
+-- Stats snapshot table for cached query demo
+CREATE TABLE demo_stats (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    total_users INTEGER NOT NULL DEFAULT 0,
+    total_trades INTEGER NOT NULL DEFAULT 0,
+    total_webhooks INTEGER NOT NULL DEFAULT 0,
+    computed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Sample user for demo (password: "password123")
+INSERT INTO users (id, email, name, role, password_hash, created_at, updated_at)
 VALUES (
     'a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d',
     'demo@example.com',
     'Demo User',
     'member',
+    '$2b$10$wsSHkdSbkLT7f5nFtH5Wt.JJrrM8IoANoX0sd7SdGRRmL217/LxZm',
     NOW(),
     NOW()
 );
@@ -65,6 +76,7 @@ SELECT forge_disable_reactivity('webhook_events');
 SELECT forge_disable_reactivity('trades');
 SELECT forge_disable_reactivity('iss_location');
 SELECT forge_disable_reactivity('users');
+DROP TABLE IF EXISTS demo_stats;
 DROP TABLE IF EXISTS webhook_events;
 DROP TABLE IF EXISTS trades;
 DROP TABLE IF EXISTS iss_location;
