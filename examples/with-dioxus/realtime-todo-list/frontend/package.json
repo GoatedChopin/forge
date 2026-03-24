@@ -2,7 +2,7 @@
   "name": "todo-dioxus-frontend",
   "private": true,
   "scripts": {
-    "dev": "dx serve --platform web --port 5173 --addr 0.0.0.0 --open false",
+    "dev": "dx serve --platform web --port 9080 --addr 0.0.0.0 --open false",
     "build": "dx build --platform web --release",
     "format": "prettier --write . && cargo fmt --manifest-path Cargo.toml",
     "check": "cargo fmt --check --manifest-path Cargo.toml && prettier --check ."
