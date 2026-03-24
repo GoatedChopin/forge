@@ -745,7 +745,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = ForgeConfig::default_with_database_url("postgres://localhost/test");
-        assert_eq!(config.gateway.port, 8080);
+        assert_eq!(config.gateway.port, 9081);
         assert_eq!(config.node.roles.len(), 4);
         assert_eq!(config.mcp.path, "/mcp");
         assert!(!config.mcp.enabled);
@@ -760,7 +760,7 @@ mod tests {
 
         let config = ForgeConfig::parse_toml(toml).unwrap();
         assert_eq!(config.database.url(), "postgres://localhost/myapp");
-        assert_eq!(config.gateway.port, 8080);
+        assert_eq!(config.gateway.port, 9081);
     }
 
     #[test]
