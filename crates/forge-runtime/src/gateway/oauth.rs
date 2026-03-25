@@ -7,10 +7,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
-use axum::Json;
 use chrono::Utc;
 use forge_core::auth::Claims;
 use forge_core::oauth::{self, validate_redirect_uri};
@@ -79,6 +79,7 @@ pub struct OAuthState {
 }
 
 impl OAuthState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         pool: sqlx::PgPool,
         auth_middleware: Arc<AuthMiddleware>,
@@ -200,11 +201,19 @@ pub async fn oauth_register(
 ) -> Response {
     let ip = client_ip(&headers);
     let rate_key = format!("oauth_register:{ip}");
-    if !state.rate_limiter.check(&rate_key, REGISTER_RATE_LIMIT).await {
-        return (StatusCode::TOO_MANY_REQUESTS, Json(serde_json::json!({
-            "error": "too_many_requests",
-            "error_description": "Rate limit exceeded for client registration"
-        }))).into_response();
+    if !state
+        .rate_limiter
+        .check(&rate_key, REGISTER_RATE_LIMIT)
+        .await
+    {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({
+                "error": "too_many_requests",
+                "error_description": "Rate limit exceeded for client registration"
+            })),
+        )
+            .into_response();
     }
 
     // Check client cap
@@ -213,17 +222,25 @@ pub async fn oauth_register(
         .await
         .unwrap_or(0);
     if count >= MAX_REGISTERED_CLIENTS {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-            "error": "too_many_clients",
-            "error_description": "Maximum number of registered clients reached"
-        }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "too_many_clients",
+                "error_description": "Maximum number of registered clients reached"
+            })),
+        )
+            .into_response();
     }
 
     if req.redirect_uris.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-            "error": "invalid_client_metadata",
-            "error_description": "redirect_uris is required"
-        }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "invalid_client_metadata",
+                "error_description": "redirect_uris is required"
+            })),
+        )
+            .into_response();
     }
 
     let client_id = Uuid::new_v4().to_string();
@@ -242,10 +259,14 @@ pub async fn oauth_register(
 
     if let Err(e) = result {
         tracing::error!("Failed to register OAuth client: {e}");
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-            "error": "server_error",
-            "error_description": "Failed to register client"
-        }))).into_response();
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": "server_error",
+                "error_description": "Failed to register client"
+            })),
+        )
+            .into_response();
     }
 
     let grant_types = if req.grant_types.is_empty() {
@@ -254,13 +275,17 @@ pub async fn oauth_register(
         req.grant_types
     };
 
-    (StatusCode::CREATED, Json(RegisterResponse {
-        client_id,
-        client_name: req.client_name,
-        redirect_uris: req.redirect_uris,
-        grant_types,
-        token_endpoint_auth_method: auth_method.to_string(),
-    })).into_response()
+    (
+        StatusCode::CREATED,
+        Json(RegisterResponse {
+            client_id,
+            client_name: req.client_name,
+            redirect_uris: req.redirect_uris,
+            grant_types,
+            token_endpoint_auth_method: auth_method.to_string(),
+        }),
+    )
+        .into_response()
 }
 
 // ── Authorization endpoint ─────────────────────────────────────────────
@@ -277,7 +302,9 @@ pub struct AuthorizeQuery {
     pub response_type: Option<String>,
 }
 
-fn default_s256() -> String { CHALLENGE_METHOD_S256.into() }
+fn default_s256() -> String {
+    CHALLENGE_METHOD_S256.into()
+}
 
 pub async fn oauth_authorize_get(
     headers: HeaderMap,
@@ -295,32 +322,48 @@ pub async fn oauth_authorize_get(
     let (_, client_name, redirect_uris) = match client {
         Ok(Some(c)) => c,
         Ok(None) => {
-            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-                "error": "invalid_client",
-                "error_description": "Unknown client_id"
-            }))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "invalid_client",
+                    "error_description": "Unknown client_id"
+                })),
+            )
+                .into_response();
         }
         Err(e) => {
             tracing::error!("OAuth client lookup failed: {e}");
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-                "error": "server_error"
-            }))).into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "server_error"
+                })),
+            )
+                .into_response();
         }
     };
 
     // Validate redirect_uri (exact match, T2)
     if !validate_redirect_uri(&params.redirect_uri, &redirect_uris) {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-            "error": "invalid_redirect_uri",
-            "error_description": "redirect_uri does not match any registered URI"
-        }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "invalid_redirect_uri",
+                "error_description": "redirect_uri does not match any registered URI"
+            })),
+        )
+            .into_response();
     }
 
     if params.code_challenge_method != CHALLENGE_METHOD_S256 {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-            "error": "invalid_request",
-            "error_description": "Only S256 code_challenge_method is supported"
-        }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "invalid_request",
+                "error_description": "Only S256 code_challenge_method is supported"
+            })),
+        )
+            .into_response();
     }
 
     // Check for existing session cookie (set by auth middleware on API calls)
@@ -348,16 +391,27 @@ pub async fn oauth_authorize_get(
         .replace("{{client_id}}", &html_escape(&params.client_id))
         .replace("{{redirect_uri}}", &html_escape(&params.redirect_uri))
         .replace("{{code_challenge}}", &html_escape(&params.code_challenge))
-        .replace("{{code_challenge_method}}", &html_escape(&params.code_challenge_method))
-        .replace("{{state}}", &html_escape(params.state.as_deref().unwrap_or("")))
-        .replace("{{scope}}", &html_escape(params.scope.as_deref().unwrap_or("")))
+        .replace(
+            "{{code_challenge_method}}",
+            &html_escape(&params.code_challenge_method),
+        )
+        .replace(
+            "{{state}}",
+            &html_escape(params.state.as_deref().unwrap_or("")),
+        )
+        .replace(
+            "{{scope}}",
+            &html_escape(params.scope.as_deref().unwrap_or("")),
+        )
         .replace("{{auth_mode}}", auth_mode)
         .replace("{{authorize_url}}", "/_api/oauth/authorize")
         .replace("{{error_message}}", "");
 
     let mut response = (StatusCode::OK, Html(html)).into_response();
     // T17: clickjacking protection
-    response.headers_mut().insert("X-Frame-Options", HeaderValue::from_static("DENY"));
+    response
+        .headers_mut()
+        .insert("X-Frame-Options", HeaderValue::from_static("DENY"));
     response.headers_mut().insert(
         "Content-Security-Policy",
         HeaderValue::from_static("frame-ancestors 'none'"),
@@ -367,7 +421,9 @@ pub async fn oauth_authorize_get(
         "forge_oauth_csrf={csrf_token}; Path=/_api/oauth/; HttpOnly; SameSite=Lax; Max-Age=600"
     );
     if let Ok(cookie_val) = HeaderValue::from_str(&cookie) {
-        response.headers_mut().insert(header::SET_COOKIE, cookie_val);
+        response
+            .headers_mut()
+            .insert(header::SET_COOKIE, cookie_val);
     }
     response
 }
@@ -402,10 +458,14 @@ pub async fn oauth_authorize_post(
         false
     };
     if !csrf_valid {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({
-            "error": "csrf_validation_failed",
-            "error_description": "Invalid or expired CSRF token. Please try again."
-        }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "csrf_validation_failed",
+                "error_description": "Invalid or expired CSRF token. Please try again."
+            })),
+        )
+            .into_response();
     }
 
     // Rate limit login failures (T7)
@@ -414,7 +474,7 @@ pub async fn oauth_authorize_post(
 
     // Validate client and redirect_uri again (form could be tampered)
     let client = sqlx::query_as::<_, (Vec<String>,)>(
-        "SELECT redirect_uris FROM forge_oauth_clients WHERE client_id = $1"
+        "SELECT redirect_uris FROM forge_oauth_clients WHERE client_id = $1",
     )
     .bind(&form.client_id)
     .fetch_optional(&state.pool)
@@ -423,16 +483,24 @@ pub async fn oauth_authorize_post(
     let redirect_uris = match client {
         Ok(Some((uris,))) => uris,
         _ => {
-            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-                "error": "invalid_client"
-            }))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "invalid_client"
+                })),
+            )
+                .into_response();
         }
     };
 
     if !validate_redirect_uri(&form.redirect_uri, &redirect_uris) {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-            "error": "invalid_redirect_uri"
-        }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "invalid_redirect_uri"
+            })),
+        )
+            .into_response();
     }
 
     // Authenticate user: try session cookie first, then token, then email/password
@@ -456,7 +524,11 @@ pub async fn oauth_authorize_post(
         // Consent flow: validate existing JWT
         match state.auth_middleware.validate_token_async(token).await {
             Ok(claims) => {
-                user_id = claims.user_id().ok_or(()).map_err(|_| ()).unwrap_or_default();
+                user_id = claims
+                    .user_id()
+                    .ok_or(())
+                    .map_err(|_| ())
+                    .unwrap_or_default();
                 if user_id.is_nil() {
                     return authorize_error_redirect(
                         &form.redirect_uri,
@@ -486,7 +558,11 @@ pub async fn oauth_authorize_post(
             );
         }
 
-        if !state.rate_limiter.check(&rate_key, LOGIN_FAIL_RATE_LIMIT).await {
+        if !state
+            .rate_limiter
+            .check(&rate_key, LOGIN_FAIL_RATE_LIMIT)
+            .await
+        {
             return authorize_error_redirect(
                 &form.redirect_uri,
                 form.state.as_deref(),
@@ -497,28 +573,26 @@ pub async fn oauth_authorize_post(
 
         // Query users table by convention
         let row = sqlx::query_as::<_, (Uuid, Option<String>, Option<String>)>(
-            "SELECT id, password_hash, role::TEXT FROM users WHERE email = $1"
+            "SELECT id, password_hash, role::TEXT FROM users WHERE email = $1",
         )
         .bind(email)
         .fetch_optional(&state.pool)
         .await;
 
         match row {
-            Ok(Some((uid, Some(hash), _role))) => {
-                match bcrypt::verify(password, &hash) {
-                    Ok(true) => {
-                        user_id = uid;
-                    }
-                    _ => {
-                        return authorize_error_redirect(
-                            &form.redirect_uri,
-                            form.state.as_deref(),
-                            "access_denied",
-                            "Invalid email or password",
-                        );
-                    }
+            Ok(Some((uid, Some(hash), _role))) => match bcrypt::verify(password, &hash) {
+                Ok(true) => {
+                    user_id = uid;
                 }
-            }
+                _ => {
+                    return authorize_error_redirect(
+                        &form.redirect_uri,
+                        form.state.as_deref(),
+                        "access_denied",
+                        "Invalid email or password",
+                    );
+                }
+            },
             _ => {
                 return authorize_error_redirect(
                     &form.redirect_uri,
@@ -529,16 +603,22 @@ pub async fn oauth_authorize_post(
             }
         }
     } else {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-            "error": "invalid_request",
-            "error_description": "Must provide either a token or email/password"
-        }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "invalid_request",
+                "error_description": "Must provide either a token or email/password"
+            })),
+        )
+            .into_response();
     }
 
     // Generate authorization code
     let code = oauth::generate_random_token();
     let expires_at = Utc::now() + chrono::Duration::seconds(AUTH_CODE_TTL_SECS);
-    let scopes: Vec<String> = form.scope.as_deref()
+    let scopes: Vec<String> = form
+        .scope
+        .as_deref()
         .map(|s| s.split_whitespace().map(String::from).collect())
         .unwrap_or_default();
 
@@ -575,10 +655,9 @@ pub async fn oauth_authorize_post(
     }
 
     let mut response = Redirect::to(&redirect_url).into_response();
-    response.headers_mut().insert(
-        "Referrer-Policy",
-        HeaderValue::from_static("no-referrer"),
-    );
+    response
+        .headers_mut()
+        .insert("Referrer-Policy", HeaderValue::from_static("no-referrer"));
 
     // Set session cookie so the next authorize visit shows consent directly
     // instead of the login form. This is same-origin (backend serves both
@@ -643,9 +722,13 @@ pub async fn oauth_token(
     match req.grant_type.as_str() {
         "authorization_code" => handle_code_exchange(&state, &req).await,
         "refresh_token" => handle_refresh(&state, &req).await,
-        _ => (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-            "error": "unsupported_grant_type"
-        }))).into_response(),
+        _ => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "unsupported_grant_type"
+            })),
+        )
+            .into_response(),
     }
 }
 
@@ -677,15 +760,26 @@ async fn handle_code_exchange(state: &OAuthState, req: &TokenRequest) -> Respons
     .fetch_optional(&state.pool)
     .await;
 
-    let (stored_client_id, user_id, stored_redirect, stored_challenge, challenge_method, expires_at) =
-        match row {
-            Ok(Some(r)) => r,
-            Ok(None) => return token_error("invalid_grant", "Invalid or already used authorization code"),
-            Err(e) => {
-                tracing::error!("Failed to exchange authorization code: {e}");
-                return token_error("server_error", "Failed to exchange code");
-            }
-        };
+    let (
+        stored_client_id,
+        user_id,
+        stored_redirect,
+        stored_challenge,
+        challenge_method,
+        expires_at,
+    ) = match row {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            return token_error(
+                "invalid_grant",
+                "Invalid or already used authorization code",
+            );
+        }
+        Err(e) => {
+            tracing::error!("Failed to exchange authorization code: {e}");
+            return token_error("server_error", "Failed to exchange code");
+        }
+    };
 
     // Check expiry
     if Utc::now() > expires_at {
@@ -724,12 +818,16 @@ async fn handle_code_exchange(state: &OAuthState, req: &TokenRequest) -> Respons
     .await;
 
     match pair {
-        Ok(pair) => (StatusCode::OK, Json(TokenResponse {
-            access_token: pair.access_token,
-            token_type: "Bearer".into(),
-            expires_in: access_ttl,
-            refresh_token: pair.refresh_token,
-        })).into_response(),
+        Ok(pair) => (
+            StatusCode::OK,
+            Json(TokenResponse {
+                access_token: pair.access_token,
+                token_type: "Bearer".into(),
+                expires_in: access_ttl,
+                refresh_token: pair.refresh_token,
+            }),
+        )
+            .into_response(),
         Err(e) => {
             tracing::error!("Failed to issue token pair: {e}");
             token_error("server_error", "Failed to issue tokens")
@@ -759,12 +857,16 @@ async fn handle_refresh(state: &OAuthState, req: &TokenRequest) -> Response {
     .await;
 
     match pair {
-        Ok(pair) => (StatusCode::OK, Json(TokenResponse {
-            access_token: pair.access_token,
-            token_type: "Bearer".into(),
-            expires_in: access_ttl,
-            refresh_token: pair.refresh_token,
-        })).into_response(),
+        Ok(pair) => (
+            StatusCode::OK,
+            Json(TokenResponse {
+                access_token: pair.access_token,
+                token_type: "Bearer".into(),
+                expires_in: access_ttl,
+                refresh_token: pair.refresh_token,
+            }),
+        )
+            .into_response(),
         Err(_) => token_error("invalid_grant", "Invalid or expired refresh token"),
     }
 }
@@ -796,13 +898,22 @@ fn is_https(headers: &HeaderMap) -> bool {
 }
 
 fn token_error(error: &str, description: &str) -> Response {
-    (StatusCode::BAD_REQUEST, Json(serde_json::json!({
-        "error": error,
-        "error_description": description
-    }))).into_response()
+    (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({
+            "error": error,
+            "error_description": description
+        })),
+    )
+        .into_response()
 }
 
-fn authorize_error_redirect(redirect_uri: &str, state: Option<&str>, error: &str, description: &str) -> Response {
+fn authorize_error_redirect(
+    redirect_uri: &str,
+    state: Option<&str>,
+    error: &str,
+    description: &str,
+) -> Response {
     let mut url = format!(
         "{}?error={}&error_description={}",
         redirect_uri,
@@ -849,13 +960,10 @@ fn extract_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
         .get(header::COOKIE)
         .and_then(|v| v.to_str().ok())
         .and_then(|cookies| {
-            cookies
-                .split(';')
-                .map(|c| c.trim())
-                .find_map(|c| {
-                    let (k, v) = c.split_once('=')?;
-                    if k == name { Some(v.to_string()) } else { None }
-                })
+            cookies.split(';').map(|c| c.trim()).find_map(|c| {
+                let (k, v) = c.split_once('=')?;
+                if k == name { Some(v.to_string()) } else { None }
+            })
         })
 }
 

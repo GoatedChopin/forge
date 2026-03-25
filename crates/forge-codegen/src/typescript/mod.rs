@@ -83,7 +83,22 @@ impl TypeScriptGenerator {
 
         let bindings = BindingSet::from_registry(registry);
 
-        std::fs::write(self.output_dir.join("types.ts"), types::generate(registry)?)?;
+        // Collect type names referenced by API bindings so types.ts
+        // can emit built-in types that aren't in the user's schema.
+        let mut referenced_types = Vec::new();
+        for binding in bindings.all() {
+            for arg in &binding.args {
+                crate::emit::collect_type_imports(&arg.rust_type, &mut referenced_types);
+            }
+            crate::emit::collect_type_imports(&binding.return_type, &mut referenced_types);
+        }
+        referenced_types.sort();
+        referenced_types.dedup();
+
+        std::fs::write(
+            self.output_dir.join("types.ts"),
+            types::generate(registry, &referenced_types)?,
+        )?;
         std::fs::write(self.output_dir.join("api.ts"), api::generate(&bindings)?)?;
         std::fs::write(
             self.output_dir.join("runes.svelte.ts"),
@@ -121,7 +136,7 @@ import { getForgeClient } from "@forge-rs/svelte";
 interface User {
   id: string;
   email: string;
-  [key: string]: unknown;
+  name?: string;
 }
 
 interface AuthState {

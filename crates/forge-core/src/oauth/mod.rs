@@ -104,8 +104,14 @@ mod tests {
     #[test]
     fn test_validate_redirect_uri_exact_match() {
         let registered = vec!["https://example.com/callback".to_string()];
-        assert!(validate_redirect_uri("https://example.com/callback", &registered));
-        assert!(!validate_redirect_uri("https://example.com/other", &registered));
+        assert!(validate_redirect_uri(
+            "https://example.com/callback",
+            &registered
+        ));
+        assert!(!validate_redirect_uri(
+            "https://example.com/other",
+            &registered
+        ));
     }
 
     #[test]

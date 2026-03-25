@@ -13,11 +13,12 @@
     children: Snippet;
   }
 
-  let props: Props = $props();
+  let { url, getToken, onConnectionChange, children }: Props = $props();
 
+  // svelte-ignore state_referenced_locally -- url and getToken are stable config, not reactive state
   const client = createForgeClient({
-    url: props.url,
-    getToken: props.getToken,
+    url,
+    getToken,
   });
 
   setForgeClient(client);
@@ -27,13 +28,13 @@
 
   onMount(() => {
     const unsubscribe = client.onConnectionStateChange((state) => {
-      props.onConnectionChange?.(state);
+      onConnectionChange?.(state);
     });
 
     // Connect handles token resolution internally before establishing SSE
     client.connect().then(async () => {
-      if (props.getToken) {
-        authState.token = await props.getToken();
+      if (getToken) {
+        authState.token = await getToken();
       }
       authState.loading = false;
     }).catch(() => {
@@ -46,4 +47,4 @@
   onDestroy(() => client.disconnect());
 </script>
 
-{@render props.children()}
+{@render children()}

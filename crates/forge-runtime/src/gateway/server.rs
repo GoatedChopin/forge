@@ -196,7 +196,10 @@ impl GatewayServer {
         ));
 
         let router = Router::new()
-            .route("/oauth/authorize", get(super::oauth::oauth_authorize_get).post(super::oauth::oauth_authorize_post))
+            .route(
+                "/oauth/authorize",
+                get(super::oauth::oauth_authorize_get).post(super::oauth::oauth_authorize_post),
+            )
             .route("/oauth/token", post(super::oauth::oauth_token))
             .route("/oauth/register", post(super::oauth::oauth_register))
             .with_state(oauth_state.clone());
@@ -243,7 +246,14 @@ impl GatewayServer {
                     use axum::http::Method;
                     CorsLayer::new()
                         .allow_origin(origins)
-                        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::PATCH, Method::OPTIONS])
+                        .allow_methods([
+                            Method::GET,
+                            Method::POST,
+                            Method::PUT,
+                            Method::DELETE,
+                            Method::PATCH,
+                            Method::OPTIONS,
+                        ])
                         .allow_headers([
                             axum::http::header::CONTENT_TYPE,
                             axum::http::header::AUTHORIZATION,

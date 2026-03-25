@@ -470,9 +470,9 @@
 
       <section class="card">
         <h2>Webhook <span class="badge">webhook</span></h2>
-        <label class="input-label">Idempotency Key</label>
+        <label class="input-label" for="idempotency-key">Idempotency Key</label>
         <div class="webhook-row">
-          <input type="text" class="key-input" class:used={keyUsed} value={idempotencyKey} readonly />
+          <input id="idempotency-key" type="text" class="key-input" class:used={keyUsed} value={idempotencyKey} readonly />
           <button class="small" onclick={newKey}>New</button>
           <button disabled={keyUsed} onclick={triggerWebhook}>Send</button>
         </div>
@@ -483,7 +483,7 @@
           <p class="hint warning">{webhookError}</p>
         {/if}
         {#if webhookEvents.data && webhookEvents.data.length > 0}
-          <label class="input-label events-label">Recent Events</label>
+          <span class="input-label events-label">Recent Events</span>
           <div class="events">
             {#each webhookEvents.data as ev (ev.id)}
               <div class="event">

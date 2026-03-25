@@ -10,9 +10,7 @@ test("homepage loads successfully", async ({ page }) => {
 test("navigation to about page works", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("link", { name: "About" }).click();
-  await expect(page.getByRole("heading", { level: 1 })).toContainText(
-    "About",
-  );
+  await expect(page.getByRole("heading", { level: 1 })).toContainText("About");
 });
 
 test("nav links are present in layout", async ({ page }) => {

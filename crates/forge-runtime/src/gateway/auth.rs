@@ -480,8 +480,8 @@ pub async fn auth_middleware(
     // (same backend origin) without needing cross-origin localStorage.
     // Requires CORS Access-Control-Allow-Credentials: true and frontend
     // fetch with credentials: 'include' for the Set-Cookie to stick.
-    let should_set_cookie = auth_context.is_authenticated()
-        && middleware.config.jwt_secret.is_some();
+    let should_set_cookie =
+        auth_context.is_authenticated() && middleware.config.jwt_secret.is_some();
 
     let req_is_https = req
         .headers()
@@ -505,18 +505,17 @@ pub async fn auth_middleware(
 
     let mut response = next.run(req).await;
 
-    if should_set_cookie {
-        if let Some(subject) = auth_context.subject() {
-            if let Some(secret) = &middleware.config.jwt_secret {
-                let cookie_value = sign_session_cookie(subject, secret);
-                let secure_flag = if req_is_https { "; Secure" } else { "" };
-                let cookie = format!(
-                    "forge_session={cookie_value}; Path=/_api/oauth/; HttpOnly; SameSite=Lax; Max-Age=86400{secure_flag}"
-                );
-                if let Ok(val) = axum::http::HeaderValue::from_str(&cookie) {
-                    response.headers_mut().append(header::SET_COOKIE, val);
-                }
-            }
+    if should_set_cookie
+        && let Some(subject) = auth_context.subject()
+        && let Some(secret) = &middleware.config.jwt_secret
+    {
+        let cookie_value = sign_session_cookie(subject, secret);
+        let secure_flag = if req_is_https { "; Secure" } else { "" };
+        let cookie = format!(
+            "forge_session={cookie_value}; Path=/_api/oauth/; HttpOnly; SameSite=Lax; Max-Age=86400{secure_flag}"
+        );
+        if let Ok(val) = axum::http::HeaderValue::from_str(&cookie) {
+            response.headers_mut().append(header::SET_COOKIE, val);
         }
     }
 
@@ -528,14 +527,14 @@ pub async fn auth_middleware(
 /// localStorage (which doesn't work cross-origin in dev).
 pub fn sign_session_cookie(subject: &str, secret: &str) -> String {
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-    use sha2::Sha256;
     use hmac::{Hmac, Mac};
+    use sha2::Sha256;
 
     let expiry = chrono::Utc::now().timestamp() + 86400; // 24h
     let payload = format!("{subject}.{expiry}");
 
-    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
-        .expect("HMAC accepts any key length");
+    let mut mac =
+        Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key length");
     mac.update(payload.as_bytes());
     let sig = URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
 
@@ -546,15 +545,15 @@ pub fn sign_session_cookie(subject: &str, secret: &str) -> String {
 /// Returns None if expired, tampered, or malformed.
 pub fn verify_session_cookie(cookie_value: &str, secret: &str) -> Option<String> {
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-    use sha2::Sha256;
     use hmac::{Hmac, Mac};
+    use sha2::Sha256;
 
     let parts: Vec<&str> = cookie_value.rsplitn(2, '.').collect();
     if parts.len() != 2 {
         return None;
     }
-    let sig_encoded = parts[0];
-    let payload = parts[1]; // "subject.expiry"
+    let sig_encoded = parts.first()?;
+    let payload = parts.get(1)?; // "subject.expiry"
 
     // Verify signature (HMAC verify_slice is constant-time)
     let sig_bytes = URL_SAFE_NO_PAD.decode(sig_encoded).ok()?;

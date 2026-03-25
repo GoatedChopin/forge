@@ -1,2 +1,4 @@
 dist
 target
+playwright-report
+test-results

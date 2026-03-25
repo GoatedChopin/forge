@@ -122,6 +122,11 @@ export interface WebhookEvent {
   processed_at: string;
 }
 
+export interface TokenPair {
+  access_token: string;
+  refresh_token: string;
+}
+
 export type UserRole = "admin" | "member" | "guest";
 
 export type {

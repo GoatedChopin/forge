@@ -241,7 +241,7 @@ export function createJobStore<TArgs, TOutput>(
           return;
         }
         state = {
-          jobId: jobData.job_id,
+          jobId: jobData.job_id as string,
           status: jobData.status as JobState<TOutput>["status"],
           progress: typeof jobData.progress === "number" ? jobData.progress : null,
           message: typeof jobData.message === "string" ? jobData.message : null,
@@ -333,7 +333,7 @@ export function createWorkflowStore<TArgs, TOutput>(
         }
         const rawSteps = Array.isArray(wfData.steps) ? wfData.steps : [];
         state = {
-          workflowId: wfData.workflow_id,
+          workflowId: wfData.workflow_id as string,
           status: wfData.status as WorkflowState<TOutput>["status"],
           step: typeof wfData.step === "string" ? wfData.step : null,
           waitingFor: null,

@@ -5,7 +5,7 @@ import { getForgeClient } from "@forge-rs/svelte";
 interface User {
   id: string;
   email: string;
-  [key: string]: unknown;
+  name?: string;
 }
 
 interface AuthState {
