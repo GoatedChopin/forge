@@ -9,7 +9,7 @@ Yet here you are, wiring up Redis for caching, Kafka for events, BullMQ for jobs
 FORGE compiles your entire backend into **one binary**: API, jobs, crons, workflows, real-time subscriptions. The only dependency? PostgreSQL. That's it.
 
 ```bash
-curl -fsSL https://tryforge.dev/install.sh | sh
+curl -fsSL https://tryforge.dev/install.sh | sh  # or: cargo install forgex
 forge new my-app --template with-svelte/minimal && cd my-app
 docker compose up --build
 ```
