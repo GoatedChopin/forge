@@ -679,3 +679,20 @@ th {
   }
 
 }
+
+/* ── App layout & nav ──────────────────────────────────────────── */
+.app-nav {
+  max-width: 80rem;
+  margin: 0 auto;
+  padding: 1rem 2rem;
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+}
+
+.nav-brand {
+  font-weight: 700;
+  font-size: 1.1rem;
+  text-decoration: none;
+  color: inherit;
+}

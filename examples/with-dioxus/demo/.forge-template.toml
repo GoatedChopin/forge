@@ -11,6 +11,8 @@ rewrite_paths = [
   "README.md",
   "frontend/Cargo.toml",
   "frontend/src/main.rs",
+  "frontend/src/layout.rs",
+  "frontend/src/pages/demo.rs",
   "frontend/tests/home.spec.ts",
 ]
 

@@ -11,6 +11,8 @@ rewrite_paths = [
   "README.md",
   "frontend/Cargo.toml",
   "frontend/src/main.rs",
+  "frontend/src/layout.rs",
+  "frontend/src/pages/home.rs",
   "frontend/tests/home.spec.ts",
 ]
 
@@ -71,7 +73,7 @@ files = ["README.md"]
 [[replacement]]
 from = "\"minimal\""
 to = "\"{{project_slug}}\""
-files = ["frontend/src/main.rs", "frontend/tests/home.spec.ts"]
+files = ["frontend/src/layout.rs", "frontend/src/pages/home.rs", "frontend/tests/home.spec.ts"]
 
 [[replacement]]
 from = "forge-dioxus-minimal-template"

@@ -10,6 +10,7 @@ rewrite_paths = [
   "Dockerfile",
   "README.md",
   "frontend/package.json",
+  "frontend/src/routes/+layout.svelte",
   "frontend/src/routes/+page.svelte",
 ]
 
@@ -71,6 +72,11 @@ files = ["README.md"]
 from = "<h1>minimal</h1>"
 to = "<h1>{{project_slug}}</h1>"
 files = ["frontend/src/routes/+page.svelte"]
+
+[[replacement]]
+from = ">minimal</a>"
+to = ">{{project_slug}}</a>"
+files = ["frontend/src/routes/+layout.svelte"]
 
 [[replacement]]
 from = "forge-svelte-minimal-template"

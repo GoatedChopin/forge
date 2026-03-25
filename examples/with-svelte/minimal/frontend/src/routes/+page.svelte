@@ -1,46 +1,27 @@
 <script lang="ts">
-  // Import forge utilities as needed:
-  // import { subscribe, mutate } from "@forge-rs/svelte";
-  // import { myQuery, myMutation } from "$lib/forge";
-
   const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8080";
 </script>
 
-<main>
-  <h1>minimal</h1>
-  <p class="subtitle">
-    Backend: <a href={apiUrl + "/health"} target="_blank" rel="external noopener">{apiUrl}</a>
-  </p>
+<h1>minimal</h1>
+<p class="subtitle">
+  Backend: <a href={apiUrl + "/health"} target="_blank" rel="external noopener">{apiUrl}</a>
+</p>
 
-  <section class="card">
-    <h2>Getting Started</h2>
-    <p>Your FORGE project is ready! Here's what you can do:</p>
-    <ul>
-      <li>Define models in <code>src/schema/</code></li>
-      <li>Create queries and mutations in <code>src/functions/</code></li>
-      <li>Register them in <code>src/main.rs</code></li>
-      <li>Add migrations in <code>migrations/</code></li>
-    </ul>
-    <p>
-      Check the <a href="https://tryforge.dev/docs" target="_blank">documentation</a> for guides and examples.
-    </p>
-  </section>
-</main>
+<section class="card">
+  <h2>Getting Started</h2>
+  <p>Your FORGE project is ready! Here's what you can do:</p>
+  <ul>
+    <li>Define models in <code>src/schema/</code></li>
+    <li>Create queries and mutations in <code>src/functions/</code></li>
+    <li>Register them in <code>src/main.rs</code></li>
+    <li>Add migrations in <code>migrations/</code></li>
+  </ul>
+  <p>
+    Check the <a href="https://tryforge.dev/docs" target="_blank">documentation</a> for guides and examples.
+  </p>
+</section>
 
 <style>
-  main {
-    max-width: 56rem;
-    margin: 0 auto;
-    padding: 2rem;
-    font-family:
-      system-ui,
-      -apple-system,
-      sans-serif;
-    display: flex;
-    flex-direction: column;
-    gap: 1.5rem;
-  }
-
   h1 {
     margin: 0;
   }
@@ -51,7 +32,7 @@
   }
 
   .subtitle {
-    margin: -1rem 0 0;
+    margin: -0.5rem 0 1.5rem;
     color: #666;
   }
 
