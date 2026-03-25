@@ -208,13 +208,25 @@ jobs:
       - env:
           TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
+          publish_crate() {
+            local output
+            output=$(cargo publish "$@" --token $TOKEN 2>&1) || {
+              if echo "$output" | grep -q "already uploaded"; then
+                echo "$output" | tail -1
+                return 0
+              fi
+              echo "$output"
+              return 1
+            }
+            echo "$output"
+          }
           for pkg in forge-macros forge-core forge-runtime forge-codegen; do
-            sleep 30 && cargo publish -p $pkg --token $TOKEN 2>&1 || echo "$pkg already published"
+            sleep 30 && publish_crate -p $pkg
           done
-          sleep 30 && cd packages/forge-dioxus && cargo publish --allow-dirty --token $TOKEN 2>&1 || echo "forge-dioxus already published"
+          sleep 30 && cd packages/forge-dioxus && publish_crate --allow-dirty
           cd "$GITHUB_WORKSPACE"
           bash scripts/build-template-archive.sh
-          sleep 30 && cargo publish -p forgex --allow-dirty --token $TOKEN 2>&1 || echo "forgex already published"
+          sleep 30 && publish_crate -p forgex --allow-dirty
 
   publish-npm:
     name: Publish npm
