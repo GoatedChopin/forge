@@ -11,7 +11,7 @@ FORGE compiles your entire backend into **one binary**: API, jobs, crons, workfl
 ```bash
 curl -fsSL https://tryforge.dev/install.sh | sh
 forge new my-app --template with-svelte/minimal && cd my-app
-forge dev
+docker compose up --build
 ```
 
 [![Crates.io](https://img.shields.io/crates/v/forgex.svg)](https://crates.io/crates/forgex)
@@ -316,7 +316,7 @@ forge              → Public API, Forge::builder(), prelude, CLI
 
 ## CLI
 
-`forge dev` starts PostgreSQL, a cargo-watch backend, and the selected frontend target. `forge new` now requires a checked-in template id such as `with-svelte/minimal`, `with-svelte/demo`, or `with-dioxus/realtime-todo-list`. `forge generate --target dioxus` still forces Dioxus binding generation when detection is not enough.
+Development is started with `docker compose up --build`, which starts PostgreSQL, a cargo-watch backend, and the selected frontend target. `forge new` now requires a checked-in template id such as `with-svelte/minimal`, `with-svelte/demo`, or `with-dioxus/realtime-todo-list`. `forge generate --target dioxus` still forces Dioxus binding generation when detection is not enough.
 
 ```bash
 forge generate                   # generate frontend/runtime bindings from backend code
@@ -396,8 +396,8 @@ log_level = "debug"   # debug, info, warn, error
 Or override with environment variables:
 
 ```bash
-RUST_LOG=debug forge dev                     # everything
-RUST_LOG=warn,my_app=debug forge dev         # your code only
+RUST_LOG=debug docker compose up --build                     # everything
+RUST_LOG=warn,my_app=debug docker compose up --build         # your code only
 ```
 
 Queries slower than 500ms are logged as warnings automatically. Distributed tracing is built in via OpenTelemetry (OTLP over HTTP).

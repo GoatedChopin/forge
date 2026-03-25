@@ -7,7 +7,7 @@ Built with [FORGE](https://tryforge.dev). Rust backend, Dioxus frontend, one Pos
 Start the backend and database:
 
 ```bash
-forge dev
+docker compose up --build
 ```
 
 - Backend: http://localhost:9081

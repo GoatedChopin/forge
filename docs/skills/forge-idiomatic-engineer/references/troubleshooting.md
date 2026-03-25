@@ -68,7 +68,7 @@ sqlx::query_as::<_, User>("...")
 
 Note: `QueryContext.db()` returns `ForgeDb` which works directly without `&mut`. Only `MutationContext.conn()` needs this pattern.
 
-## Docker / forge dev
+## Docker / docker compose
 
 ### `project root does not exist`
 

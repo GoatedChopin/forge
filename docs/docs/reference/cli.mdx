@@ -39,31 +39,19 @@ forge new my-app --template with-svelte/demo --output /path/to/projects/my-app
 
 ---
 
-## forge dev
+## Development Environment
 
-Start the development environment using Docker Compose.
-
-```bash
-forge dev [action]
-```
-
-### Actions
-
-| Action         | Description                                                            |
-| -------------- | ---------------------------------------------------------------------- |
-| (none)         | Run `docker compose up --build` with backend, frontend, and PostgreSQL |
-| `down`         | Stop the development environment                                       |
-| `down --clear` | Stop, remove volumes, and delete `target/` directory                   |
+Start your development environment with Docker Compose:
 
 ```bash
 # Start development environment
-forge dev
+docker compose up --build
 
 # Stop containers
-forge dev down
+docker compose down
 
-# Stop and clean everything (volumes + target/)
-forge dev down --clear
+# Stop and remove volumes
+docker compose down -v
 ```
 
 ### Requirements
@@ -297,9 +285,9 @@ DROP TABLE users;
 | Variable       | Description                                                                   | Used By                |
 | -------------- | ----------------------------------------------------------------------------- | ---------------------- |
 | `DATABASE_URL` | PostgreSQL connection string (set automatically by docker-compose during dev) | forge migrate, runtime |
-| `RUST_LOG`     | Log level (e.g., info, debug, trace)                                          | forge dev              |
-| `HOST`         | Backend host (default: 0.0.0.0)                                               | forge dev              |
-| `PORT`         | Backend port (default: 8080)                                                  | forge dev              |
+| `RUST_LOG`     | Log level (e.g., info, debug, trace)                                          | docker compose, runtime |
+| `HOST`         | Backend host (default: 0.0.0.0)                                               | docker compose, runtime |
+| `PORT`         | Backend port (default: 9081)                                                  | docker compose, runtime |
 
 ---
 

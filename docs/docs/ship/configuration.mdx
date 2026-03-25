@@ -61,7 +61,7 @@ Environment variables use `${VAR_NAME}` syntax (uppercase letters, numbers, unde
 url = "${DATABASE_URL}"
 ```
 
-During development, `forge dev` runs PostgreSQL via Docker Compose. For production, provide a `DATABASE_URL` pointing to your PostgreSQL instance.
+During development, `docker compose up --build` runs PostgreSQL via Docker Compose. For production, provide a `DATABASE_URL` pointing to your PostgreSQL instance.
 
 #### Read Replicas
 
@@ -370,7 +370,7 @@ Console logs always work regardless of the `enabled` flag. The flag only control
 
 ### Development
 
-Development uses `forge dev` which runs Docker Compose. The `forge.toml` in generated projects uses `${DATABASE_URL}` which is set by the Docker Compose environment:
+Development uses `docker compose up --build` to run the project. The `forge.toml` in generated projects uses `${DATABASE_URL}` which is set by the Docker Compose environment:
 
 ```toml
 [project]

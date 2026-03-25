@@ -15,7 +15,7 @@ Requires Docker (with Compose v2).
 ```bash
 forge new my-app --template with-svelte/minimal
 cd my-app
-forge dev
+docker compose up --build
 ```
 
 This template starts with a SvelteKit frontend. To start with Dioxus instead, use `forge new my-app --template with-dioxus/minimal`.

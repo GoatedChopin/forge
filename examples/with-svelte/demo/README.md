@@ -5,7 +5,7 @@ Built with [FORGE](https://tryforge.dev). One binary, one database, everything e
 ## Development
 
 ```bash
-forge dev
+docker compose up --build
 ```
 
 Starts PostgreSQL, the Rust backend, and the SvelteKit frontend. All three.
@@ -15,8 +15,8 @@ Starts PostgreSQL, the Rust backend, and the SvelteKit frontend. All three.
 - PostgreSQL: localhost:5432
 
 ```bash
-forge dev down          # stop everything
-forge dev down --clear  # stop + remove volumes and target/
+docker compose down          # stop everything
+docker compose down -v       # stop + remove volumes
 ```
 
 ### Adding Features

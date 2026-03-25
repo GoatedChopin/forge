@@ -1,5 +1,4 @@
 mod check;
-mod dev;
 mod frontend_codegen;
 mod frontend_target;
 mod generate;
@@ -11,7 +10,6 @@ mod test;
 mod ui;
 
 pub use check::CheckCommand;
-pub use dev::DevCommand;
 pub use generate::GenerateCommand;
 pub use migrate::MigrateCommand;
 pub use new::NewCommand;
@@ -27,16 +25,16 @@ Everything you need in one binary. No Redis, no Kafka, just PostgreSQL.
 Quick Start:
   forge new my-app --template with-svelte/minimal
   cd my-app
-  forge dev                 Start development (docker compose)
+  docker compose up --build      Start development
 
 Learn more: https://tryforge.dev/docs"#;
 
 const AFTER_HELP: &str = r#"Examples:
   forge new my-app --template with-svelte/minimal
   forge new my-app --template with-dioxus/realtime-todo-list
-  forge dev                      Start development (requires Docker)
-  forge dev down                 Stop the development environment
-  forge dev down --clear         Stop and remove volumes + target/
+  docker compose up --build      Start development (requires Docker)
+  docker compose down            Stop the development environment
+  docker compose down -v         Stop and remove volumes
   forge test                     Run all tests (backend + frontend)
   forge test --skip-frontend     Run backend unit tests only
   forge test --skip-backend      Run frontend Playwright tests only
@@ -65,9 +63,6 @@ pub enum Commands {
     /// Validate project configuration and dependencies
     Check(CheckCommand),
 
-    /// Start development environment with Docker Compose
-    Dev(DevCommand),
-
     /// Generate frontend bindings from backend source
     Generate(GenerateCommand),
 
@@ -84,7 +79,6 @@ impl Cli {
         match self.command {
             Commands::New(cmd) => cmd.execute().await,
             Commands::Check(cmd) => cmd.execute().await,
-            Commands::Dev(cmd) => cmd.execute().await,
             Commands::Test(cmd) => cmd.execute().await,
             Commands::Generate(cmd) => cmd.execute().await,
             Commands::Migrate(cmd) => cmd.execute().await,

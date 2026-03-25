@@ -19,10 +19,10 @@ bindings from the same Rust source of truth, with first-class support for Svelte
 curl -fsSL https://tryforge.dev/install.sh | sh
 forge new my-app --template with-svelte/minimal
 cd my-app
-forge dev
+docker compose up --build
 ```
 
-Runs Docker Compose with PostgreSQL, backend (cargo-watch), and the selected frontend target. Use `forge dev down --clear` to reset. Choose a `with-dioxus/*` template if you want a Dioxus frontend instead of SvelteKit.
+Runs Docker Compose with PostgreSQL, backend (cargo-watch), and the selected frontend target. Use `docker compose down -v` to reset. Choose a `with-dioxus/*` template if you want a Dioxus frontend instead of SvelteKit.
 
 ## Queries and mutations
 

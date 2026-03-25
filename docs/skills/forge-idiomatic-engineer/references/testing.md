@@ -312,7 +312,7 @@ Register a unique user per test using `uniqueId()` for full isolation, even when
 
 `gotoReady()` waits for the first `/_api/subscribe` response, which is the signal that reactivity is wired up. Don't use it if SSE was already established during a login step. In that case, wait for a UI element that depends on server data instead.
 
-`forge dev` runs the frontend in Docker, but Playwright needs a locally accessible dev server. Stop the Docker frontend container, then run `bun run dev` locally in `frontend/`. The backend can stay in Docker.
+`docker compose up --build` runs the frontend in Docker, but Playwright needs a locally accessible dev server. Stop the Docker frontend container, then run `bun run dev` locally in `frontend/`. The backend can stay in Docker.
 
 Add `test-results/` and `playwright-report/` to `.prettierignore` to prevent `forge check` from formatting generated HTML/JSON in those directories.
 

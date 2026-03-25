@@ -297,7 +297,7 @@ Unconfigured pools fall back to primary.
 | Command | Purpose |
 |---|---|
 | `forge new <name> --template <id>` | Scaffold project |
-| `forge dev` / `forge dev down --clear` | Docker Compose dev environment |
+| `docker compose up --build` / `docker compose down -v` | Docker Compose dev environment |
 | `forge generate` | Generate frontend bindings from backend |
 | `forge test` | Run backend + Playwright tests |
 | `forge check` | Validate config, structure, linting, bindings |

@@ -541,7 +541,10 @@ impl NewCommand {
         );
         ui::section("Next Steps");
         println!("  1. {}", style(format!("cd {}", project_dir)).cyan());
-        println!("  2. {}", style("forge dev").cyan());
+        println!(
+            "  2. {}",
+            style("docker compose up --build").cyan()
+        );
         println!("     Start development environment (requires Docker)");
         if template.frontend == FrontendTarget::Dioxus {
             println!("  3. {}", style("cd frontend && dx serve --port 9080").cyan());
@@ -549,10 +552,10 @@ impl NewCommand {
         }
 
         ui::section("Useful Commands");
-        ui::command("forge dev down", "Stop the development environment");
+        ui::command("docker compose down", "Stop the development environment");
         ui::command(
-            "forge dev down --clear",
-            "Stop and remove volumes + target/",
+            "docker compose down -v",
+            "Stop and remove volumes",
         );
 
         ui::section("Default Service URLs");

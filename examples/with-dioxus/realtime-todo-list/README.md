@@ -5,7 +5,7 @@ Built with [FORGE](https://tryforge.dev). One Rust binary, one PostgreSQL databa
 ## Development
 
 ```bash
-forge dev
+docker compose up --build
 ```
 
 Starts PostgreSQL, the Rust backend, and the Dioxus web frontend.

@@ -193,7 +193,7 @@ function CTASection(): JSX.Element {
             <pre className={styles.codeBlock}>
 {`cargo install forgex
 forge new my-app --template with-svelte/minimal
-cd my-app && forge dev`}
+cd my-app && docker compose up --build`}
             </pre>
             <p className="margin-top--md">
               Want Rust on both sides? Use <code>forge new my-app --template with-dioxus/minimal</code>.

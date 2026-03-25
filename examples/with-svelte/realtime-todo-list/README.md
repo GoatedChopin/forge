@@ -7,7 +7,7 @@ A simple todo app demonstrating queries, mutations, background jobs, cron schedu
 ## Development
 
 ```bash
-forge dev
+docker compose up --build
 ```
 
 Starts PostgreSQL, the Rust backend, and the SvelteKit frontend. All three.
@@ -17,8 +17,8 @@ Starts PostgreSQL, the Rust backend, and the SvelteKit frontend. All three.
 - PostgreSQL: localhost:5432
 
 ```bash
-forge dev down          # stop everything
-forge dev down --clear  # stop + remove volumes and target/
+docker compose down          # stop everything
+docker compose down -v       # stop + remove volumes
 ```
 
 ### Useful Commands

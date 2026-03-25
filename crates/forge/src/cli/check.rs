@@ -115,7 +115,10 @@ impl CheckCommand {
             println!("{} All checks passed! Ready for development.", ui::ok());
             println!();
             println!("Next steps:");
-            println!("  {} Start development", style("forge dev").cyan());
+            println!(
+                "  {} Start development",
+                style("docker compose up --build").cyan()
+            );
         } else if result.passed {
             println!(
                 "{} Checks passed with {} warning(s)",
