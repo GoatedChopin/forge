@@ -32,6 +32,7 @@ fn main() {
 #[component]
 fn App() -> Element {
     rsx! {
+        document::Title { "minimal" }
         ForgeProvider {
             url: api_url().to_string(),
             Router::<Route> {}
