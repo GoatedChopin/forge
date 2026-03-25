@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-03-26
+
+### Added
+
+- OAuth 2.1 authorization server with PKCE support
+- Router and layout systems for all frontend templates
+- `cargo install forgex` documented as alternative installation method
+
+### Changed
+
+- OAuth implementation refactored with improved type generation and built-in types
+- Examples switched to workspace/path dependencies with version rewriting deferred to archive time
+- `forge dev` command removed in favor of `docker compose` directly
+- Frontend API URLs updated to use port 9081 across all examples and test configurations
+
+### Fixed
+
+- sqlx cache correctly copied into crate directories for publish
+- Publish step fails on real errors instead of silently continuing
+
 ## [0.7.3] - 2026-03-25
 
 ### Added
@@ -419,7 +439,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust 2024 edition unsafe block compatibility
 - Release workflow cargo-edit installation
 
-[unreleased]: https://github.com/isala404/forge/compare/v0.7.3...HEAD
+[unreleased]: https://github.com/isala404/forge/compare/v0.7.4...HEAD
+[0.7.4]: https://github.com/isala404/forge/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/isala404/forge/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/isala404/forge/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/isala404/forge/compare/v0.7.0...v0.7.1
