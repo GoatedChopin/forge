@@ -1043,7 +1043,7 @@ checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 
 [[package]]
 name = "forge-bench"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "chrono",
  "forgex",
@@ -1058,7 +1058,7 @@ dependencies = [
 
 [[package]]
 name = "forge-codegen"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "forge-core",
  "quote",
@@ -1071,7 +1071,7 @@ dependencies = [
 
 [[package]]
 name = "forge-core"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -1099,7 +1099,7 @@ dependencies = [
 
 [[package]]
 name = "forge-dioxus-demo-template"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "bcrypt 0.16.0",
  "chrono",
@@ -1121,7 +1121,7 @@ dependencies = [
 
 [[package]]
 name = "forge-dioxus-minimal-template"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "chrono",
  "dotenvy",
@@ -1138,7 +1138,7 @@ dependencies = [
 
 [[package]]
 name = "forge-macros"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "cron",
  "proc-macro2",
@@ -1149,7 +1149,7 @@ dependencies = [
 
 [[package]]
 name = "forge-runtime"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "anyhow",
  "axum",
@@ -1190,7 +1190,7 @@ dependencies = [
 
 [[package]]
 name = "forge-svelte-demo-template"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "bcrypt 0.16.0",
  "chrono",
@@ -1212,7 +1212,7 @@ dependencies = [
 
 [[package]]
 name = "forge-svelte-minimal-template"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "chrono",
  "dotenvy",
@@ -1229,7 +1229,7 @@ dependencies = [
 
 [[package]]
 name = "forgex"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "anyhow",
  "axum",
@@ -4063,7 +4063,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "todo"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "chrono",
  "dotenvy",
@@ -4080,7 +4080,7 @@ dependencies = [
 
 [[package]]
 name = "todo-dioxus"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "chrono",
  "dotenvy",
