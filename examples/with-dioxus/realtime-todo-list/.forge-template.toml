@@ -66,6 +66,12 @@ from = "todo-dioxus/"
 to = "{{project_slug}}/"
 files = ["README.md"]
 
+# Convert workspace dep to standalone versioned dep
+[[replacement]]
+from = 'forge = { workspace = true }'
+to = 'forge = { version = "0.7.3", package = "forgex" }'
+files = ["Cargo.toml"]
+
 # Convert workspace-relative docker-compose to standalone
 [[replacement]]
 from = "- ../../..:/workspace"
