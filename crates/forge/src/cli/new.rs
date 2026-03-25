@@ -544,7 +544,7 @@ impl NewCommand {
         println!("  2. {}", style("forge dev").cyan());
         println!("     Start development environment (requires Docker)");
         if template.frontend == FrontendTarget::Dioxus {
-            println!("  3. {}", style("cd frontend && dx serve").cyan());
+            println!("  3. {}", style("cd frontend && dx serve --port 9080").cyan());
             println!("     Start the Dioxus frontend natively (web by default)");
         }
 

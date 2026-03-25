@@ -220,8 +220,14 @@ jobs:
             }
             echo "$output"
           }
+          # sqlx offline cache lives at the workspace root but cargo publish
+          # only packages files under each crate dir
+          for crate_dir in crates/forge-core crates/forge-runtime; do
+            cp -r .sqlx "$crate_dir/.sqlx"
+          done
+
           for pkg in forge-macros forge-core forge-runtime forge-codegen; do
-            sleep 30 && publish_crate -p $pkg
+            sleep 30 && publish_crate -p $pkg --allow-dirty
           done
           sleep 30 && cd packages/forge-dioxus && publish_crate --allow-dirty
           cd "$GITHUB_WORKSPACE"
