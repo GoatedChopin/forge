@@ -463,6 +463,7 @@ impl Forge {
                     access_token_secs: self.config.auth.access_token_ttl_secs(),
                     refresh_token_days: self.config.auth.refresh_token_ttl_days(),
                 },
+                project_name: self.config.project.name.clone(),
             };
 
             // Build gateway server (pass Database wrapper for read replica routing)
@@ -565,29 +566,49 @@ impl Forge {
                 );
             }
 
-            // MCP OAuth/resource discovery: return JSON 404 so MCP clients
-            // (like Claude Code) get a parseable response instead of an empty
-            // HTML page from the frontend fallback, and gracefully skip auth.
+            // MCP OAuth: mount OAuth routes or return JSON 404 for discovery
             if self.config.mcp.enabled {
                 use axum::routing::get;
-                async fn oauth_not_supported() -> impl axum::response::IntoResponse {
-                    (
-                        axum::http::StatusCode::NOT_FOUND,
-                        axum::Json(serde_json::json!({
-                            "error": "oauth_not_supported",
-                            "error_description": "This server does not support OAuth. Connect without authentication."
-                        })),
-                    )
+
+                if let Some((oauth_api_router, oauth_state)) = gateway.oauth_router() {
+                    // OAuth API routes under /_api/oauth/* (bypass auth middleware)
+                    router = router.nest("/_api", oauth_api_router);
+
+                    // Well-known metadata at root level
+                    router = router
+                        .route(
+                            "/.well-known/oauth-authorization-server",
+                            get(forge_runtime::gateway::oauth::well_known_oauth_metadata)
+                                .with_state(oauth_state.clone()),
+                        )
+                        .route(
+                            "/.well-known/oauth-protected-resource",
+                            get(forge_runtime::gateway::oauth::well_known_resource_metadata)
+                                .with_state(oauth_state),
+                        );
+
+                    tracing::info!("OAuth 2.1 endpoints enabled for MCP");
+                } else {
+                    // OAuth not configured: return parseable JSON 404
+                    async fn oauth_not_supported() -> impl axum::response::IntoResponse {
+                        (
+                            axum::http::StatusCode::NOT_FOUND,
+                            axum::Json(serde_json::json!({
+                                "error": "oauth_not_supported",
+                                "error_description": "This server does not support OAuth. Connect without authentication."
+                            })),
+                        )
+                    }
+                    router = router
+                        .route(
+                            "/.well-known/oauth-authorization-server",
+                            get(oauth_not_supported),
+                        )
+                        .route(
+                            "/.well-known/oauth-protected-resource",
+                            get(oauth_not_supported),
+                        );
                 }
-                router = router
-                    .route(
-                        "/.well-known/oauth-authorization-server",
-                        get(oauth_not_supported),
-                    )
-                    .route(
-                        "/.well-known/oauth-protected-resource",
-                        get(oauth_not_supported),
-                    );
             }
 
             // Merge custom routes before frontend fallback so they take precedence

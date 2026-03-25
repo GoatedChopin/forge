@@ -2,6 +2,31 @@ use crate::schema::{McpUserInfo, UserRole};
 use forge::forge_core::mcp::McpToolContext;
 
 #[forge::mcp_tool(
+    name = "demo.me",
+    title = "My Profile",
+    description = "Get the authenticated user's profile information",
+    read_only
+)]
+pub async fn mcp_me(ctx: &McpToolContext) -> forge::forge_core::Result<McpUserInfo> {
+    let user_id = ctx.require_user_id()?;
+    let mut conn = ctx.conn().await?;
+
+    let user = sqlx::query_as!(
+        McpUserInfo,
+        r#"
+        SELECT id, email, name, role as "role: UserRole"
+        FROM users WHERE id = $1
+        "#,
+        user_id
+    )
+    .fetch_optional(&mut conn)
+    .await?
+    .ok_or_else(|| forge::forge_core::ForgeError::NotFound("User not found".into()))?;
+
+    Ok(user)
+}
+
+#[forge::mcp_tool(
     name = "demo.list_users",
     title = "List Users",
     description = "List all users in the demo database with their roles",

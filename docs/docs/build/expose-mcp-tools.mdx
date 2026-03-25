@@ -204,6 +204,43 @@ Validation errors return as tool results so LLM clients can read and correct the
 | `ctx.auth` | Auth context (roles, claims) |
 | `ctx.request` | Request metadata (request_id, trace_id, client_ip) |
 
+## OAuth for MCP Clients
+
+Enable OAuth 2.1 so MCP clients like Claude Code can authenticate via browser login:
+
+```toml
+[auth]
+jwt_secret = "${JWT_SECRET}"
+
+[mcp]
+enabled = true
+oauth = true
+```
+
+This makes Forge act as an OAuth 2.1 Authorization Server. MCP clients discover the flow via `/.well-known/oauth-authorization-server`, register dynamically, and authenticate users through a built-in consent page.
+
+Works with both HMAC (built-in auth) and JWKS (Firebase, Auth0, Clerk). If the user is already logged into your app in the same browser, the consent page detects their existing session and shows a one-click "Authorize" button.
+
+### Adding to Claude Code
+
+```bash
+claude mcp add --transport http myapp https://your-app.example/_api/mcp
+```
+
+Claude Code will discover the OAuth endpoints automatically and prompt the user to authenticate in their browser.
+
+### How it works
+
+1. MCP client discovers OAuth metadata at `/.well-known/oauth-authorization-server`
+2. Client self-registers at `/_api/oauth/register` (dynamic client registration)
+3. Client opens browser to `/_api/oauth/authorize` with PKCE challenge
+4. User authenticates (existing session, or email/password for HMAC mode)
+5. Forge issues an authorization code, redirects back to the client
+6. Client exchanges code + PKCE verifier for access token + refresh token
+7. Client uses Bearer token for MCP tool calls
+
+OAuth-issued tokens include `aud: "forge:mcp"` to scope them to MCP endpoints only.
+
 ## Protocol
 
 Forge implements MCP protocol version `2025-11-25` over Streamable HTTP. Tools are separate from `#[forge::query]` and `#[forge::mutation]` handlers.

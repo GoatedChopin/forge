@@ -320,6 +320,27 @@ No backend auth handlers needed. Configure `jwks_url` + `jwt_issuer` + `jwt_audi
 
 When `jwt_issuer` is set, tokens with a different `iss` claim are rejected. When `jwt_audience` is set, tokens with a different `aud` claim are rejected. Both optional but recommended to prevent token confusion across services.
 
+## OAuth 2.1 for MCP
+
+Enable OAuth so MCP clients (Claude Code, etc.) can auto-authenticate:
+
+```toml
+[auth]
+jwt_secret = "${JWT_SECRET}"
+
+[mcp]
+enabled = true
+oauth = true
+```
+
+Forge acts as an OAuth 2.1 Authorization Server with PKCE. Works with both HMAC and JWKS modes. The authorize page detects existing sessions from localStorage (same origin).
+
+Endpoints created: `/.well-known/oauth-authorization-server`, `/_api/oauth/authorize`, `/_api/oauth/token`, `/_api/oauth/register`.
+
+OAuth-issued tokens include `aud: "forge:mcp"` to scope access to MCP endpoints. Refresh tokens are bound to the OAuth client that created them.
+
+HMAC mode: built-in login form queries `users` table (email + password_hash). JWKS mode: user must be logged into the app first (token read from localStorage).
+
 ## Testing Auth
 
 ```rust

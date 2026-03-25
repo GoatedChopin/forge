@@ -9,6 +9,7 @@ pub mod function;
 pub mod http;
 pub mod job;
 pub mod mcp;
+pub mod oauth;
 pub mod rate_limit;
 pub mod realtime;
 pub mod schema;

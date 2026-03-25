@@ -77,7 +77,10 @@ Config in `forge.toml`:
 enabled = true
 path = "/mcp"
 session_ttl_secs = 3600
+oauth = true  # Enable OAuth 2.1 for MCP clients (requires auth.jwt_secret)
 ```
+
+OAuth enables `claude mcp add --transport http myapp https://your-app.example/_api/mcp` with automatic browser-based authentication. See `references/auth.md` for details.
 
 Annotation flags: `read_only`, `destructive`, `idempotent`, `open_world`. These set MCP tool hints for client UIs.
 

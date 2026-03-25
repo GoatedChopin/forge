@@ -67,6 +67,8 @@ pub struct GatewayConfig {
     pub quiet_routes: Vec<String>,
     /// Token TTL configuration for refresh token management.
     pub token_ttl: forge_core::AuthTokenTtl,
+    /// Project name (displayed on OAuth consent page).
+    pub project_name: String,
 }
 
 impl Default for GatewayConfig {
@@ -82,6 +84,7 @@ impl Default for GatewayConfig {
             mcp: McpConfig::default(),
             quiet_routes: Vec::new(),
             token_ttl: forge_core::AuthTokenTtl::default(),
+            project_name: "forge-app".to_string(),
         }
     }
 }
@@ -168,6 +171,39 @@ impl GatewayServer {
         self.reactor.clone()
     }
 
+    /// Build an OAuth router (bypasses auth middleware). Returns None if OAuth is disabled.
+    pub fn oauth_router(&self) -> Option<(Router, Arc<super::oauth::OAuthState>)> {
+        if !self.config.mcp.oauth {
+            return None;
+        }
+
+        let token_issuer = HmacTokenIssuer::from_config(&self.config.auth)
+            .map(|issuer| Arc::new(issuer) as Arc<dyn forge_core::TokenIssuer>)?;
+
+        let auth_middleware_state = Arc::new(AuthMiddleware::new(self.config.auth.clone()));
+
+        let jwt_secret = self.config.auth.jwt_secret.clone().unwrap_or_default();
+
+        let oauth_state = Arc::new(super::oauth::OAuthState::new(
+            self.db.primary().clone(),
+            auth_middleware_state,
+            token_issuer,
+            self.token_ttl.access_token_secs,
+            self.token_ttl.refresh_token_days,
+            self.config.auth.is_hmac(),
+            self.config.project_name.clone(),
+            jwt_secret,
+        ));
+
+        let router = Router::new()
+            .route("/oauth/authorize", get(super::oauth::oauth_authorize_get).post(super::oauth::oauth_authorize_post))
+            .route("/oauth/token", post(super::oauth::oauth_token))
+            .route("/oauth/register", post(super::oauth::oauth_register))
+            .with_state(oauth_state.clone());
+
+        Some((router, oauth_state))
+    }
+
     /// Build the Axum router.
     pub fn router(&self) -> Router {
         let token_issuer = HmacTokenIssuer::from_config(&self.config.auth)
@@ -185,9 +221,13 @@ impl GatewayServer {
 
         let auth_middleware_state = Arc::new(AuthMiddleware::new(self.config.auth.clone()));
 
-        // Build CORS layer
+        // Build CORS layer. When MCP OAuth is enabled and specific origins
+        // are configured, allow credentials so the browser accepts Set-Cookie
+        // on cross-origin API responses (needed for forge_session cookie).
+        let oauth_credentials = self.config.mcp.oauth;
         let cors = if self.config.cors_enabled {
             if self.config.cors_origins.iter().any(|o| o == "*") {
+                // Wildcard origin can't use credentials
                 CorsLayer::new()
                     .allow_origin(Any)
                     .allow_methods(Any)
@@ -199,10 +239,23 @@ impl GatewayServer {
                     .iter()
                     .filter_map(|o| o.parse().ok())
                     .collect();
-                CorsLayer::new()
-                    .allow_origin(origins)
-                    .allow_methods(Any)
-                    .allow_headers(Any)
+                if oauth_credentials {
+                    use axum::http::Method;
+                    CorsLayer::new()
+                        .allow_origin(origins)
+                        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::PATCH, Method::OPTIONS])
+                        .allow_headers([
+                            axum::http::header::CONTENT_TYPE,
+                            axum::http::header::AUTHORIZATION,
+                            axum::http::header::ACCEPT,
+                        ])
+                        .allow_credentials(true)
+                } else {
+                    CorsLayer::new()
+                        .allow_origin(origins)
+                        .allow_methods(Any)
+                        .allow_headers(Any)
+                }
             }
         } else {
             CorsLayer::new()

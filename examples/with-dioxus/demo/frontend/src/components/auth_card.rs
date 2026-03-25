@@ -1,12 +1,14 @@
 use dioxus::prelude::*;
 
 use crate::forge::{
-    AuthResponse, LoginInput, RefreshInput, RegisterInput, UserPublic, use_login,
+    AuthResponse, LoginInput, RefreshInput, RegisterInput, UserPublic, use_forge_auth, use_login,
     use_refresh_token, use_register,
 };
 
 #[component]
 pub fn AuthCard() -> Element {
+    let mut auth = use_forge_auth();
+
     let mut mode = use_signal(|| "login".to_string());
     let mut auth_email = use_signal(|| "demo@example.com".to_string());
     let mut auth_password = use_signal(|| "password123".to_string());
@@ -14,8 +16,6 @@ pub fn AuthCard() -> Element {
     let mut auth_error = use_signal(|| None::<String>);
     let mut loading = use_signal(|| false);
 
-    let mut access_token = use_signal(|| None::<String>);
-    let mut refresh_tok = use_signal(|| None::<String>);
     let mut auth_user = use_signal(|| None::<UserPublic>);
     let mut token_claims = use_signal(|| None::<Vec<(String, String)>>);
     let mut refresh_count = use_signal(|| 0u32);
@@ -54,8 +54,14 @@ pub fn AuthCard() -> Element {
                     Ok(res) => {
                         let claims = parse_jwt_claims(&res.access_token);
                         token_claims.set(Some(claims));
-                        access_token.set(Some(res.access_token));
-                        refresh_tok.set(Some(res.refresh_token));
+                        // Wire auth into ForgeAuthProvider so the client
+                        // sends Bearer tokens on all subsequent API calls,
+                        // which triggers the session cookie for OAuth.
+                        auth.login_with_viewer(
+                            res.access_token.clone(),
+                            res.refresh_token.clone(),
+                            &res.user,
+                        );
                         auth_user.set(Some(res.user));
                         refresh_count.set(0);
                     }
@@ -71,7 +77,7 @@ pub fn AuthCard() -> Element {
     let handle_refresh = {
         let refresh_mut = refresh_mut.clone();
         move |_: MouseEvent| {
-            let rt = refresh_tok.read().clone();
+            let rt = auth.refresh_token();
             let refresh_mut = refresh_mut.clone();
             if let Some(rt) = rt {
                 spawn(async move {
@@ -80,8 +86,7 @@ pub fn AuthCard() -> Element {
                         Ok(pair) => {
                             let claims = parse_jwt_claims(&pair.access_token);
                             token_claims.set(Some(claims));
-                            access_token.set(Some(pair.access_token));
-                            refresh_tok.set(Some(pair.refresh_token));
+                            auth.update_tokens(pair.access_token.clone(), pair.refresh_token.clone());
                             refresh_count.set(refresh_count() + 1);
                         }
                         Err(e) => {
@@ -94,15 +99,26 @@ pub fn AuthCard() -> Element {
     };
 
     let handle_logout = move |_: MouseEvent| {
-        access_token.set(None);
-        refresh_tok.set(None);
+        auth.logout();
         auth_user.set(None);
         token_claims.set(None);
         refresh_count.set(0);
         auth_error.set(None);
     };
 
-    let is_logged_in = access_token.read().is_some();
+    let is_logged_in = auth.is_authenticated();
+
+    // Restore viewer on mount (persisted in localStorage by ForgeAuthProvider)
+    use_effect(move || {
+        if auth.is_authenticated() && auth_user.read().is_none() {
+            if let Some(viewer) = auth.viewer::<UserPublic>() {
+                if let Some(token) = auth.access_token() {
+                    token_claims.set(Some(parse_jwt_claims(&token)));
+                }
+                auth_user.set(Some(viewer));
+            }
+        }
+    });
 
     rsx! {
         section { class: "card",

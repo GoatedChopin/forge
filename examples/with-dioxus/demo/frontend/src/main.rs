@@ -5,13 +5,13 @@ mod pages;
 
 use dioxus::prelude::*;
 
-use forge::ForgeProvider;
+use forge::ForgeAuthProvider;
 use layout::AppLayout;
 use pages::{DemoPage, NotFound};
 
 const API_URL: &str = match option_env!("FORGE_API_URL") {
     Some(url) => url,
-    None => "http://localhost:8080",
+    None => "http://localhost:9081",
 };
 
 #[derive(Routable, Clone)]
@@ -34,6 +34,6 @@ fn App() -> Element {
     rsx! {
         document::Title { "Forge Demo" }
         document::Stylesheet { href: asset!("/public/style.css") }
-        ForgeProvider { url: API_URL.to_string(), Router::<Route> {} }
+        ForgeAuthProvider { url: API_URL.to_string(), app_name: "forge-demo".to_string(), Router::<Route> {} }
     }
 }

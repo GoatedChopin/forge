@@ -240,6 +240,7 @@ export class ForgeClient {
         method: "POST",
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: formData,
+        credentials: "include",
       });
     } else {
       const normalizedArgs =
@@ -254,6 +255,7 @@ export class ForgeClient {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({ args: normalizedArgs }),
+        credentials: "include",
       });
     }
 
@@ -325,6 +327,7 @@ export class ForgeClient {
         function: functionName,
         args: args,
       }),
+      credentials: "include",
     });
 
     const result = await response.json();
@@ -350,6 +353,7 @@ export class ForgeClient {
         session_secret: this.sessionSecret,
         id,
       }),
+      credentials: "include",
     });
   }
 
@@ -368,6 +372,7 @@ export class ForgeClient {
         id: clientSubId,
         job_id: jobId,
       }),
+      credentials: "include",
     });
     if (res.ok) {
       const json = await res.json();
@@ -391,6 +396,7 @@ export class ForgeClient {
         id: clientSubId,
         workflow_id: workflowId,
       }),
+      credentials: "include",
     });
     if (res.ok) {
       const json = await res.json();

@@ -10,7 +10,7 @@ pub fn McpCard(api_url: String) -> Element {
             }
 
             p { class: "mcp-desc",
-                "This demo exposes MCP tools that AI assistants can use to query and look up users."
+                "This demo exposes MCP tools with OAuth 2.1 authentication. AI assistants authenticate via browser login and can act on behalf of the user."
             }
 
             div { class: "code-block",
@@ -23,15 +23,22 @@ pub fn McpCard(api_url: String) -> Element {
             div { class: "mcp-tools",
                 div { class: "mcp-tool",
                     div { class: "tool-header",
+                        span { class: "tool-name mono", "demo.me" }
+                        span { class: "tool-badge", "authenticated" }
+                    }
+                    span { class: "tool-desc", "Get your own profile (requires OAuth login)" }
+                }
+                div { class: "mcp-tool",
+                    div { class: "tool-header",
                         span { class: "tool-name mono", "demo.list_users" }
-                        span { class: "tool-badge", "read-only" }
+                        span { class: "tool-badge", "public" }
                     }
                     span { class: "tool-desc", "List all users with their roles" }
                 }
                 div { class: "mcp-tool",
                     div { class: "tool-header",
                         span { class: "tool-name mono", "demo.get_user_by_email" }
-                        span { class: "tool-badge", "read-only" }
+                        span { class: "tool-badge", "public" }
                     }
                     span { class: "tool-desc", "Look up a single user by email address" }
                 }

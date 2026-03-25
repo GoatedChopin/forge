@@ -135,6 +135,8 @@ mod tests {
         assert!(sql.contains("forge_daemons"));
         assert!(sql.contains("forge_webhook_events"));
         assert!(sql.contains("forge_refresh_tokens"));
+        assert!(sql.contains("forge_oauth_clients"));
+        assert!(sql.contains("forge_oauth_codes"));
     }
 
     #[test]

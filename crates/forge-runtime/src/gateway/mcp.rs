@@ -452,6 +452,21 @@ async fn handle_tools_call(
     };
 
     if !entry.info.is_public && !auth.is_authenticated() {
+        if state.config.oauth {
+            // Return HTTP 401 with discovery header so MCP clients trigger OAuth flow
+            let mut response = (
+                StatusCode::UNAUTHORIZED,
+                Json(json_rpc_error(id, -32001, "Authentication required", None)),
+            )
+                .into_response();
+            response.headers_mut().insert(
+                "WWW-Authenticate",
+                axum::http::header::HeaderValue::from_static(
+                    "Bearer resource_metadata=\"/.well-known/oauth-protected-resource\"",
+                ),
+            );
+            return response;
+        }
         return (
             StatusCode::OK,
             Json(json_rpc_error(id, -32001, "Authentication required", None)),

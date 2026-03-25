@@ -541,22 +541,19 @@ impl NewCommand {
         );
         ui::section("Next Steps");
         println!("  1. {}", style(format!("cd {}", project_dir)).cyan());
-        println!(
-            "  2. {}",
-            style("docker compose up --build").cyan()
-        );
+        println!("  2. {}", style("docker compose up --build").cyan());
         println!("     Start development environment (requires Docker)");
         if template.frontend == FrontendTarget::Dioxus {
-            println!("  3. {}", style("cd frontend && dx serve --port 9080").cyan());
+            println!(
+                "  3. {}",
+                style("cd frontend && dx serve --port 9080").cyan()
+            );
             println!("     Start the Dioxus frontend natively (web by default)");
         }
 
         ui::section("Useful Commands");
         ui::command("docker compose down", "Stop the development environment");
-        ui::command(
-            "docker compose down -v",
-            "Stop and remove volumes",
-        );
+        ui::command("docker compose down -v", "Stop and remove volumes");
 
         ui::section("Default Service URLs");
         if template.frontend == FrontendTarget::Dioxus {

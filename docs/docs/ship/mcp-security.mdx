@@ -44,6 +44,20 @@ jwt_issuer = "https://your-provider.com"
 jwt_audience = "your-app"
 ```
 
+## OAuth Security
+
+When `mcp.oauth = true`, Forge adds OAuth 2.1 Authorization Code + PKCE:
+
+- **PKCE (S256 only):** prevents authorization code interception. Plain method intentionally unsupported.
+- **Authorization codes:** 60s TTL, single-use (atomic exchange prevents replay).
+- **CSRF protection:** server-generated token validated via HttpOnly cookie on the authorize page.
+- **Redirect URI validation:** exact string match against registered URIs (RFC 8252 localhost port exception).
+- **Token audience:** OAuth-issued JWTs include `aud: "forge:mcp"`, scoping them to MCP endpoints only.
+- **Client-bound refresh tokens:** refresh tokens are bound to the OAuth client that created them.
+- **Rate limits:** client registration (10/min per IP, 1000 client cap), login attempts (5 failures/min per IP).
+- **Clickjacking:** `X-Frame-Options: DENY` and CSP `frame-ancestors 'none'` on the authorize page.
+- **Code leakage:** `Referrer-Policy: no-referrer` on authorization redirects.
+
 ## Error Policy
 
 - Protocol errors (`-32600`, `-32601`, `-32602`, `-32603`) for malformed requests and server-side internal failures.

@@ -273,6 +273,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "bcrypt"
+version = "0.17.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "abaf6da45c74385272ddf00e1ac074c7d8a6c1a1dda376902bd6a427522a8b2c"
+dependencies = [
+ "base64 0.22.1",
+ "blowfish",
+ "getrandom 0.3.4",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
 name = "bitflags"
 version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1088,7 +1101,7 @@ dependencies = [
 name = "forge-dioxus-demo-template"
 version = "0.7.3"
 dependencies = [
- "bcrypt",
+ "bcrypt 0.16.0",
  "chrono",
  "dotenvy",
  "forgex",
@@ -1140,6 +1153,8 @@ version = "0.7.3"
 dependencies = [
  "anyhow",
  "axum",
+ "base64 0.22.1",
+ "bcrypt 0.17.1",
  "bytes",
  "chrono",
  "chrono-tz",
@@ -1156,6 +1171,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sha1",
  "sha2",
  "sqlx",
@@ -1176,7 +1192,7 @@ dependencies = [
 name = "forge-svelte-demo-template"
 version = "0.7.3"
 dependencies = [
- "bcrypt",
+ "bcrypt 0.16.0",
  "chrono",
  "dotenvy",
  "forgex",

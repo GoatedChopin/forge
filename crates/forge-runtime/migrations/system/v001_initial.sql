@@ -394,6 +394,7 @@ CREATE TABLE IF NOT EXISTS forge_refresh_tokens (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id     UUID NOT NULL,
     token_hash  TEXT NOT NULL UNIQUE,
+    client_id   TEXT,
     expires_at  TIMESTAMPTZ NOT NULL,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -411,4 +412,37 @@ CREATE OR REPLACE FUNCTION forge_purge_expired_refresh_tokens()
 RETURNS void LANGUAGE sql AS $$
     DELETE FROM forge_refresh_tokens
     WHERE expires_at < now() - interval '24 hours';
+$$;
+
+-- OAuth: Dynamic client registrations (MCP clients self-register via RFC 7591)
+CREATE TABLE IF NOT EXISTS forge_oauth_clients (
+    client_id                  TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+    client_name                TEXT,
+    redirect_uris              TEXT[] NOT NULL DEFAULT '{}',
+    token_endpoint_auth_method TEXT NOT NULL DEFAULT 'none',
+    created_at                 TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- OAuth: Authorization codes (short-lived, PKCE-bound)
+CREATE TABLE IF NOT EXISTS forge_oauth_codes (
+    code                   TEXT PRIMARY KEY,
+    client_id              TEXT NOT NULL REFERENCES forge_oauth_clients(client_id) ON DELETE CASCADE,
+    user_id                UUID NOT NULL,
+    redirect_uri           TEXT NOT NULL,
+    code_challenge         TEXT NOT NULL,
+    code_challenge_method  TEXT NOT NULL DEFAULT 'S256',
+    scopes                 TEXT[] NOT NULL DEFAULT '{}',
+    expires_at             TIMESTAMPTZ NOT NULL,
+    used_at                TIMESTAMPTZ,
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_forge_oauth_codes_expires
+    ON forge_oauth_codes(expires_at);
+
+-- Purge expired authorization codes (called by cron or manually)
+CREATE OR REPLACE FUNCTION forge_purge_expired_oauth_codes()
+RETURNS void LANGUAGE sql AS $$
+    DELETE FROM forge_oauth_codes
+    WHERE expires_at < now() - interval '1 hour';
 $$;

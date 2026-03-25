@@ -122,6 +122,10 @@ export interface WebhookEvent {
   processed_at: string;
 }
 
-export type UserRole = 'admin' | 'member' | 'guest';
+export type UserRole = "admin" | "member" | "guest";
 
-export type { ForgeError, QueryResult, SubscriptionResult } from "@forge-rs/svelte";
+export type {
+  ForgeError,
+  QueryResult,
+  SubscriptionResult,
+} from "@forge-rs/svelte";

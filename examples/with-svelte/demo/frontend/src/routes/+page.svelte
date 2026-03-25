@@ -20,6 +20,7 @@
   } from "$lib/forge";
 
   import { PUBLIC_API_URL } from "$env/static/public";
+  import { auth } from "$lib/forge/auth.svelte";
   const apiUrl = PUBLIC_API_URL;
 
   const users = getUsers$();
@@ -48,18 +49,17 @@
   let keyUsed = $state(false);
   let webhookError = $state<string | null>(null);
 
-  // Auth state
+  // Auth form state (only form inputs and UI state are local)
   let authMode = $state<"login" | "register">("login");
   let authEmail = $state("demo@example.com");
   let authPassword = $state("password123");
   let authName = $state("");
   let authLoading = $state(false);
   let authError = $state<string | null>(null);
-  let accessToken = $state<string | null>(null);
-  let authRefreshToken = $state<string | null>(null);
-  let authUser = $state<AuthResponse["user"] | null>(null);
-  let tokenClaims = $state<[string, string][] | null>(null);
   let refreshCount = $state(0);
+
+  // Derived from the auth store (persisted across refreshes)
+  let tokenClaims = $derived(auth.token ? parseJwtClaims(auth.token) : null);
 
   // Cache demo state
   let cacheData = $state<DemoStats | null>(null);
@@ -117,10 +117,7 @@
       } else {
         res = await login({ email: authEmail, password: authPassword });
       }
-      tokenClaims = parseJwtClaims(res.access_token);
-      accessToken = res.access_token;
-      authRefreshToken = res.refresh_token;
-      authUser = res.user;
+      auth.setAuth(res.access_token, res.refresh_token, res.user);
       refreshCount = 0;
     } catch (err: unknown) {
       authError = err instanceof Error ? err.message : String(err);
@@ -130,13 +127,11 @@
   }
 
   async function handleRefresh() {
-    if (!authRefreshToken) return;
+    if (!auth.refreshToken) return;
     authError = null;
     try {
-      const pair: TokenPair = await refreshToken({ refresh_token: authRefreshToken });
-      tokenClaims = parseJwtClaims(pair.access_token);
-      accessToken = pair.access_token;
-      authRefreshToken = pair.refresh_token;
+      const pair: TokenPair = await refreshToken({ refresh_token: auth.refreshToken });
+      auth.updateTokens(pair.access_token, pair.refresh_token);
       refreshCount++;
     } catch (err: unknown) {
       authError = err instanceof Error ? err.message : String(err);
@@ -144,10 +139,7 @@
   }
 
   function handleLogout() {
-    accessToken = null;
-    authRefreshToken = null;
-    authUser = null;
-    tokenClaims = null;
+    auth.clearAuth();
     refreshCount = 0;
     authError = null;
   }
@@ -359,7 +351,7 @@
 
       <section class="card mcp-card">
         <h2>MCP Tools <span class="badge green">model context protocol</span></h2>
-        <p class="mcp-desc">This demo exposes MCP tools that AI assistants can use to query and look up users.</p>
+        <p class="mcp-desc">This demo exposes MCP tools with OAuth 2.1 authentication. AI assistants authenticate via browser login and can act on behalf of the user.</p>
         <div class="code-block">
           <div class="code-label">CLAUDE CODE</div>
           <pre><code>claude mcp add forge-demo --transport http {apiUrl}/_api/mcp</code></pre>
@@ -367,15 +359,22 @@
         <div class="mcp-tools">
           <div class="mcp-tool">
             <div class="tool-header">
+              <span class="tool-name mono">demo.me</span>
+              <span class="tool-badge">authenticated</span>
+            </div>
+            <span class="tool-desc">Get your own profile (requires OAuth login)</span>
+          </div>
+          <div class="mcp-tool">
+            <div class="tool-header">
               <span class="tool-name mono">demo.list_users</span>
-              <span class="tool-badge">read-only</span>
+              <span class="tool-badge">public</span>
             </div>
             <span class="tool-desc">List all users with their roles</span>
           </div>
           <div class="mcp-tool">
             <div class="tool-header">
               <span class="tool-name mono">demo.get_user_by_email</span>
-              <span class="tool-badge">read-only</span>
+              <span class="tool-badge">public</span>
             </div>
             <span class="tool-desc">Look up a single user by email address</span>
           </div>
@@ -422,11 +421,11 @@
 
       <section class="card">
         <h2>Auth <span class="badge purple">refresh tokens</span></h2>
-        {#if accessToken}
+        {#if auth.isAuthenticated}
           <div class="auth-user">
             <span class="label">Logged in as</span>
-            {#if authUser}
-              <span class="value">{authUser.name} ({authUser.email})</span>
+            {#if auth.user}
+              <span class="value">{auth.user.name} ({auth.user.email})</span>
             {/if}
           </div>
           <div class="input-label" style="margin-top: 0.5rem;">TOKEN METADATA</div>

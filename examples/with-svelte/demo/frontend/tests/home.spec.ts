@@ -15,7 +15,9 @@ test.describe("Forge Demo", () => {
   test("homepage loads with all sections visible", async ({ page }) => {
     await page.goto("/");
 
-    await expect(page.getByRole("heading", { name: "Forge Demo" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Forge Demo" }),
+    ).toBeVisible();
     await expect(page.getByText("ISS Location")).toBeVisible();
     await expect(page.getByText("Live Trades")).toBeVisible();
     await expect(page.getByText("Export Job")).toBeVisible();
@@ -74,7 +76,9 @@ test.describe("Forge Demo", () => {
       timeout: 90_000,
     });
     await expect(section.getByText(/\d+\.\d+\s*[EW]/i).first()).toBeVisible();
-    await expect(section.getByText("Updated every minute via cron")).toBeVisible();
+    await expect(
+      section.getByText("Updated every minute via cron"),
+    ).toBeVisible();
   });
 
   // ---------------------------------------------------------------------------
@@ -104,10 +108,7 @@ test.describe("Forge Demo", () => {
   });
 
   test.skip(!!process.env.CI, "Binance API often blocked in CI");
-  test("live trades stream real data via SSE", async ({
-    page,
-    gotoReady,
-  }) => {
+  test("live trades stream real data via SSE", async ({ page, gotoReady }) => {
     await gotoReady();
 
     const section = page.locator("section", {
@@ -235,7 +236,10 @@ test.describe("Forge Demo", () => {
     await row.getByRole("button", { name: "Edit" }).click();
     await expect(page.locator("tr.editing")).toBeVisible();
 
-    await page.locator("tr.editing").getByRole("button", { name: "Cancel" }).click();
+    await page
+      .locator("tr.editing")
+      .getByRole("button", { name: "Cancel" })
+      .click();
     await expect(page.locator("tr.editing")).not.toBeVisible();
     await expect(page.getByText(name, { exact: true })).toBeVisible();
   });
@@ -270,10 +274,7 @@ test.describe("Forge Demo", () => {
     });
   });
 
-  test("cancel delete popover keeps the user", async ({
-    page,
-    gotoReady,
-  }) => {
+  test("cancel delete popover keeps the user", async ({ page, gotoReady }) => {
     await gotoReady();
 
     const section = page.locator("section", {
@@ -327,10 +328,7 @@ test.describe("Forge Demo", () => {
     ).toBeVisible();
   });
 
-  test("export Run Again re-triggers the job", async ({
-    page,
-    gotoReady,
-  }) => {
+  test("export Run Again re-triggers the job", async ({ page, gotoReady }) => {
     await gotoReady();
 
     const section = page.locator("section", {
@@ -429,9 +427,7 @@ test.describe("Forge Demo", () => {
     await expect(section.getByText(/Webhook processed/i)).toBeVisible({
       timeout: ACTION_TIMEOUT * 2,
     });
-    await expect(
-      section.getByRole("button", { name: "Send" }),
-    ).toBeDisabled();
+    await expect(section.getByRole("button", { name: "Send" })).toBeDisabled();
 
     // Key should appear in Recent Events via SSE
     await expect(section.getByText(key)).toBeVisible({
@@ -442,9 +438,7 @@ test.describe("Forge Demo", () => {
     await section.getByRole("button", { name: "New" }).click();
     const newKey = await keyInput.inputValue();
     expect(newKey).not.toBe(key);
-    await expect(
-      section.getByRole("button", { name: "Send" }),
-    ).toBeEnabled();
+    await expect(section.getByRole("button", { name: "Send" })).toBeEnabled();
   });
 
   test("webhook event appears in recent events via SSE", async ({
@@ -550,7 +544,9 @@ test.describe("Forge Demo", () => {
     const email = `reg-${Date.now()}@test.com`;
     await nameInput.fill("Test Register");
     await section.getByPlaceholder("Email").fill(email);
-    await section.getByPlaceholder("Password (min 8 chars)").fill("testpassword123");
+    await section
+      .getByPlaceholder("Password (min 8 chars)")
+      .fill("testpassword123");
     await section.locator('button[type="submit"]').click();
 
     await expect(section.getByText("Logged in as")).toBeVisible({
@@ -664,12 +660,8 @@ test.describe("Forge Demo", () => {
       has: page.getByRole("heading", { name: /MCP Tools/ }),
     });
 
-    await expect(
-      section.getByText("claude mcp add forge-demo"),
-    ).toBeVisible();
+    await expect(section.getByText("claude mcp add forge-demo")).toBeVisible();
     await expect(section.getByText("demo.list_users")).toBeVisible();
-    await expect(
-      section.getByText("demo.get_user_by_email"),
-    ).toBeVisible();
+    await expect(section.getByText("demo.get_user_by_email")).toBeVisible();
   });
 });

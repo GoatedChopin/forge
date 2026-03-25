@@ -667,7 +667,9 @@ mod platform {
         url: &str,
         body: serde_json::Value,
     ) -> Result<RpcEnvelopeRaw, ForgeClientError> {
-        let mut request = Request::post(url).header("Content-Type", "application/json");
+        let mut request = Request::post(url)
+            .header("Content-Type", "application/json")
+            .credentials(web_sys::RequestCredentials::Include);
         if let Some(token) = client.get_token() {
             request = request.header("Authorization", &format!("Bearer {token}"));
         }
@@ -687,7 +689,8 @@ mod platform {
         url: &str,
         form: web_sys::FormData,
     ) -> Result<RpcEnvelopeRaw, ForgeClientError> {
-        let mut request = Request::post(url);
+        let mut request = Request::post(url)
+            .credentials(web_sys::RequestCredentials::Include);
         if let Some(token) = client.get_token() {
             request = request.header("Authorization", &format!("Bearer {token}"));
         }

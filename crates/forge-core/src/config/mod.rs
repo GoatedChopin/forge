@@ -82,6 +82,22 @@ impl ForgeConfig {
         self.database.validate()?;
         self.auth.validate()?;
         self.mcp.validate()?;
+
+        // Cross-field: OAuth requires jwt_secret for signing tokens
+        if self.mcp.oauth && self.auth.jwt_secret.is_none() {
+            return Err(ForgeError::Config(
+                "mcp.oauth = true requires auth.jwt_secret to be set. \
+                 OAuth-issued tokens are signed with this secret, even when using \
+                 an external provider (JWKS) for identity verification."
+                    .into(),
+            ));
+        }
+        if self.mcp.oauth && !self.mcp.enabled {
+            return Err(ForgeError::Config(
+                "mcp.oauth = true requires mcp.enabled = true".into(),
+            ));
+        }
+
         Ok(())
     }
 
@@ -593,6 +609,13 @@ pub struct McpConfig {
     #[serde(default)]
     pub enabled: bool,
 
+    /// Enable OAuth 2.1 Authorization Code + PKCE for MCP clients.
+    /// When true, Forge acts as an OAuth 2.1 Authorization Server so MCP
+    /// clients like Claude Code can auto-authenticate via browser login.
+    /// Requires `auth.jwt_secret` to be set.
+    #[serde(default)]
+    pub oauth: bool,
+
     /// MCP endpoint path under the gateway API namespace.
     #[serde(default = "default_mcp_path")]
     pub path: String,
@@ -614,6 +637,7 @@ impl Default for McpConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            oauth: false,
             path: default_mcp_path(),
             session_ttl_secs: default_mcp_session_ttl_secs(),
             allowed_origins: Vec::new(),
