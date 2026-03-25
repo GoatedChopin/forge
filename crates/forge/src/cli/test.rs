@@ -251,12 +251,19 @@ impl TestCommand {
             }
         }
 
-        // Check frontend dev server (informational only, Playwright starts one if needed)
+        // Wait for the frontend dev server (Docker or manual).
+        // Playwright's reuseExistingServer won't work if Docker has the port
+        // mapped but the process inside isn't ready yet.
         print!("  {} Checking frontend...", ui::step());
         if check_frontend_health().await {
-            println!(" {}", style("ready (reusing)").green());
+            println!(" {}", style("ready").green());
         } else {
-            println!(" {}", style("will be started by Playwright").dim());
+            let frontend_ready = wait_for_frontend_health(Duration::from_secs(90)).await;
+            if frontend_ready {
+                println!(" {}", style("ready").green());
+            } else {
+                println!(" {}", style("will be started by Playwright").dim());
+            }
         }
 
         // Build Playwright command
@@ -283,6 +290,7 @@ impl TestCommand {
         let status = Command::new("bunx")
             .args(&pw_args)
             .current_dir(frontend_dir)
+            .env("VITE_API_URL", backend_base_url())
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
@@ -344,6 +352,18 @@ async fn wait_for_backend_health(timeout: Duration) -> bool {
     let start = std::time::Instant::now();
     while start.elapsed() < timeout {
         if check_backend_health().await {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        print!(".");
+    }
+    false
+}
+
+async fn wait_for_frontend_health(timeout: Duration) -> bool {
+    let start = std::time::Instant::now();
+    while start.elapsed() < timeout {
+        if check_frontend_health().await {
             return true;
         }
         tokio::time::sleep(Duration::from_secs(3)).await;

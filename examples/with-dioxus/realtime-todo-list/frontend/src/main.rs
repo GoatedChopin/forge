@@ -7,7 +7,7 @@ use forge::ForgeProvider;
 use todo_app::TodoApp;
 
 fn api_url() -> &'static str {
-    option_env!("FORGE_API_URL").unwrap_or("http://localhost:8080")
+    option_env!("FORGE_API_URL").unwrap_or("http://localhost:9081")
 }
 
 fn main() {

@@ -242,6 +242,8 @@ impl GatewayServer {
                     .iter()
                     .filter_map(|o| o.parse().ok())
                     .collect();
+                // Always allow credentials with specific origins because the
+                // client SDK uses `credentials: "include"` for session cookies.
                 if oauth_credentials {
                     use axum::http::Method;
                     CorsLayer::new()
@@ -261,10 +263,23 @@ impl GatewayServer {
                         ])
                         .allow_credentials(true)
                 } else {
+                    use axum::http::Method;
                     CorsLayer::new()
                         .allow_origin(origins)
-                        .allow_methods(Any)
-                        .allow_headers(Any)
+                        .allow_methods([
+                            Method::GET,
+                            Method::POST,
+                            Method::PUT,
+                            Method::DELETE,
+                            Method::PATCH,
+                            Method::OPTIONS,
+                        ])
+                        .allow_headers([
+                            axum::http::header::CONTENT_TYPE,
+                            axum::http::header::AUTHORIZATION,
+                            axum::http::header::ACCEPT,
+                        ])
+                        .allow_credentials(true)
                 }
             }
         } else {

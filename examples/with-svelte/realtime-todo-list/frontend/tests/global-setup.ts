@@ -1,6 +1,6 @@
 import type { FullConfig } from "@playwright/test";
 
-const API_URL = process.env.VITE_API_URL || "http://localhost:8080";
+const API_URL = process.env.VITE_API_URL || "http://localhost:9081";
 
 async function waitForBackend(maxRetries = 60, delayMs = 1000): Promise<void> {
   for (let i = 0; i < maxRetries; i++) {
