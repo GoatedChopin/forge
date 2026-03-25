@@ -19,7 +19,8 @@
     type DemoStats,
   } from "$lib/forge";
 
-  const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8080";
+  import { PUBLIC_API_URL } from "$env/static/public";
+  const apiUrl = PUBLIC_API_URL;
 
   const users = getUsers$();
   const issLocation = getIssLocation$();

@@ -52,5 +52,37 @@ for framework_dir in "${ROOT_DIR}"/examples/with-*; do
   done
 done
 
+# Read version from workspace Cargo.toml
+VERSION=$(grep -m1 '^version = ' "${ROOT_DIR}/Cargo.toml" | head -1 | sed 's/version = "\(.*\)"/\1/')
+echo "Rewriting template deps to published version ${VERSION}"
+
+# Rewrite backend Cargo.toml: workspace dep -> published version
+for cargo_toml in "${STAGING_DIR}"/with-*/*/Cargo.toml; do
+  [ -f "$cargo_toml" ] || continue
+  sed -i "s/forge = { workspace = true }/forge = { version = \"${VERSION}\", package = \"forgex\" }/" "$cargo_toml"
+done
+
+# Rewrite Svelte frontend package.json: file: path -> exact published version
+for pkg in "${STAGING_DIR}"/with-*/*/frontend/package.json; do
+  [ -f "$pkg" ] || continue
+  jq --arg v "=${VERSION}" '
+    if .dependencies["@forge-rs/svelte"] then .dependencies["@forge-rs/svelte"] = $v
+    elif .devDependencies["@forge-rs/svelte"] then .devDependencies["@forge-rs/svelte"] = $v
+    else . end
+  ' "$pkg" > "$pkg.tmp" && mv "$pkg.tmp" "$pkg"
+done
+
+# Rewrite Dioxus frontend Cargo.toml: path dep -> exact published version
+for cargo in "${STAGING_DIR}"/with-*/*/frontend/Cargo.toml; do
+  [ -f "$cargo" ] || continue
+  sed -i "s|forge-dioxus\", path = \"[^\"]*\"|forge-dioxus\", version = \"=${VERSION}\"|g" "$cargo"
+done
+
+# Ensure frontend .env files exist in templates
+for dir in "${STAGING_DIR}"/with-*/*/frontend; do
+  [ -d "$dir" ] || continue
+  [ -f "$dir/.env" ] || echo 'PUBLIC_API_URL=http://localhost:9081' > "$dir/.env"
+done
+
 tar -cf "${ARCHIVE_PATH}" -C "${STAGING_DIR}" .
 echo "Wrote ${ARCHIVE_PATH}"

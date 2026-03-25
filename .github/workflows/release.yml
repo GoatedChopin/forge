@@ -107,15 +107,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: workspace
-      - uses: oven-sh/setup-bun@v2
-      - uses: actions/download-artifact@v4
-        with:
-          name: forge-cli
-          path: /tmp/forge-bin
-      - run: chmod +x /tmp/forge-bin/forge
       - run: cargo install cargo-edit
-      - run: scripts/ci/create-env-stubs.sh
-      - run: scripts/ci/bump-versions.sh "${{ needs.parse-changelog.outputs.version }}" /tmp/forge-bin/forge
+      - run: scripts/ci/bump-versions.sh "${{ needs.parse-changelog.outputs.version }}"
       - id: commit
         run: |
           if [ "${{ inputs.dry_run }}" = "true" ]; then
@@ -160,7 +153,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-      - run: scripts/ci/create-env-stubs.sh
       - run: cargo build --release --target ${{ matrix.target }} -p forgex
       - run: cd target/${{ matrix.target }}/release && tar czvf ../../../${{ env.BINARY_NAME }}-${{ matrix.target }}.tar.gz ${{ env.BINARY_NAME }}
       - uses: actions/upload-artifact@v4

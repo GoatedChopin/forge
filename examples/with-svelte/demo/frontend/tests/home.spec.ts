@@ -15,7 +15,7 @@ test.describe("Forge Demo", () => {
   test("homepage loads with all sections visible", async ({ page }) => {
     await page.goto("/");
 
-    await expect(page.getByText("Forge Demo")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Forge Demo" })).toBeVisible();
     await expect(page.getByText("ISS Location")).toBeVisible();
     await expect(page.getByText("Live Trades")).toBeVisible();
     await expect(page.getByText("Export Job")).toBeVisible();

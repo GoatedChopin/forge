@@ -9,7 +9,7 @@ default = ["embedded-frontend"]
 embedded-frontend = ["dep:rust-embed", "forge/embedded-frontend"]
 
 [dependencies]
-forge = { version = "0.7.3", package = "forgex" }
+forge = { workspace = true }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
