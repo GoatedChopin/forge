@@ -227,7 +227,6 @@ impl GatewayServer {
         // Build CORS layer. When MCP OAuth is enabled and specific origins
         // are configured, allow credentials so the browser accepts Set-Cookie
         // on cross-origin API responses (needed for forge_session cookie).
-        let oauth_credentials = self.config.mcp.oauth;
         let cors = if self.config.cors_enabled {
             if self.config.cors_origins.iter().any(|o| o == "*") {
                 // Wildcard origin can't use credentials
@@ -242,45 +241,23 @@ impl GatewayServer {
                     .iter()
                     .filter_map(|o| o.parse().ok())
                     .collect();
-                // Always allow credentials with specific origins because the
-                // client SDK uses `credentials: "include"` for session cookies.
-                if oauth_credentials {
-                    use axum::http::Method;
-                    CorsLayer::new()
-                        .allow_origin(origins)
-                        .allow_methods([
-                            Method::GET,
-                            Method::POST,
-                            Method::PUT,
-                            Method::DELETE,
-                            Method::PATCH,
-                            Method::OPTIONS,
-                        ])
-                        .allow_headers([
-                            axum::http::header::CONTENT_TYPE,
-                            axum::http::header::AUTHORIZATION,
-                            axum::http::header::ACCEPT,
-                        ])
-                        .allow_credentials(true)
-                } else {
-                    use axum::http::Method;
-                    CorsLayer::new()
-                        .allow_origin(origins)
-                        .allow_methods([
-                            Method::GET,
-                            Method::POST,
-                            Method::PUT,
-                            Method::DELETE,
-                            Method::PATCH,
-                            Method::OPTIONS,
-                        ])
-                        .allow_headers([
-                            axum::http::header::CONTENT_TYPE,
-                            axum::http::header::AUTHORIZATION,
-                            axum::http::header::ACCEPT,
-                        ])
-                        .allow_credentials(true)
-                }
+                use axum::http::Method;
+                CorsLayer::new()
+                    .allow_origin(origins)
+                    .allow_methods([
+                        Method::GET,
+                        Method::POST,
+                        Method::PUT,
+                        Method::DELETE,
+                        Method::PATCH,
+                        Method::OPTIONS,
+                    ])
+                    .allow_headers([
+                        axum::http::header::CONTENT_TYPE,
+                        axum::http::header::AUTHORIZATION,
+                        axum::http::header::ACCEPT,
+                    ])
+                    .allow_credentials(true)
             }
         } else {
             CorsLayer::new()
