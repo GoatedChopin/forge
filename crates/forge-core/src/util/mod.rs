@@ -33,6 +33,30 @@ pub fn parse_duration(s: &str) -> Option<Duration> {
     }
 }
 
+/// Parse a human-readable size string into bytes.
+///
+/// Supports the following suffixes (case-insensitive):
+/// - `kb` - kilobytes
+/// - `mb` - megabytes
+/// - `gb` - gigabytes
+/// - `b` - bytes
+///
+/// If no suffix is provided, the value is interpreted as bytes.
+pub fn parse_size(s: &str) -> Option<usize> {
+    let s = s.trim().to_lowercase();
+    if let Some(num) = s.strip_suffix("gb") {
+        num.trim().parse::<usize>().ok().map(|n| n * 1024 * 1024 * 1024)
+    } else if let Some(num) = s.strip_suffix("mb") {
+        num.trim().parse::<usize>().ok().map(|n| n * 1024 * 1024)
+    } else if let Some(num) = s.strip_suffix("kb") {
+        num.trim().parse::<usize>().ok().map(|n| n * 1024)
+    } else if let Some(num) = s.strip_suffix('b') {
+        num.trim().parse::<usize>().ok()
+    } else {
+        s.parse::<usize>().ok()
+    }
+}
+
 /// Convert a snake_case string to PascalCase.
 pub fn to_pascal_case(s: &str) -> String {
     s.split('_')
@@ -130,6 +154,47 @@ mod tests {
         assert_eq!(parse_duration("invalid"), None);
         assert_eq!(parse_duration("abc123"), None);
         assert_eq!(parse_duration(""), None);
+    }
+
+    #[test]
+    fn test_parse_size_kilobytes() {
+        assert_eq!(parse_size("100kb"), Some(100 * 1024));
+        assert_eq!(parse_size("512KB"), Some(512 * 1024));
+    }
+
+    #[test]
+    fn test_parse_size_megabytes() {
+        assert_eq!(parse_size("20mb"), Some(20 * 1024 * 1024));
+        assert_eq!(parse_size("100MB"), Some(100 * 1024 * 1024));
+    }
+
+    #[test]
+    fn test_parse_size_gigabytes() {
+        assert_eq!(parse_size("1gb"), Some(1024 * 1024 * 1024));
+        assert_eq!(parse_size("2GB"), Some(2 * 1024 * 1024 * 1024));
+    }
+
+    #[test]
+    fn test_parse_size_bytes() {
+        assert_eq!(parse_size("1024b"), Some(1024));
+        assert_eq!(parse_size("0b"), Some(0));
+    }
+
+    #[test]
+    fn test_parse_size_bare_number() {
+        assert_eq!(parse_size("1048576"), Some(1048576));
+    }
+
+    #[test]
+    fn test_parse_size_whitespace() {
+        assert_eq!(parse_size("  20mb  "), Some(20 * 1024 * 1024));
+    }
+
+    #[test]
+    fn test_parse_size_invalid() {
+        assert_eq!(parse_size("invalid"), None);
+        assert_eq!(parse_size("abc123"), None);
+        assert_eq!(parse_size(""), None);
     }
 
     #[test]

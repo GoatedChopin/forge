@@ -227,6 +227,10 @@ pub struct GatewayConfig {
     /// Defaults to `["/_api/health", "/_api/ready"]`. Set to `[]` to monitor everything.
     #[serde(default = "default_quiet_routes")]
     pub quiet_routes: Vec<String>,
+
+    /// Maximum request body size (e.g. "100mb", "1gb"). Defaults to "20mb".
+    #[serde(default = "default_max_body_size")]
+    pub max_body_size: String,
 }
 
 impl Default for GatewayConfig {
@@ -240,7 +244,15 @@ impl Default for GatewayConfig {
             cors_enabled: default_cors_enabled(),
             cors_origins: default_cors_origins(),
             quiet_routes: default_quiet_routes(),
+            max_body_size: default_max_body_size(),
         }
+    }
+}
+
+impl GatewayConfig {
+    /// Parse `max_body_size` into bytes. Falls back to 20 MB on parse failure.
+    pub fn max_body_size_bytes(&self) -> usize {
+        crate::util::parse_size(&self.max_body_size).unwrap_or(20 * 1024 * 1024)
     }
 }
 
@@ -274,6 +286,10 @@ fn default_cors_origins() -> Vec<String> {
 
 fn default_quiet_routes() -> Vec<String> {
     vec!["/_api/health".to_string(), "/_api/ready".to_string()]
+}
+
+fn default_max_body_size() -> String {
+    "20mb".to_string()
 }
 
 /// Function execution configuration.
@@ -1062,6 +1078,31 @@ mod tests {
         };
         // 1 hour < 1 day, so should floor at 1 day
         assert_eq!(auth.refresh_token_ttl_days(), 1);
+    }
+
+    #[test]
+    fn test_max_body_size_defaults() {
+        let gw = GatewayConfig::default();
+        assert_eq!(gw.max_body_size_bytes(), 20 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_max_body_size_custom() {
+        let gw = GatewayConfig {
+            max_body_size: "100mb".into(),
+            ..Default::default()
+        };
+        assert_eq!(gw.max_body_size_bytes(), 100 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_max_body_size_invalid_falls_back() {
+        let gw = GatewayConfig {
+            max_body_size: "not-a-size".into(),
+            ..Default::default()
+        };
+        // Falls back to 20 MB
+        assert_eq!(gw.max_body_size_bytes(), 20 * 1024 * 1024);
     }
 
     #[test]

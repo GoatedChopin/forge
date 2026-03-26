@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
-    Json, Router,
+    Extension, Json, Router,
     error_handling::HandleErrorLayer,
     extract::DefaultBodyLimit,
     http::StatusCode,
@@ -27,7 +27,7 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use super::auth::{AuthConfig, AuthMiddleware, HmacTokenIssuer, auth_middleware};
 use super::mcp::{McpState, mcp_get_handler, mcp_post_handler};
-use super::multipart::rpc_multipart_handler;
+use super::multipart::{MultipartConfig, rpc_multipart_handler};
 use super::response::{RpcError, RpcResponse};
 use super::rpc::{RpcHandler, rpc_batch_handler, rpc_function_handler, rpc_handler};
 use super::sse::{
@@ -40,8 +40,8 @@ use crate::function::FunctionRegistry;
 use crate::mcp::McpToolRegistry;
 use crate::realtime::{Reactor, ReactorConfig};
 
-const MAX_JSON_BODY_SIZE: usize = 1024 * 1024;
-const MAX_MULTIPART_BODY_SIZE: usize = 20 * 1024 * 1024;
+const DEFAULT_MAX_JSON_BODY_SIZE: usize = 1024 * 1024;
+const DEFAULT_MAX_MULTIPART_BODY_SIZE: usize = 20 * 1024 * 1024;
 const MAX_MULTIPART_CONCURRENCY: usize = 32;
 
 /// Gateway server configuration.
@@ -69,6 +69,8 @@ pub struct GatewayConfig {
     pub token_ttl: forge_core::AuthTokenTtl,
     /// Project name (displayed on OAuth consent page).
     pub project_name: String,
+    /// Maximum body size in bytes for uploads. Defaults to 20 MB.
+    pub max_body_size_bytes: usize,
 }
 
 impl Default for GatewayConfig {
@@ -85,6 +87,7 @@ impl Default for GatewayConfig {
             quiet_routes: Vec::new(),
             token_ttl: forge_core::AuthTokenTtl::default(),
             project_name: "forge-app".to_string(),
+            max_body_size_bytes: DEFAULT_MAX_MULTIPART_BODY_SIZE,
         }
     }
 }
@@ -292,14 +295,21 @@ impl GatewayServer {
             // REST-style function endpoint (JSON)
             .route("/rpc/{function}", post(rpc_function_handler))
             // Prevent oversized JSON payloads from exhausting memory.
-            .layer(DefaultBodyLimit::max(MAX_JSON_BODY_SIZE))
+            .layer(DefaultBodyLimit::max(
+                self.config.max_body_size_bytes.max(DEFAULT_MAX_JSON_BODY_SIZE),
+            ))
             // Add state
             .with_state(rpc_handler_state.clone());
 
-        // Multipart RPC router (separate state needed for multipart)
+        // Multipart RPC router (separate body limit and concurrency control)
+        let max_body = self.config.max_body_size_bytes;
+        let mp_config = MultipartConfig {
+            max_body_size_bytes: max_body,
+        };
         let multipart_router = Router::new()
             .route("/rpc/{function}/upload", post(rpc_multipart_handler))
-            .layer(DefaultBodyLimit::max(MAX_MULTIPART_BODY_SIZE))
+            .layer(DefaultBodyLimit::max(max_body))
+            .layer(Extension(mp_config))
             // Cap upload fan-out; each request buffers data in memory.
             .layer(ConcurrencyLimitLayer::new(MAX_MULTIPART_CONCURRENCY))
             .with_state(rpc_handler_state);
