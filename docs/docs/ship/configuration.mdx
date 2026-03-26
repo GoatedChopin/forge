@@ -54,7 +54,9 @@ Environment variables use `${VAR_NAME}` syntax (uppercase letters, numbers, unde
 | `pool_timeout_secs`      | u64      | `30`    | Pool checkout timeout     |
 | `statement_timeout_secs` | u64      | `30`    | Query timeout             |
 | `replica_urls`           | string[] | `[]`    | Read replica URLs         |
-| `read_from_replica`      | bool     | `false` | Route reads to replicas   |
+| `read_from_replica`      | bool     | `false` | Route reads to replicas                        |
+| `min_pool_size`          | u32      | `0`     | Minimum connections kept open in the pool       |
+| `test_before_acquire`    | bool     | `true`  | Ping connection health before handing it to a caller |
 
 ```toml
 [database]
@@ -123,13 +125,24 @@ Without pool isolation configured, everything shares the primary pool. With it c
 
 | Option                 | Type     | Default                           | Description                                    |
 | ---------------------- | -------- | --------------------------------- | ---------------------------------------------- |
-| `port`                 | u16      | `8080`                            | HTTP port                                      |
+| `port`                 | u16      | `9081`                            | HTTP port                                      |
 | `grpc_port`            | u16      | `9000`                            | Inter-node communication port                  |
-| `max_connections`      | usize    | `4096`                            | Maximum concurrent connections                 |
+| `max_connections`      | usize    | `512`                             | Maximum concurrent connections                 |
 | `request_timeout_secs` | u64      | `30`                              | Request timeout                                |
 | `cors_enabled`         | bool     | `false`                           | Enable CORS handling                           |
 | `cors_origins`         | string[] | `[]`                              | Allowed CORS origins (use `["*"]` for any)     |
-| `quiet_routes`         | string[] | `["/_api/health", "/_api/ready"]` | Routes excluded from traces, metrics, and logs |
+| `quiet_routes`         | string[] | `[]`                              | Routes excluded from traces, metrics, and logs |
+| `sse_max_sessions`     | usize    | `10000`                           | Maximum concurrent SSE sessions                |
+
+#### Request Body Limits
+
+These limits are hard-coded and not configurable:
+
+| Payload        | Limit   |
+| -------------- | ------- |
+| JSON body      | 1 MiB   |
+| Multipart total| 20 MiB  |
+| Per file       | 10 MiB  |
 
 ### [function]
 
@@ -179,8 +192,11 @@ openssl rand -base64 32
 | `jwks_cache_ttl_secs` | u64    | `3600`    | Public key cache duration                                                       |
 | `jwt_issuer`          | string | -         | Expected issuer (optional)                                                      |
 | `jwt_audience`        | string | -         | Expected audience (optional)                                                    |
-| `token_expiry`        | string | -         | Optional app-level convention; not applied automatically by `ctx.issue_token()` |
+| `access_token_ttl`    | string | `"1h"`    | Access token lifetime                                                           |
+| `refresh_token_ttl`   | string | `"30d"`   | Refresh token lifetime                                                          |
 | `session_ttl_secs`    | u64    | `604800`  | Session TTL (7 days)                                                            |
+
+> `token_expiry` is deprecated; use `access_token_ttl` instead.
 
 #### HMAC (Symmetric)
 
@@ -220,6 +236,9 @@ Controls Forge MCP server exposure on Streamable HTTP.
 | `session_ttl_secs`                | u64      | `3600`   | MCP session lifetime                                   |
 | `allowed_origins`                 | string[] | `[]`     | Allowed `Origin` values                                |
 | `require_protocol_version_header` | bool     | `true`   | Require `MCP-Protocol-Version` header after initialize |
+| `oauth`                           | bool     | `false`  | Enable OAuth 2.1 Authorization Server for MCP clients  |
+
+> Requires `auth.jwt_secret` to be set when `oauth` is enabled.
 
 ```toml
 [mcp]

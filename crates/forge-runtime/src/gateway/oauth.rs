@@ -582,7 +582,10 @@ pub async fn oauth_authorize_post(
 
         match row {
             Ok(Some(r)) if r.password_hash.is_some() => {
-                match bcrypt::verify(password, r.password_hash.as_ref().unwrap()) {
+                match bcrypt::verify(
+                    password,
+                    r.password_hash.as_ref().expect("guarded by is_some check"),
+                ) {
                     Ok(true) => {
                         user_id = r.id;
                     }

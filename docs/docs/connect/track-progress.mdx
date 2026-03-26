@@ -61,6 +61,21 @@ type JobStatus =
 | `output`   | Job return value when status is `completed`                          |
 | `error`    | Error message when status is `failed`, `dead_letter`, or `cancelled` |
 
+### Job Statuses
+
+| Status             | Description                                                                                                              |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `pending`          | Job is queued and waiting to be picked up by a worker                                                                    |
+| `claimed`          | A worker has claimed the job but hasn't started executing yet                                                            |
+| `running`          | Job handler is executing                                                                                                 |
+| `completed`        | Job finished successfully; `output` contains the return value                                                            |
+| `retry`            | Job failed with a retryable error and will be re-queued                                                                  |
+| `failed`           | Job failed and has no retries left                                                                                       |
+| `dead_letter`      | Permanently failed after exhausting all retries                                                                          |
+| `cancel_requested` | Cancellation requested while the job is running; the handler should call `ctx.check_cancelled()` and stop gracefully     |
+| `cancelled`        | Job was successfully cancelled                                                                                           |
+| `not_found`        | No job exists with the given ID (client-only status)                                                                     |
+
 ## Workflow State
 
 Workflows expose additional fields for step-by-step tracking:
@@ -251,6 +266,34 @@ Generates:
 export const trackAccountVerification = (args: { userId: string }) =>
   createWorkflowStore<{ userId: string }, void>("account_verification", args);
 ```
+
+## RPC Endpoints
+
+### Individual function calls
+
+Individual functions can also be called via `POST /_api/rpc/{function_name}` with the args as the JSON body. Useful for server-to-server calls and `curl` testing:
+
+```bash
+curl -X POST https://example.com/_api/rpc/export_users \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{ "format": "csv" }'
+```
+
+Authentication is enforced identically to the standard `/rpc` endpoint.
+
+### Batch calls
+
+POST to `/_api/rpc/batch` with an array of call objects to reduce round-trips:
+
+```json
+[
+  { "fn": "get_user", "args": { "id": "abc-123" } },
+  { "fn": "get_team", "args": { "team_id": "t-456" } }
+]
+```
+
+The server executes queries in parallel and mutations serially. The generated client does not yet expose a typed `batch()` helper.
 
 ## Under the Hood
 

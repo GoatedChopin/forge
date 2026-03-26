@@ -122,7 +122,21 @@ When explicitly set, `timeout` also becomes the default outbound HTTP timeout fo
 
 ### `#[forge::model]`
 
-Place BEFORE `#[derive(...)]` — the macro strips derive attrs and re-emits the struct. Table name: pluralized snake_case of struct name. Primary key always `"id"`.
+Place BEFORE `#[derive(...)]` — the macro strips derive attrs and re-emits the struct. Table name: pluralized snake_case of struct name. Primary key always `"id"`. Override with `#[table(name = "custom_name")]` when auto-pluralization is wrong.
+
+### `#[forge::forge_enum]`
+
+Derives: `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq`, `Hash`, `Serialize`, `Deserialize` with `#[serde(rename_all = "snake_case")]`. Generates: `Display`, `FromStr`, `sqlx::Type`/`Encode`/`Decode`. Variants stored as snake_case strings in PG; PG type name = snake_case of the enum name.
+
+```rust
+#[forge::forge_enum]
+pub enum TaskStatus {
+    Pending,
+    InProgress,
+    Done,
+}
+// PG type: task_status, values: 'pending', 'in_progress', 'done'
+```
 
 ### `#[forge::mcp_tool]`
 
@@ -167,8 +181,8 @@ All duration strings: `500ms`, `30s`, `5m`, `2h`, `7d`, or bare number (= second
 
 ### Key Context Notes
 
-- `MutationContext.conn().await?` returns `ForgeConn<'_>`. Must bind to `let mut conn` before passing to sqlx: `sqlx::query_as::<_, T>("...").fetch_one(&mut conn)`. Passing `ctx.conn().await?` directly fails because sqlx needs `&mut ForgeConn`, not owned `ForgeConn`.
-- `QueryContext.db()` returns `ForgeDb` (works with query methods directly, no `&mut` needed).
+- `MutationContext` uses `conn()` for transactional access, not `db()`. `ctx.conn().await?` returns `ForgeConn<'_>`. Must bind to `let mut conn` before passing to sqlx: `sqlx::query_as::<_, T>("...").fetch_one(&mut conn)`. Passing `ctx.conn().await?` directly fails because sqlx needs `&mut ForgeConn`, not owned `ForgeConn`.
+- `QueryContext.db()` returns `ForgeDb` for pool-level access (works with query methods directly, no `&mut` needed).
 - Production `ctx.http()` is circuit-breaker-backed by default. Use `raw_http()` only when you intentionally need bare `reqwest`.
 - An explicit handler `timeout` also becomes the default outbound HTTP timeout for `ctx.http()`. If omitted, outbound requests stay unlimited unless the request sets its own timeout.
 - Job async methods: `heartbeat()`, `save()`, `saved()`, `set_saved()`, `is_cancel_requested()`, `check_cancelled()` are all async.
@@ -223,8 +237,10 @@ name = "my-app"            # telemetry service name
 [database]
 url = "${DATABASE_URL}"    # required, non-empty
 pool_size = 50
+min_pool_size = 5
 pool_timeout_secs = 30
 statement_timeout_secs = 30
+test_before_acquire = true
 replica_urls = []
 read_from_replica = false
 
@@ -245,7 +261,8 @@ timeout_secs = 30
 jwt_algorithm = "HS256"    # HS256/384/512, RS256/384/512
 jwt_secret = "${JWT_SECRET}"
 # OR for JWKS: jwks_url = "https://...", jwt_issuer = "...", jwt_audience = "..."
-token_expiry = "15m"
+access_token_ttl = "1h"
+refresh_token_ttl = "30d"
 
 [worker]
 max_concurrent_jobs = 50
@@ -339,6 +356,7 @@ Files: `migrations/NNNN_description.sql`. Markers: `-- @up` (required), `-- @dow
 
 | Path | Purpose |
 |---|---|
+| `/_api/rpc/batch` | Batch multiple RPC calls in one request (POST) |
 | `/_api/rpc/{function}` | RPC (POST) |
 | `/_api/rpc/{function}/upload` | Multipart upload (POST) |
 | `/_api/events?token=...` | SSE connection (GET) |

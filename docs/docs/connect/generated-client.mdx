@@ -48,6 +48,8 @@ The `forge generate` command:
 4. Creates API bindings that call your functions with type safety
 5. Produces subscription factories for queries with real-time support
 
+When a function takes a single argument whose type name ends in `Args` or `Input` and that type exists in the schema registry, the generator uses it directly as the params type instead of wrapping it in a generated struct. This means your custom input DTOs pass through as-is.
+
 Output goes to `frontend/src/lib/forge/` by default for SvelteKit projects.
 
 ## Dioxus Output
@@ -80,6 +82,11 @@ pub fn use_get_user_live(args: GetUserParams) -> SubscriptionState<User> {
     use_forge_subscription("get_user", args)
 }
 
+// Signal variant — returns Signal<QueryState<T>> for reactive child component passing
+pub fn use_get_user_signal(args: GetUserParams) -> Signal<QueryState<User>> {
+    use_forge_query_signal("get_user", args)
+}
+
 // Mutations return a typed Mutation handle
 pub fn use_create_user() -> Mutation<CreateUserParams, User> {
     use_forge_mutation("create_user")
@@ -88,10 +95,34 @@ pub fn use_create_user() -> Mutation<CreateUserParams, User> {
 
 The generated `mod.rs` also re-exports `ForgeProvider`, `ForgeClient`, error types, and the Dioxus hooks from `forge-dioxus`.
 
-`use_<name>()` is a one-shot query. Append `_live` for real-time subscriptions.
+`use_<name>()` is a one-shot query. Append `_live` for real-time subscriptions. Append `_signal` for `Signal<QueryState<T>>` variants useful when passing reactive query state to child components.
 Mutations return a `Mutation<Args, Result>` with a `.call(args)` method.
 Generated params and DTO structs include `new(...)` constructors plus builder methods for
 optional fields, so common calls avoid verbose Rust struct literals.
+
+### Dioxus Auth
+
+The generated `mod.rs` re-exports `ForgeAuthProvider` from `forge-dioxus`. Wrap your app in it to provide auth context:
+
+```rust
+use crate::forge::ForgeAuthProvider;
+
+fn App() -> Element {
+    rsx! {
+        ForgeAuthProvider {
+            // your routes / app content
+        }
+    }
+}
+```
+
+Inside the provider tree, use these hooks:
+
+| Hook | Returns | Purpose |
+| ---- | ------- | ------- |
+| `use_forge_auth()` | `ForgeAuth` | Auth handle with `login()`, `logout()`, `update_tokens()`, `viewer::<T>()` |
+| `use_viewer::<T>()` | `Option<T>` | Typed viewer access (shorthand for `use_forge_auth().viewer::<T>()`) |
+| `use_auth_key()` | `usize` | Counter that increments on identity changes, useful for router keying |
 
 ## Type Mapping
 
@@ -112,6 +143,21 @@ optional fields, so common calls avoid verbose Rust struct literals.
 | `Upload`                   | `File \| Blob`      |
 | `Bytes` (return)           | `Blob`              |
 | `Bytes` (arg)              | `Uint8Array`        |
+
+### Rust to Dioxus
+
+| Rust Type                  | Dioxus Type             |
+| -------------------------- | ----------------------- |
+| `String`, `&str`           | `String`                |
+| `Uuid`                     | `String`                |
+| `DateTime<Utc>`            | `String` (ISO 8601)     |
+| `i32`, `i64`, `f32`, `f64` | same                   |
+| `bool`                     | `bool`                  |
+| `Option<T>`                | `Option<T>`             |
+| `Vec<T>`                   | `Vec<T>`                |
+| `Upload`                   | `ForgeUpload`           |
+| `serde_json::Value`        | `JsonValue`             |
+| `Bytes`                    | `Vec<u8>`               |
 
 ### Enums to Union Types
 
@@ -184,6 +230,16 @@ const user = getUser$({ id: userId });
 
 The `$` suffix functions use `$state` internally for fine-grained reactivity.
 
+### SvelteKit Lower-Level APIs
+
+The generated stores are built on top of a few primitives you can use directly:
+
+| Function | Purpose |
+| -------- | ------- |
+| `createQueryStore(fn, args)` | Underlying factory used by generated store functions. Creates a subscription store for any function name and argument object. |
+| `setForgeClient(client)` | Manually inject a `ForgeClient` into Svelte context. Useful for testing or custom setups where you don't use the generated provider. |
+| `setAuthState(state)` | Manually inject auth state into Svelte context. Same use case as `setForgeClient` but for the auth layer. |
+
 ## Subscription State
 
 All subscription stores expose the same shape:
@@ -194,16 +250,20 @@ interface SubscriptionResult<T> {
   data: T | null; // the query result
   error: Error | null;
   stale: boolean; // reserved for reconnect-aware UIs
+  connection_state: ConnectionState; // Disconnected | Connecting | Connected
 }
 ```
 
 | Field     | When True                                                                                     |
 | --------- | --------------------------------------------------------------------------------------------- |
 | `loading` | Initial fetch in progress                                                                     |
-| `stale`   | Currently reserved in the Svelte runtime; use `createConnectionStore()` for connection status |
-| `error`   | Initial query or subscription registration failed                                             |
+| `stale`            | Currently reserved in the Svelte runtime; use `createConnectionStore()` for connection status |
+| `error`            | Initial query or subscription registration failed                                             |
+| `connection_state` | Tracks the underlying SSE connection (`Disconnected`, `Connecting`, `Connected`)              |
 
 The current Svelte runtime keeps `stale` at `false` and exposes connection state separately through `createConnectionStore()`.
+
+In Dioxus generated types, `WorkflowStepState.status` is an untyped `String` rather than a union type. TypeScript targets get a proper string union, but the Dioxus codegen emits a plain `String` since Rust doesn't have an equivalent inline union.
 
 ## Mutations
 
@@ -271,7 +331,9 @@ The client handles connection drops automatically:
 | Max attempts  | 10                      |
 | Initial delay | 1 second                |
 | Backoff       | Exponential with jitter |
-| Max delay     | 30 seconds              |
+| Max delay     | 30s (SvelteKit), 16s (Dioxus) |
+
+The Dioxus client caps at 16 seconds (`1s * 2^min(attempts, 4)`), while SvelteKit caps at 30 seconds.
 
 During reconnection:
 

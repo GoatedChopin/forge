@@ -316,6 +316,33 @@ Nodes with `age > 15s` are considered dead. If multiple nodes show as alive, che
 
 **Fix**: All nodes must share the same database and have `[cluster]` configured. Check `discovery` setting matches (default: `postgres`). Nodes register on startup and heartbeat every 5s.
 
+## Observability
+
+### Traces not appearing in collector
+
+```
+WARN opentelemetry: Exporter otlp encountered error: the grpc transport has been removed
+```
+
+**Cause**: Forge uses OTLP/HTTP, not gRPC. The collector may only accept gRPC on port 4317.
+
+**Fix**: Use port 4318 with the HTTP receiver. Set `otlp_endpoint = "http://collector:4318"` in `forge.toml`. Configure the collector's `otlp/http` receiver:
+```yaml
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+```
+
+## OAuth
+
+### OAuth callback fails with "CSRF state mismatch"
+
+**Cause**: OAuth CSRF state is in-memory. If the load balancer routes the callback to a different node than the one that started the flow, the state check fails.
+
+**Fix**: Configure sticky sessions for `/_api/oauth/*` paths, or run a single dedicated gateway node for MCP/OAuth traffic.
+
 ## Formatting / forge check
 
 `forge check` runs `cargo fmt`, `clippy`, and `prettier`. If it fails on formatting alone, run the fixers before investigating further:

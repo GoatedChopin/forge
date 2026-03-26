@@ -302,12 +302,12 @@ impl MigrationRunner {
         )
         .execute(&self.pool)
         .await
-            .map_err(|e| {
-                ForgeError::Database(format!(
-                    "Failed to record migration '{}': {}",
-                    migration.name, e
-                ))
-            })?;
+        .map_err(|e| {
+            ForgeError::Database(format!(
+                "Failed to record migration '{}': {}",
+                migration.name, e
+            ))
+        })?;
 
         info!("Migration applied: {}", migration.name);
         Ok(())

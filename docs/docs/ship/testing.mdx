@@ -67,6 +67,20 @@ let ctx = TestQueryContext::minimal();
 assert!(!ctx.auth.is_authenticated());
 ```
 
+### Batch Variants
+
+All context builders support batch methods for roles and environment variables:
+
+```rust
+let ctx = TestMutationContext::builder()
+    .as_user(Uuid::new_v4())
+    .with_roles(vec!["admin".into(), "editor".into()])
+    .with_envs(HashMap::from([
+        ("API_KEY".into(), "test-key".into()),
+    ]))
+    .build();
+```
+
 ### Environment Variables
 
 ```rust
@@ -210,6 +224,15 @@ async fn test_order_dispatches_jobs() {
     let jobs = ctx.job_dispatch().dispatched_jobs();
     let email_jobs = ctx.job_dispatch().jobs_of_type("send_confirmation_email");
 }
+```
+
+### Simulating Job Lifecycle
+
+```rust
+// Simulate job lifecycle transitions in tests
+ctx.job_dispatch().complete_job("send_email", json!({ "result": "sent" }));
+ctx.job_dispatch().fail_job("send_email", "SMTP connection refused");
+ctx.job_dispatch().cancel_job("send_email");
 ```
 
 ### Workflow Dispatch Assertions
@@ -428,6 +451,24 @@ fn test_job_retry_behavior() {
 }
 ```
 
+### Save/Load State
+
+```rust
+let ctx = TestJobContext::builder("process_video")
+    .with_saved("temp_file", json!("/tmp/video.mp4"))
+    .build();
+let saved = ctx.saved().await;
+```
+
+### Cancellation Testing
+
+```rust
+let ctx = TestJobContext::builder("long_job")
+    .with_cancellation_requested()
+    .build();
+assert!(ctx.check_cancelled().await.is_err()); // returns Err(JobCancelled)
+```
+
 ### Heartbeat
 
 ```rust
@@ -463,6 +504,15 @@ fn test_cron_execution() {
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0].level, "info");
 }
+```
+
+### Execution Timestamps
+
+```rust
+let ctx = TestCronContext::builder("sync")
+    .scheduled_at(Utc::now() - Duration::minutes(10))
+    .executed_at(Utc::now() - Duration::minutes(3))  // delay = 7 minutes
+    .build();
 ```
 
 ### Lateness Detection
@@ -530,9 +580,13 @@ fn test_workflow_steps() {
     ctx.record_step_complete("create_account", json!({ "user_id": "u_123" }));
 
     // Verify steps
+    assert!(ctx.is_step_started("validate_email"));
     assert!(ctx.is_step_completed("validate_email"));
     assert!(ctx.is_step_completed("create_account"));
     assert!(!ctx.is_step_completed("send_welcome"));
+
+    // Time since workflow started
+    let elapsed = ctx.elapsed();
 
     // Get step result
     let result: Option<serde_json::Value> = ctx.get_step_result("create_account");
@@ -776,6 +830,14 @@ assert!(assert_json_matches(&actual, &json!({ "nested": { "foo": "bar" } })));
 // Non-matches
 assert!(!assert_json_matches(&actual, &json!({ "id": 456 })));
 assert!(!assert_json_matches(&actual, &json!({ "missing": true })));
+```
+
+## Timeout Constants
+
+```rust
+use forge::testing::{ACTION_TIMEOUT, ASSERTION_TIMEOUT};
+// ACTION_TIMEOUT: 5s default for tokio::time::timeout in tests
+// ASSERTION_TIMEOUT: for eventually-consistent assertion helpers
 ```
 
 ## Under the Hood

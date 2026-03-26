@@ -56,6 +56,10 @@ All coordination through PostgreSQL. No separate service mesh.
 - Heartbeat: 5s interval, dead after `max(15s, 3 * adaptive_interval)`
 - Node roles: `gateway`, `function`, `worker`, `scheduler`
 
+Rate limiting with `user`/`ip` keys is per-node (in-memory). For cluster-wide enforcement use `key = "global"` (PostgreSQL-backed).
+
+OAuth CSRF state is in-memory. Multi-instance OAuth requires sticky sessions for `/_api/oauth/*` paths.
+
 ### Worker Pools
 
 Route jobs to specialized workers:
@@ -113,6 +117,20 @@ otlp_endpoint = "http://localhost:4318"
 sampling_ratio = 1.0
 log_level = "info"
 ```
+
+OTLP transport is HTTP only (port 4318). gRPC (port 4317) is not supported. Use an HTTP-capable collector endpoint.
+
+### Emitted Metrics
+
+| Metric | Type | Labels |
+|---|---|---|
+| `http_requests_total` | counter | method, path, status |
+| `http_request_duration_seconds` | histogram | method, path, status |
+| `fn.executions_total` | counter | function, kind |
+| `fn.duration_seconds` | histogram | function, kind |
+| `job_executions_total` | counter | job_type, status |
+| `job_duration_seconds` | histogram | job_type |
+| `active_connections` | up-down counter | type |
 
 ### Trace Correlation
 
@@ -246,3 +264,4 @@ In production with high traffic, start with `0.1` (10%) and increase if you need
 - [ ] Migrations tested with rollback (`forge migrate down`)
 - [ ] Rate limits configured on public endpoints
 - [ ] Circuit breaker enabled for external API calls
+- [ ] OAuth sticky sessions configured for `/_api/oauth/*` if running multiple instances

@@ -505,10 +505,14 @@ async fn try_acquire_leadership(pool: &PgPool, daemon_name: &str, node_id: Uuid)
 
     if result {
         // Update daemon record with our node_id
-        sqlx::query!("UPDATE forge_daemons SET node_id = $1 WHERE name = $2", node_id, daemon_name)
-            .execute(pool)
-            .await
-            .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+        sqlx::query!(
+            "UPDATE forge_daemons SET node_id = $1 WHERE name = $2",
+            node_id,
+            daemon_name
+        )
+        .execute(pool)
+        .await
+        .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
     }
 
     Ok(result)

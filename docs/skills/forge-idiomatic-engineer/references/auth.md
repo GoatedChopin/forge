@@ -184,6 +184,7 @@ ctx.auth.subject() -> Option<&str>           // raw sub claim, any format
 ctx.auth.require_subject() -> Result<&str>
 ctx.auth.has_role("admin") -> bool
 ctx.auth.require_role("admin") -> Result<()> // returns Forbidden
+ctx.auth.tenant_id() -> Option<Uuid>          // reads "tenant_id" claim as UUID
 ctx.auth.claim("org_id") -> Option<&Value>
 ctx.auth.claims() -> &HashMap<String, Value>
 ctx.auth.roles() -> &[String]

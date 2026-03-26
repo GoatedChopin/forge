@@ -133,7 +133,7 @@ done
 
 DATABASE_URL="postgres://postgres:forge@localhost:5432/$DB_NAME" \
   HOST=0.0.0.0 PORT="$BACKEND_PORT" RUST_LOG=warn \
-  JWT_SECRET=test-secret-for-ci WEBHOOK_SECRET=test-webhook-secret \
+  JWT_SECRET=test-secret-for-ci WEBHOOK_SECRET=demo-secret \
   "$BINARY" &
 BACKEND_PID=$!
 

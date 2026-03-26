@@ -169,18 +169,24 @@ pub async fn rotate_refresh_token_with_client(
 /// Revoke a specific refresh token.
 pub async fn revoke_refresh_token(pool: &sqlx::PgPool, refresh_token: &str) -> Result<()> {
     let hash = hash_token(refresh_token);
-    sqlx::query!("DELETE FROM forge_refresh_tokens WHERE token_hash = $1", &hash)
-        .execute(pool)
-        .await
-        .map_err(|e| ForgeError::Internal(format!("Failed to revoke refresh token: {e}")))?;
+    sqlx::query!(
+        "DELETE FROM forge_refresh_tokens WHERE token_hash = $1",
+        &hash
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| ForgeError::Internal(format!("Failed to revoke refresh token: {e}")))?;
     Ok(())
 }
 
 /// Revoke all refresh tokens for a user.
 pub async fn revoke_all_refresh_tokens(pool: &sqlx::PgPool, user_id: Uuid) -> Result<()> {
-    sqlx::query!("DELETE FROM forge_refresh_tokens WHERE user_id = $1", user_id)
-        .execute(pool)
-        .await
-        .map_err(|e| ForgeError::Internal(format!("Failed to revoke refresh tokens: {e}")))?;
+    sqlx::query!(
+        "DELETE FROM forge_refresh_tokens WHERE user_id = $1",
+        user_id
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| ForgeError::Internal(format!("Failed to revoke refresh tokens: {e}")))?;
     Ok(())
 }

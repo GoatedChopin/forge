@@ -14,7 +14,7 @@ Read-only database operations with caching and subscriptions.
 | `cache`                | `"duration"`   | none    | Cache TTL (`"30s"`, `"5m"`, `"1h"`)                          |
 | `timeout`              | `u64`          | none    | Statement timeout in seconds                                 |
 | `tables`               | `["t1", "t2"]` | auto    | Explicit table dependencies for subscriptions                |
-| `log`                  | `"level"`      | none    | Log level (`trace`, `debug`, `info`, `warn`, `error`, `off`) |
+| `log`                  | `"level"`      | none    | Log level (`trace`, `debug`, `info`, `warn`, `error`, `off`). Requires a quoted value (e.g., `log = "debug"`); a bare `log` without a value is silently accepted but has no effect. |
 | `rate_limit(...)`      | config         | none    | Rate limiting configuration                                  |
 
 ### Rate Limit Config
@@ -63,6 +63,89 @@ This always reads from the primary database, avoiding replication lag. Only use 
 
 ---
 
+## `#[forge::model]`
+
+Declares a struct as a database model. Must appear **before** `#[derive(...)]`.
+
+```rust
+#[forge::model]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
+pub struct UserProfile {
+    pub id: Uuid,
+    pub display_name: String,
+    pub created_at: DateTime<Utc>,
+}
+```
+
+### Table Name
+
+The table name is auto-pluralized from the struct name (converted to snake_case):
+
+| Ending | Rule | Example |
+| ------ | ---- | ------- |
+| `s`, `sh`, `ch`, `x`, `z` | append `"es"` | `UserBatch` → `user_batches` |
+| consonant + `y` | replace `y` with `"ies"` | `DeliveryEntry` → `delivery_entries` |
+| everything else | append `"s"` | `UserProfile` → `user_profiles` |
+
+Override with `#[table(name = "custom_name")]`:
+
+```rust
+#[forge::model]
+#[table(name = "legacy_users")]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
+pub struct User {
+    pub id: Uuid,
+    pub email: String,
+}
+```
+
+### Primary Key
+
+The primary key is always `id`. This is hardcoded and cannot be overridden.
+
+### Generated Code
+
+The macro generates a `ModelMeta` trait implementation providing:
+
+- `TABLE_NAME` — the resolved table name
+- `table_def()` — table definition metadata
+- `primary_key_field()` — returns `"id"`
+
+Models are auto-registered via the `inventory` crate at compile time. No manual registration is needed.
+
+---
+
+## `#[forge::forge_enum]`
+
+Declares an enum for use as a database column type with automatic serialization.
+
+```rust
+#[forge::forge_enum]
+pub enum TaskStatus {
+    Pending,
+    InProgress,
+    Completed,
+    Cancelled,
+}
+```
+
+### Auto-Derived Traits
+
+The macro automatically derives: `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq`, `Hash`, `serde::Serialize`, `serde::Deserialize` with `#[serde(rename_all = "snake_case")]`.
+
+### SQL Representation
+
+Variants are stored as snake_case strings in the database. For example, `InProgress` becomes `"in_progress"`.
+
+The PostgreSQL type name is the snake_case form of the enum name (e.g., `TaskStatus` → `"task_status"`).
+
+### Generated Implementations
+
+- `Display` and `FromStr` using the snake_case form
+- `sqlx::Type<Postgres>`, `sqlx::Encode`, `sqlx::Decode` for direct use in queries
+
+---
+
 ## `#[forge::mutation]`
 
 Transactional write operations.
@@ -73,12 +156,12 @@ Transactional write operations.
 | `require_role("name")` | `string` | none | Require specific role (returns 403 if missing) |
 | `transactional` | flag | `false` | Wrap in database transaction (required if dispatching jobs) |
 | `timeout` | `u64` | none | Handler timeout in seconds; if explicitly set it also becomes the default outbound HTTP timeout for `ctx.http()` |
-| `log` | `"level"` | none | Log level (`trace`, `debug`, `info`, `warn`, `error`, `off`) |
+| `log` | `"level"` | none | Log level (`trace`, `debug`, `info`, `warn`, `error`, `off`). Requires a quoted value (e.g., `log = "debug"`); a bare `log` without a value is silently accepted but has no effect. |
 | `rate_limit(...)` | config | none | Rate limiting configuration (same as query) |
 
-### Runtime Enforcement
+### Compile-Time Enforcement
 
-Mutations that call `dispatch_job()` or `start_workflow()` must use `transactional`. You get an error at runtime if you forget:
+Mutations that call `dispatch_job()` or `start_workflow()` must use `transactional`. The macro scans the function body for these calls and emits a compile error if `transactional` is missing:
 
 ```
 
@@ -118,6 +201,8 @@ Explicitly exposes a function as an MCP tool (Streamable HTTP endpoint).
 | `destructive`          | flag     | none    | Modifies external state irreversibly              |
 | `idempotent`           | flag     | none    | Repeated calls with same args produce same result |
 | `open_world`           | flag     | none    | Interacts with entities beyond its dataset        |
+
+Tool names must be 1–128 characters, using only ASCII alphanumeric characters plus `_`, `-`, and `.`. Invalid names cause a compile error.
 
 MCP tools participate in Forge auth by default: omit `public` to require a valid JWT, and add `require_role("...")` for role-gated tools.
 

@@ -38,6 +38,8 @@ store.reset()        // clear data, set loading
 
 Auto-cleanup: subscriptions stop when all Svelte subscribers detach.
 
+`createQueryStore(fn, args)` is the underlying factory; generated `listTodosStore$()` calls this internally. Use for custom store wrappers.
+
 ## Svelte 5 Runes
 
 Use `$state`, `$derived`, `$effect` (sparingly). The `$`-suffixed reactive wrappers (`listTodos$()`) return `ReactiveQuery<T>` which is `$state`-backed.
@@ -96,6 +98,8 @@ class AuthStore {
 export const auth: AuthStore;
 export function getToken(): string | null;
 ```
+
+`setForgeClient(client)` and `setAuthState(state)` manually set context values. Normally handled by `ForgeProvider`.
 
 ```typescript
 // After login/register:

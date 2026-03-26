@@ -104,10 +104,12 @@ The lock ID is a hash of the leader role. One node acquires the lock. Others ret
 | Role | Lock ID | Purpose |
 |------|---------|---------|
 | `scheduler` | `0x464F52470001` | Cron triggering, job assignment |
-| `metrics_aggregator` | `0x464F52470002` | Metrics collection |
-| `log_compactor` | `0x464F52470003` | Log compaction |
+| `metrics_aggregator` | `0x464F52470002` | Metrics collection (planned, not yet active) |
+| `log_compactor` | `0x464F52470003` | Log compaction (planned, not yet active) |
 
 Each role has an independent lock. Different nodes can lead different roles.
+
+The `forge_leaders` table records which node currently holds each leader role. Query it to see the active scheduler without inspecting `pg_locks` directly.
 
 ### Automatic Failover
 
@@ -295,6 +297,16 @@ Multiple workers safely pull from the same job queue:
 4. Other workers skip locked rows, grab different jobs
 
 This avoids race conditions and duplicate processing without distributed coordination.
+
+## Multi-Node Caveats
+
+### Rate Limiting
+
+Rate limiting with `key = "user"` or `key = "ip"` is enforced per-node using an in-memory token bucket. In a multi-node deployment, a user can make up to `requests × node_count` per window. Only `key = "global"` uses a shared PostgreSQL counter and is truly cluster-wide.
+
+### OAuth State
+
+OAuth 2.1 CSRF tokens and session state are stored in-memory on the node that initiated the flow. If a load balancer routes the OAuth callback to a different node, the CSRF check fails. For multi-instance deployments using MCP OAuth, configure sticky sessions for `/_api/oauth/*` paths or dedicate a single gateway node for MCP traffic.
 
 ## Patterns
 

@@ -37,6 +37,16 @@ forge new my-app --template with-dioxus/realtime-todo-list
 forge new my-app --template with-svelte/demo --output /path/to/projects/my-app
 ```
 
+### Post-Scaffold Automation
+
+After scaffolding the project directory, `forge new` automatically:
+
+1. Runs `git init` and creates an initial commit
+2. Runs `forge generate -y` to produce frontend bindings
+3. Runs `cargo fmt` and `bun run format` to normalize code style
+
+If a formatter binary is not installed (e.g., `bun` is missing), the command prints a warning and continues. The project is still fully usable.
+
 ---
 
 ## Development Environment
@@ -107,6 +117,19 @@ forge test [options] [-- test-args...]
 
 Trailing arguments after `--` are forwarded to the test runner.
 
+### Docker Compose Lifecycle
+
+When frontend tests run and the backend isn't already up, `forge test` automatically manages the Docker environment:
+
+1. Runs `docker compose up -d --build`
+2. Waits up to 120 seconds for the health check to pass
+3. Executes the test suite
+4. Tears down with `docker compose down -v` after tests complete
+
+### Playwright Browser Install
+
+Playwright browser binaries are installed automatically on first run if missing. No manual `npx playwright install` step is needed.
+
 ```bash
 # Run all tests
 forge test
@@ -144,6 +167,10 @@ forge check [options]
 - Function files with forge macros (query, mutation, job, cron, workflow, daemon, webhook, mcp_tool)
 - Schema files with `#[forge::model]` or standard derives (`Serialize`, `FromRow`)
 
+- SQLx offline cache freshness (warns if `.sqlx/` is stale relative to migration files)
+- `sqlx.toml` presence and `offline = true` validation
+- Generated bindings staleness (diffs current bindings against freshly generated output)
+- Dioxus-specific checks (`frontend/Dioxus.toml` presence, `rustfmt` on frontend `.rs` files)
 - Rust linting (cargo fmt, clippy)
 - Frontend configuration (if present)
 - Frontend linting (ESLint, Prettier)
@@ -170,7 +197,7 @@ forge generate [options]
 | ---------------------- | ------------------------------------------------------- |
 | `--force`              | Force regeneration even if files exist                  |
 | `--output, -o <dir>`   | Output directory (defaults to the detected target path) |
-| `--target <framework>` | Frontend target (`sveltekit` or `dioxus`)               |
+| `--target <framework>` | Frontend target (`sveltekit` or `dioxus`). Defaults to SvelteKit when no framework is auto-detected |
 | `--src, -s <dir>`      | Source directory to scan (default: src)                 |
 | `--yes, -y`            | Auto-accept prompts (useful for CI)                     |
 
@@ -237,7 +264,7 @@ forge migrate [action] [options]
 | `up`           | Run all pending migrations                                      |
 | `down [count]` | Rollback the last N migrations (default: 1)                     |
 | `status`       | Show migration status                                           |
-| `prepare`      | Run pending migrations, then refresh the `.sqlx/` offline cache |
+| `prepare`      | Run pending migrations, then refresh the `.sqlx/` offline cache. Requires `cargo-sqlx` (`cargo install sqlx-cli --locked`); prints install instructions if missing |
 
 ### Automatic migrations
 

@@ -11,6 +11,7 @@ For a backend function `get_user(ctx, id: Uuid)`:
 | `get_user(client, args)` | `Result<User, ForgeClientError>` | Async fn for manual calls |
 | `use_get_user(args)` | `QueryState<User>` | One-shot query hook |
 | `use_get_user_live(args)` | `SubscriptionState<User>` | Live subscription hook |
+| `use_get_user_signal(args)` | `Signal<QueryState<User>>` | Signal variant for passing to child components |
 
 Mutations: `use_create_user()` → `Mutation<CreateUserParams, User>`. Call via `mutation.call(params).await`.
 
@@ -37,6 +38,8 @@ pub struct SubscriptionState<T> {
 
 // ConnectionState: Disconnected | Connecting | Connected
 ```
+
+`WorkflowStepState.status` is `String` in Dioxus (not a typed enum). Pattern match carefully.
 
 ## Params Generation
 

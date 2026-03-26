@@ -31,7 +31,12 @@ impl NodeRegistry {
 
     /// Register the local node in the cluster.
     pub async fn register(&self) -> Result<()> {
-        let roles: Vec<String> = self.local_node.roles.iter().map(|r| r.as_str().to_string()).collect();
+        let roles: Vec<String> = self
+            .local_node
+            .roles
+            .iter()
+            .map(|r| r.as_str().to_string())
+            .collect();
 
         sqlx::query!(
             r#"
@@ -127,10 +132,21 @@ impl NodeRegistry {
         rows.into_iter()
             .map(|row| {
                 parse_node_fields(
-                    row.id, row.hostname, row.ip_address, row.http_port, row.grpc_port,
-                    row.roles, row.worker_capabilities, row.status, row.version,
-                    row.started_at, row.last_heartbeat, row.current_connections,
-                    row.current_jobs, row.cpu_usage, row.memory_usage,
+                    row.id,
+                    row.hostname,
+                    row.ip_address,
+                    row.http_port,
+                    row.grpc_port,
+                    row.roles,
+                    row.worker_capabilities,
+                    row.status,
+                    row.version,
+                    row.started_at,
+                    row.last_heartbeat,
+                    row.current_connections,
+                    row.current_jobs,
+                    row.cpu_usage,
+                    row.memory_usage,
                 )
             })
             .collect()
@@ -155,10 +171,21 @@ impl NodeRegistry {
 
         row.map(|row| {
             parse_node_fields(
-                row.id, row.hostname, row.ip_address, row.http_port, row.grpc_port,
-                row.roles, row.worker_capabilities, row.status, row.version,
-                row.started_at, row.last_heartbeat, row.current_connections,
-                row.current_jobs, row.cpu_usage, row.memory_usage,
+                row.id,
+                row.hostname,
+                row.ip_address,
+                row.http_port,
+                row.grpc_port,
+                row.roles,
+                row.worker_capabilities,
+                row.status,
+                row.version,
+                row.started_at,
+                row.last_heartbeat,
+                row.current_connections,
+                row.current_jobs,
+                row.cpu_usage,
+                row.memory_usage,
             )
         })
         .transpose()
@@ -230,6 +257,7 @@ impl NodeRegistry {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn parse_node_fields(
     id: Uuid,
     hostname: String,
@@ -247,9 +275,9 @@ fn parse_node_fields(
     cpu_usage: f32,
     memory_usage: f32,
 ) -> Result<NodeInfo> {
-    let ip_addr: IpAddr = ip_address
-        .parse()
-        .map_err(|e| ForgeError::Validation(format!("invalid IP address '{}': {}", ip_address, e)))?;
+    let ip_addr: IpAddr = ip_address.parse().map_err(|e| {
+        ForgeError::Validation(format!("invalid IP address '{}': {}", ip_address, e))
+    })?;
 
     let node_roles: Vec<NodeRole> = roles
         .iter()
