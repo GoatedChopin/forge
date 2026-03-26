@@ -242,14 +242,14 @@ impl WorkflowScheduler {
     /// Resume a workflow after timer expiry.
     async fn resume_workflow(&self, workflow_run_id: Uuid) {
         // Clear wake state
-        if let Err(e) = sqlx::query(
+        if let Err(e) = sqlx::query!(
             r#"
             UPDATE forge_workflow_runs
             SET wake_at = NULL, suspended_at = NULL, status = 'running'
             WHERE id = $1
             "#,
+            workflow_run_id,
         )
-        .bind(workflow_run_id)
         .execute(&self.pool)
         .await
         {
@@ -268,14 +268,14 @@ impl WorkflowScheduler {
     /// Resume a workflow after event timeout.
     async fn resume_with_timeout(&self, workflow_run_id: Uuid) {
         // Clear waiting state
-        if let Err(e) = sqlx::query(
+        if let Err(e) = sqlx::query!(
             r#"
             UPDATE forge_workflow_runs
             SET waiting_for_event = NULL, event_timeout_at = NULL, suspended_at = NULL, status = 'running'
             WHERE id = $1
             "#,
+            workflow_run_id,
         )
-        .bind(workflow_run_id)
         .execute(&self.pool)
         .await
         {
@@ -294,14 +294,14 @@ impl WorkflowScheduler {
     /// Resume a workflow that received an event.
     async fn resume_with_event(&self, workflow_run_id: Uuid) {
         // Clear waiting state
-        if let Err(e) = sqlx::query(
+        if let Err(e) = sqlx::query!(
             r#"
             UPDATE forge_workflow_runs
             SET waiting_for_event = NULL, event_timeout_at = NULL, suspended_at = NULL, status = 'running'
             WHERE id = $1
             "#,
+            workflow_run_id,
         )
-        .bind(workflow_run_id)
         .execute(&self.pool)
         .await
         {

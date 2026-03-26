@@ -1,22 +1,22 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT user_id FROM forge_refresh_tokens WHERE token_hash = $1",
+  "query": "SELECT workflow_run_id FROM forge_workflow_steps WHERE id = $1",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "user_id",
+        "name": "workflow_run_id",
         "type_info": "Uuid"
       }
     ],
     "parameters": {
       "Left": [
-        "Text"
+        "Uuid"
       ]
     },
     "nullable": [
       false
     ]
   },
-  "hash": "823ac480a3a7bd380d57416197e62ab047855379df5f89262b4e5f2f0a59cc3c"
+  "hash": "9330a21049ebee4fa35862cf8fff01558b986bd65b9883ab0eab02662d141dbe"
 }

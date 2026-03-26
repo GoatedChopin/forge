@@ -394,7 +394,7 @@ async fn readiness_handler(
     axum::extract::State(state): axum::extract::State<Arc<ReadinessState>>,
 ) -> (axum::http::StatusCode, Json<ReadinessResponse>) {
     // Check database connectivity
-    let db_ok = sqlx::query("SELECT 1")
+    let db_ok = sqlx::query_scalar!("SELECT 1 as \"v!\"")
         .fetch_one(&state.db_pool)
         .await
         .is_ok();

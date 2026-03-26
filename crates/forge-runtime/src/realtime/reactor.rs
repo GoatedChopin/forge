@@ -759,10 +759,10 @@ impl Reactor {
         session_server: &Arc<SessionServer>,
         db_pool: &sqlx::PgPool,
     ) {
-        let workflow_id: Option<Uuid> = match sqlx::query_scalar(
+        let workflow_id: Option<Uuid> = match sqlx::query_scalar!(
             "SELECT workflow_run_id FROM forge_workflow_steps WHERE id = $1",
+            step_id,
         )
-        .bind(step_id)
         .fetch_optional(db_pool)
         .await
         {
@@ -816,8 +816,7 @@ impl Reactor {
         db_pool: &sqlx::PgPool,
     ) -> forge_core::Result<Option<String>> {
         let owner_subject: Option<Option<String>> =
-            sqlx::query_scalar("SELECT owner_subject FROM forge_jobs WHERE id = $1")
-                .bind(job_id)
+            sqlx::query_scalar!("SELECT owner_subject FROM forge_jobs WHERE id = $1", job_id)
                 .fetch_optional(db_pool)
                 .await
                 .map_err(forge_core::ForgeError::Sql)?;
@@ -889,11 +888,13 @@ impl Reactor {
         db_pool: &sqlx::PgPool,
     ) -> forge_core::Result<Option<String>> {
         let owner_subject: Option<Option<String>> =
-            sqlx::query_scalar("SELECT owner_subject FROM forge_workflow_runs WHERE id = $1")
-                .bind(workflow_id)
-                .fetch_optional(db_pool)
-                .await
-                .map_err(forge_core::ForgeError::Sql)?;
+            sqlx::query_scalar!(
+                "SELECT owner_subject FROM forge_workflow_runs WHERE id = $1",
+                workflow_id,
+            )
+            .fetch_optional(db_pool)
+            .await
+            .map_err(forge_core::ForgeError::Sql)?;
 
         owner_subject.ok_or_else(|| {
             forge_core::ForgeError::NotFound(format!("Workflow {} not found", workflow_id))

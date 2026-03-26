@@ -328,18 +328,18 @@ impl WorkflowContext {
         let step_name = name.to_string();
         tokio::spawn(async move {
             let step_id = Uuid::new_v4();
-            if let Err(e) = sqlx::query(
+            if let Err(e) = sqlx::query!(
                 r#"
                 INSERT INTO forge_workflow_steps (id, workflow_run_id, step_name, status, started_at)
                 VALUES ($1, $2, $3, $4, $5)
                 ON CONFLICT (workflow_run_id, step_name) DO NOTHING
                 "#,
+                step_id,
+                run_id,
+                step_name,
+                state_clone.status.as_str(),
+                state_clone.started_at,
             )
-            .bind(step_id)
-            .bind(run_id)
-            .bind(&step_name)
-            .bind(state_clone.status.as_str())
-            .bind(state_clone.started_at)
             .execute(&pool)
             .await
             {
@@ -412,20 +412,20 @@ impl WorkflowContext {
         state: &StepState,
     ) {
         // Use UPSERT to handle race condition where persist_step_start hasn't completed yet
-        if let Err(e) = sqlx::query(
+        if let Err(e) = sqlx::query!(
             r#"
             INSERT INTO forge_workflow_steps (id, workflow_run_id, step_name, status, result, started_at, completed_at)
             VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
             ON CONFLICT (workflow_run_id, step_name) DO UPDATE
             SET status = $3, result = $4, completed_at = $6
             "#,
+            run_id,
+            step_name,
+            state.status.as_str(),
+            state.result as _,
+            state.started_at,
+            state.completed_at,
         )
-        .bind(run_id)
-        .bind(step_name)
-        .bind(state.status.as_str())
-        .bind(&state.result)
-        .bind(state.started_at)
-        .bind(state.completed_at)
         .execute(pool)
         .await
         {
@@ -454,18 +454,18 @@ impl WorkflowContext {
             let run_id = self.run_id;
             let step_name = name.to_string();
             tokio::spawn(async move {
-                if let Err(e) = sqlx::query(
+                if let Err(e) = sqlx::query!(
                     r#"
                     UPDATE forge_workflow_steps
                     SET status = $3, error = $4, completed_at = $5
                     WHERE workflow_run_id = $1 AND step_name = $2
                     "#,
+                    run_id,
+                    step_name,
+                    state.status.as_str(),
+                    state.error as _,
+                    state.completed_at,
                 )
-                .bind(run_id)
-                .bind(&step_name)
-                .bind(state.status.as_str())
-                .bind(&state.error)
-                .bind(state.completed_at)
                 .execute(&pool)
                 .await
                 {
@@ -495,16 +495,16 @@ impl WorkflowContext {
             let run_id = self.run_id;
             let step_name = name.to_string();
             tokio::spawn(async move {
-                if let Err(e) = sqlx::query(
+                if let Err(e) = sqlx::query!(
                     r#"
                     UPDATE forge_workflow_steps
                     SET status = $3
                     WHERE workflow_run_id = $1 AND step_name = $2
                     "#,
+                    run_id,
+                    step_name,
+                    state.status.as_str(),
                 )
-                .bind(run_id)
-                .bind(&step_name)
-                .bind(state.status.as_str())
                 .execute(&pool)
                 .await
                 {
@@ -736,15 +736,15 @@ impl WorkflowContext {
 
     /// Persist wake time to database.
     async fn set_wake_at(&self, wake_at: DateTime<Utc>) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE forge_workflow_runs
             SET status = 'waiting', suspended_at = NOW(), wake_at = $2
             WHERE id = $1
             "#,
+            self.run_id,
+            wake_at,
         )
-        .bind(self.run_id)
-        .bind(wake_at)
         .execute(&self.db_pool)
         .await
         .map_err(|e| ForgeError::Database(e.to_string()))?;
@@ -757,16 +757,16 @@ impl WorkflowContext {
         event_name: &str,
         timeout_at: Option<DateTime<Utc>>,
     ) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE forge_workflow_runs
             SET status = 'waiting', suspended_at = NOW(), waiting_for_event = $2, event_timeout_at = $3
             WHERE id = $1
             "#,
+            self.run_id,
+            event_name,
+            timeout_at,
         )
-        .bind(self.run_id)
-        .bind(event_name)
-        .bind(timeout_at)
         .execute(&self.db_pool)
         .await
         .map_err(|e| ForgeError::Database(e.to_string()))?;

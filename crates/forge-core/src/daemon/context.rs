@@ -166,15 +166,15 @@ impl DaemonContext {
     pub async fn heartbeat(&self) -> crate::Result<()> {
         tracing::trace!(daemon.name = %self.daemon_name, "Sending heartbeat");
 
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE forge_daemons
             SET last_heartbeat = NOW()
             WHERE name = $1 AND instance_id = $2
             "#,
+            self.daemon_name,
+            self.instance_id,
         )
-        .bind(&self.daemon_name)
-        .bind(self.instance_id)
         .execute(&self.db_pool)
         .await
         .map_err(|e| crate::ForgeError::Database(e.to_string()))?;

@@ -184,14 +184,14 @@ impl HeartbeatLoop {
 
     /// Send a heartbeat update.
     async fn send_heartbeat(&self) -> forge_core::Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE forge_nodes
             SET last_heartbeat = NOW()
             WHERE id = $1
             "#,
+            self.node_id.as_uuid(),
         )
-        .bind(self.node_id.as_uuid())
         .execute(&self.pool)
         .await
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
@@ -206,15 +206,15 @@ impl HeartbeatLoop {
         let configured = self.config.dead_threshold.as_secs_f64();
         let threshold_secs = adaptive.max(configured);
 
-        let result = sqlx::query(
+        let result = sqlx::query!(
             r#"
             UPDATE forge_nodes
             SET status = 'dead'
             WHERE status = 'active'
               AND last_heartbeat < NOW() - make_interval(secs => $1)
             "#,
+            threshold_secs,
         )
-        .bind(threshold_secs)
         .execute(&self.pool)
         .await
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
@@ -240,7 +240,7 @@ impl HeartbeatLoop {
         cpu_usage: f32,
         memory_usage: f32,
     ) -> forge_core::Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE forge_nodes
             SET current_connections = $2,
@@ -250,12 +250,12 @@ impl HeartbeatLoop {
                 last_heartbeat = NOW()
             WHERE id = $1
             "#,
+            self.node_id.as_uuid(),
+            current_connections as i32,
+            current_jobs as i32,
+            cpu_usage,
+            memory_usage,
         )
-        .bind(self.node_id.as_uuid())
-        .bind(current_connections as i32)
-        .bind(current_jobs as i32)
-        .bind(cpu_usage)
-        .bind(memory_usage)
         .execute(&self.pool)
         .await
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;

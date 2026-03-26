@@ -199,9 +199,8 @@ impl MigrationRunner {
             ForgeError::Database(format!("Failed to acquire lock connection: {}", e))
         })?;
 
-        sqlx::query("SELECT pg_advisory_lock($1)")
-            .bind(MIGRATION_LOCK_ID)
-            .execute(&mut *conn)
+        sqlx::query_scalar!("SELECT pg_advisory_lock($1)", MIGRATION_LOCK_ID)
+            .fetch_one(&mut *conn)
             .await
             .map_err(|e| {
                 ForgeError::Database(format!("Failed to acquire migration lock: {}", e))
@@ -214,9 +213,8 @@ impl MigrationRunner {
         &self,
         conn: &mut sqlx::pool::PoolConnection<Postgres>,
     ) -> Result<()> {
-        sqlx::query("SELECT pg_advisory_unlock($1)")
-            .bind(MIGRATION_LOCK_ID)
-            .execute(&mut **conn)
+        sqlx::query_scalar!("SELECT pg_advisory_unlock($1)", MIGRATION_LOCK_ID)
+            .fetch_one(&mut **conn)
             .await
             .map_err(|e| {
                 ForgeError::Database(format!("Failed to release migration lock: {}", e))
@@ -297,11 +295,13 @@ impl MigrationRunner {
         }
 
         // Record it as applied (with down_sql for potential rollback)
-        sqlx::query("INSERT INTO forge_migrations (name, down_sql) VALUES ($1, $2)")
-            .bind(&migration.name)
-            .bind(&migration.down_sql)
-            .execute(&self.pool)
-            .await
+        sqlx::query!(
+            "INSERT INTO forge_migrations (name, down_sql) VALUES ($1, $2)",
+            &migration.name,
+            migration.down_sql as _,
+        )
+        .execute(&self.pool)
+        .await
             .map_err(|e| {
                 ForgeError::Database(format!(
                     "Failed to record migration '{}': {}",
@@ -386,8 +386,7 @@ impl MigrationRunner {
             }
 
             // Remove from migrations table
-            sqlx::query("DELETE FROM forge_migrations WHERE id = $1")
-                .bind(id)
+            sqlx::query!("DELETE FROM forge_migrations WHERE id = $1", id)
                 .execute(&self.pool)
                 .await
                 .map_err(|e| {

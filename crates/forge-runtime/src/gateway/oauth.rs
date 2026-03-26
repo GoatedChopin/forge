@@ -217,9 +217,10 @@ pub async fn oauth_register(
     }
 
     // Check client cap
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM forge_oauth_clients")
+    let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM forge_oauth_clients")
         .fetch_one(&state.pool)
         .await
+        .unwrap_or(Some(0))
         .unwrap_or(0);
     if count >= MAX_REGISTERED_CLIENTS {
         return (
@@ -246,14 +247,14 @@ pub async fn oauth_register(
     let client_id = Uuid::new_v4().to_string();
     let auth_method = req.token_endpoint_auth_method.as_deref().unwrap_or("none");
 
-    let result = sqlx::query(
+    let result = sqlx::query!(
         "INSERT INTO forge_oauth_clients (client_id, client_name, redirect_uris, token_endpoint_auth_method) \
-         VALUES ($1, $2, $3, $4)"
+         VALUES ($1, $2, $3, $4)",
+        &client_id,
+        req.client_name as _,
+        &req.redirect_uris,
+        auth_method,
     )
-    .bind(&client_id)
-    .bind(&req.client_name)
-    .bind(&req.redirect_uris)
-    .bind(auth_method)
     .execute(&state.pool)
     .await;
 
@@ -312,15 +313,15 @@ pub async fn oauth_authorize_get(
     State(state): State<Arc<OAuthState>>,
 ) -> Response {
     // Validate client_id
-    let client = sqlx::query_as::<_, (String, Option<String>, Vec<String>)>(
-        "SELECT client_id, client_name, redirect_uris FROM forge_oauth_clients WHERE client_id = $1"
+    let client = sqlx::query!(
+        "SELECT client_id, client_name, redirect_uris FROM forge_oauth_clients WHERE client_id = $1",
+        &params.client_id,
     )
-    .bind(&params.client_id)
     .fetch_optional(&state.pool)
     .await;
 
     let (_, client_name, redirect_uris) = match client {
-        Ok(Some(c)) => c,
+        Ok(Some(c)) => (c.client_id, c.client_name, c.redirect_uris),
         Ok(None) => {
             return (
                 StatusCode::BAD_REQUEST,
@@ -473,15 +474,15 @@ pub async fn oauth_authorize_post(
     let rate_key = format!("oauth_login:{ip}");
 
     // Validate client and redirect_uri again (form could be tampered)
-    let client = sqlx::query_as::<_, (Vec<String>,)>(
+    let client = sqlx::query!(
         "SELECT redirect_uris FROM forge_oauth_clients WHERE client_id = $1",
+        &form.client_id,
     )
-    .bind(&form.client_id)
     .fetch_optional(&state.pool)
     .await;
 
     let redirect_uris = match client {
-        Ok(Some((uris,))) => uris,
+        Ok(Some(c)) => c.redirect_uris,
         _ => {
             return (
                 StatusCode::BAD_REQUEST,
@@ -572,27 +573,29 @@ pub async fn oauth_authorize_post(
         }
 
         // Query users table by convention
-        let row = sqlx::query_as::<_, (Uuid, Option<String>, Option<String>)>(
+        let row = sqlx::query!(
             "SELECT id, password_hash, role::TEXT FROM users WHERE email = $1",
+            email,
         )
-        .bind(email)
         .fetch_optional(&state.pool)
         .await;
 
         match row {
-            Ok(Some((uid, Some(hash), _role))) => match bcrypt::verify(password, &hash) {
-                Ok(true) => {
-                    user_id = uid;
+            Ok(Some(r)) if r.password_hash.is_some() => {
+                match bcrypt::verify(password, r.password_hash.as_ref().unwrap()) {
+                    Ok(true) => {
+                        user_id = r.id;
+                    }
+                    _ => {
+                        return authorize_error_redirect(
+                            &form.redirect_uri,
+                            form.state.as_deref(),
+                            "access_denied",
+                            "Invalid email or password",
+                        );
+                    }
                 }
-                _ => {
-                    return authorize_error_redirect(
-                        &form.redirect_uri,
-                        form.state.as_deref(),
-                        "access_denied",
-                        "Invalid email or password",
-                    );
-                }
-            },
+            }
             _ => {
                 return authorize_error_redirect(
                     &form.redirect_uri,
@@ -622,19 +625,19 @@ pub async fn oauth_authorize_post(
         .map(|s| s.split_whitespace().map(String::from).collect())
         .unwrap_or_default();
 
-    let result = sqlx::query(
+    let result = sqlx::query!(
         "INSERT INTO forge_oauth_codes \
          (code, client_id, user_id, redirect_uri, code_challenge, code_challenge_method, scopes, expires_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        &code,
+        &form.client_id,
+        user_id,
+        &form.redirect_uri,
+        &form.code_challenge,
+        &form.code_challenge_method,
+        &scopes,
+        expires_at,
     )
-    .bind(&code)
-    .bind(&form.client_id)
-    .bind(user_id)
-    .bind(&form.redirect_uri)
-    .bind(&form.code_challenge)
-    .bind(&form.code_challenge_method)
-    .bind(&scopes)
-    .bind(expires_at)
     .execute(&state.pool)
     .await;
 
@@ -751,12 +754,12 @@ async fn handle_code_exchange(state: &OAuthState, req: &TokenRequest) -> Respons
     };
 
     // Atomic exchange: mark code as used and fetch in one query (T8)
-    let row = sqlx::query_as::<_, (String, Uuid, String, String, String, chrono::DateTime<Utc>)>(
+    let row = sqlx::query!(
         "UPDATE forge_oauth_codes SET used_at = now() \
          WHERE code = $1 AND used_at IS NULL \
-         RETURNING client_id, user_id, redirect_uri, code_challenge, code_challenge_method, expires_at"
+         RETURNING client_id, user_id, redirect_uri, code_challenge, code_challenge_method, expires_at",
+        code,
     )
-    .bind(code)
     .fetch_optional(&state.pool)
     .await;
 
@@ -768,7 +771,14 @@ async fn handle_code_exchange(state: &OAuthState, req: &TokenRequest) -> Respons
         challenge_method,
         expires_at,
     ) = match row {
-        Ok(Some(r)) => r,
+        Ok(Some(r)) => (
+            r.client_id,
+            r.user_id,
+            r.redirect_uri,
+            r.code_challenge,
+            r.code_challenge_method,
+            r.expires_at,
+        ),
         Ok(None) => {
             return token_error(
                 "invalid_grant",

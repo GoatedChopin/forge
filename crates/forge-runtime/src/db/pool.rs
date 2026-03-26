@@ -242,8 +242,8 @@ impl Database {
             loop {
                 interval.tick().await;
                 for entry in replicas.iter() {
-                    let ok = sqlx::query("SELECT 1")
-                        .execute(entry.pool.as_ref())
+                    let ok = sqlx::query_scalar!("SELECT 1 as \"v!\"")
+                        .fetch_one(entry.pool.as_ref())
                         .await
                         .is_ok();
                     let was_healthy = entry.healthy.swap(ok, Ordering::Relaxed);
@@ -275,8 +275,8 @@ impl Database {
 
     /// Check database connectivity.
     pub async fn health_check(&self) -> Result<()> {
-        sqlx::query("SELECT 1")
-            .execute(self.primary.as_ref())
+        sqlx::query_scalar!("SELECT 1 as \"v!\"")
+            .fetch_one(self.primary.as_ref())
             .await
             .map_err(|e| ForgeError::Database(format!("Health check failed: {}", e)))?;
         Ok(())

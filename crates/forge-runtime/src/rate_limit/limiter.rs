@@ -126,8 +126,7 @@ impl RateLimiter {
 
     /// Reset a rate limit bucket.
     pub async fn reset(&self, bucket_key: &str) -> Result<()> {
-        sqlx::query("DELETE FROM forge_rate_limits WHERE bucket_key = $1")
-            .bind(bucket_key)
+        sqlx::query!("DELETE FROM forge_rate_limits WHERE bucket_key = $1", bucket_key)
             .execute(&self.pool)
             .await
             .map_err(|e| ForgeError::Database(e.to_string()))?;
@@ -136,13 +135,13 @@ impl RateLimiter {
 
     /// Clean up old rate limit entries.
     pub async fn cleanup(&self, older_than: DateTime<Utc>) -> Result<u64> {
-        let result = sqlx::query(
+        let result = sqlx::query!(
             r#"
             DELETE FROM forge_rate_limits
             WHERE created_at < $1
             "#,
+            older_than,
         )
-        .bind(older_than)
         .execute(&self.pool)
         .await
         .map_err(|e| ForgeError::Database(e.to_string()))?;

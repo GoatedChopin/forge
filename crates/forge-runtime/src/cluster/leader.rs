@@ -119,7 +119,7 @@ impl LeaderElection {
             let lease_until =
                 Utc::now() + chrono::Duration::seconds(self.config.lease_duration.as_secs() as i64);
 
-            sqlx::query(
+            sqlx::query!(
                 r#"
                 INSERT INTO forge_leaders (role, node_id, acquired_at, lease_until)
                 VALUES ($1, $2, NOW(), $3)
@@ -128,10 +128,10 @@ impl LeaderElection {
                     acquired_at = NOW(),
                     lease_until = EXCLUDED.lease_until
                 "#,
+                self.role.as_str(),
+                self.node_id.as_uuid(),
+                lease_until,
             )
-            .bind(self.role.as_str())
-            .bind(self.node_id.as_uuid())
-            .bind(lease_until)
             .execute(&self.pool)
             .await
             .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
@@ -154,16 +154,16 @@ impl LeaderElection {
         let lease_until =
             Utc::now() + chrono::Duration::seconds(self.config.lease_duration.as_secs() as i64);
 
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE forge_leaders
             SET lease_until = $3
             WHERE role = $1 AND node_id = $2
             "#,
+            self.role.as_str(),
+            self.node_id.as_uuid(),
+            lease_until,
         )
-        .bind(self.role.as_str())
-        .bind(self.node_id.as_uuid())
-        .bind(lease_until)
         .execute(&self.pool)
         .await
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
@@ -180,9 +180,8 @@ impl LeaderElection {
         // Release the advisory lock on the same session that acquired it.
         let mut lock_connection = self.lock_connection.lock().await;
         if let Some(mut conn) = lock_connection.take() {
-            sqlx::query("SELECT pg_advisory_unlock($1)")
-                .bind(self.role.lock_id())
-                .execute(&mut *conn)
+            sqlx::query_scalar!("SELECT pg_advisory_unlock($1)", self.role.lock_id())
+                .fetch_one(&mut *conn)
                 .await
                 .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
         } else {
@@ -194,14 +193,14 @@ impl LeaderElection {
         drop(lock_connection);
 
         // Clear leadership record
-        sqlx::query(
+        sqlx::query!(
             r#"
             DELETE FROM forge_leaders
             WHERE role = $1 AND node_id = $2
             "#,
+            self.role.as_str(),
+            self.node_id.as_uuid(),
         )
-        .bind(self.role.as_str())
-        .bind(self.node_id.as_uuid())
         .execute(&self.pool)
         .await
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
@@ -231,29 +230,27 @@ impl LeaderElection {
 
     /// Get current leader info.
     pub async fn get_leader(&self) -> forge_core::Result<Option<LeaderInfo>> {
-        let row = sqlx::query(
+        let row = sqlx::query!(
             r#"
             SELECT role, node_id, acquired_at, lease_until
             FROM forge_leaders
             WHERE role = $1
             "#,
+            self.role.as_str(),
         )
-        .bind(self.role.as_str())
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
 
         match row {
             Some(row) => {
-                use sqlx::Row;
-                let role_str: String = row.get("role");
-                let role = role_str.parse().unwrap_or(LeaderRole::Scheduler);
+                let role = row.role.parse().unwrap_or(LeaderRole::Scheduler);
 
                 Ok(Some(LeaderInfo {
                     role,
-                    node_id: NodeId::from_uuid(row.get("node_id")),
-                    acquired_at: row.get("acquired_at"),
-                    lease_until: row.get("lease_until"),
+                    node_id: NodeId::from_uuid(row.node_id),
+                    acquired_at: row.acquired_at,
+                    lease_until: row.lease_until,
                 }))
             }
             None => Ok(None),

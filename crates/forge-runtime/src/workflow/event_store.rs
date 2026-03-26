@@ -25,26 +25,28 @@ impl EventStore {
     ) -> Result<Uuid> {
         let id = Uuid::new_v4();
 
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO forge_workflow_events (id, event_name, correlation_id, payload)
             VALUES ($1, $2, $3, $4)
             "#,
+            id,
+            event_name,
+            correlation_id,
+            payload as _,
         )
-        .bind(id)
-        .bind(event_name)
-        .bind(correlation_id)
-        .bind(&payload)
         .execute(&self.pool)
         .await
         .map_err(|e| ForgeError::Database(e.to_string()))?;
 
         // Send notification for immediate processing
-        sqlx::query("SELECT pg_notify('forge_workflow_events', $1)")
-            .bind(format!("{}:{}", event_name, correlation_id))
-            .execute(&self.pool)
-            .await
-            .map_err(|e| ForgeError::Database(e.to_string()))?;
+        sqlx::query_scalar!(
+            "SELECT pg_notify('forge_workflow_events', $1)",
+            format!("{}:{}", event_name, correlation_id),
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| ForgeError::Database(e.to_string()))?;
 
         tracing::debug!(
             event_id = %id,
@@ -140,13 +142,13 @@ impl EventStore {
 
     /// Clean up old consumed events.
     pub async fn cleanup_consumed_events(&self, older_than: DateTime<Utc>) -> Result<u64> {
-        let result = sqlx::query(
+        let result = sqlx::query!(
             r#"
             DELETE FROM forge_workflow_events
             WHERE consumed_at IS NOT NULL AND consumed_at < $1
             "#,
+            older_than,
         )
-        .bind(older_than)
         .execute(&self.pool)
         .await
         .map_err(|e| ForgeError::Database(e.to_string()))?;
