@@ -49,7 +49,12 @@ pub async fn rpc_multipart_handler(
     Path(function): Path<String>,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
-    let max_total = mp_config.max_body_size_bytes.max(DEFAULT_MAX_TOTAL_UPLOAD_SIZE);
+    // Per-function limit takes priority, then global config, then default floor.
+    let max_total = handler
+        .function_info(&function)
+        .and_then(|info| info.max_upload_size_bytes)
+        .unwrap_or(mp_config.max_body_size_bytes)
+        .max(DEFAULT_MAX_TOTAL_UPLOAD_SIZE);
     let max_file = max_total;
 
     let mut json_args: Option<serde_json::Value> = None;

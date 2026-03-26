@@ -301,14 +301,15 @@ impl GatewayServer {
             // Add state
             .with_state(rpc_handler_state.clone());
 
-        // Multipart RPC router (separate body limit and concurrency control)
-        let max_body = self.config.max_body_size_bytes;
+        // Multipart RPC router. Body limit is disabled at the Axum layer because
+        // per-mutation overrides (max_size) may exceed the global config. The handler
+        // enforces limits chunk-by-chunk during streaming, so memory is bounded.
         let mp_config = MultipartConfig {
-            max_body_size_bytes: max_body,
+            max_body_size_bytes: self.config.max_body_size_bytes,
         };
         let multipart_router = Router::new()
             .route("/rpc/{function}/upload", post(rpc_multipart_handler))
-            .layer(DefaultBodyLimit::max(max_body))
+            .layer(DefaultBodyLimit::disable())
             .layer(Extension(mp_config))
             // Cap upload fan-out; each request buffers data in memory.
             .layer(ConcurrencyLimitLayer::new(MAX_MULTIPART_CONCURRENCY))

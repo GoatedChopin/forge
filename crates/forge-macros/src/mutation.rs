@@ -3,7 +3,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{FnArg, ItemFn, Pat, ReturnType, Type, parse_macro_input};
 
-use crate::utils::{has_attr_flag, parse_attr_value, parse_duration_secs, to_pascal_case};
+use crate::utils::{has_attr_flag, parse_attr_value, parse_duration_secs, parse_size_bytes, to_pascal_case};
 
 /// Expand the #[forge::mutation] attribute.
 ///
@@ -31,6 +31,7 @@ struct MutationAttrs {
     rate_limit_key: Option<String>,
     log_level: Option<String>,
     transactional: bool,
+    max_upload_size_bytes: Option<usize>,
 }
 
 fn parse_mutation_attrs(attr: TokenStream) -> MutationAttrs {
@@ -122,6 +123,10 @@ fn parse_mutation_attrs(attr: TokenStream) -> MutationAttrs {
                 attrs.log_level = Some(level.to_string());
             }
         }
+    }
+
+    if let Some(size_str) = parse_attr_value(&attr_str, "max_size") {
+        attrs.max_upload_size_bytes = parse_size_bytes(&size_str);
     }
 
     attrs
@@ -286,6 +291,11 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
         None => quote! { None },
     };
 
+    let max_upload_size_bytes = match attrs.max_upload_size_bytes {
+        Some(n) => quote! { Some(#n) },
+        None => quote! { None },
+    };
+
     let transactional = attrs.transactional;
     let is_public = attrs.is_public;
 
@@ -413,6 +423,7 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
                     selected_columns: &[],
                     transactional: #transactional,
                     consistent: false,
+                    max_upload_size_bytes: #max_upload_size_bytes,
                     has_input_args: #has_input_args,
                 }
             }

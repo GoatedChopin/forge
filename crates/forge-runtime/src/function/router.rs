@@ -519,6 +519,7 @@ mod tests {
             selected_columns: &[],
             transactional: false,
             consistent: false,
+            max_upload_size_bytes: None,
             has_input_args: false,
         };
 

@@ -83,6 +83,23 @@ pub fn parse_duration_tokens(s: &str, default_secs: u64) -> TokenStream {
     }
 }
 
+/// Parse a human-readable size string into bytes.
+/// Returns None if the string cannot be parsed.
+pub fn parse_size_bytes(s: &str) -> Option<usize> {
+    let s = s.trim().to_lowercase();
+    if let Some(num) = s.strip_suffix("gb") {
+        num.trim().parse::<usize>().ok().map(|n| n * 1024 * 1024 * 1024)
+    } else if let Some(num) = s.strip_suffix("mb") {
+        num.trim().parse::<usize>().ok().map(|n| n * 1024 * 1024)
+    } else if let Some(num) = s.strip_suffix("kb") {
+        num.trim().parse::<usize>().ok().map(|n| n * 1024)
+    } else if let Some(num) = s.strip_suffix('b') {
+        num.trim().parse::<usize>().ok()
+    } else {
+        s.parse::<usize>().ok()
+    }
+}
+
 /// Check whether an attribute string contains a standalone flag identifier.
 ///
 /// This avoids false positives from substring matching inside quoted values,
@@ -206,6 +223,17 @@ mod tests {
 
         let ts = parse_duration_tokens("1h", 3600);
         assert!(!ts.is_empty());
+    }
+
+    #[test]
+    fn test_parse_size_bytes() {
+        assert_eq!(parse_size_bytes("100mb"), Some(100 * 1024 * 1024));
+        assert_eq!(parse_size_bytes("1gb"), Some(1024 * 1024 * 1024));
+        assert_eq!(parse_size_bytes("512kb"), Some(512 * 1024));
+        assert_eq!(parse_size_bytes("1024b"), Some(1024));
+        assert_eq!(parse_size_bytes("200MB"), Some(200 * 1024 * 1024));
+        assert_eq!(parse_size_bytes("1048576"), Some(1048576));
+        assert_eq!(parse_size_bytes("invalid"), None);
     }
 
     #[test]

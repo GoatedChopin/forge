@@ -50,6 +50,8 @@ pub struct FunctionInfo {
     /// Use for read-after-write consistency (e.g., post-mutation confirmation,
     /// permission checks depending on just-written state).
     pub consistent: bool,
+    /// Per-function maximum upload size in bytes. Overrides gateway max_body_size.
+    pub max_upload_size_bytes: Option<usize>,
     /// Whether the function signature has input arguments beyond the context.
     /// When false, identity scope enforcement is skipped since there are no
     /// args to carry scope fields. Auth is still enforced via the JWT.
@@ -149,6 +151,7 @@ mod tests {
             selected_columns: &["id", "name", "email"],
             transactional: false,
             consistent: false,
+            max_upload_size_bytes: None,
             has_input_args: true,
         };
 
