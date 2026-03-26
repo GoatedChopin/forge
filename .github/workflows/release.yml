@@ -17,6 +17,7 @@ env:
   CARGO_TERM_COLOR: always
   BINARY_NAME: forge
   SQLX_OFFLINE: "true"
+  FORGE_TEST_ARTIFACT_DIR: /tmp/forge-test-artifacts
 
 jobs:
   parse-changelog:
@@ -90,7 +91,7 @@ jobs:
         if: failure()
         with:
           name: playwright-${{ matrix.template }}
-          path: /tmp/test-project/frontend/test-results/
+          path: /tmp/forge-test-artifacts/**
           retention-days: 7
 
   bump-versions:

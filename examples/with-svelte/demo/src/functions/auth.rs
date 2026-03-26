@@ -28,27 +28,35 @@ async fn auth_response(ctx: &MutationContext, user: &User) -> Result<AuthRespons
     })
 }
 
-#[forge::mutation(public)]
-pub async fn register(ctx: &MutationContext, input: RegisterInput) -> Result<AuthResponse> {
-    if input.email.trim().is_empty() {
+fn validate_register_input(input: &RegisterInput) -> Result<(String, String)> {
+    let email = input.email.trim();
+    if email.is_empty() {
         return Err(ForgeError::Validation("Email is required".into()));
     }
-    if input.name.trim().is_empty() {
+
+    let name = input.name.trim();
+    if name.is_empty() {
         return Err(ForgeError::Validation("Name is required".into()));
     }
+
     if input.password.len() < 8 {
         return Err(ForgeError::Validation(
             "Password must be at least 8 characters".into(),
         ));
     }
 
+    Ok((email.to_string(), name.to_string()))
+}
+
+#[forge::mutation(public)]
+pub async fn register(ctx: &MutationContext, input: RegisterInput) -> Result<AuthResponse> {
+    let (email, name) = validate_register_input(&input)?;
+
     let password_hash =
         bcrypt::hash(&input.password, 10).map_err(|e| ForgeError::Internal(e.to_string()))?;
 
     let id = Uuid::new_v4();
     let now = Utc::now();
-    let email = input.email.trim().to_string();
-    let name = input.name.trim().to_string();
     let mut conn = ctx.conn().await?;
 
     let user = sqlx::query_as!(
@@ -120,4 +128,51 @@ pub async fn login(ctx: &MutationContext, input: LoginInput) -> Result<AuthRespo
 #[forge::mutation(public)]
 pub async fn refresh_token(ctx: &MutationContext, input: RefreshInput) -> Result<TokenPair> {
     ctx.rotate_refresh_token(&input.refresh_token).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn register_input(email: &str, name: &str, password: &str) -> RegisterInput {
+        RegisterInput {
+            email: email.into(),
+            name: name.into(),
+            password: password.into(),
+        }
+    }
+
+    #[test]
+    fn test_validate_register_input_trims_values() {
+        let (email, name) = validate_register_input(&register_input(
+            "  ship@example.com  ",
+            "  Release Pilot  ",
+            "password123",
+        ))
+        .unwrap();
+
+        assert_eq!(email, "ship@example.com");
+        assert_eq!(name, "Release Pilot");
+    }
+
+    #[test]
+    fn test_validate_register_input_rejects_blank_email() {
+        let err =
+            validate_register_input(&register_input("   ", "User", "password123")).unwrap_err();
+
+        assert!(matches!(err, ForgeError::Validation(_)));
+        assert!(err.to_string().contains("Email is required"));
+    }
+
+    #[test]
+    fn test_validate_register_input_rejects_short_password() {
+        let err = validate_register_input(&register_input("ship@example.com", "User", "short"))
+            .unwrap_err();
+
+        assert!(matches!(err, ForgeError::Validation(_)));
+        assert!(
+            err.to_string()
+                .contains("Password must be at least 8 characters")
+        );
+    }
 }

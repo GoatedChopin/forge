@@ -73,3 +73,145 @@ pub async fn delete_todo(ctx: &MutationContext, id: Uuid) -> Result<bool> {
 
     Ok(result.rows_affected() > 0)
 }
+
+#[cfg(all(test, feature = "testcontainers"))]
+mod tests {
+    use super::*;
+    use forge::forge_core::function::{AuthContext, RequestMetadata};
+    use forge::testing::{IsolatedTestDb, TestDatabase};
+    use std::path::Path;
+
+    async fn setup_db() -> IsolatedTestDb {
+        let base = TestDatabase::from_env().await.unwrap();
+        let db = base.isolated("todos_test").await.unwrap();
+        db.run_sql(&forge::get_internal_sql()).await.unwrap();
+        db.migrate(Path::new("migrations")).await.unwrap();
+        db
+    }
+
+    fn query_ctx(pool: sqlx::PgPool) -> QueryContext {
+        QueryContext::new(
+            pool,
+            AuthContext::unauthenticated(),
+            RequestMetadata::default(),
+        )
+    }
+
+    fn mutation_ctx(pool: sqlx::PgPool) -> MutationContext {
+        MutationContext::new(
+            pool,
+            AuthContext::unauthenticated(),
+            RequestMetadata::default(),
+        )
+    }
+
+    #[tokio::test]
+    async fn test_create_todo_trims_and_persists_title() {
+        let db = setup_db().await;
+        let ctx = mutation_ctx(db.pool().clone());
+
+        let todo = create_todo(
+            &ctx,
+            CreateTodoInput {
+                title: "  ship tests  ".into(),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(todo.title, "ship tests");
+        assert!(!todo.completed);
+        db.cleanup().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_create_todo_rejects_blank_title() {
+        let db = setup_db().await;
+        let ctx = mutation_ctx(db.pool().clone());
+
+        let err = create_todo(
+            &ctx,
+            CreateTodoInput {
+                title: "   ".into(),
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(err, ForgeError::Validation(_)));
+        assert!(err.to_string().contains("Title cannot be empty"));
+        db.cleanup().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_update_todo_toggles_completion_without_overwriting_title() {
+        let db = setup_db().await;
+        let ctx = mutation_ctx(db.pool().clone());
+
+        let created = create_todo(
+            &ctx,
+            CreateTodoInput {
+                title: "cover release path".into(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let updated = update_todo(
+            &ctx,
+            UpdateTodoInput {
+                id: created.id,
+                title: None,
+                completed: Some(true),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(updated.title, created.title);
+        assert!(updated.completed);
+        db.cleanup().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_update_todo_missing_id_returns_not_found() {
+        let db = setup_db().await;
+        let ctx = mutation_ctx(db.pool().clone());
+
+        let err = update_todo(
+            &ctx,
+            UpdateTodoInput {
+                id: Uuid::new_v4(),
+                title: Some("missing".into()),
+                completed: None,
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(err, ForgeError::NotFound(_)));
+        db.cleanup().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_delete_todo_removes_item_from_query_results() {
+        let db = setup_db().await;
+        let m_ctx = mutation_ctx(db.pool().clone());
+
+        let todo = create_todo(
+            &m_ctx,
+            CreateTodoInput {
+                title: "delete me".into(),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(delete_todo(&m_ctx, todo.id).await.unwrap());
+
+        let q_ctx = query_ctx(db.pool().clone());
+        let todos = list_todos(&q_ctx).await.unwrap();
+        assert!(!todos.iter().any(|item| item.id == todo.id));
+        db.cleanup().await.unwrap();
+    }
+}

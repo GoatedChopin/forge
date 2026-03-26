@@ -565,6 +565,8 @@ pub fn load_migrations_from_dir(dir: &Path) -> Result<Vec<Migration>> {
 #[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
+    use crate::migrations::LEGACY_MIGRATION_NAME;
+    use std::collections::HashSet;
     use std::fs;
     use tempfile::TempDir;
 
@@ -675,6 +677,24 @@ DROP TABLE posts;
         let down = m.down_sql.unwrap();
         assert!(down.contains("DROP INDEX"));
         assert!(down.contains("DROP TABLE posts"));
+    }
+
+    #[tokio::test]
+    async fn test_get_max_system_version_prefers_highest_applied_version() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect_lazy("postgres://localhost/nonexistent")
+            .expect("lazy pool must build");
+        let runner = MigrationRunner::new(pool);
+
+        let applied = HashSet::from([
+            LEGACY_MIGRATION_NAME.to_string(),
+            "__forge_v003".to_string(),
+            "__forge_v001".to_string(),
+            "0001_user_schema".to_string(),
+        ]);
+
+        assert_eq!(runner.get_max_system_version(&applied), Some(3));
     }
 
     #[test]

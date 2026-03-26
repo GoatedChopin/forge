@@ -773,7 +773,8 @@ mod tests {
         assert!(frontend_manifest.contains("name = \"my-app-frontend\""));
 
         let frontend_main = fs::read_to_string(path.join("frontend/src/main.rs")).unwrap();
-        assert!(frontend_main.contains("\"my-app\""));
+        assert!(frontend_main.contains("ForgeProvider"));
+        assert!(frontend_main.contains("Router::<Route>"));
     }
 
     #[test]

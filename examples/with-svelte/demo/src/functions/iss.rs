@@ -23,6 +23,21 @@ struct IssPosition {
     longitude: String,
 }
 
+#[derive(Debug, PartialEq)]
+struct ParsedIssSnapshot {
+    latitude: f64,
+    longitude: f64,
+    timestamp: i64,
+}
+
+fn parse_iss_snapshot(data: IssApiResponse) -> ParsedIssSnapshot {
+    ParsedIssSnapshot {
+        latitude: data.iss_position.latitude.parse().unwrap_or(0.0),
+        longitude: data.iss_position.longitude.parse().unwrap_or(0.0),
+        timestamp: data.timestamp,
+    }
+}
+
 /// Get the latest ISS location from database
 #[forge::query(public)]
 pub async fn get_iss_location(ctx: &QueryContext) -> Result<Option<IssLocation>> {
@@ -75,15 +90,14 @@ pub async fn iss_location(ctx: &CronContext) -> Result<()> {
         );
     }
 
-    let latitude: f64 = data.iss_position.latitude.parse().unwrap_or(0.0);
-    let longitude: f64 = data.iss_position.longitude.parse().unwrap_or(0.0);
+    let snapshot = parse_iss_snapshot(data);
 
     sqlx::query!(
         "INSERT INTO iss_location (id, latitude, longitude, api_timestamp, created_at) \
          VALUES (gen_random_uuid(), $1, $2, to_timestamp($3), NOW())",
-        latitude,
-        longitude,
-        data.timestamp as f64
+        snapshot.latitude,
+        snapshot.longitude,
+        snapshot.timestamp as f64
     )
     .execute(ctx.db())
     .await?;
@@ -91,8 +105,8 @@ pub async fn iss_location(ctx: &CronContext) -> Result<()> {
     ctx.log.debug(
         "ISS location stored",
         serde_json::json!({
-            "latitude": latitude,
-            "longitude": longitude
+            "latitude": snapshot.latitude,
+            "longitude": snapshot.longitude
         }),
     );
 
@@ -102,67 +116,41 @@ pub async fn iss_location(ctx: &CronContext) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Duration;
-    use forge::testing::TestCronContext;
 
     #[test]
-    fn test_cron_context_creation() {
-        let ctx = TestCronContext::builder("iss_location").build();
+    fn test_parse_iss_snapshot_preserves_api_values() {
+        let snapshot = parse_iss_snapshot(IssApiResponse {
+            iss_position: IssPosition {
+                latitude: "7.1234".into(),
+                longitude: "81.4321".into(),
+            },
+            timestamp: 1_700_000_000,
+            message: "success".into(),
+        });
 
-        assert_eq!(ctx.cron_name, "iss_location");
-        assert!(!ctx.is_catch_up);
-        assert!(!ctx.is_late());
+        assert_eq!(
+            snapshot,
+            ParsedIssSnapshot {
+                latitude: 7.1234,
+                longitude: 81.4321,
+                timestamp: 1_700_000_000,
+            }
+        );
     }
 
     #[test]
-    fn test_cron_logging() {
-        let ctx = TestCronContext::builder("iss_location").build();
+    fn test_parse_iss_snapshot_falls_back_for_invalid_coordinates() {
+        let snapshot = parse_iss_snapshot(IssApiResponse {
+            iss_position: IssPosition {
+                latitude: "north".into(),
+                longitude: "east".into(),
+            },
+            timestamp: 42,
+            message: "failure".into(),
+        });
 
-        ctx.log.info("Starting");
-        ctx.log.warn("Warning message");
-        ctx.log.error("Error occurred");
-
-        let entries = ctx.log.entries();
-        assert_eq!(entries.len(), 3);
-        assert_eq!(entries[0].level, "info");
-        assert_eq!(entries[1].level, "warn");
-        assert_eq!(entries[2].level, "error");
-    }
-
-    #[test]
-    fn test_cron_late_detection() {
-        let ctx = TestCronContext::builder("iss_location")
-            .scheduled_at(Utc::now() - Duration::minutes(5))
-            .build();
-
-        assert!(ctx.is_late());
-        assert!(ctx.delay() >= Duration::minutes(4));
-    }
-
-    #[test]
-    fn test_cron_on_time() {
-        let ctx = TestCronContext::builder("iss_location")
-            .scheduled_at(Utc::now())
-            .build();
-
-        assert!(!ctx.is_late());
-    }
-
-    #[test]
-    fn test_cron_catch_up_mode() {
-        let ctx = TestCronContext::builder("iss_location")
-            .as_catch_up()
-            .build();
-
-        assert!(ctx.is_catch_up);
-    }
-
-    #[test]
-    fn test_cron_timezone() {
-        let ctx = TestCronContext::builder("iss_location")
-            .with_timezone("America/New_York")
-            .build();
-
-        assert_eq!(ctx.timezone, "America/New_York");
+        assert_eq!(snapshot.latitude, 0.0);
+        assert_eq!(snapshot.longitude, 0.0);
+        assert_eq!(snapshot.timestamp, 42);
     }
 }

@@ -578,7 +578,10 @@ pub fn verify_session_cookie(cookie_value: &str, secret: &str) -> Option<String>
 #[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+    use hmac::{Hmac, Mac};
     use jsonwebtoken::{EncodingKey, Header, encode};
+    use sha2::Sha256;
 
     fn create_test_claims(expired: bool) -> Claims {
         use forge_core::auth::ClaimsBuilder;
@@ -601,6 +604,15 @@ mod tests {
             &EncodingKey::from_secret(secret.as_bytes()),
         )
         .unwrap()
+    }
+
+    fn session_cookie_with_expiry(subject: &str, secret: &str, expiry: i64) -> String {
+        let payload = format!("{subject}.{expiry}");
+        let mut mac =
+            Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key");
+        mac.update(payload.as_bytes());
+        let sig = URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
+        format!("{payload}.{sig}")
     }
 
     #[test]
@@ -767,6 +779,59 @@ mod tests {
 
         let result = extract_token(&req);
         assert!(matches!(result, Err(AuthError::InvalidHeader)));
+    }
+
+    #[test]
+    fn test_build_auth_context_from_non_uuid_claims_preserves_subject() {
+        let claims = Claims::builder()
+            .subject("clerk_user_123")
+            .role("member")
+            .claim("tenant_id", serde_json::json!("tenant-1"))
+            .build()
+            .unwrap();
+
+        let auth = build_auth_context_from_claims(claims);
+        assert!(auth.is_authenticated());
+        assert!(auth.user_id().is_none());
+        assert_eq!(auth.subject(), Some("clerk_user_123"));
+        assert_eq!(auth.principal_id(), Some("clerk_user_123".to_string()));
+        assert!(auth.has_role("member"));
+        assert_eq!(
+            auth.claim("sub"),
+            Some(&serde_json::json!("clerk_user_123"))
+        );
+    }
+
+    #[test]
+    fn test_verify_session_cookie_round_trip_and_tamper_detection() {
+        let cookie = sign_session_cookie("user-123", "session-secret");
+
+        assert_eq!(
+            verify_session_cookie(&cookie, "session-secret"),
+            Some("user-123".to_string())
+        );
+
+        let mut tampered = cookie.clone();
+        if let Some(last_char) = tampered.pop() {
+            tampered.push(if last_char == 'a' { 'b' } else { 'a' });
+        }
+
+        assert_eq!(verify_session_cookie(&tampered, "session-secret"), None);
+        assert_eq!(verify_session_cookie(&cookie, "wrong-secret"), None);
+    }
+
+    #[test]
+    fn test_verify_session_cookie_rejects_expired_cookie() {
+        let expired_cookie = session_cookie_with_expiry(
+            "user-123",
+            "session-secret",
+            chrono::Utc::now().timestamp() - 1,
+        );
+
+        assert_eq!(
+            verify_session_cookie(&expired_cookie, "session-secret"),
+            None
+        );
     }
 
     #[tokio::test]

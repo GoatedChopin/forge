@@ -14,6 +14,22 @@ pub struct ExportOutput {
     pub format: String,
 }
 
+fn render_export_data(users: &[User], format: &str) -> Result<String> {
+    match format {
+        "json" => serde_json::to_string_pretty(users).map_err(|e| ForgeError::Job(e.to_string())),
+        _ => {
+            let mut csv = String::from("id,email,name,role,created_at\n");
+            for user in users {
+                csv.push_str(&format!(
+                    "{},{},{},{:?},{}\n",
+                    user.id, user.email, user.name, user.role, user.created_at
+                ));
+            }
+            Ok(csv)
+        }
+    }
+}
+
 /// Export users as CSV or JSON with progress reporting
 #[forge::job(
     timeout = "5m",
@@ -70,21 +86,7 @@ pub async fn export_users(ctx: &JobContext, input: ExportInput) -> Result<Export
     );
     tokio::time::sleep(Duration::from_millis(800)).await;
 
-    let data = match input.format.as_str() {
-        "json" => {
-            serde_json::to_string_pretty(&users).map_err(|e| ForgeError::Job(e.to_string()))?
-        }
-        _ => {
-            let mut csv = String::from("id,email,name,role,created_at\n");
-            for user in &users {
-                csv.push_str(&format!(
-                    "{},{},{},{:?},{}\n",
-                    user.id, user.email, user.name, user.role, user.created_at
-                ));
-            }
-            csv
-        }
-    };
+    let data = render_export_data(&users, &input.format)?;
 
     let _ = ctx.progress(70, "Compressing output...");
     tokio::time::sleep(Duration::from_millis(800)).await;
@@ -106,57 +108,59 @@ pub async fn export_users(ctx: &JobContext, input: ExportInput) -> Result<Export
 
 #[cfg(test)]
 mod tests {
-    use forge::testing::TestJobContext;
+    use super::*;
 
-    #[test]
-    fn test_job_context_creation() {
-        let ctx = TestJobContext::builder("export_users").build();
-
-        assert_eq!(ctx.job_type, "export_users");
-        assert_eq!(ctx.attempt, 1);
-        assert!(!ctx.is_retry());
+    fn sample_user(email: &str, name: &str, role: UserRole) -> User {
+        let now = Utc::now();
+        User {
+            id: Uuid::new_v4(),
+            email: email.into(),
+            name: name.into(),
+            role,
+            created_at: now,
+            updated_at: now,
+            password_hash: Some("secret".into()),
+        }
     }
 
     #[test]
-    fn test_job_progress_tracking() {
-        let ctx = TestJobContext::builder("export_users").build();
+    fn test_render_export_data_json_omits_password_hash() {
+        let data = render_export_data(
+            &[sample_user("ship@example.com", "Ship It", UserRole::Admin)],
+            "json",
+        )
+        .unwrap();
 
-        ctx.progress(25, "Step 1 complete").unwrap();
-        ctx.progress(50, "Step 2 complete").unwrap();
-        ctx.progress(100, "Done").unwrap();
-
-        let updates = ctx.progress_updates();
-        assert_eq!(updates.len(), 3);
-        assert_eq!(updates[0].percent, 25);
-        assert_eq!(updates[2].percent, 100);
+        assert!(data.contains("\"email\": \"ship@example.com\""));
+        assert!(data.contains("\"role\": \"admin\""));
+        assert!(!data.contains("password_hash"));
     }
 
     #[test]
-    fn test_job_retry_detection() {
-        let ctx = TestJobContext::builder("export_users")
-            .as_retry(2)
-            .with_max_attempts(3)
-            .build();
+    fn test_render_export_data_csv_includes_header_and_rows() {
+        let data = render_export_data(
+            &[
+                sample_user("a@example.com", "Alpha", UserRole::Member),
+                sample_user("b@example.com", "Beta", UserRole::Guest),
+            ],
+            "csv",
+        )
+        .unwrap();
 
-        assert!(ctx.is_retry());
-        assert!(!ctx.is_last_attempt());
+        assert!(data.starts_with("id,email,name,role,created_at\n"));
+        assert!(data.contains(",a@example.com,Alpha,Member,"));
+        assert!(data.contains(",b@example.com,Beta,Guest,"));
     }
 
     #[test]
-    fn test_job_last_attempt() {
-        let ctx = TestJobContext::builder("export_users")
-            .as_retry(3)
-            .with_max_attempts(3)
-            .build();
+    fn test_render_export_data_unknown_format_falls_back_to_csv() {
+        let data = render_export_data(
+            &[sample_user("ship@example.com", "Ship It", UserRole::Member)],
+            "xml",
+        )
+        .unwrap();
 
-        assert!(ctx.is_retry());
-        assert!(ctx.is_last_attempt());
-    }
-
-    #[test]
-    fn test_job_first_attempt() {
-        let ctx = TestJobContext::builder("export_users").build();
-
-        assert!(!ctx.is_retry());
+        assert!(data.starts_with("id,email,name,role,created_at\n"));
+        assert!(data.contains("ship@example.com"));
     }
 }

@@ -28,6 +28,28 @@ struct BinanceTrade {
     is_buyer_maker: bool,
 }
 
+#[derive(Debug, PartialEq)]
+struct ParsedTradeRecord {
+    symbol: String,
+    price: f64,
+    quantity: f64,
+    trade_time: Timestamp,
+    is_buyer_maker: bool,
+}
+
+fn parse_trade_message(text: &str, fallback_time: Timestamp) -> Option<ParsedTradeRecord> {
+    let trade = serde_json::from_str::<BinanceTrade>(text).ok()?;
+
+    Some(ParsedTradeRecord {
+        symbol: trade.symbol,
+        price: trade.price.parse().unwrap_or(0.0),
+        quantity: trade.quantity.parse().unwrap_or(0.0),
+        trade_time: chrono::DateTime::from_timestamp_millis(trade.trade_time)
+            .unwrap_or(fallback_time),
+        is_buyer_maker: trade.is_buyer_maker,
+    })
+}
+
 /// Get the 4 most recent trades
 #[forge::query(public)]
 pub async fn get_trades(ctx: &QueryContext) -> Result<Vec<Trade>> {
@@ -69,19 +91,14 @@ pub async fn trade_stream(ctx: &DaemonContext) -> Result<()> {
             msg = read.next() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
-                        if let Ok(trade) = serde_json::from_str::<BinanceTrade>(&text) {
-                            let price: f64 = trade.price.parse().unwrap_or(0.0);
-                            let quantity: f64 = trade.quantity.parse().unwrap_or(0.0);
-                            let trade_time = chrono::DateTime::from_timestamp_millis(trade.trade_time)
-                                .unwrap_or_else(Utc::now);
-
+                        if let Some(trade) = parse_trade_message(&text, Utc::now()) {
                             sqlx::query!(
                                 "INSERT INTO trades (id, symbol, price, quantity, trade_time, is_buyer_maker, created_at) \
                                  VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, NOW())",
                                 &trade.symbol,
-                                price,
-                                quantity,
-                                trade_time,
+                                trade.price,
+                                trade.quantity,
+                                trade.trade_time,
                                 trade.is_buyer_maker
                             )
                             .execute(ctx.db())
@@ -114,59 +131,42 @@ pub async fn trade_stream(ctx: &DaemonContext) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use forge::testing::TestDaemonContext;
-    use tokio::time::{Duration, timeout};
+    use chrono::TimeZone;
 
     #[test]
-    fn test_daemon_context_creation() {
-        let ctx = TestDaemonContext::builder("trade_stream").build();
+    fn test_parse_trade_message_extracts_trade_fields() {
+        let fallback = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let parsed = parse_trade_message(
+            r#"{"s":"EURUSDT","p":"1.1234","q":"250.50","T":1704067200000,"m":true}"#,
+            fallback,
+        )
+        .unwrap();
 
-        assert_eq!(ctx.daemon_name, "trade_stream");
-        assert!(!ctx.is_shutdown_requested());
-    }
-
-    #[tokio::test]
-    async fn test_daemon_shutdown_signal() {
-        let ctx = TestDaemonContext::builder("trade_stream").build();
-
-        assert!(!ctx.is_shutdown_requested());
-        ctx.request_shutdown();
-        assert!(ctx.is_shutdown_requested());
-    }
-
-    #[tokio::test]
-    async fn test_daemon_graceful_shutdown() {
-        let ctx = TestDaemonContext::builder("trade_stream").build();
-
-        // Spawn task to trigger shutdown after brief delay
-        let shutdown_tx = ctx.shutdown_tx.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            let _ = shutdown_tx.send(true);
-        });
-
-        // Wait for shutdown signal with timeout
-        let result = timeout(Duration::from_millis(200), ctx.shutdown_signal()).await;
-        assert!(result.is_ok());
-        assert!(ctx.is_shutdown_requested());
+        assert_eq!(parsed.symbol, "EURUSDT");
+        assert_eq!(parsed.price, 1.1234);
+        assert_eq!(parsed.quantity, 250.50);
+        assert_eq!(parsed.trade_time, fallback);
+        assert!(parsed.is_buyer_maker);
     }
 
     #[test]
-    fn test_daemon_instance_id() {
-        let instance_id = Uuid::new_v4();
-        let ctx = TestDaemonContext::builder("trade_stream")
-            .with_instance_id(instance_id)
-            .build();
-
-        assert_eq!(ctx.instance_id, instance_id);
+    fn test_parse_trade_message_returns_none_for_invalid_json() {
+        let fallback = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        assert!(parse_trade_message("not-json", fallback).is_none());
     }
 
-    #[tokio::test]
-    async fn test_daemon_heartbeat() {
-        let ctx = TestDaemonContext::builder("trade_stream").build();
+    #[test]
+    fn test_parse_trade_message_falls_back_for_invalid_numbers_and_timestamp() {
+        let fallback = Utc.with_ymd_and_hms(2024, 5, 12, 8, 30, 0).unwrap();
+        let parsed = parse_trade_message(
+            r#"{"s":"EURUSDT","p":"oops","q":"nope","T":9223372036854775807,"m":false}"#,
+            fallback,
+        )
+        .unwrap();
 
-        // Heartbeat is a no-op in tests but should not error
-        let result = ctx.heartbeat().await;
-        assert!(result.is_ok());
+        assert_eq!(parsed.price, 0.0);
+        assert_eq!(parsed.quantity, 0.0);
+        assert_eq!(parsed.trade_time, fallback);
+        assert!(!parsed.is_buyer_maker);
     }
 }

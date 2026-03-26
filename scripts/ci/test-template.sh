@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
-# Usage: test-template.sh <template> <forge-binary> <workspace-dir>
-# Scaffolds a project, validates with forge check, then runs forge test.
+# Usage: test-template.sh <template> <forge-binary> <workspace-dir> [playwright-args...]
+# Scaffolds a project, validates with forge check, runs backend tests, then runs forge test.
 set -euo pipefail
 
 TEMPLATE="$1"
 FORGE="$2"
 WORKSPACE="$3"
+shift 3
+PLAYWRIGHT_ARGS=("$@")
 SLUG=$(echo "$TEMPLATE" | tr '/' '-')
 DIR="/tmp/test-project-$SLUG-$(date +%s)-$$"
 CONTAINER_NAME="forge-test-pg-$SLUG"
+ARTIFACT_ROOT="${FORGE_TEST_ARTIFACT_DIR:-/tmp/forge-test-artifacts}"
+ARTIFACT_DIR="$ARTIFACT_ROOT/$SLUG-$(date +%s)-$$"
 BACKEND_PORT=$((18080 + ($(printf '%s' "$SLUG" | cksum | awk '{print $1}') % 1000)))
 API_URL="http://localhost:$BACKEND_PORT"
 
@@ -21,12 +25,22 @@ stop_pid() {
   wait "$pid" 2>/dev/null || true
 }
 cleanup() {
+  if [ -d "$DIR/frontend/test-results" ]; then
+    mkdir -p "$ARTIFACT_DIR"
+    cp -R "$DIR/frontend/test-results" "$ARTIFACT_DIR/" 2>/dev/null || true
+  fi
+  if [ -d "$DIR/frontend/playwright-report" ]; then
+    mkdir -p "$ARTIFACT_DIR"
+    cp -R "$DIR/frontend/playwright-report" "$ARTIFACT_DIR/" 2>/dev/null || true
+  fi
   stop_pid "$FRONTEND_PID"
   stop_pid "$BACKEND_PID"
   docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
   rm -rf "$DIR" 2>/dev/null || true
 }
 trap cleanup EXIT
+
+mkdir -p "$ARTIFACT_DIR"
 
 echo "=== Scaffold ==="
 "$FORGE" new "test-$SLUG" --template "$TEMPLATE" --output "$DIR" --no-lock --include-skill
@@ -129,6 +143,13 @@ for i in $(seq 1 180); do
   sleep 1
 done
 
+echo "=== Run backend tests ==="
+BACKEND_TEST_ARGS=(cargo test)
+if grep -q '^testcontainers =' Cargo.toml; then
+  BACKEND_TEST_ARGS+=(--features testcontainers)
+fi
+TEST_DATABASE_URL="postgres://postgres:forge@localhost:5432/$DB_NAME" "${BACKEND_TEST_ARGS[@]}"
+
 # Wait for Dioxus to finish compiling. dx serve responds to HTTP
 # immediately with a placeholder page while compiling. Once the real app
 # is ready, that placeholder disappears.
@@ -149,5 +170,9 @@ if [ "$PRESTART_DIOXUS" = true ]; then
 fi
 
 echo "=== Run forge test ==="
+PW_ARGS=(--fail-on-flaky-tests)
+if [ "${#PLAYWRIGHT_ARGS[@]}" -gt 0 ]; then
+  PW_ARGS+=("${PLAYWRIGHT_ARGS[@]}")
+fi
 CI=true FORGE_API_URL="$API_URL" VITE_API_URL="$API_URL" PUBLIC_API_URL="$API_URL" \
-  "$FORGE" test --skip-backend -- --fail-on-flaky-tests
+  "$FORGE" test --skip-backend -- "${PW_ARGS[@]}"

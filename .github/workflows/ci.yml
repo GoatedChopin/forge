@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  SQLX_OFFLINE: "true"
+  FORGE_TEST_ARTIFACT_DIR: /tmp/forge-test-artifacts
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: workspace
+      - run: scripts/ci/create-env-stubs.sh
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets --all-features --workspace -- -D warnings
+      - run: cargo test --workspace
+      - run: cargo build -p forgex
+      - uses: actions/upload-artifact@v4
+        with:
+          name: forge-cli
+          path: target/debug/forge
+          retention-days: 1
+
+  example-integration:
+    name: Example Integration
+    needs: validate
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: forge_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/forge_ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: example-integration
+      - run: cargo test -p forge-svelte-demo-template --features testcontainers
+      - run: cargo test -p todo --features testcontainers
+
+  template-smoke:
+    name: ${{ matrix.template }}
+    needs: validate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        template:
+          - with-svelte/minimal
+          - with-svelte/demo
+          - with-svelte/realtime-todo-list
+          - with-dioxus/minimal
+          - with-dioxus/demo
+          - with-dioxus/realtime-todo-list
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: template-build
+          workspaces: /tmp/test-project -> target
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/download-artifact@v4
+        with:
+          name: forge-cli
+          path: /tmp/forge-bin
+      - run: chmod +x /tmp/forge-bin/forge
+      - if: startsWith(matrix.template, 'with-dioxus/')
+        uses: cargo-bins/cargo-binstall@main
+      - if: startsWith(matrix.template, 'with-dioxus/')
+        run: cargo binstall dioxus-cli@0.7.3 --no-confirm
+      - run: scripts/ci/test-template.sh "${{ matrix.template }}" /tmp/forge-bin/forge "${{ github.workspace }}"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-${{ matrix.template }}
+          path: /tmp/forge-test-artifacts/**
+          retention-days: 7
