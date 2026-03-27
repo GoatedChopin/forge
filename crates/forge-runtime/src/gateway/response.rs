@@ -151,7 +151,8 @@ impl From<forge_core::error::ForgeError> for RpcError {
             forge_core::error::ForgeError::Timeout(msg) => Self::new("TIMEOUT", msg),
             forge_core::error::ForgeError::JobCancelled(msg) => Self::new("JOB_CANCELLED", msg),
             forge_core::error::ForgeError::Deserialization(msg) => {
-                Self::new("INVALID_ARGUMENT", format!("Invalid input: {msg}"))
+                tracing::warn!(error = %msg, "Deserialization error in RPC handler");
+                Self::new("INVALID_ARGUMENT", "Invalid input format")
             }
             ref e @ forge_core::error::ForgeError::Database(_)
             | ref e @ forge_core::error::ForgeError::Sql(_) => {

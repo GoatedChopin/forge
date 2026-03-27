@@ -179,7 +179,13 @@ pub async fn webhook_handler(
                 return (StatusCode::OK, Json(json!({"status": "already_processed"})));
             }
             Err(e) => {
-                warn!(webhook = info.name, error = %e, "Failed to claim idempotency key");
+                // Fail closed: if idempotency is configured but the DB is unavailable,
+                // reject the request rather than processing without replay protection
+                error!(webhook = info.name, error = %e, "Failed to claim idempotency key -- rejecting request");
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({"error": "Service temporarily unavailable"})),
+                );
             }
         }
     }
@@ -254,7 +260,7 @@ pub async fn webhook_handler(
             error!(webhook = info.name, error = %e, "Webhook handler error");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": e.to_string()})),
+                Json(json!({"error": "Internal server error", "request_id": request_id})),
             )
         }
         Err(_) => {

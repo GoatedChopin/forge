@@ -29,7 +29,9 @@ pub struct AuthConfig {
     /// Expected audience (aud claim).
     pub audience: Option<String>,
     /// Skip signature verification (DEV MODE ONLY - NEVER USE IN PRODUCTION).
-    pub skip_verification: bool,
+    /// This field is intentionally not public. Use `dev_mode()` constructor which
+    /// includes a runtime guard against production use.
+    pub(crate) skip_verification: bool,
 }
 
 impl Default for AuthConfig {
@@ -78,7 +80,20 @@ impl AuthConfig {
 
     /// Create a dev mode config that skips signature verification.
     /// WARNING: Only use this for development and testing!
+    ///
+    /// Returns a production-safe config (verification enabled, no secret) if
+    /// `FORGE_ENV` is set to `"production"`, preventing accidental misuse.
     pub fn dev_mode() -> Self {
+        if std::env::var("FORGE_ENV")
+            .map(|v| v.eq_ignore_ascii_case("production"))
+            .unwrap_or(false)
+        {
+            tracing::error!(
+                "AuthConfig::dev_mode() called with FORGE_ENV=production. \
+                 Returning default config with verification enabled."
+            );
+            return Self::default();
+        }
         Self {
             jwt_secret: None,
             algorithm: JwtAlgorithm::HS256,
@@ -291,7 +306,7 @@ impl AuthMiddleware {
 
         // Configure validation
         validation.validate_exp = true;
-        validation.validate_nbf = false;
+        validation.validate_nbf = true;
         validation.leeway = 60; // 60 seconds clock skew tolerance
 
         // Require exp and sub claims
@@ -414,8 +429,8 @@ pub fn build_auth_context_from_claims(claims: Claims) -> AuthContext {
     // Try to parse subject as UUID first (before moving claims)
     let user_id = claims.user_id();
 
-    // Build custom claims with raw subject included
-    let mut custom_claims = claims.custom;
+    // Build custom claims with raw subject included, filtering out reserved JWT claims
+    let mut custom_claims = claims.sanitized_custom();
     custom_claims.insert("sub".to_string(), serde_json::Value::String(claims.sub));
 
     match user_id {

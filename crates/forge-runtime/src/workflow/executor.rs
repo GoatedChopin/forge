@@ -533,20 +533,61 @@ impl WorkflowExecutor {
         })
     }
 
-    /// Update workflow status.
+    /// Get valid source states for a given target workflow status.
+    /// Enforces a state machine to prevent invalid transitions.
+    fn valid_source_states(target: &WorkflowStatus) -> &'static [&'static str] {
+        match target {
+            WorkflowStatus::Running => &["created", "waiting"],
+            WorkflowStatus::Waiting => &["running"],
+            WorkflowStatus::Completed => &["running"],
+            WorkflowStatus::Compensating => &["running", "waiting", "failed"],
+            WorkflowStatus::Compensated => &["compensating"],
+            WorkflowStatus::Failed => &["running", "waiting", "compensating"],
+            WorkflowStatus::Created => &[], // entry state only
+        }
+    }
+
+    /// Update workflow status with state transition validation.
+    ///
+    /// Validates the transition in Rust before issuing the update to keep
+    /// SQL queries compile-time checked while still enforcing the state machine.
     async fn update_workflow_status(
         &self,
         run_id: Uuid,
         status: WorkflowStatus,
     ) -> forge_core::Result<()> {
+        let valid_from = Self::valid_source_states(&status);
+
+        if !valid_from.is_empty() {
+            let current = sqlx::query_scalar!(
+                "SELECT status FROM forge_workflow_runs WHERE id = $1",
+                run_id,
+            )
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+
+            match current {
+                Some(ref s) if valid_from.contains(&s.as_str()) => {}
+                Some(_) => {
+                    return Err(forge_core::ForgeError::InvalidState(format!(
+                        "Cannot transition workflow {} to {:?}: invalid current state",
+                        run_id, status
+                    )));
+                }
+                None => {
+                    return Err(forge_core::ForgeError::NotFound(format!(
+                        "Workflow run {} not found",
+                        run_id
+                    )));
+                }
+            }
+        }
+
         sqlx::query!(
-            r#"
-            UPDATE forge_workflow_runs
-            SET status = $2
-            WHERE id = $1
-            "#,
-            run_id,
+            "UPDATE forge_workflow_runs SET status = $1 WHERE id = $2",
             status.as_str(),
+            run_id,
         )
         .execute(&self.pool)
         .await
@@ -555,42 +596,48 @@ impl WorkflowExecutor {
         Ok(())
     }
 
-    /// Mark workflow as completed.
+    /// Mark workflow as completed (only from 'running' state).
     async fn complete_workflow(
         &self,
         run_id: Uuid,
         output: serde_json::Value,
     ) -> forge_core::Result<()> {
-        sqlx::query!(
-            r#"
-            UPDATE forge_workflow_runs
-            SET status = 'completed', output = $2, completed_at = NOW()
-            WHERE id = $1
-            "#,
-            run_id,
+        let result = sqlx::query!(
+            "UPDATE forge_workflow_runs SET status = 'completed', output = $1, completed_at = NOW() WHERE id = $2 AND status = 'running'",
             output as _,
+            run_id,
         )
         .execute(&self.pool)
         .await
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+
+        if result.rows_affected() == 0 {
+            return Err(forge_core::ForgeError::InvalidState(format!(
+                "Cannot complete workflow {}: not in 'running' state",
+                run_id
+            )));
+        }
 
         Ok(())
     }
 
-    /// Mark workflow as failed.
+    /// Mark workflow as failed (only from valid states).
     async fn fail_workflow(&self, run_id: Uuid, error: &str) -> forge_core::Result<()> {
-        sqlx::query!(
-            r#"
-            UPDATE forge_workflow_runs
-            SET status = 'failed', error = $2, completed_at = NOW()
-            WHERE id = $1
-            "#,
-            run_id,
+        let result = sqlx::query!(
+            "UPDATE forge_workflow_runs SET status = 'failed', error = $1, completed_at = NOW() WHERE id = $2 AND status IN ('running', 'waiting', 'compensating')",
             error,
+            run_id,
         )
         .execute(&self.pool)
         .await
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+
+        if result.rows_affected() == 0 {
+            return Err(forge_core::ForgeError::InvalidState(format!(
+                "Cannot fail workflow {}: not in a valid state for failure",
+                run_id
+            )));
+        }
 
         Ok(())
     }

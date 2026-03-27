@@ -28,6 +28,7 @@ const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 const MCP_SESSION_HEADER: &str = "mcp-session-id";
 const MCP_PROTOCOL_HEADER: &str = "mcp-protocol-version";
 const DEFAULT_PAGE_SIZE: usize = 50;
+const MAX_MCP_SESSIONS: usize = 10_000;
 type ResponseError = Box<Response>;
 
 #[derive(Debug, Clone)]
@@ -320,6 +321,19 @@ async fn handle_initialize(state: &Arc<McpState>, id: Option<Value>, params: &Va
     let session_id = uuid::Uuid::new_v4().to_string();
     {
         let mut sessions = state.sessions.write().await;
+        // Enforce session limit to prevent memory exhaustion DoS
+        if sessions.len() >= MAX_MCP_SESSIONS {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json_rpc_error(
+                    id,
+                    -32000,
+                    "Server at MCP session capacity",
+                    None,
+                )),
+            )
+                .into_response();
+        }
         sessions.insert(
             session_id.clone(),
             McpSession {
@@ -740,8 +754,21 @@ fn validate_origin(
         return Ok(());
     };
 
+    // When no allowed_origins are configured, reject cross-origin requests
+    // rather than allowing all origins (secure by default)
     if config.allowed_origins.is_empty() {
-        return Ok(());
+        return Err(Box::new(
+            (
+                StatusCode::FORBIDDEN,
+                Json(json_rpc_error(
+                    None,
+                    -32600,
+                    "Cross-origin requests require allowed_origins to be configured",
+                    None,
+                )),
+            )
+                .into_response(),
+        ));
     }
 
     let allowed = config

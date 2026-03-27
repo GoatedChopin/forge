@@ -435,26 +435,36 @@ impl JobQueue {
     }
 
     /// Request cancellation for a job.
+    ///
+    /// If `caller_subject` is provided, the cancellation will only succeed if
+    /// the job has no `owner_subject` or the `owner_subject` matches the caller.
+    /// This prevents unauthorized users from cancelling other users' jobs.
     pub async fn request_cancel(
         &self,
         job_id: Uuid,
         reason: Option<&str>,
+        caller_subject: Option<&str>,
     ) -> Result<bool, sqlx::Error> {
-        let row = sqlx::query_scalar!(
-            r#"
-            SELECT status
-            FROM forge_jobs
-            WHERE id = $1
-            "#,
+        let row = sqlx::query!(
+            "SELECT status, owner_subject FROM forge_jobs WHERE id = $1",
             job_id
         )
         .fetch_optional(&self.pool)
         .await?;
 
-        let status = match row {
-            Some(status) => status,
+        let (status, owner_subject) = match row {
+            Some(r) => (r.status, r.owner_subject),
             None => return Ok(false),
         };
+
+        // Verify ownership: if job has an owner, caller must match.
+        // Reject if no caller_subject is provided for an owned job.
+        if let Some(ref owner) = owner_subject {
+            match caller_subject {
+                Some(caller) if caller == owner => { /* authorized */ }
+                _ => return Ok(false), // no caller or mismatch -> deny
+            }
+        }
 
         let terminal_statuses = [
             JobStatus::Completed.as_str(),

@@ -44,8 +44,14 @@ pub enum IdempotencySource {
 
 impl IdempotencySource {
     /// Parse from attribute string (e.g., "header:X-Request-Id" or "body:$.id").
+    ///
+    /// NOTE: This uses `Box::leak` to produce `&'static str` references, so it
+    /// must only be called at startup/registration time (e.g., from proc macros),
+    /// never in request-handling hot paths. Calling this in a loop will leak memory.
     pub fn parse(s: &str) -> Option<Self> {
         let (prefix, value) = s.split_once(':')?;
+        // SAFETY: This is intended to be called only at startup during webhook registration.
+        // The leaked strings live for the program's lifetime, matching webhook configurations.
         match prefix {
             "header" => Some(Self::Header(Box::leak(value.to_string().into_boxed_str()))),
             "body" => Some(Self::Body(Box::leak(value.to_string().into_boxed_str()))),

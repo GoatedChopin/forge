@@ -43,6 +43,20 @@ pub async fn rpc_multipart_handler(
     Path(function): Path<String>,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
+    // Validate function name to prevent log injection and path traversal
+    if function.is_empty()
+        || function.len() > 256
+        || !function
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == ':' || c == '-')
+    {
+        return multipart_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_FUNCTION",
+            "Invalid function name: must be 1-256 alphanumeric characters, underscores, dots, colons, or hyphens",
+        );
+    }
+
     let mut json_args: Option<serde_json::Value> = None;
     let mut uploads: HashMap<String, Upload> = HashMap::new();
     let mut total_read: usize = 0;
@@ -215,6 +229,14 @@ pub async fn rpc_multipart_handler(
 
     if let serde_json::Value::Object(ref mut map) = args {
         for (name, upload) in uploads {
+            // Prevent upload fields from overwriting JSON args (parameter tampering)
+            if map.contains_key(&name) {
+                return multipart_error(
+                    StatusCode::BAD_REQUEST,
+                    "DUPLICATE_FIELD",
+                    format!("Upload field '{}' conflicts with JSON argument", name),
+                );
+            }
             match serde_json::to_value(&upload) {
                 Ok(value) => {
                     map.insert(name, value);
@@ -235,8 +257,18 @@ pub async fn rpc_multipart_handler(
 
     let response = handler.handle(request, auth, metadata).await;
 
+    // Use RpcResponse's IntoResponse to preserve correct HTTP status codes
+    let status = if response.success {
+        StatusCode::OK
+    } else {
+        response
+            .error
+            .as_ref()
+            .map(|e| e.status_code())
+            .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
+    };
     match serde_json::to_value(&response) {
-        Ok(value) => (StatusCode::OK, axum::Json(value)),
+        Ok(value) => (status, axum::Json(value)),
         Err(e) => multipart_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "SERIALIZE_ERROR",

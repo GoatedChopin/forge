@@ -131,6 +131,11 @@ pub async fn rpc_handler(
     headers: HeaderMap,
     Json(request): Json<RpcRequest>,
 ) -> RpcResponse {
+    if !is_valid_function_name(&request.function) {
+        return RpcResponse::error(RpcError::validation(
+            "Invalid function name: must be 1-256 alphanumeric characters, underscores, dots, colons, or hyphens",
+        ));
+    }
     handler
         .handle(request, auth, build_metadata(tracing, &headers))
         .await
@@ -144,6 +149,16 @@ pub struct RpcFunctionBody {
     pub args: serde_json::Value,
 }
 
+/// Validate that a function name contains only safe characters.
+/// Prevents log injection and unexpected behavior from special characters.
+fn is_valid_function_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 256
+        && name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == ':' || c == '-')
+}
+
 /// Axum handler for POST /rpc/:function (REST-style).
 pub async fn rpc_function_handler(
     State(handler): State<Arc<RpcHandler>>,
@@ -153,11 +168,19 @@ pub async fn rpc_function_handler(
     axum::extract::Path(function): axum::extract::Path<String>,
     Json(body): Json<RpcFunctionBody>,
 ) -> RpcResponse {
+    if !is_valid_function_name(&function) {
+        return RpcResponse::error(RpcError::validation(
+            "Invalid function name: must be 1-256 alphanumeric characters, underscores, dots, colons, or hyphens",
+        ));
+    }
     let request = RpcRequest::new(function, body.args);
     handler
         .handle(request, auth, build_metadata(tracing, &headers))
         .await
 }
+
+/// Maximum number of requests allowed in a single batch.
+const MAX_BATCH_SIZE: usize = 100;
 
 /// Axum handler for POST /rpc/batch.
 pub async fn rpc_batch_handler(
@@ -167,11 +190,29 @@ pub async fn rpc_batch_handler(
     headers: HeaderMap,
     Json(batch): Json<BatchRpcRequest>,
 ) -> BatchRpcResponse {
+    // Prevent DoS via unbounded batch size
+    if batch.requests.len() > MAX_BATCH_SIZE {
+        return BatchRpcResponse {
+            results: vec![RpcResponse::error(RpcError::validation(format!(
+                "Batch size {} exceeds maximum of {}",
+                batch.requests.len(),
+                MAX_BATCH_SIZE
+            )))],
+        };
+    }
+
     let client_ip = extract_client_ip(&headers);
     let user_agent = extract_user_agent(&headers);
     let mut results = Vec::with_capacity(batch.requests.len());
 
     for request in batch.requests {
+        // Validate function names in batch requests
+        if !is_valid_function_name(&request.function) {
+            results.push(RpcResponse::error(RpcError::validation(
+                "Invalid function name: must be 1-256 alphanumeric characters, underscores, dots, colons, or hyphens",
+            )));
+            continue;
+        }
         let metadata = RequestMetadata {
             request_id: uuid::Uuid::new_v4(),
             trace_id: tracing.trace_id.clone(),

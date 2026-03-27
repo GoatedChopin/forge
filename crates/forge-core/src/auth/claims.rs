@@ -36,9 +36,31 @@ impl Claims {
         self.roles.iter().any(|r| r == role)
     }
 
+    /// Reserved JWT claim names that should not be treated as custom claims.
+    const RESERVED_CLAIMS: &'static [&'static str] =
+        &["iss", "aud", "nbf", "jti", "sub", "iat", "exp", "roles"];
+
     /// Get a custom claim value.
+    ///
+    /// Returns `None` for reserved JWT claims (iss, aud, nbf, jti, etc.)
+    /// to prevent claim injection via `#[serde(flatten)]`.
     pub fn get_claim(&self, key: &str) -> Option<&serde_json::Value> {
+        if Self::RESERVED_CLAIMS.contains(&key) {
+            return None;
+        }
         self.custom.get(key)
+    }
+
+    /// Get custom claims with reserved JWT claims filtered out.
+    ///
+    /// Prevents claim injection where standard JWT claims like `iss`, `aud`,
+    /// or `jti` end up in the custom claims map via `#[serde(flatten)]`.
+    pub fn sanitized_custom(&self) -> HashMap<String, serde_json::Value> {
+        self.custom
+            .iter()
+            .filter(|(k, _)| !Self::RESERVED_CLAIMS.contains(&k.as_str()))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
     }
 
     /// Get the tenant ID if present in claims.

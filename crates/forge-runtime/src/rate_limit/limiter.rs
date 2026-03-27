@@ -197,6 +197,10 @@ impl LocalBucket {
     }
 }
 
+/// Maximum number of local rate limit buckets to prevent unbounded memory growth.
+/// When exceeded, a cleanup is triggered to evict idle entries.
+const MAX_LOCAL_BUCKETS: usize = 100_000;
+
 /// Hybrid rate limiter with in-memory fast path and periodic DB sync.
 ///
 /// Per-user/per-IP checks use a local DashMap for sub-microsecond decisions.
@@ -227,6 +231,11 @@ impl HybridRateLimiter {
 
         let max_tokens = config.requests as f64;
         let refill_rate = config.refill_rate();
+
+        // Evict idle buckets when the map gets too large to prevent memory exhaustion
+        if self.local.len() > MAX_LOCAL_BUCKETS {
+            self.cleanup_local(Duration::from_secs(300)); // evict entries idle > 5 min
+        }
 
         let mut bucket = self
             .local
