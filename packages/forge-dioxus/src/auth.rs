@@ -421,3 +421,44 @@ mod storage {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_authenticated_state_exposes_tokens_and_viewer() {
+        let viewer = serde_json::json!({"id": "user-1", "role": "admin"});
+        let state = ForgeAuthState::Authenticated {
+            access_token: "access-token".into(),
+            refresh_token: "refresh-token".into(),
+            viewer: Some(viewer.clone()),
+        };
+
+        assert!(state.is_authenticated());
+        assert_eq!(state.access_token().as_deref(), Some("access-token"));
+        assert_eq!(state.refresh_token().as_deref(), Some("refresh-token"));
+        assert_eq!(state.viewer_json(), Some(&viewer));
+    }
+
+    #[test]
+    fn test_unauthenticated_state_has_no_auth_material() {
+        let state = ForgeAuthState::Unauthenticated;
+
+        assert!(!state.is_authenticated());
+        assert!(state.access_token().is_none());
+        assert!(state.refresh_token().is_none());
+        assert!(state.viewer_json().is_none());
+    }
+
+    #[test]
+    fn test_stored_auth_backwards_compatible_without_viewer() {
+        let stored: StoredAuth =
+            serde_json::from_value(serde_json::json!({"access_token":"a","refresh_token":"r"}))
+                .unwrap();
+
+        assert_eq!(stored.access_token, "a");
+        assert_eq!(stored.refresh_token, "r");
+        assert!(stored.viewer.is_none());
+    }
+}

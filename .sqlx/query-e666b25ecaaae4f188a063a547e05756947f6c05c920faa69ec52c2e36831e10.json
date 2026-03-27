@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE forge_workflow_runs\n            SET status = 'failed', error = $2, completed_at = NOW()\n            WHERE id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e666b25ecaaae4f188a063a547e05756947f6c05c920faa69ec52c2e36831e10"
+}

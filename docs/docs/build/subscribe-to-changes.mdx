@@ -335,7 +335,7 @@ pub async fn list_todos(ctx: &QueryContext) -> Result<Vec<Todo>> {
 
 An `UPDATE todos SET updated_at = now()` would not trigger re-execution for this query because `updated_at` is not in the selected columns. An `UPDATE todos SET title = 'new'` would.
 
-For `SELECT *` queries or dynamic SQL where columns can't be determined, all UPDATEs trigger re-execution.
+At compile time, the `#[forge::query]` macro parses the SQL string and populates a `selected_columns` field on the query metadata. At runtime, the reactor compares `selected_columns` against the `changed_columns` in each NOTIFY payload. `SELECT *` or dynamically constructed SQL leaves `selected_columns` empty, causing all UPDATEs to trigger re-execution.
 
 ### Auto-Reconnect
 
@@ -351,6 +351,22 @@ Maximum 10 reconnection attempts before giving up.
 ### Token Change Detection
 
 When the auth token changes (login, logout, refresh), the client detects the change via hash comparison and reconnects to ensure subscriptions use the new identity.
+
+### SSE Wire Protocol
+
+The real-time transport uses Server-Sent Events over a single long-lived connection.
+
+**Connection URL:** `/_api/events?token=<jwt>`. The `?token=` query parameter is used because browser `EventSource` cannot set custom headers. The server treats it identically to `Authorization: Bearer <token>`. The generated client handles this automatically.
+
+**Event types and payloads:**
+
+| Event | Payload | Description |
+|-------|---------|-------------|
+| `connected` | `{ session_id: string, session_secret: string }` | Sent once on connection. The `session_secret` must be included in subsequent `/_api/subscribe` and `/_api/unsubscribe` POST requests to bind subscriptions to the session. |
+| `update` | `{ target: string, data: T }` | The `target` field routes the payload to the correct subscription store on the client. |
+| `error` | `{ target: string, code: string, message: string }` | Subscription-scoped error for the given target. |
+
+**Session secret binding:** each SSE session gets a server-generated `session_secret`. All subscription management calls must include this secret. This prevents one session from injecting updates into another.
 
 ## Testing
 

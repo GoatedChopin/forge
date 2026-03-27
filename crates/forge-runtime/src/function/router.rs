@@ -436,26 +436,26 @@ impl FunctionRouter {
         job: &PendingJob,
     ) -> Result<()> {
         let now = Utc::now();
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO forge_jobs (
                 id, job_type, input, job_context, status, priority, attempts, max_attempts,
                 worker_capability, owner_subject, scheduled_at, created_at
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             "#,
+            job.id,
+            &job.job_type,
+            job.args as _,
+            job.context as _,
+            JobStatus::Pending.as_str(),
+            job.priority,
+            0i32,
+            job.max_attempts,
+            job.worker_capability.as_deref(),
+            job.owner_subject as _,
+            now,
+            now,
         )
-        .bind(job.id)
-        .bind(&job.job_type)
-        .bind(&job.args)
-        .bind(&job.context)
-        .bind(JobStatus::Pending.as_str())
-        .bind(job.priority)
-        .bind(0i32)
-        .bind(job.max_attempts)
-        .bind(&job.worker_capability)
-        .bind(&job.owner_subject)
-        .bind(now)
-        .bind(now)
         .execute(&mut **tx)
         .await
         .map_err(|e| ForgeError::Database(e.to_string()))?;
@@ -469,24 +469,24 @@ impl FunctionRouter {
         version: u32,
     ) -> Result<()> {
         let now = Utc::now();
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO forge_workflow_runs (
                 id, workflow_name, version, owner_subject, input, status, current_step,
                 step_results, started_at, trace_id
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             "#,
+            workflow.id,
+            &workflow.workflow_name,
+            version as i32,
+            workflow.owner_subject as _,
+            workflow.input as _,
+            WorkflowStatus::Created.as_str(),
+            Option::<String>::None,
+            serde_json::json!({}) as _,
+            now,
+            workflow.id.to_string(),
         )
-        .bind(workflow.id)
-        .bind(&workflow.workflow_name)
-        .bind(version as i32)
-        .bind(&workflow.owner_subject)
-        .bind(&workflow.input)
-        .bind(WorkflowStatus::Created.as_str())
-        .bind(Option::<String>::None)
-        .bind(serde_json::json!({}))
-        .bind(now)
-        .bind(workflow.id.to_string())
         .execute(&mut **tx)
         .await
         .map_err(|e| ForgeError::Database(e.to_string()))?;

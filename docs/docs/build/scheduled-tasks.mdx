@@ -51,7 +51,7 @@ Coordination relies on PostgreSQL advisory locks and unique constraints rather t
 | `timeout` | `"duration"` | `"1h"` | Maximum execution time (`"30s"`, `"5m"`, `"1h"`) |
 | `catch_up` | flag | `false` | Run missed executions after downtime |
 | `catch_up_limit` | `u32` | `10` | Maximum catch-up runs per tick |
-| `group` | `"string"` | `"default"` | Sharded leader election group for scheduling |
+| `group` | `"string"` | `"default"` | Sharded leader election group (accepted by the macro but not yet active — all cron tasks run under a single scheduler leader regardless of this value) |
 
 ### Cron Expression Format
 

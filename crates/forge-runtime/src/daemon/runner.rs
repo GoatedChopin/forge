@@ -204,7 +204,7 @@ impl DaemonRunner {
     }
 
     async fn record_daemon_start(&self, handle: &DaemonHandle) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO forge_daemons (name, node_id, instance_id, status, restarts, started_at, last_heartbeat)
             VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
@@ -217,12 +217,12 @@ impl DaemonRunner {
                 last_heartbeat = NOW(),
                 last_error = NULL
             "#,
+            &handle.name,
+            self.node_id,
+            handle.instance_id,
+            handle.status.as_str(),
+            handle.restarts as i32,
         )
-        .bind(&handle.name)
-        .bind(self.node_id)
-        .bind(handle.instance_id)
-        .bind(handle.status.as_str())
-        .bind(handle.restarts as i32)
         .execute(&self.pool)
         .await
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
@@ -231,15 +231,15 @@ impl DaemonRunner {
     }
 
     async fn record_daemon_stop(&self, handle: &DaemonHandle) -> Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE forge_daemons
             SET status = 'stopped', last_heartbeat = NOW()
             WHERE name = $1 AND instance_id = $2
             "#,
+            &handle.name,
+            handle.instance_id,
         )
-        .bind(&handle.name)
-        .bind(handle.instance_id)
         .execute(&self.pool)
         .await
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
@@ -505,12 +505,14 @@ async fn try_acquire_leadership(pool: &PgPool, daemon_name: &str, node_id: Uuid)
 
     if result {
         // Update daemon record with our node_id
-        sqlx::query("UPDATE forge_daemons SET node_id = $1 WHERE name = $2")
-            .bind(node_id)
-            .bind(daemon_name)
-            .execute(pool)
-            .await
-            .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+        sqlx::query!(
+            "UPDATE forge_daemons SET node_id = $1 WHERE name = $2",
+            node_id,
+            daemon_name
+        )
+        .execute(pool)
+        .await
+        .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
     }
 
     Ok(result)
@@ -521,9 +523,8 @@ async fn release_leadership(pool: &PgPool, daemon_name: &str, _node_id: Uuid) ->
         .bytes()
         .fold(0i64, |acc, b| acc.wrapping_add(b as i64).wrapping_mul(31));
 
-    sqlx::query("SELECT pg_advisory_unlock($1)")
-        .bind(lock_id)
-        .execute(pool)
+    sqlx::query_scalar!("SELECT pg_advisory_unlock($1)", lock_id)
+        .fetch_one(pool)
         .await
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
 
@@ -531,22 +532,24 @@ async fn release_leadership(pool: &PgPool, daemon_name: &str, _node_id: Uuid) ->
 }
 
 async fn update_daemon_status(pool: &PgPool, name: &str, status: DaemonStatus) -> Result<()> {
-    sqlx::query("UPDATE forge_daemons SET status = $1, last_heartbeat = NOW() WHERE name = $2")
-        .bind(status.as_str())
-        .bind(name)
-        .execute(pool)
-        .await
-        .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+    sqlx::query!(
+        "UPDATE forge_daemons SET status = $1, last_heartbeat = NOW() WHERE name = $2",
+        status.as_str(),
+        name,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
 
     Ok(())
 }
 
 async fn record_daemon_error(pool: &PgPool, name: &str, error: &str) -> Result<()> {
-    sqlx::query(
+    sqlx::query!(
         "UPDATE forge_daemons SET status = 'failed', last_error = $1, last_heartbeat = NOW() WHERE name = $2",
+        error,
+        name,
     )
-    .bind(error)
-    .bind(name)
     .execute(pool)
     .await
     .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;

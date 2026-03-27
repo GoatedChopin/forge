@@ -303,7 +303,7 @@ impl CronRunner {
             .unwrap_or(chrono::Duration::minutes(15));
 
         // Insert new run, or reclaim stale running row if previous node crashed.
-        let result = sqlx::query(
+        let result = sqlx::query!(
             r#"
             INSERT INTO forge_cron_runs (id, cron_name, scheduled_time, status, node_id, started_at)
             VALUES ($1, $2, $3, 'running', $4, NOW())
@@ -316,14 +316,14 @@ impl CronRunner {
                 completed_at = NULL,
                 error = NULL
             WHERE forge_cron_runs.status = 'running'
-              AND forge_cron_runs.started_at < NOW() - $5
+              AND forge_cron_runs.started_at < NOW() - make_interval(secs => $5)
             "#,
+            claim_id,
+            cron_name,
+            scheduled_time,
+            self.config.node_id,
+            stale_threshold.num_seconds() as f64,
         )
-        .bind(claim_id)
-        .bind(cron_name)
-        .bind(scheduled_time)
-        .bind(self.config.node_id)
-        .bind(stale_threshold)
         .execute(&self.pool)
         .await
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
@@ -421,15 +421,15 @@ impl CronRunner {
 
     /// Mark a cron run as completed.
     async fn mark_completed(&self, run_id: Uuid, cron_name: &str) {
-        if let Err(e) = sqlx::query(
+        if let Err(e) = sqlx::query!(
             r#"
             UPDATE forge_cron_runs
             SET status = 'completed', completed_at = NOW()
             WHERE id = $1 AND node_id = $2
             "#,
+            run_id,
+            self.config.node_id,
         )
-        .bind(run_id)
-        .bind(self.config.node_id)
         .execute(&self.pool)
         .await
         {
@@ -439,16 +439,16 @@ impl CronRunner {
 
     /// Mark a cron run as failed.
     async fn mark_failed(&self, run_id: Uuid, cron_name: &str, error: &str) {
-        if let Err(e) = sqlx::query(
+        if let Err(e) = sqlx::query!(
             r#"
             UPDATE forge_cron_runs
             SET status = 'failed', completed_at = NOW(), error = $3
             WHERE id = $1 AND node_id = $2
             "#,
+            run_id,
+            self.config.node_id,
+            error,
         )
-        .bind(run_id)
-        .bind(self.config.node_id)
-        .bind(error)
         .execute(&self.pool)
         .await
         {

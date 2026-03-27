@@ -1063,6 +1063,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_initialize_rejects_unsupported_protocol_version() {
+        let state = test_state(McpConfig {
+            enabled: true,
+            ..Default::default()
+        });
+        let payload = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-01-01",
+                "capabilities": {},
+                "clientInfo": { "name": "test", "version": "1.0.0" }
+            }
+        });
+
+        let response = mcp_post_handler(
+            State(state),
+            Extension(AuthContext::unauthenticated()),
+            Extension(TracingState::new()),
+            Method::POST,
+            HeaderMap::new(),
+            Json(payload),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["error"]["code"], -32602);
+        let supported = body["error"]["data"]["supported"]
+            .as_array()
+            .expect("supported versions array");
+        assert!(
+            supported
+                .iter()
+                .any(|value| value.as_str() == Some(MCP_PROTOCOL_VERSION))
+        );
+    }
+
+    #[tokio::test]
     async fn test_tools_list_requires_initialized_session() {
         let state = test_state(McpConfig {
             enabled: true,
@@ -1391,6 +1431,61 @@ mod tests {
         )
         .await;
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_expired_session_is_rejected_after_cleanup() {
+        let state = test_state(McpConfig {
+            enabled: true,
+            ..Default::default()
+        });
+        let session_id = "expired-session".to_string();
+        {
+            let mut sessions = state.sessions.write().await;
+            sessions.insert(
+                session_id.clone(),
+                McpSession {
+                    initialized: true,
+                    protocol_version: MCP_PROTOCOL_VERSION.to_string(),
+                    expires_at: Instant::now() - Duration::from_secs(1),
+                },
+            );
+        }
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            MCP_SESSION_HEADER,
+            HeaderValue::from_str(&session_id).expect("valid session id"),
+        );
+        headers.insert(
+            MCP_PROTOCOL_HEADER,
+            HeaderValue::from_static(MCP_PROTOCOL_VERSION),
+        );
+
+        let payload = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "tools/list",
+            "params": {}
+        });
+
+        let response = mcp_post_handler(
+            State(state),
+            Extension(AuthContext::unauthenticated()),
+            Extension(TracingState::new()),
+            Method::POST,
+            headers,
+            Json(payload),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = response_json(response).await;
+        assert_eq!(body["error"]["code"], -32600);
+        assert_eq!(
+            body["error"]["message"],
+            "Unknown MCP session. Re-initialize."
+        );
     }
 
     #[tokio::test]

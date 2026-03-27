@@ -227,9 +227,11 @@ impl GatewayServer {
 
         let auth_middleware_state = Arc::new(AuthMiddleware::new(self.config.auth.clone()));
 
-        // Build CORS layer. When MCP OAuth is enabled and specific origins
-        // are configured, allow credentials so the browser accepts Set-Cookie
-        // on cross-origin API responses (needed for forge_session cookie).
+        // Build CORS layer. When specific origins are configured, allow
+        // credentials so the browser accepts cross-origin API responses
+        // (the forge-svelte client sends `credentials: "include"` for
+        // the SSE session cookie). Wildcard methods/headers are incompatible
+        // with credentials per the CORS spec, so we enumerate them.
         let cors = if self.config.cors_enabled {
             if self.config.cors_origins.iter().any(|o| o == "*") {
                 // Wildcard origin can't use credentials
@@ -238,13 +240,13 @@ impl GatewayServer {
                     .allow_methods(Any)
                     .allow_headers(Any)
             } else {
+                use axum::http::Method;
                 let origins: Vec<_> = self
                     .config
                     .cors_origins
                     .iter()
                     .filter_map(|o| o.parse().ok())
                     .collect();
-                use axum::http::Method;
                 CorsLayer::new()
                     .allow_origin(origins)
                     .allow_methods([
@@ -405,7 +407,7 @@ async fn readiness_handler(
     axum::extract::State(state): axum::extract::State<Arc<ReadinessState>>,
 ) -> (axum::http::StatusCode, Json<ReadinessResponse>) {
     // Check database connectivity
-    let db_ok = sqlx::query("SELECT 1")
+    let db_ok = sqlx::query_scalar!("SELECT 1 as \"v!\"")
         .fetch_one(&state.db_pool)
         .await
         .is_ok();

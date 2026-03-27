@@ -74,7 +74,7 @@ files = ["Dockerfile"]
 # Convert workspace dep to standalone versioned dep
 [[replacement]]
 from = 'forge = { workspace = true }'
-to = 'forge = { version = "0.7.3", package = "forgex" }'
+to = 'forge = { version = "0.7.4", package = "forgex" }'
 files = ["Cargo.toml"]
 
 # Convert workspace-relative docker-compose to standalone
@@ -97,3 +97,9 @@ files = ["docker-compose.yml"]
 from = "\n      - ../../../packages/forge-svelte:/packages/forge-svelte"
 to = ""
 files = ["docker-compose.yml"]
+
+# Convert workspace-relative npm dep to published version
+[[replacement]]
+from = '"file:../../../../packages/forge-svelte"'
+to = '"0.7.4"'
+files = ["frontend/package.json"]

@@ -199,9 +199,8 @@ impl MigrationRunner {
             ForgeError::Database(format!("Failed to acquire lock connection: {}", e))
         })?;
 
-        sqlx::query("SELECT pg_advisory_lock($1)")
-            .bind(MIGRATION_LOCK_ID)
-            .execute(&mut *conn)
+        sqlx::query_scalar!("SELECT pg_advisory_lock($1)", MIGRATION_LOCK_ID)
+            .fetch_one(&mut *conn)
             .await
             .map_err(|e| {
                 ForgeError::Database(format!("Failed to acquire migration lock: {}", e))
@@ -214,9 +213,8 @@ impl MigrationRunner {
         &self,
         conn: &mut sqlx::pool::PoolConnection<Postgres>,
     ) -> Result<()> {
-        sqlx::query("SELECT pg_advisory_unlock($1)")
-            .bind(MIGRATION_LOCK_ID)
-            .execute(&mut **conn)
+        sqlx::query_scalar!("SELECT pg_advisory_unlock($1)", MIGRATION_LOCK_ID)
+            .fetch_one(&mut **conn)
             .await
             .map_err(|e| {
                 ForgeError::Database(format!("Failed to release migration lock: {}", e))
@@ -297,17 +295,19 @@ impl MigrationRunner {
         }
 
         // Record it as applied (with down_sql for potential rollback)
-        sqlx::query("INSERT INTO forge_migrations (name, down_sql) VALUES ($1, $2)")
-            .bind(&migration.name)
-            .bind(&migration.down_sql)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| {
-                ForgeError::Database(format!(
-                    "Failed to record migration '{}': {}",
-                    migration.name, e
-                ))
-            })?;
+        sqlx::query!(
+            "INSERT INTO forge_migrations (name, down_sql) VALUES ($1, $2)",
+            &migration.name,
+            migration.down_sql as _,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            ForgeError::Database(format!(
+                "Failed to record migration '{}': {}",
+                migration.name, e
+            ))
+        })?;
 
         info!("Migration applied: {}", migration.name);
         Ok(())
@@ -386,8 +386,7 @@ impl MigrationRunner {
             }
 
             // Remove from migrations table
-            sqlx::query("DELETE FROM forge_migrations WHERE id = $1")
-                .bind(id)
+            sqlx::query!("DELETE FROM forge_migrations WHERE id = $1", id)
                 .execute(&self.pool)
                 .await
                 .map_err(|e| {
@@ -566,6 +565,8 @@ pub fn load_migrations_from_dir(dir: &Path) -> Result<Vec<Migration>> {
 #[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
+    use crate::migrations::LEGACY_MIGRATION_NAME;
+    use std::collections::HashSet;
     use std::fs;
     use tempfile::TempDir;
 
@@ -676,6 +677,24 @@ DROP TABLE posts;
         let down = m.down_sql.unwrap();
         assert!(down.contains("DROP INDEX"));
         assert!(down.contains("DROP TABLE posts"));
+    }
+
+    #[tokio::test]
+    async fn test_get_max_system_version_prefers_highest_applied_version() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect_lazy("postgres://localhost/nonexistent")
+            .expect("lazy pool must build");
+        let runner = MigrationRunner::new(pool);
+
+        let applied = HashSet::from([
+            LEGACY_MIGRATION_NAME.to_string(),
+            "__forge_v003".to_string(),
+            "__forge_v001".to_string(),
+            "0001_user_schema".to_string(),
+        ]);
+
+        assert_eq!(runner.get_max_system_version(&applied), Some(3));
     }
 
     #[test]

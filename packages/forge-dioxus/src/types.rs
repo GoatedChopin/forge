@@ -263,6 +263,77 @@ where
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn client_error_as_forge_error_preserves_code_message_and_details() {
+        let err = ForgeClientError::new(
+            "VALIDATION",
+            "Name is required",
+            Some(json!({"field": "name"})),
+        );
+
+        assert_eq!(
+            err.as_forge_error(),
+            ForgeError {
+                code: "VALIDATION".into(),
+                message: "Name is required".into(),
+                details: Some(json!({"field": "name"})),
+            }
+        );
+    }
+
+    #[test]
+    fn subscription_state_default_is_loading_and_disconnected() {
+        let state = SubscriptionState::<Vec<String>>::default();
+
+        assert!(state.loading);
+        assert_eq!(state.data, None);
+        assert_eq!(state.error, None);
+        assert!(!state.stale);
+        assert_eq!(state.connection_state, ConnectionState::Disconnected);
+    }
+
+    #[test]
+    fn job_and_workflow_status_serialize_in_snake_case() {
+        assert_eq!(serde_json::to_string(&JobStatus::CancelRequested).unwrap(), "\"cancel_requested\"");
+        assert_eq!(serde_json::to_string(&WorkflowStatus::NotFound).unwrap(), "\"not_found\"");
+    }
+
+    #[test]
+    fn query_and_subscription_state_defaults_are_safe_for_initial_render() {
+        let query = QueryState::<Vec<String>>::default();
+        let subscription = SubscriptionState::<Vec<String>>::default();
+
+        assert!(query.loading);
+        assert!(query.data.is_none());
+        assert!(query.error.is_none());
+
+        assert!(subscription.loading);
+        assert!(subscription.data.is_none());
+        assert!(subscription.error.is_none());
+        assert!(!subscription.stale);
+        assert_eq!(subscription.connection_state, ConnectionState::Disconnected);
+    }
+
+    #[test]
+    fn job_and_workflow_execution_state_defaults_start_disconnected() {
+        let job = JobExecutionState::<serde_json::Value>::default();
+        let workflow = WorkflowExecutionState::<serde_json::Value>::default();
+
+        assert!(job.loading);
+        assert_eq!(job.connection_state, ConnectionState::Disconnected);
+        assert_eq!(job.state.status, JobStatus::Pending);
+
+        assert!(workflow.loading);
+        assert_eq!(workflow.connection_state, ConnectionState::Disconnected);
+        assert_eq!(workflow.state.status, WorkflowStatus::Created);
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum StreamEvent<T> {
     Connection(ConnectionState),

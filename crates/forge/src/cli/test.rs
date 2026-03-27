@@ -316,6 +316,7 @@ impl TestCommand {
 
 fn backend_base_url_from_env(get_env: impl Fn(&str) -> Option<String>) -> String {
     get_env("VITE_API_URL")
+        .filter(|value| !value.trim().is_empty())
         .or_else(|| get_env("PUBLIC_API_URL"))
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| "http://localhost:9081".to_string())
@@ -470,6 +471,17 @@ mod tests {
     #[test]
     fn test_backend_base_url_falls_back_to_public_api_url() {
         let url = backend_base_url_from_env(|key| match key {
+            "PUBLIC_API_URL" => Some("http://localhost:18080".into()),
+            _ => None,
+        });
+
+        assert_eq!(url, "http://localhost:18080");
+    }
+
+    #[test]
+    fn test_backend_base_url_ignores_blank_env_values() {
+        let url = backend_base_url_from_env(|key| match key {
+            "VITE_API_URL" => Some("   ".into()),
             "PUBLIC_API_URL" => Some("http://localhost:18080".into()),
             _ => None,
         });

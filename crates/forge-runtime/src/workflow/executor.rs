@@ -405,38 +405,36 @@ impl WorkflowExecutor {
         &self,
         workflow_run_id: Uuid,
     ) -> forge_core::Result<Vec<WorkflowStepRecord>> {
-        let rows = sqlx::query(
+        let rows = sqlx::query!(
             r#"
             SELECT id, workflow_run_id, step_name, status, result, error, started_at, completed_at
             FROM forge_workflow_steps
             WHERE workflow_run_id = $1
             ORDER BY started_at ASC
             "#,
+            workflow_run_id,
         )
-        .bind(workflow_run_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
 
-        use sqlx::Row;
         rows.into_iter()
             .map(|row| {
-                let status_str = row.get::<String, _>("status");
-                let status = status_str.parse().map_err(|e| {
+                let status = row.status.parse().map_err(|e| {
                     forge_core::ForgeError::Database(format!(
                         "Invalid step status '{}': {}",
-                        status_str, e
+                        row.status, e
                     ))
                 })?;
                 Ok(WorkflowStepRecord {
-                    id: row.get("id"),
-                    workflow_run_id: row.get("workflow_run_id"),
-                    step_name: row.get("step_name"),
+                    id: row.id,
+                    workflow_run_id: row.workflow_run_id,
+                    step_name: row.step_name,
                     status,
-                    result: row.get("result"),
-                    error: row.get("error"),
-                    started_at: row.get("started_at"),
-                    completed_at: row.get("completed_at"),
+                    result: row.result,
+                    error: row.error,
+                    started_at: row.started_at,
+                    completed_at: row.completed_at,
                 })
             })
             .collect()
@@ -449,16 +447,16 @@ impl WorkflowExecutor {
         step_name: &str,
         status: StepStatus,
     ) -> forge_core::Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE forge_workflow_steps
             SET status = $3
             WHERE workflow_run_id = $1 AND step_name = $2
             "#,
+            workflow_run_id,
+            step_name,
+            status.as_str(),
         )
-        .bind(workflow_run_id)
-        .bind(step_name)
-        .bind(status.as_str())
         .execute(&self.pool)
         .await
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
@@ -468,24 +466,24 @@ impl WorkflowExecutor {
 
     /// Save workflow record to database.
     async fn save_workflow(&self, record: &WorkflowRecord) -> forge_core::Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO forge_workflow_runs (
                 id, workflow_name, version, owner_subject, input, status, current_step,
                 step_results, started_at, trace_id
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             "#,
+            record.id,
+            &record.workflow_name,
+            record.version as i32,
+            record.owner_subject as _,
+            record.input as _,
+            record.status.as_str(),
+            record.current_step as _,
+            record.step_results as _,
+            record.started_at,
+            record.trace_id.as_deref(),
         )
-        .bind(record.id)
-        .bind(&record.workflow_name)
-        .bind(record.version as i32)
-        .bind(&record.owner_subject)
-        .bind(&record.input)
-        .bind(record.status.as_str())
-        .bind(&record.current_step)
-        .bind(&record.step_results)
-        .bind(record.started_at)
-        .bind(&record.trace_id)
         .execute(&self.pool)
         .await
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
@@ -495,15 +493,15 @@ impl WorkflowExecutor {
 
     /// Get workflow record from database.
     async fn get_workflow(&self, run_id: Uuid) -> forge_core::Result<WorkflowRecord> {
-        let row = sqlx::query(
+        let row = sqlx::query!(
             r#"
             SELECT id, workflow_name, version, owner_subject, input, output, status, current_step,
                    step_results, started_at, completed_at, error, trace_id
             FROM forge_workflow_runs
             WHERE id = $1
             "#,
+            run_id,
         )
-        .bind(run_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
@@ -512,28 +510,26 @@ impl WorkflowExecutor {
             forge_core::ForgeError::NotFound(format!("Workflow run {} not found", run_id))
         })?;
 
-        use sqlx::Row;
-        let status_str = row.get::<String, _>("status");
-        let status = status_str.parse().map_err(|e| {
+        let status = row.status.parse().map_err(|e| {
             forge_core::ForgeError::Database(format!(
                 "Invalid workflow status '{}': {}",
-                status_str, e
+                row.status, e
             ))
         })?;
         Ok(WorkflowRecord {
-            id: row.get("id"),
-            workflow_name: row.get("workflow_name"),
-            version: row.get::<i32, _>("version") as u32,
-            owner_subject: row.get("owner_subject"),
-            input: row.get("input"),
-            output: row.get("output"),
+            id: row.id,
+            workflow_name: row.workflow_name,
+            version: row.version.unwrap_or(1) as u32,
+            owner_subject: row.owner_subject,
+            input: row.input,
+            output: row.output,
             status,
-            current_step: row.get("current_step"),
-            step_results: row.get("step_results"),
-            started_at: row.get("started_at"),
-            completed_at: row.get("completed_at"),
-            error: row.get("error"),
-            trace_id: row.get("trace_id"),
+            current_step: row.current_step,
+            step_results: row.step_results.unwrap_or_default(),
+            started_at: row.started_at,
+            completed_at: row.completed_at,
+            error: row.error,
+            trace_id: row.trace_id,
         })
     }
 
@@ -543,15 +539,15 @@ impl WorkflowExecutor {
         run_id: Uuid,
         status: WorkflowStatus,
     ) -> forge_core::Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE forge_workflow_runs
             SET status = $2
             WHERE id = $1
             "#,
+            run_id,
+            status.as_str(),
         )
-        .bind(run_id)
-        .bind(status.as_str())
         .execute(&self.pool)
         .await
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
@@ -565,15 +561,15 @@ impl WorkflowExecutor {
         run_id: Uuid,
         output: serde_json::Value,
     ) -> forge_core::Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE forge_workflow_runs
             SET status = 'completed', output = $2, completed_at = NOW()
             WHERE id = $1
             "#,
+            run_id,
+            output as _,
         )
-        .bind(run_id)
-        .bind(output)
         .execute(&self.pool)
         .await
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
@@ -583,15 +579,15 @@ impl WorkflowExecutor {
 
     /// Mark workflow as failed.
     async fn fail_workflow(&self, run_id: Uuid, error: &str) -> forge_core::Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE forge_workflow_runs
             SET status = 'failed', error = $2, completed_at = NOW()
             WHERE id = $1
             "#,
+            run_id,
+            error,
         )
-        .bind(run_id)
-        .bind(error)
         .execute(&self.pool)
         .await
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
@@ -601,7 +597,7 @@ impl WorkflowExecutor {
 
     /// Save step record.
     pub async fn save_step(&self, step: &WorkflowStepRecord) -> forge_core::Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO forge_workflow_steps (
                 id, workflow_run_id, step_name, status, result, error, started_at, completed_at
@@ -613,15 +609,15 @@ impl WorkflowExecutor {
                 started_at = COALESCE(forge_workflow_steps.started_at, EXCLUDED.started_at),
                 completed_at = EXCLUDED.completed_at
             "#,
+            step.id,
+            step.workflow_run_id,
+            &step.step_name,
+            step.status.as_str(),
+            step.result as _,
+            step.error as _,
+            step.started_at,
+            step.completed_at,
         )
-        .bind(step.id)
-        .bind(step.workflow_run_id)
-        .bind(&step.step_name)
-        .bind(step.status.as_str())
-        .bind(&step.result)
-        .bind(&step.error)
-        .bind(step.started_at)
-        .bind(step.completed_at)
         .execute(&self.pool)
         .await
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;

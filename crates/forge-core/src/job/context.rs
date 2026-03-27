@@ -221,15 +221,15 @@ impl JobContext {
     }
 
     async fn persist_saved_data(&self, data: serde_json::Value) -> crate::Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE forge_jobs
             SET job_context = $2
             WHERE id = $1
             "#,
+            self.job_id,
+            data,
         )
-        .bind(self.job_id)
-        .bind(data)
         .execute(&self.db_pool)
         .await
         .map_err(|e| crate::ForgeError::Database(e.to_string()))?;
@@ -257,14 +257,14 @@ impl JobContext {
 
     /// Send heartbeat to keep job alive (async).
     pub async fn heartbeat(&self) -> crate::Result<()> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE forge_jobs
             SET last_heartbeat = NOW()
             WHERE id = $1
             "#,
+            self.job_id,
         )
-        .bind(self.job_id)
         .execute(&self.db_pool)
         .await
         .map_err(|e| crate::ForgeError::Database(e.to_string()))?;

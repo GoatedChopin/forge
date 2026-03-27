@@ -515,6 +515,7 @@ impl Forge {
                             .allow_methods(Any)
                             .allow_headers(Any)
                     } else {
+                        use axum::http::Method;
                         let origins: Vec<_> = self
                             .config
                             .gateway
@@ -524,8 +525,20 @@ impl Forge {
                             .collect();
                         CorsLayer::new()
                             .allow_origin(origins)
-                            .allow_methods(Any)
-                            .allow_headers(Any)
+                            .allow_methods([
+                                Method::GET,
+                                Method::POST,
+                                Method::PUT,
+                                Method::DELETE,
+                                Method::PATCH,
+                                Method::OPTIONS,
+                            ])
+                            .allow_headers([
+                                axum::http::header::CONTENT_TYPE,
+                                axum::http::header::AUTHORIZATION,
+                                axum::http::header::ACCEPT,
+                            ])
+                            .allow_credentials(true)
                     }
                 } else {
                     CorsLayer::new()

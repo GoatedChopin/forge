@@ -66,7 +66,7 @@ if (error.code === 'RATE_LIMITED') {
 }
 ```
 
-For network errors during data fetching, the generated client retries SSE connections with exponential backoff (1s base, 30s cap, max 10 attempts) automatically. Don't add your own retry logic on top.
+For network errors during data fetching, the generated client retries SSE connections with exponential backoff (1s base, max 10 attempts) automatically. SvelteKit: 30s cap. Dioxus: 16s cap (`1s * 2^min(attempts, 4)`). Don't add your own retry logic on top.
 
 ## File Uploads
 

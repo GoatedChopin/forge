@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 
 use super::generator::Migration;
 use forge_core::error::{ForgeError, Result};
@@ -38,9 +38,9 @@ impl MigrationExecutor {
 
     /// Get all applied migrations.
     pub async fn applied_migrations(&self) -> Result<Vec<AppliedMigration>> {
-        let rows = sqlx::query(
+        let rows = sqlx::query!(
             r#"
-            SELECT version, name, applied_at, checksum, execution_time_ms
+            SELECT version as "version!", name, applied_at, checksum, execution_time_ms
             FROM forge_migrations
             ORDER BY version ASC
             "#,
@@ -50,13 +50,13 @@ impl MigrationExecutor {
         .map_err(|e| ForgeError::Database(format!("Failed to fetch migrations: {}", e)))?;
 
         let migrations = rows
-            .iter()
+            .into_iter()
             .map(|row| AppliedMigration {
-                version: row.get("version"),
-                name: row.get("name"),
-                applied_at: row.get("applied_at"),
-                checksum: row.get("checksum"),
-                execution_time_ms: row.get("execution_time_ms"),
+                version: row.version,
+                name: Some(row.name),
+                applied_at: row.applied_at,
+                checksum: row.checksum,
+                execution_time_ms: row.execution_time_ms,
             })
             .collect();
 
@@ -65,15 +65,15 @@ impl MigrationExecutor {
 
     /// Check if a migration has been applied.
     pub async fn is_applied(&self, version: &str) -> Result<bool> {
-        let row = sqlx::query_scalar::<_, i64>(
+        let row = sqlx::query_scalar!(
             "SELECT COUNT(*) FROM forge_migrations WHERE version = $1",
+            version,
         )
-        .bind(version)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| ForgeError::Database(format!("Failed to check migration: {}", e)))?;
 
-        Ok(row > 0)
+        Ok(row.unwrap_or(0) > 0)
     }
 
     /// Apply a migration.
@@ -97,16 +97,16 @@ impl MigrationExecutor {
         let checksum = calculate_checksum(&migration.sql);
 
         // Record the migration
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO forge_migrations (version, name, checksum, execution_time_ms)
             VALUES ($1, $2, $3, $4)
             "#,
+            &migration.version,
+            &migration.name,
+            &checksum,
+            elapsed.as_millis() as i32,
         )
-        .bind(&migration.version)
-        .bind(&migration.name)
-        .bind(&checksum)
-        .bind(elapsed.as_millis() as i32)
         .execute(&self.pool)
         .await
         .map_err(|e| {
@@ -122,8 +122,8 @@ impl MigrationExecutor {
     /// Rollback the last migration.
     pub async fn rollback(&self) -> Result<Option<String>> {
         // Get the last applied migration
-        let last = sqlx::query_scalar::<_, String>(
-            "SELECT version FROM forge_migrations ORDER BY version DESC LIMIT 1",
+        let last = sqlx::query_scalar!(
+            r#"SELECT version as "version!" FROM forge_migrations ORDER BY version DESC LIMIT 1"#,
         )
         .fetch_optional(&self.pool)
         .await
@@ -132,8 +132,7 @@ impl MigrationExecutor {
         match last {
             Some(version) => {
                 // Remove from migrations table
-                sqlx::query("DELETE FROM forge_migrations WHERE version = $1")
-                    .bind(&version)
+                sqlx::query!("DELETE FROM forge_migrations WHERE version = $1", &version)
                     .execute(&self.pool)
                     .await
                     .map_err(|e| {

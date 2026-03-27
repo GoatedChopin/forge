@@ -403,6 +403,38 @@ Forge inherits PostgreSQL's durability guarantees. All state changes (jobs, work
 
 Additional variables can be accessed in handlers via `ctx.env("VAR_NAME")`.
 
+## Observability
+
+### OTLP Transport
+
+Forge exports telemetry via OTLP over HTTP (port 4318), not gRPC (port 4317). Configure your collector's HTTP receiver accordingly. If your collector only accepts gRPC, you will need an HTTP-capable proxy or receiver.
+
+### Emitted Metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `http_requests_total` | counter | `method`, `path`, `status` | Total HTTP requests |
+| `http_request_duration_seconds` | histogram | `method`, `path`, `status` | Request latency |
+| `fn.executions_total` | counter | `function`, `kind` | Function call count |
+| `fn.duration_seconds` | histogram | `function`, `kind` | Function execution latency |
+| `job_executions_total` | counter | `job_type`, `status` | Job execution count |
+| `job_duration_seconds` | histogram | `job_type` | Job execution latency |
+| `active_connections` | up-down counter | `type` | Current active connections |
+
+### Tracing Headers
+
+Every response includes these headers for request correlation:
+
+| Header | Description |
+|--------|-------------|
+| `x-request-id` | UUID for the request |
+| `x-trace-id` | OpenTelemetry trace ID |
+| `x-span-id` | Current span ID |
+
+### W3C Trace Context
+
+Forge extracts the `traceparent` header from inbound requests per the W3C Trace Context spec. If present, the request joins the existing distributed trace.
+
 ## Production Checklist
 
 - [ ] `cargo build --release` with optimizations

@@ -362,7 +362,7 @@ async fn claim_idempotency(
     let expires_at =
         chrono::Utc::now() + chrono::Duration::from_std(ttl).unwrap_or(chrono::Duration::hours(24));
 
-    let result = sqlx::query(
+    let result = sqlx::query!(
         r#"
         INSERT INTO forge_webhook_events (idempotency_key, webhook_name, processed_at, expires_at)
         VALUES ($1, $2, NOW(), $3)
@@ -371,10 +371,10 @@ async fn claim_idempotency(
                 expires_at = EXCLUDED.expires_at
         WHERE forge_webhook_events.expires_at < NOW()
         "#,
+        key,
+        webhook_name,
+        expires_at,
     )
-    .bind(key)
-    .bind(webhook_name)
-    .bind(expires_at)
     .execute(pool)
     .await?;
 
@@ -387,14 +387,14 @@ async fn release_idempotency(
     webhook_name: &str,
     key: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
+    sqlx::query!(
         r#"
         DELETE FROM forge_webhook_events
         WHERE webhook_name = $1 AND idempotency_key = $2
         "#,
+        webhook_name,
+        key,
     )
-    .bind(webhook_name)
-    .bind(key)
     .execute(pool)
     .await?;
 

@@ -165,6 +165,7 @@ pub async fn get_profile(ctx: &QueryContext) -> Result<Profile> {
 | `auth.has_role("role")` | `bool` | Check if user has role |
 | `auth.require_role("role")` | `Result<()>` | Require role or return 403 |
 | `auth.claim("key")` | `Option<&Value>` | Get custom claim by key |
+| `auth.tenant_id()` | `Option<Uuid>` | Read the `tenant_id` custom claim as a UUID. Returns `None` if the claim is absent or not a valid UUID |
 | `auth.roles()` | `&[String]` | Get all roles |
 
 ## Configuration
@@ -240,6 +241,52 @@ export function getToken(): string | null;
 ```
 
 When `setAuth()` or `clearAuth()` is called, the client automatically reconnects with the new token.
+
+## Refresh Tokens
+
+Forge includes a built-in refresh token system for issuing short-lived access tokens alongside longer-lived refresh tokens. The `forge_refresh_tokens` system table is created automatically, so no migration is needed.
+
+Tokens are random opaque strings. They are SHA-256 hashed before storage, so the raw token value never hits the database.
+
+### Configuration
+
+Token TTLs are set in the `[auth]` section of `forge.toml`:
+
+```toml
+[auth]
+access_token_ttl = "15m"   # How long access tokens are valid
+refresh_token_ttl = "7d"   # How long refresh tokens are valid
+```
+
+### Issuing Tokens
+
+`ctx.issue_token_pair(user_id, &["role"])` issues an access token and a refresh token in one call, using the TTLs from your config.
+
+### Rotating Tokens
+
+`ctx.rotate_refresh_token(&old_token)` atomically deletes the old refresh token and issues a new pair. Each refresh token is single-use: once rotated, the old token is invalidated immediately.
+
+### Revoking Tokens
+
+| Method | Description |
+|--------|-------------|
+| `ctx.revoke_refresh_token(&token)` | Revoke a single refresh token |
+| `ctx.revoke_all_refresh_tokens(user_id)` | Revoke all refresh tokens for a user (useful for password changes or account deletion) |
+
+### Example
+
+```rust
+#[forge::mutation(public)]
+async fn login(ctx: &MutationContext, email: String, password: String) -> Result<TokenPair> {
+    let user = verify_credentials(ctx, &email, &password).await?;
+    ctx.issue_token_pair(user.id, &user.roles).await
+}
+
+#[forge::mutation]
+async fn refresh(ctx: &MutationContext, refresh_token: String) -> Result<TokenPair> {
+    ctx.rotate_refresh_token(&refresh_token).await
+}
+```
 
 ## Under the Hood
 

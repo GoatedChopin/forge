@@ -36,6 +36,8 @@ mod tests {
 
 Every handler type has a matching test context with builder pattern.
 
+All context builders support both singular and batch variants: `with_role("admin")` / `with_roles(vec!["admin".into(), "editor".into()])`, `with_env("KEY", "val")` / `with_envs(map)`.
+
 ### TestQueryContext
 
 ```rust
@@ -68,6 +70,13 @@ Same auth/env/pool builders, plus:
 ```
 
 Access: `ctx.http()` → `&MockHttp`, `ctx.job_dispatch()`, `ctx.workflow_dispatch()`, `ctx.dispatch_job(...)`, `ctx.start_workflow(...)`, `ctx.pending_jobs()`, `ctx.assert_job_buffered("type")`.
+
+`MockJobDispatch` simulation (drive jobs through lifecycle in tests):
+```rust
+ctx.job_dispatch().complete_job("send_email", json!({ "result": "sent" }));
+ctx.job_dispatch().fail_job("send_email", "SMTP refused");
+ctx.job_dispatch().cancel_job("send_email");
+```
 
 ### TestJobContext
 
@@ -328,6 +337,14 @@ Run: `forge test` (backend must be running). Debug: `forge test --ui`. Headed: `
 - **Handler tests cover integration**: auth, scope, dispatch, DB interaction. More expensive so focus on critical paths.
 
 A well-tested module should make a reviewer think "I can't change this behavior without a test failing."
+
+## Timeout Constants
+
+```rust
+use forge::testing::{ACTION_TIMEOUT, ASSERTION_TIMEOUT};
+// ACTION_TIMEOUT: 5s — use with tokio::time::timeout for operations that should complete quickly
+// ASSERTION_TIMEOUT: for eventually-consistent assertions that may need retries
+```
 
 ## Execution Order
 
