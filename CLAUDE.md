@@ -219,12 +219,8 @@ Always `gotoReady()` before testing reactive data. Run frontend with `bun run de
 
 Detailed docs for Forge users live in `docs/skills/forge-idiomatic-engineer/references/`:
 - `api.md`: macro attributes, context methods, forge.toml, CLI
-- `auth.md`: JWT, claims, identity scope, refresh tokens, OAuth
 - `frontend.md`: stores, reactivity, uploads, errors
-- `patterns.md`: jobs, workflows, crons, daemons, DbConn helpers
-- `testing.md`: test contexts, mocking, assertions, Playwright
-- `integrations.md`: uploads, webhooks, MCP tools, custom routes
-- `operations.md`: deploy, scaling, health, pool isolation, observability
-- `quality.md`: review checklist, anti-patterns, security
-- `troubleshooting.md`: common errors and fixes
-- `donts.md`: 35 numbered mistakes to avoid
+- `frontend/svelte.md`: SvelteKit-specific patterns and stores
+- `frontend/dioxus.md`: Dioxus-specific hooks and signals
+- `patterns.md`: jobs, workflows, crons, daemons, auth, testing, operations, integrations
+- `pitfalls.md`: common mistakes and anti-patterns
