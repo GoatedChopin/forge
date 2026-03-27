@@ -199,7 +199,11 @@ pub struct GatewayConfig {
     #[serde(default = "default_http_port")]
     pub port: u16,
 
-    /// gRPC port for inter-node communication.
+    /// gRPC port for inter-node communication (reserved for future use).
+    ///
+    /// This port is registered in the cluster node info but a gRPC listener
+    /// is not yet started. It will be used for efficient binary inter-node
+    /// RPC in a future release.
     #[serde(default = "default_grpc_port")]
     pub grpc_port: u16,
 
@@ -287,7 +291,13 @@ pub struct FunctionConfig {
     #[serde(default = "default_function_timeout")]
     pub timeout_secs: u64,
 
-    /// Memory limit per function (in bytes).
+    /// Advisory memory limit per function execution (in bytes).
+    ///
+    /// This value is exposed as configuration metadata for orchestrators
+    /// (e.g., Kubernetes resource requests) and observability dashboards.
+    /// It is not enforced at the process level since Rust does not provide
+    /// per-function memory sandboxing. Use container-level limits for hard
+    /// enforcement.
     #[serde(default = "default_memory_limit")]
     pub memory_limit: usize,
 }
@@ -583,6 +593,24 @@ impl Default for ObservabilityConfig {
 impl ObservabilityConfig {
     pub fn otlp_active(&self) -> bool {
         self.enabled && (self.enable_traces || self.enable_metrics || self.enable_logs)
+    }
+
+    /// Apply FORGE_OTEL_* environment variable overrides.
+    ///
+    /// Supported variables:
+    /// - `FORGE_OTEL_TRACES` - "true"/"false" to enable/disable traces
+    /// - `FORGE_OTEL_METRICS` - "true"/"false" to enable/disable metrics
+    /// - `FORGE_OTEL_LOGS` - "true"/"false" to enable/disable logs
+    pub fn apply_env_overrides(&mut self) {
+        if let Ok(val) = std::env::var("FORGE_OTEL_TRACES") {
+            self.enable_traces = val.eq_ignore_ascii_case("true") || val == "1";
+        }
+        if let Ok(val) = std::env::var("FORGE_OTEL_METRICS") {
+            self.enable_metrics = val.eq_ignore_ascii_case("true") || val == "1";
+        }
+        if let Ok(val) = std::env::var("FORGE_OTEL_LOGS") {
+            self.enable_logs = val.eq_ignore_ascii_case("true") || val == "1";
+        }
     }
 }
 

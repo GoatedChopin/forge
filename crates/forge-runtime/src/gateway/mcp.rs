@@ -1,16 +1,21 @@
 use std::collections::HashMap;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use axum::extract::{Extension, State};
 use axum::http::header::{HeaderName, HeaderValue};
 use axum::http::{HeaderMap, Method, StatusCode};
-use axum::response::{IntoResponse, Response};
+use axum::response::IntoResponse;
+use axum::response::Response;
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::{Json, body::Body};
 use forge_core::config::McpConfig;
 use forge_core::function::{AuthContext, JobDispatch, RequestMetadata, WorkflowDispatch};
 use forge_core::mcp::McpToolContext;
 use forge_core::rate_limit::RateLimitKey;
+use futures_util::Stream;
 use serde_json::Value;
 use tokio::sync::RwLock;
 
@@ -80,21 +85,81 @@ impl McpState {
     }
 }
 
+/// Wraps an mpsc::Receiver as a Stream for MCP SSE.
+struct McpReceiverStream {
+    rx: tokio::sync::mpsc::Receiver<Result<Event, std::convert::Infallible>>,
+}
+
+impl Stream for McpReceiverStream {
+    type Item = Result<Event, std::convert::Infallible>;
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.rx.poll_recv(cx)
+    }
+}
+
+/// MCP Streamable HTTP GET handler.
+///
+/// Opens a Server-Sent Events stream for server-initiated messages.
+/// Clients use this to receive notifications and asynchronous responses
+/// from the MCP server. The stream starts with an `endpoint` event
+/// containing the session ID, then sends keepalive pings every 30 seconds.
 pub async fn mcp_get_handler(State(state): State<Arc<McpState>>, headers: HeaderMap) -> Response {
     if let Err(resp) = validate_origin(&headers, &state.config) {
         return *resp;
     }
 
-    (
-        StatusCode::METHOD_NOT_ALLOWED,
-        Json(json_rpc_error(
-            None,
-            -32601,
-            "GET stream is not supported in Forge MCP v1",
-            None,
-        )),
-    )
-        .into_response()
+    if let Err(resp) = enforce_protocol_header(&state.config, &headers) {
+        return *resp;
+    }
+
+    // Require a valid session (created via POST initialize)
+    let session_id = match required_session_id(&state, &headers, true).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+
+    state.touch_session(&session_id).await;
+
+    // Create a channel for server-to-client messages
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, std::convert::Infallible>>(32);
+
+    // Send the initial endpoint event with the session binding
+    let session_id_clone = session_id.clone();
+    tokio::spawn(async move {
+        let endpoint_data = serde_json::json!({
+            "sessionId": session_id_clone,
+        });
+        let _ = tx
+            .send(Ok(Event::default()
+                .event("endpoint")
+                .data(endpoint_data.to_string())))
+            .await;
+
+        // Keep channel open until client disconnects.
+        // The SSE keepalive mechanism handles pings.
+        // When the client disconnects, the tx will be dropped.
+        loop {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            if tx.is_closed() {
+                break;
+            }
+        }
+    });
+
+    let stream = McpReceiverStream { rx };
+
+    let mut response = Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(Duration::from_secs(30)))
+        .into_response();
+
+    // Set MCP session header on the response
+    if let Ok(val) = HeaderValue::from_str(&session_id) {
+        response
+            .headers_mut()
+            .insert(HeaderName::from_static(MCP_SESSION_HEADER), val);
+    }
+
+    response
 }
 
 pub async fn mcp_post_handler(

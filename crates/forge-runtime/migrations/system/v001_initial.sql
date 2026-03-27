@@ -446,3 +446,34 @@ RETURNS void LANGUAGE sql AS $$
     DELETE FROM forge_oauth_codes
     WHERE expires_at < now() - interval '1 hour';
 $$;
+
+-- Alias for documented function name: forge_cleanup_refresh_tokens()
+-- Maps to forge_purge_expired_refresh_tokens() for backward compatibility.
+CREATE OR REPLACE FUNCTION forge_cleanup_refresh_tokens()
+RETURNS void LANGUAGE sql AS $$
+    SELECT forge_purge_expired_refresh_tokens();
+$$;
+
+-- Cluster-aware cache invalidation tracking.
+-- Used by the Reactor to propagate invalidation events across nodes
+-- when a write occurs on one node and subscriptions exist on another.
+CREATE TABLE IF NOT EXISTS forge_invalidations (
+    id              BIGSERIAL PRIMARY KEY,
+    table_name      TEXT NOT NULL,
+    row_id          TEXT,
+    operation       TEXT NOT NULL,          -- INSERT, UPDATE, DELETE
+    changed_columns TEXT[],
+    node_id         UUID,                   -- originating node
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Index for efficient polling by other nodes
+CREATE INDEX IF NOT EXISTS idx_forge_invalidations_created
+    ON forge_invalidations (created_at);
+
+-- Auto-purge old invalidation records (keep only last hour)
+CREATE OR REPLACE FUNCTION forge_purge_expired_invalidations()
+RETURNS void LANGUAGE sql AS $$
+    DELETE FROM forge_invalidations
+    WHERE created_at < now() - interval '1 hour';
+$$;

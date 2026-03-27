@@ -185,6 +185,9 @@ impl Forge {
 
     /// Run the FORGE server.
     pub async fn run(mut self) -> Result<()> {
+        // Apply FORGE_OTEL_* environment variable overrides before initializing
+        self.config.observability.apply_env_overrides();
+
         // Users shouldn't need tracing_subscriber boilerplate to see logs
         let telemetry_config = forge_runtime::TelemetryConfig::from_observability_config(
             &self.config.observability,
@@ -241,7 +244,18 @@ impl Forge {
         // Get local node info
         let hostname = get_hostname();
 
-        let ip_address: IpAddr = "127.0.0.1".parse().expect("valid IP literal");
+        // Support HOST env var (default 0.0.0.0), PORT env var (overrides config)
+        let ip_address: IpAddr = std::env::var("HOST")
+            .unwrap_or_else(|_| "0.0.0.0".to_string())
+            .parse()
+            .unwrap_or_else(|_| "0.0.0.0".parse().expect("valid IP literal"));
+
+        if let Ok(port_str) = std::env::var("PORT") {
+            if let Ok(port) = port_str.parse::<u16>() {
+                self.config.gateway.port = port;
+            }
+        }
+
         let roles: Vec<NodeRole> = self
             .config
             .node
@@ -672,10 +686,20 @@ impl Forge {
             });
         }
 
+        // Startup banner: summary of config, roles, and capabilities
+        let role_names: Vec<&str> = roles.iter().map(|r| r.as_str()).collect();
+        let capabilities = &self.config.node.worker_capabilities;
         tracing::info!(
             node_id = %node_id,
-            roles = ?roles,
+            project = %self.config.project.name,
+            version = env!("CARGO_PKG_VERSION"),
+            roles = ?role_names,
+            worker_capabilities = ?capabilities,
             port = self.config.gateway.port,
+            db_pool_size = self.config.database.pool_size,
+            cluster_discovery = ?self.config.cluster.discovery,
+            observability = self.config.observability.enabled,
+            mcp = self.config.mcp.enabled,
             "Forge started"
         );
 

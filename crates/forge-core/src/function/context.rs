@@ -471,6 +471,17 @@ impl AuthContext {
         self.roles.iter().any(|r| r == "admin")
     }
 
+    /// Get the tenant ID from the JWT claims, if present.
+    ///
+    /// Looks for a `tenant_id` claim in the token and attempts to parse it as
+    /// a UUID. Returns `None` if the claim is absent or not a valid UUID.
+    pub fn tenant_id(&self) -> Option<uuid::Uuid> {
+        self.claims
+            .get("tenant_id")
+            .and_then(|v| v.as_str())
+            .and_then(|s| uuid::Uuid::parse_str(s).ok())
+    }
+
     /// Validate that identity/tenant-scoped arguments in a function call match
     /// the authenticated principal.
     ///
