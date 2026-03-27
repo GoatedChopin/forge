@@ -270,8 +270,8 @@ impl HeartbeatLoop {
             self.node_id.as_uuid(),
             current_connections as i32,
             current_jobs as i32,
-            cpu_usage,
-            memory_usage,
+            cpu_usage as f64,
+            memory_usage as f64,
         )
         .execute(&self.pool)
         .await

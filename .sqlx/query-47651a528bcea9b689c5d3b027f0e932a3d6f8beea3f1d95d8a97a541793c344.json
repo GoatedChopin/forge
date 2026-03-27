@@ -71,12 +71,12 @@
       {
         "ordinal": 13,
         "name": "cpu_usage",
-        "type_info": "Float4"
+        "type_info": "Float8"
       },
       {
         "ordinal": 14,
         "name": "memory_usage",
-        "type_info": "Float4"
+        "type_info": "Float8"
       }
     ],
     "parameters": {
@@ -98,8 +98,8 @@
       false,
       false,
       false,
-      false,
-      false
+      true,
+      true
     ]
   },
   "hash": "47651a528bcea9b689c5d3b027f0e932a3d6f8beea3f1d95d8a97a541793c344"

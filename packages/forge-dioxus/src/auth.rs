@@ -11,12 +11,10 @@ use serde::{Deserialize, Serialize};
 use crate::{ConnectionState, ForgeClient, ForgeClientConfig};
 
 /// Persisted auth data: tokens + optional viewer.
-/// Backward compatible with old format (viewer is optional).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredAuth {
     access_token: String,
     refresh_token: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     viewer: Option<serde_json::Value>,
 }
 
@@ -451,14 +449,4 @@ mod tests {
         assert!(state.viewer_json().is_none());
     }
 
-    #[test]
-    fn test_stored_auth_backwards_compatible_without_viewer() {
-        let stored: StoredAuth =
-            serde_json::from_value(serde_json::json!({"access_token":"a","refresh_token":"r"}))
-                .unwrap();
-
-        assert_eq!(stored.access_token, "a");
-        assert_eq!(stored.refresh_token, "r");
-        assert!(stored.viewer.is_none());
-    }
 }

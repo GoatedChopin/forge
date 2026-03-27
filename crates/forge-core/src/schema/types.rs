@@ -79,10 +79,6 @@ pub enum RustType {
     F64,
     /// Boolean
     Bool,
-    /// Chrono DateTime (deprecated, use Instant)
-    DateTime,
-    /// Chrono NaiveDate (deprecated, use LocalDate)
-    Date,
     /// UTC instant in time (compile-time safe, no naive datetime)
     Instant,
     /// Local date without time (YYYY-MM-DD)
@@ -114,10 +110,8 @@ impl RustType {
             "f32" => RustType::F32,
             "f64" => RustType::F64,
             "bool" => RustType::Bool,
-            "DateTime<Utc>" | "Timestamp" => RustType::DateTime,
-            "Instant" => RustType::Instant,
-            "NaiveDate" | "Date" => RustType::Date,
-            "LocalDate" => RustType::LocalDate,
+            "DateTime<Utc>" | "Timestamp" | "Instant" => RustType::Instant,
+            "NaiveDate" | "Date" | "LocalDate" => RustType::LocalDate,
             "NaiveTime" | "LocalTime" => RustType::LocalTime,
             "Upload" => RustType::Upload,
             "Value" | "Json" => RustType::Json,
@@ -150,8 +144,8 @@ impl RustType {
             RustType::F32 => SqlType::Real,
             RustType::F64 => SqlType::DoublePrecision,
             RustType::Bool => SqlType::Boolean,
-            RustType::DateTime | RustType::Instant => SqlType::Timestamptz,
-            RustType::Date | RustType::LocalDate => SqlType::Date,
+            RustType::Instant => SqlType::Timestamptz,
+            RustType::LocalDate => SqlType::Date,
             RustType::LocalTime => SqlType::Time,
             // Upload is a runtime-only type for mutation arguments, not a storable column.
             // Return Bytea as a fallback; callers should never define model fields as Upload.
@@ -177,7 +171,6 @@ impl RustType {
             RustType::I32 | RustType::I64 => "number".to_string(),
             RustType::F32 | RustType::F64 => "number".to_string(),
             RustType::Bool => "boolean".to_string(),
-            RustType::DateTime | RustType::Date => "string".to_string(),
             RustType::Instant | RustType::LocalDate | RustType::LocalTime => "string".to_string(),
             RustType::Upload => "File | Blob".to_string(),
             RustType::Json => "unknown".to_string(),
@@ -188,8 +181,8 @@ impl RustType {
                 "Uuid" | "uuid::Uuid" => "string".to_string(),
                 "usize" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128" | "i8" | "i16"
                 | "i128" => "number".to_string(),
-                "Timestamp" | "NaiveDate" | "NaiveDateTime" | "NaiveTime" => "string".to_string(),
-                "Instant" | "LocalDate" | "LocalTime" => "string".to_string(),
+                "Timestamp" | "NaiveDate" | "NaiveDateTime" | "NaiveTime" | "Instant"
+                | "LocalDate" | "LocalTime" => "string".to_string(),
                 "Upload" => "File | Blob".to_string(),
                 "Bytes" => "Uint8Array".to_string(),
                 dt if dt.starts_with("DateTime<") => "string".to_string(),

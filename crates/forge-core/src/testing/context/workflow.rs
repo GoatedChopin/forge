@@ -47,8 +47,6 @@ pub struct TestWorkflowContext {
     pub run_id: Uuid,
     /// Workflow name.
     pub workflow_name: String,
-    /// Workflow version.
-    pub version: u32,
     /// When the workflow started.
     pub started_at: DateTime<Utc>,
     /// Deterministic workflow time.
@@ -201,7 +199,6 @@ impl EnvAccess for TestWorkflowContext {
 pub struct TestWorkflowContextBuilder {
     run_id: Option<Uuid>,
     workflow_name: String,
-    version: u32,
     started_at: DateTime<Utc>,
     workflow_time: Option<DateTime<Utc>>,
     is_resumed: bool,
@@ -222,7 +219,6 @@ impl TestWorkflowContextBuilder {
         Self {
             run_id: None,
             workflow_name: workflow_name.into(),
-            version: 1,
             started_at: now,
             workflow_time: None,
             is_resumed: false,
@@ -240,12 +236,6 @@ impl TestWorkflowContextBuilder {
     /// Set a specific run ID.
     pub fn with_run_id(mut self, id: Uuid) -> Self {
         self.run_id = Some(id);
-        self
-    }
-
-    /// Set the workflow version.
-    pub fn with_version(mut self, version: u32) -> Self {
-        self.version = version;
         self
     }
 
@@ -350,7 +340,6 @@ impl TestWorkflowContextBuilder {
         TestWorkflowContext {
             run_id: self.run_id.unwrap_or_else(Uuid::new_v4),
             workflow_name: self.workflow_name,
-            version: self.version,
             started_at: self.started_at,
             workflow_time: self.workflow_time.unwrap_or(self.started_at),
             is_resumed: self.is_resumed,
@@ -375,7 +364,6 @@ mod tests {
         let ctx = TestWorkflowContext::builder("test_workflow").build();
 
         assert_eq!(ctx.workflow_name, "test_workflow");
-        assert_eq!(ctx.version, 1);
         assert!(!ctx.is_resumed());
     }
 

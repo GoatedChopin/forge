@@ -121,10 +121,6 @@ impl JobContext {
         self.http_client.inner()
     }
 
-    pub fn http_with_circuit_breaker(&self) -> crate::http::HttpClient {
-        self.http()
-    }
-
     pub fn set_http_timeout(&mut self, timeout: Option<Duration>) {
         self.http_timeout = timeout;
     }

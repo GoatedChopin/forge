@@ -81,9 +81,7 @@ Generated struct: `{PascalCase}Workflow`.
 
 | Attribute | Type | Default |
 |---|---|---|
-| `version = 1` | u32 | 1 |
 | `timeout = "24h"` | duration | `"24h"` |
-| `deprecated` | flag | false |
 | `public` / `require_role(...)` | — | — |
 
 Compile-time: detects `tokio::sleep` > 100s and errors (must use `ctx.sleep()`). Signature: `async fn name(ctx: &WorkflowContext, input: T) -> Result<R>`.

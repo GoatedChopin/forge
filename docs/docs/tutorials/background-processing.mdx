@@ -294,7 +294,7 @@ pub struct VerificationOutput {
     pub token: String,
 }
 
-#[forge::workflow(version = 1, timeout = "24h", public)]
+#[forge::workflow(timeout = "24h", public)]
 pub async fn account_verification(
     ctx: &WorkflowContext,
     input: VerificationInput,

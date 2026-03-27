@@ -5,7 +5,6 @@
 //! produces file content without touching the filesystem.
 
 mod api;
-mod client;
 mod reactive;
 mod stores;
 mod types;

@@ -250,10 +250,10 @@ impl Forge {
             .parse()
             .unwrap_or_else(|_| "0.0.0.0".parse().expect("valid IP literal"));
 
-        if let Ok(port_str) = std::env::var("PORT") {
-            if let Ok(port) = port_str.parse::<u16>() {
-                self.config.gateway.port = port;
-            }
+        if let Ok(port_str) = std::env::var("PORT")
+            && let Ok(port) = port_str.parse::<u16>()
+        {
+            self.config.gateway.port = port;
         }
 
         let roles: Vec<NodeRole> = self

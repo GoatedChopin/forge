@@ -8,8 +8,8 @@
         "Uuid",
         "Int4",
         "Int4",
-        "Float4",
-        "Float4"
+        "Float8",
+        "Float8"
       ]
     },
     "nullable": []

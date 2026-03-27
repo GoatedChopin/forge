@@ -93,7 +93,6 @@ mod tests {
         let ctx = TestWorkflowContext::builder("account_verification").build();
 
         assert_eq!(ctx.workflow_name, "account_verification");
-        assert_eq!(ctx.version, 1);
         assert!(!ctx.is_resumed());
     }
 

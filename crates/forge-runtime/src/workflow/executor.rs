@@ -69,12 +69,7 @@ impl WorkflowExecutor {
 
         let input_value = serde_json::to_value(input)?;
 
-        let record = WorkflowRecord::new(
-            workflow_name,
-            entry.info.version,
-            input_value.clone(),
-            owner_subject,
-        );
+        let record = WorkflowRecord::new(workflow_name, input_value.clone(), owner_subject);
         let run_id = record.id;
 
         // Clone entry data for background execution
@@ -128,7 +123,6 @@ impl WorkflowExecutor {
         let mut ctx = WorkflowContext::new(
             run_id,
             entry.info.name.to_string(),
-            entry.info.version,
             self.pool.clone(),
             self.http_client.clone(),
         );
@@ -215,7 +209,6 @@ impl WorkflowExecutor {
         let mut ctx = WorkflowContext::resumed(
             run_id,
             entry.info.name.to_string(),
-            entry.info.version,
             started_at,
             self.pool.clone(),
             self.http_client.clone(),
@@ -292,15 +285,12 @@ impl WorkflowExecutor {
     ) -> forge_core::Result<WorkflowResult> {
         let record = self.get_workflow(run_id).await?;
 
-        let entry = self
-            .registry
-            .get_version(&record.workflow_name, record.version)
-            .ok_or_else(|| {
-                forge_core::ForgeError::NotFound(format!(
-                    "Workflow '{}' version {} not found",
-                    record.workflow_name, record.version
-                ))
-            })?;
+        let entry = self.registry.get(&record.workflow_name).ok_or_else(|| {
+            forge_core::ForgeError::NotFound(format!(
+                "Workflow '{}' not found",
+                record.workflow_name,
+            ))
+        })?;
 
         // Check if workflow is resumable
         match record.status {
@@ -469,13 +459,12 @@ impl WorkflowExecutor {
         sqlx::query!(
             r#"
             INSERT INTO forge_workflow_runs (
-                id, workflow_name, version, owner_subject, input, status, current_step,
+                id, workflow_name, owner_subject, input, status, current_step,
                 step_results, started_at, trace_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             "#,
             record.id,
             &record.workflow_name,
-            record.version as i32,
             record.owner_subject as _,
             record.input as _,
             record.status.as_str(),
@@ -495,7 +484,7 @@ impl WorkflowExecutor {
     async fn get_workflow(&self, run_id: Uuid) -> forge_core::Result<WorkflowRecord> {
         let row = sqlx::query!(
             r#"
-            SELECT id, workflow_name, version, owner_subject, input, output, status, current_step,
+            SELECT id, workflow_name, owner_subject, input, output, status, current_step,
                    step_results, started_at, completed_at, error, trace_id
             FROM forge_workflow_runs
             WHERE id = $1
@@ -519,7 +508,6 @@ impl WorkflowExecutor {
         Ok(WorkflowRecord {
             id: row.id,
             workflow_name: row.workflow_name,
-            version: row.version.unwrap_or(1) as u32,
             owner_subject: row.owner_subject,
             input: row.input,
             output: row.output,

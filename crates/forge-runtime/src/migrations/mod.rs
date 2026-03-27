@@ -18,8 +18,8 @@ mod generator;
 mod runner;
 
 pub use builtin::{
-    LEGACY_MIGRATION_NAME, SYSTEM_MIGRATION_PREFIX, SystemMigration, extract_version,
-    get_all_system_sql, get_builtin_migrations, get_system_migrations, is_system_migration,
+    SYSTEM_MIGRATION_PREFIX, SystemMigration, extract_version, get_all_system_sql,
+    get_builtin_migrations, get_system_migrations, is_system_migration,
 };
 pub use diff::{DiffAction, DiffEntry, SchemaDiff};
 pub use executor::MigrationExecutor;

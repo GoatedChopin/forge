@@ -554,13 +554,11 @@ fn test_catch_up_cron() {
 fn test_workflow_execution() {
     let ctx = TestWorkflowContext::builder("order_fulfillment")
         .with_run_id(Uuid::new_v4())
-        .with_version(2)
         .as_user(Uuid::new_v4())
         .with_tenant(Uuid::new_v4())
         .build();
 
     assert_eq!(ctx.workflow_name, "order_fulfillment");
-    assert_eq!(ctx.version, 2);
     assert!(!ctx.is_resumed());
 }
 ```

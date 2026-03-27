@@ -9,8 +9,6 @@ use forge_core::schema::{
     FunctionArg, FunctionDef, FunctionKind, RustType, SchemaRegistry, TableDef,
 };
 
-use crate::emit;
-
 /// Pre-computed, target-agnostic binding for a single function.
 #[derive(Debug)]
 pub struct FunctionBinding {
@@ -22,13 +20,8 @@ pub struct FunctionBinding {
     pub args: Vec<FunctionArg>,
     /// Return type.
     pub return_type: RustType,
-    /// Whether any argument contains an Upload type.
-    pub has_upload: bool,
     /// Whether the single argument is a known custom Args/Input struct.
     pub is_custom_args: bool,
-    /// Documentation comment (preserved for future doc generation).
-    #[allow(dead_code)]
-    pub doc: Option<String>,
 }
 
 impl FunctionBinding {
@@ -104,11 +97,6 @@ impl BindingSet {
 }
 
 fn build_binding(func: FunctionDef, tables: &[TableDef]) -> FunctionBinding {
-    let has_upload = func
-        .args
-        .iter()
-        .any(|a| emit::contains_upload(&a.rust_type));
-
     let is_custom_args = func.args.len() == 1
         && func
             .args
@@ -120,9 +108,7 @@ fn build_binding(func: FunctionDef, tables: &[TableDef]) -> FunctionBinding {
         kind: func.kind,
         args: func.args,
         return_type: func.return_type,
-        has_upload,
         is_custom_args,
-        doc: func.doc,
     }
 }
 
@@ -182,23 +168,6 @@ mod tests {
 
         let bindings = BindingSet::from_registry(&registry);
         assert_eq!(bindings.all().count(), 0);
-    }
-
-    #[test]
-    fn upload_detection_in_binding() {
-        let registry = SchemaRegistry::new();
-        let mut func = FunctionDef::mutation("upload_avatar", RustType::Custom("User".into()));
-        func.args.push(FunctionArg::new("file", RustType::Upload));
-        registry.register_function(func);
-
-        let bindings = BindingSet::from_registry(&registry);
-        assert!(
-            bindings
-                .mutations
-                .first()
-                .expect("expected upload mutation binding")
-                .has_upload
-        );
     }
 
     #[test]

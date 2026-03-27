@@ -409,10 +409,6 @@ pub struct AuthConfig {
     /// If set, tokens with a different audience are rejected.
     pub jwt_audience: Option<String>,
 
-    /// Token expiry duration (e.g., "15m", "1h", "7d").
-    /// Deprecated: use `access_token_ttl` instead.
-    pub token_expiry: Option<String>,
-
     /// Access token lifetime (e.g., "15m", "1h").
     /// Used by `ctx.issue_token_pair()`. Defaults to "1h".
     pub access_token_ttl: Option<String>,
@@ -441,7 +437,6 @@ impl Default for AuthConfig {
             jwt_algorithm: JwtAlgorithm::default(),
             jwt_issuer: None,
             jwt_audience: None,
-            token_expiry: None,
             access_token_ttl: None,
             refresh_token_ttl: None,
             jwks_url: None,
@@ -453,12 +448,11 @@ impl Default for AuthConfig {
 
 impl AuthConfig {
     /// Resolved access token TTL in seconds.
-    /// Checks `access_token_ttl`, falls back to `token_expiry`, then default 3600s (1h).
+    /// Parses `access_token_ttl`, default 3600s (1h).
     /// Minimum 1 second to prevent zero-lifetime tokens.
     pub fn access_token_ttl_secs(&self) -> i64 {
         self.access_token_ttl
             .as_deref()
-            .or(self.token_expiry.as_deref())
             .and_then(crate::util::parse_duration)
             .map(|d| (d.as_secs() as i64).max(1))
             .unwrap_or(3600)

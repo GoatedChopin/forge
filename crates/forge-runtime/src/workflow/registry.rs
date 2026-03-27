@@ -98,13 +98,6 @@ impl WorkflowRegistry {
         self.workflows.get(name)
     }
 
-    /// Get a workflow entry by name and version.
-    pub fn get_version(&self, name: &str, version: u32) -> Option<&WorkflowEntry> {
-        self.workflows
-            .get(name)
-            .filter(|e| e.info.version == version)
-    }
-
     /// List all registered workflows.
     pub fn list(&self) -> impl Iterator<Item = &WorkflowEntry> {
         self.workflows.values()

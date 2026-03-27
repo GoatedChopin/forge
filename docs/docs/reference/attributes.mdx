@@ -421,9 +421,7 @@ Multi-step durable processes with compensation.
 | ---------------------- | ------------ | ------- | --------------------------------------------------- |
 | `public`               | flag         | `false` | Allow start without authentication                  |
 | `require_role("name")` | `string`     | none    | Require role to start                               |
-| `version`              | `u32`        | `1`     | Workflow version (increment for breaking changes)   |
 | `timeout`              | `"duration"` | `"24h"` | Maximum workflow duration (`"1h"`, `"7d"`, `"30d"`); if explicitly set it also becomes the default outbound HTTP timeout for `ctx.http()` |
-| `deprecated`           | flag         | `false` | Mark workflow as deprecated                         |
 
 ### Duration Format
 
@@ -448,7 +446,7 @@ Short sleeps for polling loops are allowed.
 ### Example
 
 ```rust
-#[forge::workflow(version = 2, timeout = "7d", require_role("admin"))]
+#[forge::workflow(timeout = "7d", require_role("admin"))]
 pub async fn order_fulfillment(ctx: &WorkflowContext, order: Order) -> Result<FulfillmentResult> {
     let payment = ctx.step("charge_card", || async {
         charge(&order.payment).await

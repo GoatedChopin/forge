@@ -96,7 +96,6 @@ CREATE INDEX IF NOT EXISTS idx_forge_cron_runs_name_time
 CREATE TABLE IF NOT EXISTS forge_workflow_runs (
     id UUID PRIMARY KEY,
     workflow_name VARCHAR(255) NOT NULL,
-    version INTEGER DEFAULT 1,
     owner_subject TEXT,
     input JSONB NOT NULL DEFAULT '{}',
     output JSONB,
@@ -445,13 +444,6 @@ CREATE OR REPLACE FUNCTION forge_purge_expired_oauth_codes()
 RETURNS void LANGUAGE sql AS $$
     DELETE FROM forge_oauth_codes
     WHERE expires_at < now() - interval '1 hour';
-$$;
-
--- Alias for documented function name: forge_cleanup_refresh_tokens()
--- Maps to forge_purge_expired_refresh_tokens() for backward compatibility.
-CREATE OR REPLACE FUNCTION forge_cleanup_refresh_tokens()
-RETURNS void LANGUAGE sql AS $$
-    SELECT forge_purge_expired_refresh_tokens();
 $$;
 
 -- Cluster-aware cache invalidation tracking.

@@ -30,14 +30,10 @@ pub trait ForgeWorkflow: Send + Sync + 'static {
 pub struct WorkflowInfo {
     /// Workflow name.
     pub name: &'static str,
-    /// Workflow version.
-    pub version: u32,
     /// Default timeout for the entire workflow.
     pub timeout: Duration,
     /// Default timeout for outbound HTTP requests made by the workflow.
     pub http_timeout: Option<Duration>,
-    /// Whether the workflow is deprecated.
-    pub deprecated: bool,
     /// Whether the workflow is public (no auth required).
     pub is_public: bool,
     /// Required role for authorization (implies auth required).
@@ -48,10 +44,8 @@ impl Default for WorkflowInfo {
     fn default() -> Self {
         Self {
             name: "",
-            version: 1,
             timeout: Duration::from_secs(86400), // 24 hours
             http_timeout: None,
-            deprecated: false,
             is_public: false,
             required_role: None,
         }
@@ -134,8 +128,6 @@ mod tests {
     fn test_workflow_info_default() {
         let info = WorkflowInfo::default();
         assert_eq!(info.name, "");
-        assert_eq!(info.version, 1);
-        assert!(!info.deprecated);
     }
 
     #[test]

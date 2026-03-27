@@ -18,10 +18,6 @@ use super::runner::Migration;
 /// System migration prefix. All forge internal migrations use this prefix.
 pub const SYSTEM_MIGRATION_PREFIX: &str = "__forge_v";
 
-/// Legacy migration name from older forge versions.
-/// If found, it will be considered equivalent to v001.
-pub const LEGACY_MIGRATION_NAME: &str = "0000_forge_internal";
-
 /// System migration v001: Initial FORGE schema.
 /// Creates all core tables for jobs, workflows, crons, observability, daemons, webhooks, etc.
 const V001_INITIAL: &str = include_str!("../../migrations/system/v001_initial.sql");
@@ -82,19 +78,14 @@ pub fn get_all_system_sql() -> String {
 
 /// Check if a migration name is a system migration.
 pub fn is_system_migration(name: &str) -> bool {
-    name.starts_with(SYSTEM_MIGRATION_PREFIX) || name == LEGACY_MIGRATION_NAME
+    name.starts_with(SYSTEM_MIGRATION_PREFIX)
 }
 
 /// Extract version number from a system migration name.
 /// Returns None if not a valid system migration name.
 pub fn extract_version(name: &str) -> Option<u32> {
-    if name == LEGACY_MIGRATION_NAME {
-        return Some(1);
-    }
-    if let Some(suffix) = name.strip_prefix(SYSTEM_MIGRATION_PREFIX) {
-        return suffix.parse().ok();
-    }
-    None
+    name.strip_prefix(SYSTEM_MIGRATION_PREFIX)
+        .and_then(|suffix| suffix.parse().ok())
 }
 
 #[cfg(test)]
@@ -144,7 +135,6 @@ mod tests {
         assert!(is_system_migration("__forge_v001"));
         assert!(is_system_migration("__forge_v002"));
         assert!(is_system_migration("__forge_v100"));
-        assert!(is_system_migration("0000_forge_internal")); // Legacy
         assert!(!is_system_migration("0001_create_users"));
         assert!(!is_system_migration("user_migration"));
     }
@@ -154,7 +144,6 @@ mod tests {
         assert_eq!(extract_version("__forge_v001"), Some(1));
         assert_eq!(extract_version("__forge_v002"), Some(2));
         assert_eq!(extract_version("__forge_v100"), Some(100));
-        assert_eq!(extract_version("0000_forge_internal"), Some(1)); // Legacy
         assert_eq!(extract_version("0001_create_users"), None);
         assert_eq!(extract_version("invalid"), None);
     }

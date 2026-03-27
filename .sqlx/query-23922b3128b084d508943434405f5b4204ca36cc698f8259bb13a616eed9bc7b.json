@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT id, workflow_name, version, owner_subject, input, output, status, current_step,\n                   step_results, started_at, completed_at, error, trace_id\n            FROM forge_workflow_runs\n            WHERE id = $1\n            ",
+  "query": "\n            SELECT id, workflow_name, owner_subject, input, output, status, current_step,\n                   step_results, started_at, completed_at, error, trace_id\n            FROM forge_workflow_runs\n            WHERE id = $1\n            ",
   "describe": {
     "columns": [
       {
@@ -15,56 +15,51 @@
       },
       {
         "ordinal": 2,
-        "name": "version",
-        "type_info": "Int4"
-      },
-      {
-        "ordinal": 3,
         "name": "owner_subject",
         "type_info": "Text"
       },
       {
-        "ordinal": 4,
+        "ordinal": 3,
         "name": "input",
         "type_info": "Jsonb"
       },
       {
-        "ordinal": 5,
+        "ordinal": 4,
         "name": "output",
         "type_info": "Jsonb"
       },
       {
-        "ordinal": 6,
+        "ordinal": 5,
         "name": "status",
         "type_info": "Varchar"
       },
       {
-        "ordinal": 7,
+        "ordinal": 6,
         "name": "current_step",
         "type_info": "Varchar"
       },
       {
-        "ordinal": 8,
+        "ordinal": 7,
         "name": "step_results",
         "type_info": "Jsonb"
       },
       {
-        "ordinal": 9,
+        "ordinal": 8,
         "name": "started_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 10,
+        "ordinal": 9,
         "name": "completed_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 11,
+        "ordinal": 10,
         "name": "error",
         "type_info": "Text"
       },
       {
-        "ordinal": 12,
+        "ordinal": 11,
         "name": "trace_id",
         "type_info": "Varchar"
       }
@@ -78,7 +73,6 @@
       false,
       false,
       true,
-      true,
       false,
       true,
       false,
@@ -90,5 +84,5 @@
       true
     ]
   },
-  "hash": "7131c1b620d36589327c4d495933ef54cf4e4f01995db7a42e93e3d749646c39"
+  "hash": "23922b3128b084d508943434405f5b4204ca36cc698f8259bb13a616eed9bc7b"
 }

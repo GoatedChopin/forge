@@ -55,24 +55,7 @@ impl FieldDef {
     }
 }
 
-/// Convert a string to snake_case.
-fn to_snake_case(s: &str) -> String {
-    let mut result = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if c.is_uppercase() {
-            if i > 0 {
-                result.push('_');
-            }
-            // to_lowercase always yields at least one char for uppercase input
-            for lc in c.to_lowercase() {
-                result.push(lc);
-            }
-        } else {
-            result.push(c);
-        }
-    }
-    result
-}
+use crate::util::to_snake_case;
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]

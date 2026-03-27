@@ -85,7 +85,7 @@ Exactly-once via `UNIQUE(cron_name, scheduled_time)`. Leader-only execution. 5-p
 ### Workflows
 
 ```rust
-#[forge::workflow(version = 1, timeout = "30d")]
+#[forge::workflow(timeout = "30d")]
 pub async fn order_fulfillment(ctx: &WorkflowContext, order_id: Uuid) -> Result<()> {
     let payment = ctx.step("charge", || async {
         charge_card(order_id).await
@@ -108,7 +108,7 @@ pub async fn order_fulfillment(ctx: &WorkflowContext, order_id: Uuid) -> Result<
 ```
 
 - Steps are cached: on resume, completed steps return cached result without re-executing.
-- Compensation runs in reverse order. Step names must be stable across versions (cache keys).
+- Compensation runs in reverse order. Step names must be stable across deploys (cache keys).
 - `ctx.workflow_time()` for deterministic replay (not wall clock).
 - Sequential steps use `Fn` (supports retry). Parallel steps use `FnOnce` (no retry).
 

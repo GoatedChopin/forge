@@ -84,8 +84,6 @@ pub struct WorkflowContext {
     pub run_id: Uuid,
     /// Workflow name.
     pub workflow_name: String,
-    /// Workflow version.
-    pub version: u32,
     /// When the workflow started.
     pub started_at: DateTime<Utc>,
     /// Deterministic workflow time (consistent across replays).
@@ -122,7 +120,6 @@ impl WorkflowContext {
     pub fn new(
         run_id: Uuid,
         workflow_name: String,
-        version: u32,
         db_pool: sqlx::PgPool,
         http_client: CircuitBreakerClient,
     ) -> Self {
@@ -130,7 +127,6 @@ impl WorkflowContext {
         Self {
             run_id,
             workflow_name,
-            version,
             started_at: now,
             workflow_time: now,
             auth: AuthContext::unauthenticated(),
@@ -152,7 +148,6 @@ impl WorkflowContext {
     pub fn resumed(
         run_id: Uuid,
         workflow_name: String,
-        version: u32,
         started_at: DateTime<Utc>,
         db_pool: sqlx::PgPool,
         http_client: CircuitBreakerClient,
@@ -160,7 +155,6 @@ impl WorkflowContext {
         Self {
             run_id,
             workflow_name,
-            version,
             started_at,
             workflow_time: started_at,
             auth: AuthContext::unauthenticated(),
@@ -231,10 +225,6 @@ impl WorkflowContext {
 
     pub fn raw_http(&self) -> &reqwest::Client {
         self.http_client.inner()
-    }
-
-    pub fn http_with_circuit_breaker(&self) -> crate::http::HttpClient {
-        self.http()
     }
 
     pub fn set_http_timeout(&mut self, timeout: Option<Duration>) {
@@ -884,14 +874,12 @@ mod tests {
         let ctx = WorkflowContext::new(
             run_id,
             "test_workflow".to_string(),
-            1,
             pool,
             CircuitBreakerClient::with_defaults(reqwest::Client::new()),
         );
 
         assert_eq!(ctx.run_id, run_id);
         assert_eq!(ctx.workflow_name, "test_workflow");
-        assert_eq!(ctx.version, 1);
     }
 
     #[tokio::test]
@@ -904,7 +892,6 @@ mod tests {
         let ctx = WorkflowContext::new(
             Uuid::new_v4(),
             "test".to_string(),
-            1,
             pool,
             CircuitBreakerClient::with_defaults(reqwest::Client::new()),
         );

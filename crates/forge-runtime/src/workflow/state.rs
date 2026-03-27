@@ -9,8 +9,6 @@ pub struct WorkflowRecord {
     pub id: Uuid,
     /// Workflow name.
     pub workflow_name: String,
-    /// Workflow version.
-    pub version: u32,
     /// Principal that started the workflow.
     pub owner_subject: Option<String>,
     /// Input data as JSON.
@@ -37,14 +35,12 @@ impl WorkflowRecord {
     /// Create a new workflow record.
     pub fn new(
         workflow_name: impl Into<String>,
-        version: u32,
         input: serde_json::Value,
         owner_subject: Option<String>,
     ) -> Self {
         Self {
             id: Uuid::new_v4(),
             workflow_name: workflow_name.into(),
-            version,
             owner_subject,
             input,
             output: None,
@@ -175,15 +171,14 @@ mod tests {
 
     #[test]
     fn test_workflow_record_creation() {
-        let record = WorkflowRecord::new("test_workflow", 1, serde_json::json!({}), None);
+        let record = WorkflowRecord::new("test_workflow", serde_json::json!({}), None);
         assert_eq!(record.workflow_name, "test_workflow");
-        assert_eq!(record.version, 1);
         assert_eq!(record.status, WorkflowStatus::Created);
     }
 
     #[test]
     fn test_workflow_record_transitions() {
-        let mut record = WorkflowRecord::new("test", 1, serde_json::json!({}), None);
+        let mut record = WorkflowRecord::new("test", serde_json::json!({}), None);
 
         record.start();
         assert_eq!(record.status, WorkflowStatus::Running);

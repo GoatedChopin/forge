@@ -77,7 +77,7 @@ Workflows survive restarts; `tokio::sleep` doesn't. Use `ctx.sleep()` which pers
 Sequential steps need `Fn` closures because they may execute multiple times on retry. Parallel steps use `FnOnce` (no retry).
 
 **Step results are cached by name on resume.**
-If you rename a step between code versions, the old cache entry won't match and the step re-executes. Keep step names stable across versions.
+If you rename a step between deploys, the old cache entry won't match and the step re-executes. Keep step names stable across deploys.
 
 ## 5. Frontend
 

@@ -32,5 +32,5 @@ pub use readset::{BloomFilter, Change, ChangeOperation, ReadSet, TrackingMode};
 pub use session::{SessionId, SessionInfo, SessionStatus};
 pub use subscription::{
     AuthScope, Delta, QueryGroup, QueryGroupId, Subscriber, SubscriberId, SubscriptionId,
-    SubscriptionInfo, SubscriptionState,
+    SubscriptionState,
 };

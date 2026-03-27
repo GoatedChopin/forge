@@ -71,7 +71,7 @@ async fn discover_dns(config: &ClusterConfig, default_port: u16) -> Result<Vec<P
     .map_err(|e| ForgeError::Cluster(format!("DNS lookup task failed: {}", e)))?
     .map_err(|e| ForgeError::Cluster(format!("DNS resolution failed for '{}': {}", dns_name, e)))?;
 
-    let peers = addrs
+    let peers: Vec<PeerAddress> = addrs
         .into_iter()
         .map(|addr| PeerAddress {
             ip: addr.ip(),
@@ -79,7 +79,11 @@ async fn discover_dns(config: &ClusterConfig, default_port: u16) -> Result<Vec<P
         })
         .collect();
 
-    tracing::debug!(dns_name, peer_count = peers.len(), "DNS discovery completed");
+    tracing::debug!(
+        dns_name,
+        peer_count = peers.len(),
+        "DNS discovery completed"
+    );
     Ok(peers)
 }
 
@@ -91,7 +95,10 @@ async fn discover_dns(config: &ClusterConfig, default_port: u16) -> Result<Vec<P
 ///
 /// Falls back to DNS discovery using the `dns_name` config, which should
 /// be set to the headless service FQDN (e.g., `my-app.default.svc.cluster.local`).
-async fn discover_kubernetes(config: &ClusterConfig, default_port: u16) -> Result<Vec<PeerAddress>> {
+async fn discover_kubernetes(
+    config: &ClusterConfig,
+    default_port: u16,
+) -> Result<Vec<PeerAddress>> {
     // Kubernetes discovery uses DNS under the hood via headless services.
     // The dns_name should point to the headless service FQDN.
     if config.dns_name.is_some() {
@@ -190,9 +197,11 @@ mod tests {
 
         let peers = discover_static(&config, 9081).unwrap();
         assert_eq!(peers.len(), 3);
-        assert_eq!(peers[0].ip, "10.0.0.1".parse::<IpAddr>().unwrap());
-        assert_eq!(peers[0].port, 9081);
-        assert_eq!(peers[2].port, 9081); // default port used
+        let first = peers.first().expect("expected at least one peer");
+        assert_eq!(first.ip, "10.0.0.1".parse::<IpAddr>().unwrap());
+        assert_eq!(first.port, 9081);
+        let third = peers.get(2).expect("expected three peers");
+        assert_eq!(third.port, 9081); // default port used
     }
 
     #[test]

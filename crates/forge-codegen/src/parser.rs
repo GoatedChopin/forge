@@ -361,9 +361,9 @@ fn type_to_rust_type(ty: &syn::Type) -> RustType {
         "bool" => RustType::Bool,
         "Uuid" | "uuid::Uuid" => RustType::Uuid,
         "DateTime<Utc>" | "chrono::DateTime<Utc>" | "chrono::DateTime<chrono::Utc>" => {
-            RustType::DateTime
+            RustType::Instant
         }
-        "NaiveDate" | "chrono::NaiveDate" => RustType::Date,
+        "NaiveDate" | "chrono::NaiveDate" => RustType::LocalDate,
         "NaiveTime" | "chrono::NaiveTime" => RustType::LocalTime,
         "serde_json::Value" | "Value" => RustType::Json,
         "Vec<u8>" => RustType::Bytes,

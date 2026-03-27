@@ -918,11 +918,6 @@ impl MutationContext {
         self.http_client.inner()
     }
 
-    /// Get the circuit-breaker-backed HTTP client explicitly.
-    pub fn http_with_circuit_breaker(&self) -> crate::http::HttpClient {
-        self.http()
-    }
-
     /// Set the default outbound HTTP request timeout for this context.
     pub fn set_http_timeout(&mut self, timeout: Option<Duration>) {
         self.http_timeout = timeout;
