@@ -1,7 +1,10 @@
 use dioxus::prelude::*;
 use forge_dioxus::WorkflowStatus;
 
-use crate::forge::{User, VerificationInput, use_account_verification};
+use crate::forge::{
+    ConfirmVerificationInput, User, VerificationInput, confirm_verification,
+    use_account_verification, use_forge_client,
+};
 
 #[component]
 pub fn VerificationCard(selected_user: Signal<Option<User>>) -> Element {
@@ -22,7 +25,7 @@ pub fn VerificationCard(selected_user: Signal<Option<User>>) -> Element {
             if let Some((nonce, account_id, email)) = run_request() {
                 VerificationRun { key: "{nonce}", account_id, email, on_restart: start }
             } else {
-                p { class: "muted small workflow-desc", "Multi-step workflow with durable sleep" }
+                p { class: "muted small workflow-desc", "Multi-step workflow with event wait" }
                 button { onclick: start, "Start Workflow" }
             }
         }
@@ -36,10 +39,32 @@ fn VerificationRun(
     on_restart: EventHandler<MouseEvent>,
 ) -> Element {
     let wf = use_account_verification(VerificationInput::new(account_id, email));
+    let mut confirm_sent = use_signal(|| false);
+
+    let is_waiting = wf.state.status == WorkflowStatus::Waiting;
+    let is_confirming = *confirm_sent.read() && wf.state.status == WorkflowStatus::Running;
+    let show_confirm = is_waiting || is_confirming;
     let can_restart = matches!(
         wf.state.status,
         WorkflowStatus::Completed | WorkflowStatus::Failed | WorkflowStatus::Compensated
     );
+
+    let client = use_forge_client();
+    let workflow_id = wf.state.workflow_id.clone();
+    let handle_confirm = move |_| {
+        if *confirm_sent.read() {
+            return;
+        }
+        confirm_sent.set(true);
+        let wf_id = workflow_id.clone();
+        let client = client.clone();
+        spawn(async move {
+            let input = ConfirmVerificationInput::new(wf_id);
+            if confirm_verification(&client, input).await.is_err() {
+                confirm_sent.set(false);
+            }
+        });
+    };
 
     rsx! {
         div { class: "steps",
@@ -48,6 +73,17 @@ fn VerificationRun(
                     span { class: "icon", {step_icon(&step.status)} }
                     span { "{step.name}" }
                 }
+            }
+        }
+        if show_confirm {
+            p { class: "muted small",
+                if *confirm_sent.read() { "Confirmation sent, finishing up..." } else { "Waiting for your confirmation..." }
+            }
+            button {
+                class: "confirm-btn",
+                disabled: *confirm_sent.read(),
+                onclick: handle_confirm,
+                if *confirm_sent.read() { "Confirmed" } else { "Confirm Verification" }
             }
         }
         if can_restart {

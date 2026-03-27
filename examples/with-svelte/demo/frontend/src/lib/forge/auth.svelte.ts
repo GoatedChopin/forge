@@ -111,9 +111,7 @@ class AuthStore {
       const res = await fetch(`${this.#apiUrl}/_api/rpc/refresh`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          args: { refresh_token: this.#state.refreshToken },
-        }),
+        body: JSON.stringify({ args: { refresh_token: this.#state.refreshToken } }),
       });
       if (!res.ok) {
         if (res.status === 401 || res.status === 403) {
@@ -123,10 +121,7 @@ class AuthStore {
       }
       const envelope = await res.json();
       if (envelope.success && envelope.data) {
-        this.updateTokens(
-          envelope.data.access_token,
-          envelope.data.refresh_token,
-        );
+        this.updateTokens(envelope.data.access_token, envelope.data.refresh_token);
         return true;
       }
       this.clearAuth();

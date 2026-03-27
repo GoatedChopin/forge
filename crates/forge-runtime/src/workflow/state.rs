@@ -9,6 +9,10 @@ pub struct WorkflowRecord {
     pub id: Uuid,
     /// Workflow name.
     pub workflow_name: String,
+    /// Version this run is pinned to.
+    pub workflow_version: String,
+    /// Signature this run was started with.
+    pub workflow_signature: String,
     /// Principal that started the workflow.
     pub owner_subject: Option<String>,
     /// Input data as JSON.
@@ -17,6 +21,10 @@ pub struct WorkflowRecord {
     pub output: Option<serde_json::Value>,
     /// Current status.
     pub status: WorkflowStatus,
+    /// Why the run is blocked (if status is blocked_*).
+    pub blocking_reason: Option<String>,
+    /// Why the run was resolved (for terminal operator actions).
+    pub resolution_reason: Option<String>,
     /// Current step name.
     pub current_step: Option<String>,
     /// Step results as JSON map.
@@ -32,19 +40,25 @@ pub struct WorkflowRecord {
 }
 
 impl WorkflowRecord {
-    /// Create a new workflow record.
+    /// Create a new workflow record pinned to a specific version and signature.
     pub fn new(
         workflow_name: impl Into<String>,
+        workflow_version: impl Into<String>,
+        workflow_signature: impl Into<String>,
         input: serde_json::Value,
         owner_subject: Option<String>,
     ) -> Self {
         Self {
             id: Uuid::new_v4(),
             workflow_name: workflow_name.into(),
+            workflow_version: workflow_version.into(),
+            workflow_signature: workflow_signature.into(),
             owner_subject,
             input,
             output: None,
             status: WorkflowStatus::Created,
+            blocking_reason: None,
+            resolution_reason: None,
             current_step: None,
             step_results: serde_json::json!({}),
             started_at: Utc::now(),
@@ -171,14 +185,17 @@ mod tests {
 
     #[test]
     fn test_workflow_record_creation() {
-        let record = WorkflowRecord::new("test_workflow", serde_json::json!({}), None);
+        let record =
+            WorkflowRecord::new("test_workflow", "v1", "abc123", serde_json::json!({}), None);
         assert_eq!(record.workflow_name, "test_workflow");
+        assert_eq!(record.workflow_version, "v1");
+        assert_eq!(record.workflow_signature, "abc123");
         assert_eq!(record.status, WorkflowStatus::Created);
     }
 
     #[test]
     fn test_workflow_record_transitions() {
-        let mut record = WorkflowRecord::new("test", serde_json::json!({}), None);
+        let mut record = WorkflowRecord::new("test", "v1", "sig", serde_json::json!({}), None);
 
         record.start();
         assert_eq!(record.status, WorkflowStatus::Running);

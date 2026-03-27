@@ -3,6 +3,8 @@ use quote::{format_ident, quote};
 use syn::visit::Visit;
 use syn::{ExprAwait, ExprCall, ItemFn, Lit, parse_macro_input};
 
+use std::collections::BTreeSet;
+
 use crate::utils::{has_attr_flag, parse_attr_value, parse_duration_tokens, to_pascal_case};
 
 /// Minimum sleep duration (in seconds) that triggers the tokio::sleep warning.
@@ -139,8 +141,12 @@ impl<'ast> Visit<'ast> for TokioSleepDetector {
 /// Workflow attributes.
 #[derive(Debug, Default)]
 struct WorkflowAttrs {
+    name: Option<String>,
+    version: Option<String>,
     timeout: Option<String>,
     is_public: bool,
+    is_active: bool,
+    is_deprecated: bool,
     required_role: Option<String>,
 }
 
@@ -148,12 +154,28 @@ fn parse_workflow_attrs(attr: TokenStream) -> WorkflowAttrs {
     let mut result = WorkflowAttrs::default();
     let attr_str = attr.to_string();
 
+    if let Some(name) = parse_attr_value(&attr_str, "name") {
+        result.name = Some(name);
+    }
+
+    if let Some(version) = parse_attr_value(&attr_str, "version") {
+        result.version = Some(version);
+    }
+
     if let Some(timeout) = parse_attr_value(&attr_str, "timeout") {
         result.timeout = Some(timeout);
     }
 
     if has_attr_flag(&attr_str, "public") {
         result.is_public = true;
+    }
+
+    if has_attr_flag(&attr_str, "active") {
+        result.is_active = true;
+    }
+
+    if has_attr_flag(&attr_str, "deprecated") {
+        result.is_deprecated = true;
     }
 
     if let Some(role_start) = attr_str.find("require_role")
@@ -166,15 +188,129 @@ fn parse_workflow_attrs(attr: TokenStream) -> WorkflowAttrs {
         }
     }
 
+    // Default to active if neither active nor deprecated is specified
+    if !result.is_active && !result.is_deprecated {
+        result.is_active = true;
+    }
+
     result
+}
+
+/// Extract step and wait keys from the workflow function body for signature derivation.
+/// Looks for patterns like `ctx.step("key")`, `ctx.wait_for_event::<T>("event", ...)`,
+/// `ctx.sleep(...)`, and `ctx.parallel()...step("key")`.
+struct ContractExtractor {
+    step_keys: BTreeSet<String>,
+    wait_keys: BTreeSet<String>,
+}
+
+impl ContractExtractor {
+    fn new() -> Self {
+        Self {
+            step_keys: BTreeSet::new(),
+            wait_keys: BTreeSet::new(),
+        }
+    }
+
+    fn extract_string_lit(expr: &syn::Expr) -> Option<String> {
+        if let syn::Expr::Lit(lit) = expr
+            && let Lit::Str(s) = &lit.lit
+        {
+            return Some(s.value());
+        }
+        None
+    }
+}
+
+impl<'ast> Visit<'ast> for ContractExtractor {
+    fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
+        let method_name = node.method.to_string();
+
+        match method_name.as_str() {
+            // ctx.step("key", ...) or builder.step("key", ...)
+            "step" => {
+                if let Some(first_arg) = node.args.first()
+                    && let Some(key) = Self::extract_string_lit(first_arg)
+                {
+                    self.step_keys.insert(key);
+                }
+            }
+            // ctx.wait_for_event::<T>("event_name", ...)
+            "wait_for_event" => {
+                if let Some(first_arg) = node.args.first()
+                    && let Some(key) = Self::extract_string_lit(first_arg)
+                {
+                    self.wait_keys.insert(key);
+                }
+            }
+            _ => {}
+        }
+
+        // Continue visiting child nodes
+        syn::visit::visit_expr_method_call(self, node);
+    }
+}
+
+/// Derive a workflow signature from its persisted contract.
+/// The signature is a hex-encoded hash of: name, version, step keys, wait keys,
+/// timeout, and input/output type shapes.
+fn derive_signature(
+    name: &str,
+    version: &str,
+    step_keys: &BTreeSet<String>,
+    wait_keys: &BTreeSet<String>,
+    timeout_secs: u64,
+    input_type: &str,
+    output_type: &str,
+) -> String {
+    // Simple FNV-1a 64-bit hash (no external crate needed in proc macros)
+    let mut hash: u64 = 0xcbf29ce484222325;
+    let fnv_prime: u64 = 0x100000001b3;
+
+    let mut feed = |bytes: &[u8]| {
+        for &b in bytes {
+            hash ^= u64::from(b);
+            hash = hash.wrapping_mul(fnv_prime);
+        }
+        // separator
+        hash ^= 0xff;
+        hash = hash.wrapping_mul(fnv_prime);
+    };
+
+    feed(name.as_bytes());
+    feed(version.as_bytes());
+    for key in step_keys {
+        feed(b"step:");
+        feed(key.as_bytes());
+    }
+    for key in wait_keys {
+        feed(b"wait:");
+        feed(key.as_bytes());
+    }
+    feed(timeout_secs.to_le_bytes().as_slice());
+    feed(input_type.as_bytes());
+    feed(output_type.as_bytes());
+
+    format!("{hash:016x}")
 }
 
 pub fn workflow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
     let attrs = parse_workflow_attrs(attr);
 
+    // Validate: cannot be both active and deprecated
+    if attrs.is_active && attrs.is_deprecated {
+        return syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "A workflow version cannot be both `active` and `deprecated`",
+        )
+        .to_compile_error()
+        .into();
+    }
+
     let fn_name = &input.sig.ident;
     let fn_name_str = fn_name.to_string();
+    let workflow_name = attrs.name.as_deref().unwrap_or(&fn_name_str);
     let struct_name = format_ident!("{}Workflow", to_pascal_case(&fn_name.to_string()));
 
     let vis = &input.vis;
@@ -194,9 +330,14 @@ pub fn workflow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
         .into();
     }
 
+    // Extract step/wait keys from function body for signature derivation
+    let mut contract_extractor = ContractExtractor::new();
+    contract_extractor.visit_block(block);
+
     // Parse input type from function signature
     let mut input_type = quote! { () };
     let mut input_ident = format_ident!("_input");
+    let mut input_type_str = String::from("()");
 
     for (i, input_arg) in input.sig.inputs.iter().enumerate() {
         if i == 0 {
@@ -207,11 +348,13 @@ pub fn workflow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                 input_ident = ident.ident.clone();
             }
             let ty = &pat_type.ty;
+            input_type_str = quote!(#ty).to_string();
             input_type = quote! { #ty };
         }
     }
 
     // Parse return type
+    let mut output_type_str = String::from("()");
     let output_type = match &input.sig.output {
         syn::ReturnType::Default => quote! { () },
         syn::ReturnType::Type(_, ty) => {
@@ -220,6 +363,7 @@ pub fn workflow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                     if segment.ident == "Result" {
                         if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
                             if let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
+                                output_type_str = quote!(#inner).to_string();
                                 quote! { #inner }
                             } else {
                                 quote! { () }
@@ -228,18 +372,25 @@ pub fn workflow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                             quote! { () }
                         }
                     } else {
+                        output_type_str = quote!(#ty).to_string();
                         quote! { #ty }
                     }
                 } else {
+                    output_type_str = quote!(#ty).to_string();
                     quote! { #ty }
                 }
             } else {
+                output_type_str = quote!(#ty).to_string();
                 quote! { #ty }
             }
         }
     };
 
+    let version_str = attrs.version.as_deref().unwrap_or("v1");
     let is_public = attrs.is_public;
+    let is_active = attrs.is_active;
+    let is_deprecated = attrs.is_deprecated;
+
     let required_role = if let Some(ref role) = attrs.required_role {
         quote! { Some(#role) }
     } else {
@@ -251,12 +402,31 @@ pub fn workflow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     } else {
         quote! { std::time::Duration::from_secs(86400) } // 24 hours default
     };
+
+    // Compute timeout seconds for signature
+    let timeout_secs: u64 = if let Some(ref t) = attrs.timeout {
+        crate::utils::parse_duration_secs(t).unwrap_or(86400)
+    } else {
+        86400
+    };
+
     let http_timeout = if let Some(ref t) = attrs.timeout {
         let timeout = parse_duration_tokens(t, 0);
         quote! { Some(#timeout) }
     } else {
         quote! { None }
     };
+
+    // Derive the workflow signature from its persisted contract
+    let signature = derive_signature(
+        workflow_name,
+        version_str,
+        &contract_extractor.step_keys,
+        &contract_extractor.wait_keys,
+        timeout_secs,
+        &input_type_str,
+        &output_type_str,
+    );
 
     let fn_attrs = &input.attrs;
 
@@ -270,7 +440,11 @@ pub fn workflow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
 
             fn info() -> forge::forge_core::workflow::WorkflowInfo {
                 forge::forge_core::workflow::WorkflowInfo {
-                    name: #fn_name_str,
+                    name: #workflow_name,
+                    version: #version_str,
+                    signature: #signature,
+                    is_active: #is_active,
+                    is_deprecated: #is_deprecated,
                     timeout: #timeout,
                     http_timeout: #http_timeout,
                     is_public: #is_public,
@@ -316,4 +490,56 @@ mod tests {
         let ts = parse_duration_tokens("24h", 86400);
         assert!(!ts.is_empty());
     }
+
+    #[test]
+    fn test_derive_signature_deterministic() {
+        let mut steps = BTreeSet::new();
+        steps.insert("create_user".to_string());
+        steps.insert("send_email".to_string());
+        let waits = BTreeSet::new();
+
+        let sig1 = derive_signature("onboarding", "v1", &steps, &waits, 86400, "Input", "Output");
+        let sig2 = derive_signature("onboarding", "v1", &steps, &waits, 86400, "Input", "Output");
+        assert_eq!(sig1, sig2);
+    }
+
+    #[test]
+    fn test_derive_signature_changes_with_steps() {
+        let mut steps1 = BTreeSet::new();
+        steps1.insert("create_user".to_string());
+        let mut steps2 = BTreeSet::new();
+        steps2.insert("create_user".to_string());
+        steps2.insert("send_email".to_string());
+        let waits = BTreeSet::new();
+
+        let sig1 = derive_signature("wf", "v1", &steps1, &waits, 86400, "()", "()");
+        let sig2 = derive_signature("wf", "v1", &steps2, &waits, 86400, "()", "()");
+        assert_ne!(sig1, sig2);
+    }
+
+    #[test]
+    fn test_derive_signature_changes_with_version() {
+        let steps = BTreeSet::new();
+        let waits = BTreeSet::new();
+
+        let sig1 = derive_signature("wf", "v1", &steps, &waits, 86400, "()", "()");
+        let sig2 = derive_signature("wf", "v2", &steps, &waits, 86400, "()", "()");
+        assert_ne!(sig1, sig2);
+    }
+
+    #[test]
+    fn test_derive_signature_changes_with_waits() {
+        let steps = BTreeSet::new();
+        let mut waits1 = BTreeSet::new();
+        waits1.insert("payment_confirmed".to_string());
+        let waits2 = BTreeSet::new();
+
+        let sig1 = derive_signature("wf", "v1", &steps, &waits1, 86400, "()", "()");
+        let sig2 = derive_signature("wf", "v1", &steps, &waits2, 86400, "()", "()");
+        assert_ne!(sig1, sig2);
+    }
+
+    // Note: parse_workflow_attrs takes proc_macro::TokenStream which can't be used
+    // outside of a proc macro context. Attribute parsing is tested via integration
+    // tests (macro expansion in the demo example).
 }

@@ -13,6 +13,10 @@ CREATE UNLOGGED TABLE IF NOT EXISTS forge_nodes (
     worker_capabilities TEXT[] NOT NULL DEFAULT '{}',
     status VARCHAR(32) NOT NULL DEFAULT 'starting',
     version VARCHAR(64),
+    current_connections INTEGER NOT NULL DEFAULT 0,
+    current_jobs INTEGER NOT NULL DEFAULT 0,
+    cpu_usage DOUBLE PRECISION,
+    memory_usage DOUBLE PRECISION,
     started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -92,14 +96,28 @@ CREATE TABLE IF NOT EXISTS forge_cron_runs (
 CREATE INDEX IF NOT EXISTS idx_forge_cron_runs_name_time
     ON forge_cron_runs(cron_name, scheduled_time DESC);
 
+-- Workflows: Definition registry (upserted on startup)
+CREATE TABLE IF NOT EXISTS forge_workflow_definitions (
+    workflow_name VARCHAR(255) NOT NULL,
+    workflow_version VARCHAR(255) NOT NULL,
+    workflow_signature VARCHAR(64) NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'active',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (workflow_name, workflow_version)
+);
+
 -- Workflows: Run state
 CREATE TABLE IF NOT EXISTS forge_workflow_runs (
     id UUID PRIMARY KEY,
     workflow_name VARCHAR(255) NOT NULL,
+    workflow_version VARCHAR(255) NOT NULL,
+    workflow_signature VARCHAR(64) NOT NULL,
     owner_subject TEXT,
     input JSONB NOT NULL DEFAULT '{}',
     output JSONB,
     status VARCHAR(32) NOT NULL DEFAULT 'created',
+    blocking_reason TEXT,
+    resolution_reason TEXT,
     current_step VARCHAR(255),
     step_results JSONB DEFAULT '{}',
     started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -128,6 +146,10 @@ CREATE INDEX IF NOT EXISTS idx_forge_workflow_runs_tenant
 CREATE INDEX IF NOT EXISTS idx_forge_workflow_runs_owner_subject
     ON forge_workflow_runs(owner_subject)
     WHERE owner_subject IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_forge_workflow_runs_name_version
+    ON forge_workflow_runs(workflow_name, workflow_version)
+    WHERE status NOT IN ('completed', 'failed', 'compensated', 'retired_unresumable', 'cancelled_by_operator');
 
 -- Workflows: Event storage for durable workflows
 CREATE TABLE IF NOT EXISTS forge_workflow_events (

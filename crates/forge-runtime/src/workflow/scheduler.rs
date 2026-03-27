@@ -142,7 +142,8 @@ impl WorkflowScheduler {
         // Query for workflows ready to wake (timer or event timeout)
         let workflows = sqlx::query!(
             r#"
-            SELECT id, waiting_for_event FROM forge_workflow_runs
+            SELECT id, workflow_name, workflow_version, workflow_signature, waiting_for_event
+            FROM forge_workflow_runs
             WHERE status = 'waiting' AND (
                 (wake_at IS NOT NULL AND wake_at <= NOW())
                 OR (event_timeout_at IS NOT NULL AND event_timeout_at <= NOW())

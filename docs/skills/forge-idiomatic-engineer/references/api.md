@@ -79,10 +79,36 @@ When explicitly set, `timeout` also becomes the default outbound HTTP timeout fo
 
 Generated struct: `{PascalCase}Workflow`.
 
-| Attribute | Type | Default |
-|---|---|---|
-| `timeout = "24h"` | duration | `"24h"` |
-| `public` / `require_role(...)` | — | — |
+| Attribute | Type | Default | Notes |
+|---|---|---|---|
+| `name = "x"` | string | fn_name | Logical workflow identity. Two versions share the same name. |
+| `version = "2026-05"` | string | — | Freeform string. Paired with `name` to form the unique definition key. |
+| `active` | flag | true | This version handles new runs. At most one active version per name. |
+| `deprecated` | flag | false | Keeps executing in-flight runs but rejects new ones. Cannot combine with `active`. |
+| `timeout = "24h"` | duration | `"24h"` | |
+| `public` / `require_role(...)` | — | — | |
+
+Default is `active` when neither `active` nor `deprecated` is specified. Specifying both is a compile error.
+
+A workflow **signature** is derived automatically from step keys, wait keys, event names, timeout, and type shapes. The runtime persists definitions to `forge_workflow_definitions` on startup and stamps each run with `workflow_version` and `workflow_signature`. If a handler's signature differs from what was persisted under the same name+version, the node refuses to start.
+
+Versioned example:
+```rust
+#[forge::workflow(name = "user_onboarding", version = "2026-05", active)]
+pub async fn user_onboarding_v2(ctx: &WorkflowContext, input: OnboardingInput) -> Result<()> {
+    // current version — all new runs land here
+    ctx.step("verify_email", || async { verify(input.email).await }).run().await?;
+    ctx.step("provision", || async { provision(input.user_id).await }).run().await?;
+    Ok(())
+}
+
+#[forge::workflow(name = "user_onboarding", version = "2026-03", deprecated)]
+pub async fn user_onboarding_v1(ctx: &WorkflowContext, input: OnboardingInputV1) -> Result<()> {
+    // old version — only finishes in-flight runs, no new dispatches
+    ctx.step("send_welcome", || async { welcome(input.user_id).await }).run().await?;
+    Ok(())
+}
+```
 
 Compile-time: detects `tokio::sleep` > 100s and errors (must use `ctx.sleep()`). Signature: `async fn name(ctx: &WorkflowContext, input: T) -> Result<R>`.
 When explicitly set, `timeout` also becomes the default outbound HTTP timeout for `ctx.http()`.

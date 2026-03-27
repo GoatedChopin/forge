@@ -9,6 +9,7 @@
     getDemoStats,
     trackExportUsers,
     trackAccountVerification,
+    confirmVerification,
     getUsers$,
     getIssLocation$,
     getTrades$,
@@ -43,6 +44,7 @@
   // Export / Workflow
   let exportJobStore = $state<ReturnType<typeof trackExportUsers> | null>(null);
   let workflowStore = $state<ReturnType<typeof trackAccountVerification> | null>(null);
+  let confirmSent = $state(false);
 
   // Webhook
   let idempotencyKey = $state(generateKey());
@@ -258,10 +260,24 @@
   }
 
   function startVerificationWorkflow() {
+    confirmSent = false;
     workflowStore = trackAccountVerification({
       account_id: selectedUser?.id || "demo-user",
       email: selectedUser?.email || "demo@example.com",
     });
+  }
+
+  async function handleConfirmVerification() {
+    if (!workflowStore || confirmSent) return;
+    const state = $workflowStore;
+    if (!state?.workflowId) return;
+    confirmSent = true;
+    try {
+      await confirmVerification({ workflow_id: state.workflowId });
+    } catch (err: unknown) {
+      confirmSent = false;
+      console.error("Failed to confirm verification:", err);
+    }
   }
 
   function formatCoord(value: number, isLat: boolean): string {
@@ -286,8 +302,6 @@
 </script>
 
 <main class="shell">
-  <h1>Forge Demo</h1>
-
   <div class="columns">
     <!-- Left column -->
     <div class="col">
@@ -506,11 +520,16 @@
               </div>
             {/each}
           </div>
-          {#if ["completed", "failed", "compensated"].includes($workflowStore.status)}
+          {#if $workflowStore.status === "waiting" || ($workflowStore.status === "running" && confirmSent)}
+            <p class="muted small">{confirmSent ? "Confirmation sent, finishing up..." : "Waiting for your confirmation..."}</p>
+            <button class="confirm-btn" onclick={handleConfirmVerification} disabled={confirmSent}>
+              {confirmSent ? "Confirmed" : "Confirm Verification"}
+            </button>
+          {:else if ["completed", "failed", "compensated"].includes($workflowStore.status)}
             <button onclick={startVerificationWorkflow}>Run Again</button>
           {/if}
         {:else}
-          <p class="muted small workflow-desc">Multi-step workflow with durable sleep</p>
+          <p class="muted small workflow-desc">Multi-step workflow with event wait</p>
           <button onclick={startVerificationWorkflow}>Start Workflow</button>
         {/if}
       </section>
@@ -580,7 +599,6 @@
     line-height: 1.5;
   }
 
-  h1 { margin: 0 0 1.5rem; font-size: 1.75rem; font-weight: 700; }
   h2 { margin: 0 0 0.75rem; font-size: 0.95rem; font-weight: 600; }
 
   /* Layout */
@@ -703,8 +721,8 @@
   /* Responsive */
   @media (max-width: 700px) {
     main { padding: 1rem; }
-    h1 { font-size: 1.5rem; margin-bottom: 1rem; }
     .columns { flex-direction: column; }
+    .col { width: 100%; }
     .card { padding: 1rem; }
     .stats { gap: 1rem; flex-wrap: wrap; }
     .value { font-size: 0.95rem; }
@@ -716,5 +734,7 @@
     th, td { padding: 0.5rem 0.25rem; }
     .action-cell { display: flex; flex-wrap: wrap; gap: 0.25rem; }
     .popover { position: fixed; top: 50%; right: auto; left: 50%; transform: translate(-50%, -50%); }
+    .trades-table { font-size: 0.8rem; }
+    .code-block code { font-size: 0.7rem; }
   }
 </style>

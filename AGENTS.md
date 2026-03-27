@@ -62,9 +62,13 @@ Mutation macro validates: detects `dispatch_job()`/`start_workflow()` without `t
 
 Cron macro validates: cron expression checked at compile time via `cron` crate.
 
+Workflow macro: supports `name`, `version`, `active`/`deprecated`, `timeout`, `public`, `require_role` attributes. Extracts step/wait keys from function body via AST visitor. Derives FNV-1a signature from persisted contract (name, version, step keys, wait keys, timeout, input/output types). Fails if both `active` and `deprecated` are set.
+
 ### forge-core: Types and Traits
 
 Handler traits: `ForgeQuery`, `ForgeMutation`, `ForgeJob`, `ForgeCron`, `ForgeWorkflow`, `ForgeDaemon`, `ForgeWebhook`, `ForgeMcpTool`. All follow pattern: `type Args`, `type Output`, `fn info() -> XInfo`, `fn execute(ctx, args) -> Pin<Box<Future>>`.
+
+`WorkflowInfo` fields: `name`, `version`, `signature`, `is_active`, `is_deprecated`, `timeout`, `http_timeout`, `is_public`, `required_role`. `WorkflowStatus` variants: Created, Running, Waiting, Completed, Compensating, Compensated, Failed, BlockedMissingVersion, BlockedSignatureMismatch, BlockedMissingHandler, RetiredUnresumable, CancelledByOperator.
 
 Contexts: `QueryContext` (db pool, auth, env), `MutationContext` (+ conn, http circuit breaker, dispatch, token issuer, outbox buffer), `JobContext` (+ progress channel, saved data, cancellation), `WorkflowContext` (+ step states, compensation handlers, suspend signal, durable sleep), `CronContext`, `DaemonContext` (+ shutdown signal), `WebhookContext`, `McpToolContext`.
 
@@ -84,7 +88,7 @@ Testing module: `TestQueryContext`, `TestMutationContext`, `TestJobContext`, `Te
 
 **Jobs** (`jobs/`): `JobQueue` (PG-backed, SKIP LOCKED). `Worker` polls with semaphore-bounded concurrency. Claim: `FOR UPDATE SKIP LOCKED` ordered by priority DESC, scheduled_at ASC. `JobExecutor` spawns task, creates progress channel, applies timeout. Stale reclaim after 5min. Status: Pending -> Claimed -> Running -> Completed/Failed/DeadLetter/Cancelled.
 
-**Workflows** (`workflow/`): `WorkflowExecutor` persists state to DB. Steps cached by name (completed steps skip on resume). Compensation runs in reverse. Durable sleep survives restarts. Wait for external events with timeout. Parallel steps via `ParallelBuilder`.
+**Workflows** (`workflow/`): Versioned, signature-guarded durable workflows. `WorkflowRegistry` keyed by (name, version) with one active version per name. `WorkflowExecutor` persists state to DB, pins new runs to active version+signature. Resume requires exact version+signature match; mismatches mark run as blocked. Steps cached by name (completed steps skip on resume). Compensation runs in reverse. Durable sleep survives restarts. Wait for external events with timeout. Parallel steps via `ParallelBuilder`. On startup, definitions upserted to `forge_workflow_definitions`; signature conflict under same name+version fails startup. `/_api/ready` reports unhealthy if blocked runs exist. Operator terminal actions: cancel_by_operator, retire_unresumable.
 
 **Cron** (`cron/`): Leader-only execution via advisory lock. Exactly-once via UNIQUE constraint on (cron_name, scheduled_time). Catch-up for missed executions.
 
@@ -198,6 +202,8 @@ Fixtures from `tests/fixtures.ts`:
 - `ACTION_TIMEOUT`: 5s local, 15s CI
 
 Always `gotoReady()` before testing reactive data. Run frontend with `bun run dev` (not Docker build).
+
+Note: Integration testing means running `target/debug/forge test` on each example one by one.
 
 ## Key Internal Flows
 

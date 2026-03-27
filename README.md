@@ -112,9 +112,12 @@ Timezone support. Catch-up for missed runs. Leader-elected so it runs exactly on
 ### Durable Workflows
 
 ```rust
-#[forge::workflow]
-#[version = 1]
-#[timeout = "60d"]
+#[forge::workflow(
+    name = "free_trial",
+    version = "2026-03",
+    active,
+    timeout = "60d",
+)]
 pub async fn free_trial_flow(ctx: &WorkflowContext, user: User) -> Result<()> {
     ctx.step("start_trial")
         .run(|| activate_trial(&user))
@@ -127,15 +130,21 @@ pub async fn free_trial_flow(ctx: &WorkflowContext, user: User) -> Result<()> {
 
     ctx.step("trial_ending").run(|| send_email(&user, "3 days left!")).await?;
 
-    ctx.sleep(Duration::from_days(3)).await;
+    // Wait for user action or timeout after 3 days
+    let decision: Value = ctx
+        .wait_for_event("plan_selected", Some(Duration::from_days(3)))
+        .await?;
 
-    ctx.step("convert_or_expire").run(|| end_trial(&user)).await?;
+    ctx.step("convert_or_expire")
+        .run(|| resolve_trial(&user, &decision))
+        .await?;
+
     Ok(())
     // If any step fails, previous steps compensate in reverse order
 }
 ```
 
-Sleep for 45 days, deploy new code, restart servers, scale up. The workflow picks up exactly where it left off. Compensation runs automatically if later steps fail. No separate orchestration cluster.
+Workflows are versioned and signature-guarded. New runs pin to the active version. In-flight runs resume only if the exact version and signature match. If you change a workflow's steps, bump the version and mark the old one `deprecated` to drain. Sleep for 45 days, deploy new code, restart servers, scale up. The workflow picks up exactly where it left off. Compensation runs automatically if later steps fail. No separate orchestration cluster.
 
 ### Real-Time Subscriptions
 
@@ -308,7 +317,7 @@ forge              → Public API, Forge::builder(), prelude, CLI
 | **Vendor Lock-in**    |    None    |    Low     |      High       |    None    |
 | **Database**          | PostgreSQL | PostgreSQL |    Firestore    |   SQLite   |
 
-**vs. Temporal/Inngest**: FORGE workflows run in-process with no separate orchestration service. If you need child workflows, signals, or advanced versioning, use Temporal. If you need durable multi-step processes without the ops overhead, FORGE handles it.
+**vs. Temporal/Inngest**: FORGE workflows run in-process with no separate orchestration service. Versioning and signature guards are built in, so deploys are safe without a separate workflow cluster. If you need child workflows or cross-service signals, use Temporal. If you need durable multi-step processes without the ops overhead, FORGE handles it.
 
 **vs. Node.js + BullMQ + the rest**: FORGE trades ecosystem breadth for operational simplicity. Fewer npm packages, fewer 3 AM pages about Redis running out of memory.
 
@@ -346,7 +355,7 @@ Everything runs through PostgreSQL. That means everything is queryable.
 
 ```
 GET /health    → { "status": "healthy", "version": "0.4.1" }
-GET /ready     → { "ready": true, "database": true, "reactor": true }
+GET /ready     → { "ready": true, "database": true, "reactor": true, "workflows": true }
 ```
 
 ### Inspect Jobs
@@ -369,8 +378,12 @@ FROM forge_jobs WHERE status = 'running';
 
 ```sql
 -- active workflows
-SELECT id, workflow_name, status, current_step, started_at
+SELECT id, workflow_name, workflow_version, status, current_step, started_at
 FROM forge_workflow_runs WHERE status IN ('created', 'running');
+
+-- blocked workflows (version/signature mismatches after a deploy)
+SELECT id, workflow_name, workflow_version, status, blocking_reason
+FROM forge_workflow_runs WHERE status LIKE 'blocked_%';
 
 -- step-by-step details for a specific run
 SELECT step_name, status, error, started_at, completed_at
@@ -418,6 +431,7 @@ All FORGE state lives in PostgreSQL. The full set of system tables:
 | ---------------------- | ----------------------------------- |
 | `forge_jobs`           | Job queue, status, errors, progress |
 | `forge_cron_runs`      | Cron execution history              |
+| `forge_workflow_definitions` | Registered workflow versions   |
 | `forge_workflow_runs`  | Workflow instances and state        |
 | `forge_workflow_steps` | Individual step results             |
 | `forge_nodes`          | Cluster node registry               |

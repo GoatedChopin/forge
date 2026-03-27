@@ -102,6 +102,9 @@ pub struct ReadinessResponse {
     pub ready: bool,
     pub database: bool,
     pub reactor: bool,
+    pub workflows: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocked_workflow_runs: Option<i64>,
     pub version: String,
 }
 
@@ -258,6 +261,8 @@ impl GatewayServer {
                         axum::http::header::CONTENT_TYPE,
                         axum::http::header::AUTHORIZATION,
                         axum::http::header::ACCEPT,
+                        axum::http::HeaderName::from_static("x-webhook-signature"),
+                        axum::http::HeaderName::from_static("x-idempotency-key"),
                     ])
                     .allow_credentials(true)
             }
@@ -405,7 +410,22 @@ async fn readiness_handler(
     let reactor_stats = state.reactor.stats().await;
     let reactor_ok = reactor_stats.listener_running;
 
-    let ready = db_ok && reactor_ok;
+    // Check for blocked workflow runs (strict mode: unhealthy if any runs are blocked)
+    let (workflows_ok, blocked_count) = if db_ok {
+        match sqlx::query_scalar!(
+            r#"SELECT COUNT(*) as "count!" FROM forge_workflow_runs WHERE status LIKE 'blocked_%'"#,
+        )
+        .fetch_one(&state.db_pool)
+        .await
+        {
+            Ok(count) => (count == 0, if count > 0 { Some(count) } else { None }),
+            Err(_) => (true, None), // if query fails, don't block on this check
+        }
+    } else {
+        (true, None)
+    };
+
+    let ready = db_ok && reactor_ok && workflows_ok;
     let status_code = if ready {
         axum::http::StatusCode::OK
     } else {
@@ -418,6 +438,8 @@ async fn readiness_handler(
             ready,
             database: db_ok,
             reactor: reactor_ok,
+            workflows: workflows_ok,
+            blocked_workflow_runs: blocked_count,
             version: env!("CARGO_PKG_VERSION").to_string(),
         }),
     )

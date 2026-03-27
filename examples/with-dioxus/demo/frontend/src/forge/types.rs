@@ -52,6 +52,19 @@ impl BinanceTrade {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConfirmVerificationInput {
+    pub workflow_id: String,
+}
+
+impl ConfirmVerificationInput {
+    pub fn new(workflow_id: impl Into<String>) -> Self {
+        Self {
+            workflow_id: workflow_id.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DemoStats {
     pub total_users: i64,
     pub total_trades: i64,

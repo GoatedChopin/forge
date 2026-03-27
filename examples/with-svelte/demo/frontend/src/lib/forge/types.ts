@@ -14,6 +14,10 @@ export interface BinanceTrade {
   is_buyer_maker: boolean;
 }
 
+export interface ConfirmVerificationInput {
+  workflow_id: string;
+}
+
 export interface DemoStats {
   total_users: number;
   total_trades: number;
@@ -127,10 +131,6 @@ export interface TokenPair {
   refresh_token: string;
 }
 
-export type UserRole = "admin" | "member" | "guest";
+export type UserRole = 'admin' | 'member' | 'guest';
 
-export type {
-  ForgeError,
-  QueryResult,
-  SubscriptionResult,
-} from "@forge-rs/svelte";
+export type { ForgeError, QueryResult, SubscriptionResult } from "@forge-rs/svelte";

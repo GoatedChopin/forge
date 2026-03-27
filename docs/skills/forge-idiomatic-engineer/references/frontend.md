@@ -42,6 +42,8 @@ stale: bool         // reserved for reconnection status
 Jobs add: `jobId`, `status`, `progress`, `message`, `output`, `error`.
 Workflows add: `workflowId`, `status`, `step`, `steps[]`, `output`, `error`.
 
+Workflow `status` values: `pending`, `running`, `suspended`, `completed`, `failed`, `cancelled_by_operator`, `blocked_missing_version`, `blocked_signature_mismatch`, `blocked_missing_handler`, `retired_unresumable`. The `blocked_*` statuses indicate the backend has no matching handler for the run's version or signature. `retired_unresumable` means the workflow version was removed after the run was already past the point of safe resumption. Treat all blocked/retired statuses as terminal from the UI perspective and show an operational error state.
+
 ## Auth Pattern
 
 1. Backend: `[auth]` config in `forge.toml` + public `register`/`login`/`refresh` mutations using `ctx.issue_token_pair()`

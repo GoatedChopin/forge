@@ -95,6 +95,16 @@ pub fn use_get_webhook_events() -> QueryState<Vec<WebhookEvent>> {
 pub fn use_get_webhook_events_live() -> SubscriptionState<Vec<WebhookEvent>> {
     use_forge_subscription("get_webhook_events", ())
 }
+pub async fn confirm_verification(
+    client: &ForgeClient,
+    args: ConfirmVerificationInput,
+) -> Result<bool, ForgeClientError> {
+    client.call("confirm_verification", args).await
+}
+
+pub fn use_confirm_verification() -> Mutation<ConfirmVerificationInput, bool> {
+    use_forge_mutation("confirm_verification")
+}
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct CreateUserParams {
     pub email: String,

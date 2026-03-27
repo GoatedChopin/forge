@@ -13,8 +13,6 @@ pub fn DemoPage() -> Element {
 
     rsx! {
         main { class: "shell",
-            h1 { "Forge Demo" }
-
             div { class: "columns",
                 div { class: "col",
                     IssCard {}

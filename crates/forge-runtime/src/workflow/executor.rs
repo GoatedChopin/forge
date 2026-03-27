@@ -55,7 +55,7 @@ impl WorkflowExecutor {
         }
     }
 
-    /// Start a new workflow.
+    /// Start a new workflow on the active version.
     /// Returns immediately with the run_id; workflow executes in the background.
     pub async fn start<I: serde::Serialize>(
         &self,
@@ -63,13 +63,22 @@ impl WorkflowExecutor {
         input: I,
         owner_subject: Option<String>,
     ) -> forge_core::Result<Uuid> {
-        let entry = self.registry.get(workflow_name).ok_or_else(|| {
-            forge_core::ForgeError::NotFound(format!("Workflow '{}' not found", workflow_name))
+        let entry = self.registry.get_active(workflow_name).ok_or_else(|| {
+            forge_core::ForgeError::NotFound(format!(
+                "No active version of workflow '{}'",
+                workflow_name
+            ))
         })?;
 
         let input_value = serde_json::to_value(input)?;
 
-        let record = WorkflowRecord::new(workflow_name, input_value.clone(), owner_subject);
+        let record = WorkflowRecord::new(
+            workflow_name,
+            entry.info.version,
+            entry.info.signature,
+            input_value.clone(),
+            owner_subject,
+        );
         let run_id = record.id;
 
         // Clone entry data for background execution
@@ -277,7 +286,7 @@ impl WorkflowExecutor {
         self.resume_internal(run_id, true).await
     }
 
-    /// Internal resume logic.
+    /// Internal resume logic with version+signature validation.
     async fn resume_internal(
         &self,
         run_id: Uuid,
@@ -285,19 +294,12 @@ impl WorkflowExecutor {
     ) -> forge_core::Result<WorkflowResult> {
         let record = self.get_workflow(run_id).await?;
 
-        let entry = self.registry.get(&record.workflow_name).ok_or_else(|| {
-            forge_core::ForgeError::NotFound(format!(
-                "Workflow '{}' not found",
-                record.workflow_name,
-            ))
-        })?;
-
         // Check if workflow is resumable
         match record.status {
             WorkflowStatus::Running | WorkflowStatus::Waiting => {
                 // Can resume
             }
-            status if status.is_terminal() => {
+            status if status.is_terminal() || status.is_blocked() => {
                 return Err(forge_core::ForgeError::Validation(format!(
                     "Cannot resume workflow in {} state",
                     status.as_str()
@@ -306,8 +308,37 @@ impl WorkflowExecutor {
             _ => {}
         }
 
-        self.execute_workflow_resumed(run_id, entry, record.input, record.started_at, from_sleep)
-            .await
+        // Validate version+signature against registry
+        match self.registry.validate_resume(
+            &record.workflow_name,
+            &record.workflow_version,
+            &record.workflow_signature,
+        ) {
+            Ok(entry) => {
+                self.execute_workflow_resumed(
+                    run_id,
+                    entry,
+                    record.input,
+                    record.started_at,
+                    from_sleep,
+                )
+                .await
+            }
+            Err(reason) => {
+                // Mark run as blocked
+                let status = reason.to_status();
+                let description = reason.description();
+                self.block_workflow(run_id, status, &description).await?;
+                tracing::warn!(
+                    workflow_run_id = %run_id,
+                    workflow_name = %record.workflow_name,
+                    workflow_version = %record.workflow_version,
+                    reason = %description,
+                    "Workflow run blocked"
+                );
+                Ok(WorkflowResult::Failed { error: description })
+            }
+        }
     }
 
     /// Get workflow status.
@@ -459,12 +490,15 @@ impl WorkflowExecutor {
         sqlx::query!(
             r#"
             INSERT INTO forge_workflow_runs (
-                id, workflow_name, owner_subject, input, status, current_step,
+                id, workflow_name, workflow_version, workflow_signature,
+                owner_subject, input, status, current_step,
                 step_results, started_at, trace_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             "#,
             record.id,
             &record.workflow_name,
+            &record.workflow_version,
+            &record.workflow_signature,
             record.owner_subject as _,
             record.input as _,
             record.status.as_str(),
@@ -484,8 +518,10 @@ impl WorkflowExecutor {
     async fn get_workflow(&self, run_id: Uuid) -> forge_core::Result<WorkflowRecord> {
         let row = sqlx::query!(
             r#"
-            SELECT id, workflow_name, owner_subject, input, output, status, current_step,
-                   step_results, started_at, completed_at, error, trace_id
+            SELECT id, workflow_name, workflow_version, workflow_signature,
+                   owner_subject, input, output, status, blocking_reason,
+                   resolution_reason, current_step, step_results, started_at,
+                   completed_at, error, trace_id
             FROM forge_workflow_runs
             WHERE id = $1
             "#,
@@ -508,10 +544,14 @@ impl WorkflowExecutor {
         Ok(WorkflowRecord {
             id: row.id,
             workflow_name: row.workflow_name,
+            workflow_version: row.workflow_version,
+            workflow_signature: row.workflow_signature,
             owner_subject: row.owner_subject,
             input: row.input,
             output: row.output,
             status,
+            blocking_reason: row.blocking_reason,
+            resolution_reason: row.resolution_reason,
             current_step: row.current_step,
             step_results: row.step_results.unwrap_or_default(),
             started_at: row.started_at,
@@ -525,12 +565,24 @@ impl WorkflowExecutor {
     /// Enforces a state machine to prevent invalid transitions.
     fn valid_source_states(target: &WorkflowStatus) -> &'static [&'static str] {
         match target {
-            WorkflowStatus::Running => &["created", "waiting"],
+            WorkflowStatus::Running => &["created", "waiting", "running"],
             WorkflowStatus::Waiting => &["running"],
             WorkflowStatus::Completed => &["running"],
             WorkflowStatus::Compensating => &["running", "waiting", "failed"],
             WorkflowStatus::Compensated => &["compensating"],
             WorkflowStatus::Failed => &["running", "waiting", "compensating"],
+            WorkflowStatus::BlockedMissingVersion
+            | WorkflowStatus::BlockedSignatureMismatch
+            | WorkflowStatus::BlockedMissingHandler => &["waiting", "running", "created"],
+            WorkflowStatus::RetiredUnresumable | WorkflowStatus::CancelledByOperator => &[
+                "created",
+                "running",
+                "waiting",
+                "failed",
+                "blocked_missing_version",
+                "blocked_signature_mismatch",
+                "blocked_missing_handler",
+            ],
             WorkflowStatus::Created => &[], // entry state only
         }
     }
@@ -630,6 +682,68 @@ impl WorkflowExecutor {
         Ok(())
     }
 
+    /// Block a workflow run due to version/signature incompatibility.
+    async fn block_workflow(
+        &self,
+        run_id: Uuid,
+        status: WorkflowStatus,
+        reason: &str,
+    ) -> forge_core::Result<()> {
+        sqlx::query!(
+            "UPDATE forge_workflow_runs SET status = $1, blocking_reason = $2 WHERE id = $3 AND status IN ('waiting', 'running', 'created')",
+            status.as_str(),
+            reason,
+            run_id,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+
+        Ok(())
+    }
+
+    /// Cancel a workflow run by operator decision. Terminal action that preserves audit trail.
+    pub async fn cancel_by_operator(&self, run_id: Uuid, reason: &str) -> forge_core::Result<()> {
+        let result = sqlx::query!(
+            "UPDATE forge_workflow_runs SET status = 'cancelled_by_operator', resolution_reason = $1, completed_at = NOW() WHERE id = $2 AND status NOT IN ('completed', 'compensated', 'cancelled_by_operator', 'retired_unresumable')",
+            reason,
+            run_id,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+
+        if result.rows_affected() == 0 {
+            return Err(forge_core::ForgeError::InvalidState(format!(
+                "Cannot cancel workflow {}: already in a terminal state",
+                run_id
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Retire a workflow run as unresumable. Terminal action for blocked runs.
+    pub async fn retire_unresumable(&self, run_id: Uuid, reason: &str) -> forge_core::Result<()> {
+        let result = sqlx::query!(
+            "UPDATE forge_workflow_runs SET status = 'retired_unresumable', resolution_reason = $1, completed_at = NOW() WHERE id = $2 AND status NOT IN ('completed', 'compensated', 'cancelled_by_operator', 'retired_unresumable')",
+            reason,
+            run_id,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+
+        if result.rows_affected() == 0 {
+            return Err(forge_core::ForgeError::InvalidState(format!(
+                "Cannot retire workflow {}: already in a terminal state",
+                run_id
+            )));
+        }
+
+        Ok(())
+    }
+
     /// Save step record.
     pub async fn save_step(&self, step: &WorkflowStepRecord) -> forge_core::Result<()> {
         sqlx::query!(
@@ -673,7 +787,9 @@ impl WorkflowExecutor {
 
 impl WorkflowDispatch for WorkflowExecutor {
     fn get_info(&self, workflow_name: &str) -> Option<forge_core::workflow::WorkflowInfo> {
-        self.registry.get(workflow_name).map(|e| e.info.clone())
+        self.registry
+            .get_active(workflow_name)
+            .map(|e| e.info.clone())
     }
 
     fn start_by_name(

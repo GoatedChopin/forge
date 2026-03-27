@@ -183,6 +183,80 @@ impl Forge {
         self.webhook_registry.clone()
     }
 
+    /// Persist all registered workflow definitions to the database.
+    /// Fails startup if a definition's signature conflicts with a previously
+    /// registered one under the same name+version.
+    async fn persist_workflow_definitions(&self, pool: &sqlx::PgPool) -> Result<()> {
+        for info in self.workflow_registry.definitions() {
+            let status = if info.is_active {
+                "active"
+            } else if info.is_deprecated {
+                "deprecated"
+            } else {
+                "active"
+            };
+
+            // Try to insert. If row exists, check signature matches.
+            let existing = sqlx::query!(
+                r#"
+                SELECT workflow_signature FROM forge_workflow_definitions
+                WHERE workflow_name = $1 AND workflow_version = $2
+                "#,
+                info.name,
+                info.version,
+            )
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| ForgeError::Database(e.to_string()))?;
+
+            if let Some(row) = existing {
+                if row.workflow_signature != info.signature {
+                    return Err(ForgeError::Config(format!(
+                        "Workflow '{}' version '{}' has a different signature than previously registered. \
+                         Persisted contract changed under the same version. \
+                         Expected signature: {}, got: {}. \
+                         Create a new version instead of modifying the existing one.",
+                        info.name, info.version, row.workflow_signature, info.signature
+                    )));
+                }
+                // Update status if changed
+                sqlx::query!(
+                    "UPDATE forge_workflow_definitions SET status = $3 WHERE workflow_name = $1 AND workflow_version = $2",
+                    info.name,
+                    info.version,
+                    status,
+                )
+                .execute(pool)
+                .await
+                .map_err(|e| ForgeError::Database(e.to_string()))?;
+            } else {
+                sqlx::query!(
+                    r#"
+                    INSERT INTO forge_workflow_definitions (workflow_name, workflow_version, workflow_signature, status)
+                    VALUES ($1, $2, $3, $4)
+                    "#,
+                    info.name,
+                    info.version,
+                    info.signature,
+                    status,
+                )
+                .execute(pool)
+                .await
+                .map_err(|e| ForgeError::Database(e.to_string()))?;
+            }
+
+            tracing::debug!(
+                workflow = info.name,
+                version = info.version,
+                signature = info.signature,
+                status = status,
+                "Workflow definition registered"
+            );
+        }
+
+        Ok(())
+    }
+
     /// Run the FORGE server.
     pub async fn run(mut self) -> Result<()> {
         // Apply FORGE_OTEL_* environment variable overrides before initializing
@@ -240,6 +314,11 @@ impl Forge {
 
         runner.run(user_migrations).await?;
         tracing::debug!("Migrations applied");
+
+        // Persist workflow definitions and validate signatures
+        if !self.workflow_registry.is_empty() {
+            self.persist_workflow_definitions(&pool).await?;
+        }
 
         // Get local node info
         let hostname = get_hostname();
@@ -550,6 +629,8 @@ impl Forge {
                                 axum::http::header::CONTENT_TYPE,
                                 axum::http::header::AUTHORIZATION,
                                 axum::http::header::ACCEPT,
+                                axum::http::HeaderName::from_static("x-webhook-signature"),
+                                axum::http::HeaderName::from_static("x-idempotency-key"),
                             ])
                             .allow_credentials(true)
                     }

@@ -660,7 +660,18 @@ impl WorkflowContext {
     ) -> Result<T> {
         let correlation_id = self.run_id.to_string();
 
-        // Check if event already exists (race condition handling)
+        // On resume: check if the scheduler already consumed an event for this run.
+        // This happens when the scheduler wakes the workflow after an event arrives.
+        if self.is_resumed
+            && let Some(event) = self
+                .find_consumed_event(event_name, &correlation_id)
+                .await?
+        {
+            return serde_json::from_value(event.payload.unwrap_or_default())
+                .map_err(|e| ForgeError::Deserialization(e.to_string()));
+        }
+
+        // Check if event already exists but not yet consumed (race condition handling)
         if let Some(event) = self.try_consume_event(event_name, &correlation_id).await? {
             return serde_json::from_value(event.payload.unwrap_or_default())
                 .map_err(|e| ForgeError::Deserialization(e.to_string()));
@@ -706,6 +717,37 @@ impl WorkflowContext {
                     FOR UPDATE SKIP LOCKED
                 )
                 RETURNING id, event_name, correlation_id, payload, created_at
+                "#,
+            event_name,
+            correlation_id,
+            self.run_id
+        )
+        .fetch_optional(&self.db_pool)
+        .await
+        .map_err(|e| ForgeError::Database(e.to_string()))?;
+
+        Ok(result.map(|row| WorkflowEvent {
+            id: row.id,
+            event_name: row.event_name,
+            correlation_id: row.correlation_id,
+            payload: row.payload,
+            created_at: row.created_at,
+        }))
+    }
+
+    /// Find an event that was already consumed by the scheduler for this run.
+    /// Used on resume to retrieve the event payload without re-consuming.
+    async fn find_consumed_event(
+        &self,
+        event_name: &str,
+        correlation_id: &str,
+    ) -> Result<Option<WorkflowEvent>> {
+        let result = sqlx::query!(
+            r#"
+                SELECT id, event_name, correlation_id, payload, created_at
+                FROM forge_workflow_events
+                WHERE event_name = $1 AND correlation_id = $2 AND consumed_by = $3
+                ORDER BY created_at DESC LIMIT 1
                 "#,
             event_name,
             correlation_id,

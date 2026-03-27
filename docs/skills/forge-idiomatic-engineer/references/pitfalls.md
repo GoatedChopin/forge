@@ -79,6 +79,12 @@ Sequential steps need `Fn` closures because they may execute multiple times on r
 **Step results are cached by name on resume.**
 If you rename a step between deploys, the old cache entry won't match and the step re-executes. Keep step names stable across deploys.
 
+**Changing the persisted contract under the same version.**
+The runtime computes a signature from step keys, wait keys, event names, timeout, and type shapes, then persists it to `forge_workflow_definitions` on startup. If you rename a step, add a wait key, or change the input type without bumping the version, the signature won't match what's stored and the node will refuse to start. Bump the version any time the contract changes.
+
+**Removing a deprecated workflow version while runs are still active.**
+Deprecated handlers must stay deployed until all their in-flight runs finish. If you remove the handler while runs exist, those runs become `BlockedMissingHandler` and the `/_api/ready` endpoint returns 503, blocking deploys. Check `SELECT count(*) FROM forge_workflow_runs WHERE workflow_version = '...' AND status NOT IN ('completed', 'failed')` before removing old versions.
+
 ## 5. Frontend
 
 **Calling `refetch()` on reactive queries.**

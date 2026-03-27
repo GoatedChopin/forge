@@ -83,7 +83,16 @@ test("export job and verification workflow complete from the UI", async ({
   await verificationSection
     .getByRole("button", { name: "Start Workflow" })
     .click();
-  await expect(verificationSection.locator(".step.completed")).toHaveCount(5, {
+
+  // Workflow pauses at "await_confirmation" step, waiting for user to click confirm
+  const confirmBtn = verificationSection.getByRole("button", {
+    name: "Confirm Verification",
+  });
+  await expect(confirmBtn).toBeVisible({ timeout: 15_000 });
+  await confirmBtn.click();
+
+  // After confirmation, remaining steps complete (includes wait_period durable sleep)
+  await expect(verificationSection.locator(".step.completed")).toHaveCount(6, {
     timeout: 15_000,
   });
 });
