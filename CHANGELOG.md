@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MCP SSE streaming for Model Context Protocol tool calls.
 - Startup banner on server init.
 
+### Fixed
+
+- SvelteKit example `build.rs` files now track `frontend/.env` for rebuild, fixing `forge test` failures where stale `PUBLIC_API_URL` was embedded after env patching.
+- Normalized Playwright `ACTION_TIMEOUT` across all examples to 5s local / 15s CI; job/workflow tests use dedicated 15s timeout.
+
 ### Changed
 
 - All internal `sqlx` queries migrated to compile-time checked `sqlx::query!`/`sqlx::query_as!` macros with inline parameters. Runtime dynamic queries removed.
