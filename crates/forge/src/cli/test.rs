@@ -1,17 +1,20 @@
 use anyhow::Result;
 use clap::Parser;
 use console::style;
+use std::net::TcpListener;
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::process::Command;
 
+use super::frontend_target::FrontendTarget;
 use super::ui;
 
 /// Run project tests (backend unit tests and frontend Playwright tests).
 ///
-/// Runs both suites by default. If the dev server is not running,
-/// it starts docker compose, runs the tests, then tears it down.
+/// Builds the project with an embedded frontend, starts a PostgreSQL
+/// container, runs the binary on a random port, and executes Playwright
+/// tests against the single-origin server.
 #[derive(Parser)]
 pub struct TestCommand {
     /// Skip backend unit tests
@@ -133,80 +136,90 @@ impl TestCommand {
         println!();
         println!("  {} {}", ui::step(), style("Frontend Tests").bold());
 
-        // Check if we need to start the dev environment
-        let mut started_compose = false;
-
-        print!("  {} Checking backend...", ui::step());
-        if check_backend_health().await {
-            println!(" {}", style("ready").green());
-        } else {
-            println!(" {}", style("not running").yellow());
-            started_compose = self.start_dev_environment().await?;
+        // If FORGE_TEST_URL is already set (CI or manual), skip build/start
+        if let Some(url) = std::env::var("FORGE_TEST_URL")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+        {
+            print!("  {} Checking server...", ui::step());
+            if wait_for_health(&url, Duration::from_secs(60)).await {
+                println!(" {}", style("ready").green());
+            } else {
+                println!(" {}", style("not reachable").red());
+                anyhow::bail!("FORGE_TEST_URL={url} is set but server is not reachable");
+            }
+            return self.execute_frontend_tests(frontend_dir, &url).await;
         }
 
-        // Run tests, tearing down compose if we started it
-        let result = self.execute_frontend_tests(frontend_dir).await;
-
-        if started_compose {
-            self.stop_dev_environment().await;
+        // Compiled test flow: build, start PG, run binary, test, cleanup
+        if !check_docker_available().await {
+            anyhow::bail!(
+                "Docker is required for running frontend tests.\n\n\
+                Install Docker or set FORGE_TEST_URL to point to a running server."
+            );
         }
+
+        let frontend_type = FrontendTarget::detect(frontend_dir);
+
+        // Start PostgreSQL container
+        let db_name = read_db_name();
+        println!("  {} Starting PostgreSQL...", ui::step());
+        let (pg_container, pg_port) = start_postgres(&db_name).await?;
+        let db_url = format!("postgres://postgres:forge@localhost:{pg_port}/{db_name}");
+
+        // Build project with embedded frontend
+        let binary = match build_project(frontend_type).await {
+            Ok(bin) => bin,
+            Err(e) => {
+                stop_postgres(&pg_container).await;
+                return Err(e);
+            }
+        };
+
+        // Pick random port and start the server
+        let port = pick_random_port()?;
+        let app_url = format!("http://localhost:{port}");
+
+        println!("  {} Starting server on port {port}...", ui::step());
+        let mut child = match start_server(&binary, port, &db_url).await {
+            Ok(child) => child,
+            Err(e) => {
+                stop_postgres(&pg_container).await;
+                return Err(e);
+            }
+        };
+
+        // Wait for the server to become healthy
+        print!("  {} Waiting for server...", ui::step());
+        if !wait_for_health(&app_url, Duration::from_secs(120)).await {
+            println!(" {}", style("timed out").red());
+            let _ = child.kill().await;
+            stop_postgres(&pg_container).await;
+            anyhow::bail!(
+                "Server did not become healthy within 120s.\n\
+                Check the binary output for errors."
+            );
+        }
+        println!(" {}", style("ready").green());
+
+        // Run tests
+        let result = self.execute_frontend_tests(frontend_dir, &app_url).await;
+
+        // Cleanup
+        println!();
+        println!("  {} Stopping server...", ui::step());
+        let _ = child.kill().await;
+        stop_postgres(&pg_container).await;
 
         result
     }
 
-    async fn start_dev_environment(&self) -> Result<bool> {
-        if !check_docker_available().await {
-            anyhow::bail!(
-                "Backend is not running and Docker is not available.\n\n\
-                Either start the backend manually or install Docker."
-            );
-        }
-
-        println!("  {} Starting dev environment for tests...", ui::step());
-
-        let status = Command::new("docker")
-            .args(["compose", "up", "-d", "--build"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
-            .status()
-            .await?;
-
-        if !status.success() {
-            anyhow::bail!("Failed to start dev environment with docker compose");
-        }
-
-        // Wait for backend to become healthy
-        print!("  {} Waiting for backend...", ui::step());
-        let healthy = wait_for_backend_health(Duration::from_secs(120)).await;
-        if healthy {
-            println!(" {}", style("ready").green());
-        } else {
-            println!(" {}", style("timed out").red());
-            // Tear down since we started it
-            self.stop_dev_environment().await;
-            anyhow::bail!(
-                "Backend did not become healthy within 120s.\n\
-                Check docker compose logs for details."
-            );
-        }
-
-        Ok(true)
-    }
-
-    async fn stop_dev_environment(&self) {
-        println!();
-        println!("  {} Stopping dev environment...", ui::step());
-        // Use -v to remove volumes so the next test run starts with a clean DB
-        let _ = Command::new("docker")
-            .args(["compose", "down", "-v"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .await;
-    }
-
-    async fn execute_frontend_tests(&self, frontend_dir: &Path) -> Result<bool> {
-        // Check dependencies are installed
+    async fn execute_frontend_tests(
+        &self,
+        frontend_dir: &Path,
+        app_url: &str,
+    ) -> Result<bool> {
+        // Install dependencies if needed
         if !frontend_dir.join("node_modules").exists() {
             println!("  {} Installing frontend dependencies...", ui::step());
             let status = Command::new("bun")
@@ -251,21 +264,6 @@ impl TestCommand {
             }
         }
 
-        // Wait for the frontend dev server (Docker or manual).
-        // Playwright's reuseExistingServer won't work if Docker has the port
-        // mapped but the process inside isn't ready yet.
-        print!("  {} Checking frontend...", ui::step());
-        if check_frontend_health().await {
-            println!(" {}", style("ready").green());
-        } else {
-            let frontend_ready = wait_for_frontend_health(Duration::from_secs(90)).await;
-            if frontend_ready {
-                println!(" {}", style("ready").green());
-            } else {
-                println!(" {}", style("will be started by Playwright").dim());
-            }
-        }
-
         // Build Playwright command
         let mut pw_args = vec!["playwright", "test"];
 
@@ -290,7 +288,7 @@ impl TestCommand {
         let status = Command::new("bunx")
             .args(&pw_args)
             .current_dir(frontend_dir)
-            .env("VITE_API_URL", backend_base_url())
+            .env("FORGE_TEST_URL", app_url)
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
@@ -314,74 +312,319 @@ impl TestCommand {
     }
 }
 
-fn backend_base_url_from_env(get_env: impl Fn(&str) -> Option<String>) -> String {
-    get_env("VITE_API_URL")
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| get_env("PUBLIC_API_URL"))
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "http://localhost:9081".to_string())
+fn read_db_name() -> String {
+    read_env_file(Path::new(".env"))
+        .into_iter()
+        .find(|(k, _)| k == "POSTGRES_DB")
+        .map(|(_, v)| v)
+        .unwrap_or_else(|| "test_db".to_string())
 }
 
-fn backend_base_url() -> String {
-    backend_base_url_from_env(|key| std::env::var(key).ok())
+fn pick_random_port() -> Result<u16> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let port = listener.local_addr()?.port();
+    drop(listener);
+    Ok(port)
 }
 
-async fn check_backend_health() -> bool {
-    let base_url = backend_base_url();
-    let urls = [
-        format!("{base_url}/_api/health"),
-        format!("{base_url}/_api/ready"),
-    ];
+async fn start_postgres(db_name: &str) -> Result<(String, u16)> {
+    let container_name = format!(
+        "forge-test-pg-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+    );
 
-    for url in &urls {
-        let result = Command::new("curl")
-            .args(["-sf", "--max-time", "2", url.as_str()])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .await;
-
-        if matches!(result, Ok(status) if status.success()) {
-            return true;
-        }
-    }
-
-    false
-}
-
-async fn wait_for_backend_health(timeout: Duration) -> bool {
-    let start = std::time::Instant::now();
-    while start.elapsed() < timeout {
-        if check_backend_health().await {
-            return true;
-        }
-        tokio::time::sleep(Duration::from_secs(3)).await;
-        print!(".");
-    }
-    false
-}
-
-async fn wait_for_frontend_health(timeout: Duration) -> bool {
-    let start = std::time::Instant::now();
-    while start.elapsed() < timeout {
-        if check_frontend_health().await {
-            return true;
-        }
-        tokio::time::sleep(Duration::from_secs(3)).await;
-        print!(".");
-    }
-    false
-}
-
-async fn check_frontend_health() -> bool {
-    let result = Command::new("curl")
-        .args(["-sf", "--max-time", "2", "http://localhost:9080"])
+    let _ = Command::new("docker")
+        .args(["rm", "-f", &container_name])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .await;
 
-    matches!(result, Ok(status) if status.success())
+    let status = Command::new("docker")
+        .args([
+            "run",
+            "-d",
+            "--name",
+            &container_name,
+            "-e",
+            "POSTGRES_USER=postgres",
+            "-e",
+            "POSTGRES_PASSWORD=forge",
+            "-e",
+            &format!("POSTGRES_DB={db_name}"),
+            "-p",
+            "0:5432",
+            "postgres:18",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .status()
+        .await?;
+
+    if !status.success() {
+        anyhow::bail!("Failed to start PostgreSQL container");
+    }
+
+    let output = Command::new("docker")
+        .args(["port", &container_name, "5432"])
+        .output()
+        .await?;
+
+    // Output is like "0.0.0.0:12345\n" or "[::]:12345\n"
+    let port_str = String::from_utf8_lossy(&output.stdout);
+    let port: u16 = port_str
+        .trim()
+        .rsplit(':')
+        .next()
+        .and_then(|p| p.parse().ok())
+        .ok_or_else(|| anyhow::anyhow!("Could not parse PostgreSQL port from: {port_str}"))?;
+
+    for _ in 0..30 {
+        let check = Command::new("docker")
+            .args([
+                "exec",
+                &container_name,
+                "pg_isready",
+                "-U",
+                "postgres",
+                "-d",
+                db_name,
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await;
+
+        if matches!(check, Ok(s) if s.success()) {
+            return Ok((container_name, port));
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+
+    let _ = Command::new("docker")
+        .args(["rm", "-f", &container_name])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await;
+
+    anyhow::bail!("PostgreSQL did not become ready within 30s")
+}
+
+async fn stop_postgres(container_name: &str) {
+    let _ = Command::new("docker")
+        .args(["rm", "-f", container_name])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await;
+}
+
+async fn build_project(frontend_type: Option<FrontendTarget>) -> Result<std::path::PathBuf> {
+    println!("  {} Building project...", ui::step());
+
+    let frontend_env = Path::new("frontend/.env");
+
+    // For Svelte: SvelteKit reads PUBLIC_API_URL from frontend/.env at build time.
+    // Patch it to empty so the frontend uses relative URLs (same-origin serving).
+    let original_frontend_env = std::fs::read_to_string(frontend_env).ok();
+    if matches!(frontend_type, Some(FrontendTarget::SvelteKit))
+        && let Some(ref content) = original_frontend_env
+    {
+        let patched: String = content
+            .lines()
+            .map(|l| {
+                if l.trim_start().starts_with("PUBLIC_API_URL=") {
+                    "PUBLIC_API_URL="
+                } else {
+                    l
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(frontend_env, patched)?;
+    }
+
+    // For Dioxus: build WASM first so frontend/dist/ has real files before cargo build.
+    // build.rs only creates a placeholder in debug, and rust_embed needs the folder to exist.
+    if matches!(frontend_type, Some(FrontendTarget::Dioxus)) {
+        println!("  {} Building Dioxus WASM frontend...", ui::step());
+        let frontend_dir = Path::new("frontend");
+        let status = Command::new("dx")
+            .args(["build", "--platform", "web"])
+            .current_dir(frontend_dir)
+            .env("FORGE_API_URL", "")
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()
+            .await?;
+
+        if !status.success() {
+            anyhow::bail!(
+                "Dioxus frontend build failed.\n\
+                Make sure dioxus-cli (dx) is installed: cargo install dioxus-cli"
+            );
+        }
+
+        // dx outputs to target/dx/{name}/{profile}/web/public/; copy to frontend/dist/
+        let dx_target = frontend_dir.join("target/dx");
+        if let Ok(entries) = std::fs::read_dir(&dx_target) {
+            for entry in entries.flatten() {
+                for profile in ["debug", "release"] {
+                    let public_dir = entry.path().join(profile).join("web/public");
+                    if public_dir.exists() {
+                        let dist_dir = frontend_dir.join("dist");
+                        let _ = std::fs::remove_dir_all(&dist_dir);
+                        copy_dir_recursive(&public_dir, &dist_dir)?;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Build backend with embedded frontend
+    let status = Command::new("cargo")
+        .args(["build", "--features", "embedded-frontend"])
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .await;
+
+    // Restore before checking build result so a failed build doesn't leave a patched .env
+    if let Some(content) = original_frontend_env {
+        if let Err(e) = std::fs::write(frontend_env, content) {
+            eprintln!("Warning: failed to restore frontend/.env: {e}");
+        }
+    }
+
+    if !status?.success() {
+        anyhow::bail!("cargo build failed");
+    }
+
+    find_binary()
+}
+
+fn find_binary() -> Result<std::path::PathBuf> {
+    // Read package name from Cargo.toml (cargo preserves hyphens for bin names)
+    let cargo_toml = std::fs::read_to_string("Cargo.toml")?;
+    let name = cargo_toml
+        .lines()
+        .find(|l| l.starts_with("name"))
+        .and_then(|l| l.split('=').nth(1))
+        .map(|v| v.trim().trim_matches('"').to_string())
+        .ok_or_else(|| anyhow::anyhow!("Could not find package name in Cargo.toml"))?;
+
+    // Workspace members output to the workspace root target/debug/.
+    // Find the workspace root by looking for the Cargo.toml with [workspace].
+    let mut search_dir = std::env::current_dir()?;
+    loop {
+        let ws_toml = search_dir.join("Cargo.toml");
+        if ws_toml.exists()
+            && let Ok(content) = std::fs::read_to_string(&ws_toml)
+            && content.contains("[workspace]")
+        {
+            let candidate = search_dir.join("target/debug").join(&name);
+            if candidate.exists() {
+                return Ok(candidate);
+            }
+        }
+        if !search_dir.pop() {
+            break;
+        }
+    }
+
+    // Fallback: check local target/debug/
+    let local = std::path::PathBuf::from(format!("target/debug/{name}"));
+    if local.exists() {
+        return Ok(local);
+    }
+
+    anyhow::bail!(
+        "Built binary not found for package '{name}'.\n\
+        Checked workspace and local target/debug/ directories."
+    )
+}
+
+/// Parse all key=value pairs from a dotenv file.
+fn read_env_file(path: &Path) -> Vec<(String, String)> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    content
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                return None;
+            }
+            let (key, value) = line.split_once('=')?;
+            Some((key.trim().to_string(), value.trim().to_string()))
+        })
+        .collect()
+}
+
+async fn start_server(
+    binary: &Path,
+    port: u16,
+    db_url: &str,
+) -> Result<tokio::process::Child> {
+    let mut cmd = Command::new(binary);
+
+    // Load all vars from .env so secrets, config, and custom vars carry through
+    for (key, value) in read_env_file(Path::new(".env")) {
+        cmd.env(&key, &value);
+    }
+
+    // Override the vars we control for the test environment
+    cmd.env("PORT", port.to_string())
+        .env("HOST", "0.0.0.0")
+        .env("DATABASE_URL", db_url)
+        .env("RUST_LOG", "warn")
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit());
+
+    let child = cmd.spawn()?;
+    Ok(child)
+}
+
+async fn wait_for_health(base_url: &str, timeout: Duration) -> bool {
+    let health_url = format!("{base_url}/_api/health");
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .unwrap_or_default();
+    let start = std::time::Instant::now();
+
+    while start.elapsed() < timeout {
+        if client.get(&health_url).send().await.is_ok() {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        print!(".");
+    }
+    false
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let dest_path = dst.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_recursive(&entry.path(), &dest_path)?;
+        } else {
+            std::fs::copy(entry.path(), dest_path)?;
+        }
+    }
+    Ok(())
 }
 
 async fn check_docker_available() -> bool {
@@ -458,41 +701,15 @@ mod tests {
     }
 
     #[test]
-    fn test_backend_base_url_prefers_vite_api_url() {
-        let url = backend_base_url_from_env(|key| match key {
-            "VITE_API_URL" => Some("http://localhost:19080".into()),
-            "PUBLIC_API_URL" => Some("http://localhost:18080".into()),
-            _ => None,
-        });
-
-        assert_eq!(url, "http://localhost:19080");
+    fn test_read_db_name_default() {
+        assert!(!read_db_name().is_empty());
     }
 
     #[test]
-    fn test_backend_base_url_falls_back_to_public_api_url() {
-        let url = backend_base_url_from_env(|key| match key {
-            "PUBLIC_API_URL" => Some("http://localhost:18080".into()),
-            _ => None,
-        });
-
-        assert_eq!(url, "http://localhost:18080");
-    }
-
-    #[test]
-    fn test_backend_base_url_ignores_blank_env_values() {
-        let url = backend_base_url_from_env(|key| match key {
-            "VITE_API_URL" => Some("   ".into()),
-            "PUBLIC_API_URL" => Some("http://localhost:18080".into()),
-            _ => None,
-        });
-
-        assert_eq!(url, "http://localhost:18080");
-    }
-
-    #[test]
-    fn test_backend_base_url_defaults_to_localhost() {
-        let url = backend_base_url_from_env(|_| None);
-
-        assert_eq!(url, "http://localhost:9081");
+    fn test_pick_random_port() {
+        let port1 = pick_random_port().unwrap();
+        let port2 = pick_random_port().unwrap();
+        assert!(port1 > 0);
+        assert!(port2 > 0);
     }
 }

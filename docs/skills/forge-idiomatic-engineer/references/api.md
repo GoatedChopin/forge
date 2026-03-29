@@ -352,7 +352,7 @@ Unconfigured pools fall back to primary.
 | `forge new <name> --template <id>` | Scaffold project |
 | `docker compose up --build` / `docker compose down -v` | Docker Compose dev environment |
 | `forge generate` | Generate frontend bindings from backend |
-| `forge test` | Run backend + Playwright tests |
+| `forge test` | Build binary, start PG container, run backend + Playwright tests. Set `FORGE_TEST_URL` to skip build/start and test against a running server. |
 | `forge check` | Validate config, structure, linting, bindings |
 | `forge migrate up` / `down [N]` / `status` / `prepare` | Database migrations |
 

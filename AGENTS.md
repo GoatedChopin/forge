@@ -240,3 +240,21 @@ Any change to the framework (new feature, config option, endpoint, API, behavior
    - `pitfalls.md`: common mistakes and anti-patterns
 
 Source code and docs must stay in sync. If you add a config option, it goes in `docs/docs/ship/configuration.mdx` AND `api.md`. If you add an endpoint, it goes in the relevant `docs/docs/` page AND `api.md`. If you change client behavior, it goes in `docs/docs/connect/` or `docs/docs/ship/` AND `frontend.md`. If you discover a new pitfall, it goes in `pitfalls.md`. Don't ship code without updating both.
+
+## Release Flow
+
+Pre-1.0: never bump to 1.x.x. Changelog-driven pipeline parses version from CHANGELOG.md, validates, builds, publishes.
+
+### Steps
+
+1. `cargo fmt --all` across entire workspace
+2. Frontend lint/format: eslint, tscheck, prettier on examples + packages
+3. `cargo test --workspace` (SQLX_OFFLINE=true)
+4. `target/debug/forge test` on every example (with-svelte/minimal, with-svelte/demo, with-svelte/realtime-todo-list, with-dioxus/minimal, with-dioxus/demo, with-dioxus/realtime-todo-list)
+5. If any step 1-4 errors: fix root cause, not bandaids. Iterate until clean.
+6. Sub-agents review each commit since last tag (`git log $(git describe --tags --abbrev=0)..HEAD --oneline`), summarize main changes per commit
+7. Write CHANGELOG.md: new `## [X.X.X] - YYYY-MM-DD` section under `[Unreleased]` with Added/Changed/Fixed/Removed. Call out breaking changes explicitly. Update comparison links at bottom.
+8. Commit: `git commit -m "Prepare release X.X.X"` using user's git config. Single line, no co-author.
+9. Push to main, monitor CI (`gh run watch`). All jobs must pass.
+10. Trigger release: `gh workflow run release.yml`. Monitor with `gh run watch`. Inspect publish jobs with `gh run view`.
+11. Verify packages live on crates.io and npm.

@@ -1,7 +1,8 @@
 import type { FullConfig } from "@playwright/test";
 
-const API_URL = process.env.VITE_API_URL || "http://localhost:9081";
-const FRONTEND_URL = "http://localhost:9080";
+const APP_URL = process.env.FORGE_TEST_URL;
+const API_URL = APP_URL || process.env.VITE_API_URL || "http://localhost:9081";
+const FRONTEND_URL = APP_URL || "http://localhost:9080";
 
 async function waitForBackend(maxRetries = 60, delayMs = 1000): Promise<void> {
   for (let i = 0; i < maxRetries; i++) {
@@ -52,5 +53,8 @@ async function warmupWasm(maxRetries = 120, delayMs = 2000): Promise<void> {
 
 export default async function globalSetup(_config: FullConfig) {
   await waitForBackend();
-  await warmupWasm();
+  // Skip WASM warmup in compiled mode (frontend is pre-built and embedded)
+  if (!APP_URL) {
+    await warmupWasm();
+  }
 }

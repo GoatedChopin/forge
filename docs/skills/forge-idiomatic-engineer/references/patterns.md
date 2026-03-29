@@ -519,7 +519,7 @@ async fn daemon_shuts_down_gracefully() {
 1. Backend unit tests (`cargo test`)
 2. `forge generate` if contract changed
 3. Frontend lint/build checks
-4. Playwright (`forge test --skip-backend`)
+4. Playwright (`forge test` — builds binary, starts PG container, runs against it)
 5. `forge check`
 
 ## 5. Operations & Deployment

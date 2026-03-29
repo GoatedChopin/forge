@@ -188,6 +188,7 @@ jobs:
           tag_name: v${{ needs.parse-changelog.outputs.version }}
           name: ${{ needs.parse-changelog.outputs.version }} - ${{ needs.parse-changelog.outputs.release_date }}
           body: ${{ needs.parse-changelog.outputs.release_notes }}
+          generate_release_notes: true
           prerelease: ${{ needs.parse-changelog.outputs.is_prerelease == 'true' }}
           files: artifacts/**/*
 
