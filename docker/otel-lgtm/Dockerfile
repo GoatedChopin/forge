@@ -1,4 +1,4 @@
-FROM grafana/otel-lgtm:0.20.0
+FROM grafana/otel-lgtm:0.22.1
 
 # Remove default JVM/RED dashboards that ship with the base image
 RUN rm -f /otel-lgtm/grafana/conf/provisioning/dashboards/grafana-dashboards.yaml \

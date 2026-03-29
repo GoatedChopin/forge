@@ -89,6 +89,12 @@ from = 'forge = { workspace = true }'
 to = 'forge = { version = "0.8.1", package = "forgex" }'
 files = ["Cargo.toml"]
 
+# Use published otel-lgtm image instead of local build context
+[[replacement]]
+from = "build: ../../../docker/otel-lgtm"
+to = "image: grafana/otel-lgtm:0.22.1"
+files = ["docker-compose.yml"]
+
 # Convert workspace-relative docker-compose to standalone
 [[replacement]]
 from = "- ../../..:/workspace"

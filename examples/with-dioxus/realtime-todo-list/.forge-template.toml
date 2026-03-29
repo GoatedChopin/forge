@@ -72,6 +72,18 @@ from = 'forge = { workspace = true }'
 to = 'forge = { version = "0.8.1", package = "forgex" }'
 files = ["Cargo.toml"]
 
+# Convert path dep to published version
+[[replacement]]
+from = 'forge-dioxus = { path = "../../../../packages/forge-dioxus" }'
+to = 'forge-dioxus = { version = "0.8.1" }'
+files = ["frontend/Cargo.toml"]
+
+# Use published otel-lgtm image instead of local build context
+[[replacement]]
+from = "build: ../../../docker/otel-lgtm"
+to = "image: grafana/otel-lgtm:0.22.1"
+files = ["docker-compose.yml"]
+
 # Convert workspace-relative docker-compose to standalone
 [[replacement]]
 from = "- ../../..:/workspace"

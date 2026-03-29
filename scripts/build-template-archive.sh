@@ -75,7 +75,13 @@ done
 # Rewrite Dioxus frontend Cargo.toml: path dep -> exact published version
 for cargo in "${STAGING_DIR}"/with-*/*/frontend/Cargo.toml; do
   [ -f "$cargo" ] || continue
-  sed -i "s|forge-dioxus\", path = \"[^\"]*\"|forge-dioxus\", version = \"=${VERSION}\"|g" "$cargo"
+  sed -i "s|forge-dioxus = { path = \"[^\"]*\" }|forge-dioxus = { version = \"=${VERSION}\" }|g" "$cargo"
+done
+
+# Rewrite otel service: local build context -> published image
+for compose in "${STAGING_DIR}"/with-*/*/docker-compose.yml; do
+  [ -f "$compose" ] || continue
+  sed -i "s|build: ../../../docker/otel-lgtm|image: grafana/otel-lgtm:${VERSION_OTEL:-0.22.1}|g" "$compose"
 done
 
 # Ensure frontend .env files exist in templates
