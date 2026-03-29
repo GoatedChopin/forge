@@ -59,9 +59,15 @@ export class ForgeClient {
   private connectionId = 0;
   private hasConnectedBefore = false;
   private connectedTokenHash: string | null = null;
+  private signals: import("./signals.js").ForgeSignals | null = null;
 
   constructor(config: ForgeClientConfig) {
     this.config = config;
+  }
+
+  /** Wire signals for correlation ID injection on RPC calls. */
+  setSignals(signals: import("./signals.js").ForgeSignals): void {
+    this.signals = signals;
   }
 
   private hashToken(token: string | null): string | null {
@@ -176,8 +182,17 @@ export class ForgeClient {
         if (resolved || currentConnectionId !== this.connectionId) return;
         resolved = true;
         clearTimeout(timeoutId);
+
+        // EventSource goes to CLOSED (not CONNECTING) on HTTP 401/403.
+        // Treat this as an auth error instead of a retriable network failure.
+        const isClosed = this.eventSource?.readyState === EventSource.CLOSED;
         this.setConnectionState("disconnected");
-        this.scheduleReconnect();
+
+        if (isClosed && token) {
+          this.config.onAuthError?.({ code: "UNAUTHORIZED", message: "SSE authentication failed" });
+        } else {
+          this.scheduleReconnect();
+        }
         resolve();
       };
     });
@@ -231,14 +246,18 @@ export class ForgeClient {
   async call<T>(functionName: string, args: unknown): Promise<T> {
     const token = await this.getToken();
     const hasFiles = this.containsFiles(args);
+    const correlationId = this.signals?.nextCorrelationId();
 
     let response: Response;
 
     if (hasFiles) {
       const formData = this.buildFormData(args);
+      const headers: Record<string, string> = { "x-forge-platform": "web" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      if (correlationId) headers["x-correlation-id"] = correlationId;
       response = await fetch(`${this.config.url}/_api/rpc/${functionName}/upload`, {
         method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers,
         body: formData,
         credentials: "include",
       });
@@ -248,15 +267,23 @@ export class ForgeClient {
           ? null
           : args;
 
+      const headers: Record<string, string> = { "Content-Type": "application/json", "x-forge-platform": "web" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      if (correlationId) headers["x-correlation-id"] = correlationId;
+
       response = await fetch(`${this.config.url}/_api/rpc/${functionName}`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
+        headers,
         body: JSON.stringify({ args: normalizedArgs }),
         credentials: "include",
       });
+    }
+
+    // Trigger auth error callback on 401/403 so the app can refresh or logout
+    if (response.status === 401 || response.status === 403) {
+      const error: ForgeError = { code: "UNAUTHORIZED", message: "Authentication failed" };
+      this.config.onAuthError?.(error);
+      throw new ForgeClientError(error.code, error.message);
     }
 
     const contentType = response.headers.get("content-type");
@@ -268,6 +295,9 @@ export class ForgeClient {
     const result: RpcResponse<T> = await response.json();
     if (!result.success || result.error) {
       const error = result.error || { code: "UNKNOWN", message: "Unknown error" };
+      if (error.code === "UNAUTHORIZED" || error.code === "FORBIDDEN") {
+        this.config.onAuthError?.(error);
+      }
       throw new ForgeClientError(error.code, error.message);
     }
     return result.data as T;

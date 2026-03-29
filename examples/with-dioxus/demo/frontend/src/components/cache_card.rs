@@ -1,4 +1,6 @@
 use dioxus::prelude::*;
+use forge_dioxus::use_signals;
+use serde_json::json;
 
 use super::format_time;
 use crate::forge::{self, DemoStats, use_forge_client};
@@ -20,27 +22,33 @@ fn now_ms() -> f64 {
 #[component]
 pub fn CacheCard() -> Element {
     let client = use_forge_client();
+    let signals = use_signals();
     let mut data = use_signal(|| None::<DemoStats>);
     let mut response_ms = use_signal(|| None::<f64>);
     let mut fetch_count = use_signal(|| 0u32);
     let mut loading = use_signal(|| false);
 
-    let handle_fetch = move |_: MouseEvent| {
-        let client = client.clone();
-        spawn(async move {
-            loading.set(true);
-            let start = now_ms();
-            match forge::get_demo_stats(&client).await {
-                Ok(stats) => {
-                    let elapsed = now_ms() - start;
-                    data.set(Some(stats));
-                    response_ms.set(Some(elapsed));
-                    fetch_count.set(fetch_count() + 1);
+    let handle_fetch = {
+        let signals = signals.clone();
+        move |_: MouseEvent| {
+            let client = client.clone();
+            let signals = signals.clone();
+            spawn(async move {
+                loading.set(true);
+                let start = now_ms();
+                match forge::get_demo_stats(&client).await {
+                    Ok(stats) => {
+                        let elapsed = now_ms() - start;
+                        signals.track("cache_fetch", json!({"response_ms": elapsed, "cache_hit": elapsed < 100.0, "fetch_number": fetch_count() + 1}));
+                        data.set(Some(stats));
+                        response_ms.set(Some(elapsed));
+                        fetch_count.set(fetch_count() + 1);
+                    }
+                    Err(_) => {}
                 }
-                Err(_) => {}
-            }
-            loading.set(false);
-        });
+                loading.set(false);
+            });
+        }
     };
 
     let is_cached = response_ms().is_some_and(|ms| ms < 100.0);

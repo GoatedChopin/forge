@@ -832,20 +832,7 @@ fn enforce_protocol_header(
     Ok(())
 }
 
-fn extract_client_ip(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(',').next().unwrap_or("").trim().to_string())
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            headers
-                .get("x-real-ip")
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-        })
-}
+use super::extract_client_ip;
 
 fn extract_user_agent(headers: &HeaderMap) -> Option<String> {
     headers
@@ -864,6 +851,7 @@ fn build_request_metadata(
         trace_id: tracing.trace_id.clone(),
         client_ip: extract_client_ip(headers),
         user_agent: extract_user_agent(headers),
+        correlation_id: None,
         timestamp: chrono::Utc::now(),
     }
 }

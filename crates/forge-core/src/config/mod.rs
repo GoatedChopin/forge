@@ -1,8 +1,10 @@
 pub mod cluster;
 mod database;
+pub mod signals;
 
 pub use cluster::ClusterConfig;
 pub use database::{DatabaseConfig, PoolConfig};
+pub use signals::SignalsConfig;
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -54,6 +56,10 @@ pub struct ForgeConfig {
     /// MCP server configuration.
     #[serde(default)]
     pub mcp: McpConfig,
+
+    /// Signals configuration for product analytics and diagnostics.
+    #[serde(default)]
+    pub signals: SignalsConfig,
 }
 
 impl ForgeConfig {
@@ -115,6 +121,7 @@ impl ForgeConfig {
             auth: AuthConfig::default(),
             observability: ObservabilityConfig::default(),
             mcp: McpConfig::default(),
+            signals: SignalsConfig::default(),
         }
     }
 }
@@ -277,7 +284,14 @@ fn default_cors_origins() -> Vec<String> {
 }
 
 fn default_quiet_routes() -> Vec<String> {
-    vec!["/_api/health".to_string(), "/_api/ready".to_string()]
+    vec![
+        "/_api/health".to_string(),
+        "/_api/ready".to_string(),
+        "/_api/signal/event".to_string(),
+        "/_api/signal/view".to_string(),
+        "/_api/signal/user".to_string(),
+        "/_api/signal/report".to_string(),
+    ]
 }
 
 /// Function execution configuration.
@@ -612,7 +626,7 @@ fn default_otlp_endpoint() -> String {
     "http://localhost:4318".to_string()
 }
 
-fn default_true() -> bool {
+pub(crate) fn default_true() -> bool {
     true
 }
 

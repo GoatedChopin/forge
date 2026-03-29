@@ -128,6 +128,11 @@ mod tests {
         assert!(sql.contains("forge_refresh_tokens"));
         assert!(sql.contains("forge_oauth_clients"));
         assert!(sql.contains("forge_oauth_codes"));
+
+        // Signals tables
+        assert!(sql.contains("forge_signals_events"));
+        assert!(sql.contains("forge_signals_sessions"));
+        assert!(sql.contains("forge_signals_users"));
     }
 
     #[test]

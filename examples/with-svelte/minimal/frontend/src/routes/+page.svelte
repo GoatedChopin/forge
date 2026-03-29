@@ -1,10 +1,12 @@
 <script lang="ts">
+  import { getForgeSignals } from "@forge-rs/svelte";
+  const signals = getForgeSignals();
   const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8080";
 </script>
 
 <h1>minimal</h1>
 <p class="subtitle">
-  Backend: <a href={apiUrl + "/health"} target="_blank" rel="external noopener">{apiUrl}</a>
+  Backend: <a href={apiUrl + "/health"} target="_blank" rel="external noopener" onclick={() => signals.track('link_clicked', { target: 'health_check', url: apiUrl + '/health' })}>{apiUrl}</a>
 </p>
 
 <section class="card">
@@ -17,7 +19,7 @@
     <li>Add migrations in <code>migrations/</code></li>
   </ul>
   <p>
-    Check the <a href="https://tryforge.dev/docs" target="_blank">documentation</a> for guides and examples.
+    Check the <a href="https://tryforge.dev/docs" target="_blank" onclick={() => signals.track('link_clicked', { target: 'documentation', url: 'https://tryforge.dev/docs' })}>documentation</a> for guides and examples.
   </p>
 </section>
 

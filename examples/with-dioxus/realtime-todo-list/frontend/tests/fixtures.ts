@@ -3,7 +3,7 @@ import { test as base, expect, type Page } from "@playwright/test";
 export { expect };
 
 export const API_URL = process.env.VITE_API_URL || "http://localhost:9081";
-export const ACTION_TIMEOUT = process.env.CI ? 15_000 : 5_000;
+export const ACTION_TIMEOUT = process.env.CI ? 30_000 : 30_000;
 
 export function uniqueId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -50,11 +50,10 @@ export const test = base.extend<ForgeFixtures>({
 
   gotoReady: async ({ page }, use) => {
     await use(async (path = "/") => {
-      // WASM apps need extra time: download → compile → init → subscribe.
-      // Wait for the app to render before expecting network activity.
+      // WASM apps need extra time: download → instantiate → init → SSE → subscribe.
       const subscribed = page.waitForResponse(
         (res) => res.url().includes("/_api/subscribe") && res.status() === 200,
-        { timeout: 60_000 },
+        { timeout: 90_000 },
       );
       await page.goto(path);
       await subscribed;

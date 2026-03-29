@@ -157,3 +157,26 @@ Bind `ctx.conn().await?` to a `let mut conn` variable and pass `&mut conn` to qu
 
 **Pool exhaustion (`pool timed out`)**
 Check `pg_stat_activity` for stuck connections. Isolate analytics/jobs into separate pools via `forge.toml`. Ensure mutations drop connections before long non-DB work.
+
+## 8. Signals
+
+**Signals events not appearing in Grafana**
+Check: (1) `[signals] enabled = true` in forge.toml, (2) PostgreSQL datasource configured in Grafana, (3) materialized views have been refreshed (first refresh happens 5 min after startup), (4) events exist: `SELECT count(*) FROM forge_signals_events`.
+
+**Don't log PII in signal properties**
+Custom `track()` properties are stored as JSONB. Don't pass email addresses, passwords, or personal data. Use user IDs for identification via `identify()`.
+
+**Session timeout too short**
+Default 30 minutes. If users have long idle periods (reading docs, filling forms), increase `session_timeout_mins`. Too short = inflated session counts and bounce rates.
+
+**Batch exceeds 50 events**
+Signal endpoints reject batches larger than 50. Client SDKs default to `maxBatchSize: 20`, so this only happens with custom integrations. Split into multiple requests.
+
+**Missing correlation between frontend and backend**
+If `correlation_id` is null on signal events, the frontend isn't attaching `x-correlation-id` headers. Check that `ForgeProvider` wraps your app. Direct `fetch()` calls bypass this; use generated RPC functions instead.
+
+**Bot traffic skewing metrics**
+Bot detection tags events with `is_bot = true` but doesn't filter them. Dashboard queries should use `WHERE NOT is_bot` for user-facing metrics.
+
+**Events dropped silently**
+Collector uses a bounded channel (capacity 10,000). Under extreme load, events drop with a warning log (`signals collector channel full`). Increase `batch_size` or decrease `flush_interval_ms` to drain faster.

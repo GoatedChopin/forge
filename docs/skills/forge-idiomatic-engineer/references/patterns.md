@@ -621,3 +621,107 @@ SELECT status, count(*) FROM forge_workflow_runs GROUP BY status;
 - Migrations tested with rollback (`forge migrate down`)
 - Rate limits on public endpoints
 - Circuit breaker enabled for external API calls
+
+## Signals (Product Analytics & Diagnostics)
+
+### Overview
+
+Built-in, zero-config product analytics and frontend diagnostics. Enabled by default. GDPR-compliant without cookie banners (no cookies, no persistent client IDs).
+
+### Configuration
+
+```toml
+[signals]
+enabled = true              # default
+auto_capture = true         # auto-track RPC calls
+diagnostics = true          # capture frontend errors
+session_timeout_mins = 30
+retention_days = 90
+anonymize_ip = false        # when true, store hashed visitor ID instead of raw IP
+batch_size = 100            # events per DB flush
+flush_interval_ms = 5000    # max ms between flushes
+excluded_functions = []
+bot_detection = true
+```
+
+### How It Works
+
+**Server-side auto-capture**: Every RPC call is automatically recorded with function name, duration, status, and user context. No user code required.
+
+**Client-side tracking**: `ForgeSignals` (Svelte) / `use_signals()` (Dioxus) auto-captures page views, errors, and provides manual `track()` / `identify()` APIs.
+
+**Correlation**: Each RPC call gets a `x-correlation-id` header linking frontend events to backend execution. Use this to trace a user action from click to database query.
+
+**Visitor identity**: Daily-rotating `SHA256(ip + ua + daily_salt)` hash. Same-day uniqueness without cookies. Resets at midnight UTC. Raw IPs stored by default; set `anonymize_ip = true` to store only the hashed visitor ID.
+
+**Bot detection**: UA-based classification (50+ patterns). Bot events stored alongside human events with `is_bot` flag. Dashboard filters by `WHERE NOT is_bot`.
+
+**Sessions**: Server-managed via `x-session-id` header. Server assigns a UUID on first contact, client sends it back on subsequent requests. Sessions close after `session_timeout_mins` of inactivity. No cookies, no localStorage.
+
+**Event types**: `PageView`, `RpcCall`, `Track`, `Identify`, `SessionStart`, `SessionEnd`, `Error`, `Breadcrumb`.
+
+**Collector**: Events buffered via bounded mpsc channel (capacity 10,000). Non-blocking `try_send()` prevents request slowdown. Drops events with a warning if full.
+
+### Client API (Svelte)
+
+```typescript
+import { getForgeSignals } from '@forge-rs/svelte';
+
+const signals = getForgeSignals();
+
+// Custom event
+signals.track('button_clicked', { button_id: 'signup' });
+
+// Identify user (links anonymous session)
+await signals.identify(userId, { plan: 'pro' });
+
+// Manual page view (auto-tracked by default)
+await signals.page();
+
+// Error capture (auto-captured by default)
+signals.captureError(new Error('Something broke'), { component: 'Cart' });
+
+// Breadcrumb for error reproduction
+signals.breadcrumb('Added item to cart', { item_id: '123' });
+```
+
+### Client API (Dioxus)
+
+```rust
+use forge_dioxus::use_signals;
+
+let signals = use_signals();
+signals.track("button_clicked", json!({"button_id": "signup"}));
+signals.identify("user-uuid", json!({"plan": "pro"})).await;
+signals.page("/dashboard").await;
+signals.capture_error("Something broke", json!({})).await;
+signals.breadcrumb("Opened settings", Some(json!({"tab": "billing"})));
+```
+
+### Endpoints
+
+Ingestion endpoints (added to quiet_routes by default, max 50 events per batch):
+- `POST /_api/signal/event` -- batch custom events (`{ "events": [{ "event", "properties", "correlation_id", "timestamp" }] }`)
+- `POST /_api/signal/view` -- page view (`{ "url", "referrer", "title", "utm": { "source", "medium", "campaign", "term", "content" } }`)
+- `POST /_api/signal/user` -- user identification (`{ "user_id", "traits" }`)
+- `POST /_api/signal/report` -- diagnostic errors (`{ "errors": [{ "message", "stack", "context", "correlation_id", "breadcrumbs" }] }`)
+
+All return `{ "ok": true, "session_id": "UUID" }`.
+
+### Storage
+
+Three PostgreSQL tables (using the analytics pool):
+- `forge_signals_events` -- partitioned by month, auto-cleaned based on `retention_days`
+- `forge_signals_sessions` -- server-side session tracking
+- `forge_signals_users` -- analytics user profiles
+
+Materialized views refreshed every 5 minutes:
+- `forge_signals_daily_stats` -- DAU, sessions, events by day
+- `forge_signals_retention` -- weekly cohort retention
+- `forge_signals_function_stats` -- hourly function performance
+
+### Grafana Dashboard
+
+Ships with a pre-built "Forge Signals" dashboard (PostgreSQL datasource). Sections: Overview, Behavior, Acquisition, Retention, Performance, Diagnostics, Real-time.
+
+Enable in docker-compose by using the Forge OTEL-LGTM image and passing `POSTGRES_*` env vars.

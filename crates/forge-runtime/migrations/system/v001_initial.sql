@@ -491,3 +491,307 @@ RETURNS void LANGUAGE sql AS $$
     DELETE FROM forge_invalidations
     WHERE created_at < now() - interval '1 hour';
 $$;
+
+-- Events table (partitioned by month for retention management)
+CREATE TABLE IF NOT EXISTS forge_signals_events (
+    id              UUID NOT NULL DEFAULT gen_random_uuid(),
+    event_type      VARCHAR(32) NOT NULL,
+    event_name      VARCHAR(255),
+    correlation_id  VARCHAR(64),
+    session_id      UUID,
+    visitor_id      VARCHAR(64),
+    user_id         UUID,
+    tenant_id       UUID,
+    properties      JSONB NOT NULL DEFAULT '{}',
+
+    -- Page context
+    page_url        TEXT,
+    referrer        TEXT,
+
+    -- RPC fields (denormalized for dashboard query performance)
+    function_name   VARCHAR(255),
+    function_kind   VARCHAR(32),
+    duration_ms     INTEGER,
+    status          VARCHAR(32),
+
+    -- Diagnostics
+    error_message   TEXT,
+    error_stack     TEXT,
+    error_context   JSONB,
+
+    -- Client context
+    client_ip       TEXT,
+    user_agent      TEXT,
+    device_type     VARCHAR(16),
+    browser         VARCHAR(64),
+    os              VARCHAR(64),
+
+    -- Acquisition
+    utm_source      VARCHAR(255),
+    utm_medium      VARCHAR(255),
+    utm_campaign    VARCHAR(255),
+    utm_term        VARCHAR(255),
+    utm_content     VARCHAR(255),
+
+    -- Geo (ISO 3166-1 alpha-2, derived from IP)
+    country         VARCHAR(8),
+
+    -- Classification
+    is_bot          BOOLEAN NOT NULL DEFAULT FALSE,
+
+    timestamp       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    PRIMARY KEY (id, timestamp)
+) PARTITION BY RANGE (timestamp);
+
+-- Create initial partition for the current month and next month.
+-- The runtime creates future partitions via a daily cron.
+DO $$
+DECLARE
+    current_start DATE := date_trunc('month', CURRENT_DATE);
+    next_start DATE := current_start + interval '1 month';
+    after_next DATE := next_start + interval '1 month';
+    partition_name TEXT;
+BEGIN
+    partition_name := 'forge_signals_events_' || to_char(current_start, 'YYYY_MM');
+    EXECUTE format(
+        'CREATE TABLE IF NOT EXISTS %I PARTITION OF forge_signals_events
+         FOR VALUES FROM (%L) TO (%L)',
+        partition_name, current_start, next_start
+    );
+
+    partition_name := 'forge_signals_events_' || to_char(next_start, 'YYYY_MM');
+    EXECUTE format(
+        'CREATE TABLE IF NOT EXISTS %I PARTITION OF forge_signals_events
+         FOR VALUES FROM (%L) TO (%L)',
+        partition_name, next_start, after_next
+    );
+END $$;
+
+-- Default partition catches events outside explicit partition ranges
+CREATE TABLE IF NOT EXISTS forge_signals_events_default
+    PARTITION OF forge_signals_events DEFAULT;
+
+-- Indexes on the parent (inherited by all partitions)
+CREATE INDEX IF NOT EXISTS idx_signals_events_timestamp
+    ON forge_signals_events (timestamp DESC);
+
+CREATE INDEX IF NOT EXISTS idx_signals_events_user
+    ON forge_signals_events (user_id, timestamp DESC)
+    WHERE user_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_signals_events_session
+    ON forge_signals_events (session_id, timestamp)
+    WHERE session_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_signals_events_type
+    ON forge_signals_events (event_type, timestamp DESC);
+
+CREATE INDEX IF NOT EXISTS idx_signals_events_function
+    ON forge_signals_events (function_name, timestamp DESC)
+    WHERE function_name IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_signals_events_correlation
+    ON forge_signals_events (correlation_id)
+    WHERE correlation_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_signals_events_properties
+    ON forge_signals_events USING GIN (properties);
+
+-- Session tracking (server-side, no client cookies)
+CREATE TABLE IF NOT EXISTS forge_signals_sessions (
+    id                  UUID PRIMARY KEY,
+    visitor_id          VARCHAR(64),
+    user_id             UUID,
+    tenant_id           UUID,
+
+    -- Timeline
+    started_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_activity_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ended_at            TIMESTAMPTZ,
+    duration_secs       INTEGER,
+
+    -- Counters (updated incrementally)
+    event_count         INTEGER NOT NULL DEFAULT 0,
+    page_view_count     INTEGER NOT NULL DEFAULT 0,
+    rpc_call_count      INTEGER NOT NULL DEFAULT 0,
+    error_count         INTEGER NOT NULL DEFAULT 0,
+
+    -- Navigation
+    entry_page          TEXT,
+    exit_page           TEXT,
+
+    -- Acquisition (first-touch for this session)
+    referrer            TEXT,
+    referrer_domain     VARCHAR(255),
+    utm_source          VARCHAR(255),
+    utm_medium          VARCHAR(255),
+    utm_campaign        VARCHAR(255),
+
+    -- Device
+    user_agent          TEXT,
+    device_type         VARCHAR(16),
+    browser             VARCHAR(64),
+    os                  VARCHAR(64),
+    client_ip           TEXT,
+
+    -- Geo
+    country             VARCHAR(8),
+
+    -- Classification
+    is_bot              BOOLEAN NOT NULL DEFAULT FALSE,
+    is_bounce           BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+CREATE INDEX IF NOT EXISTS idx_signals_sessions_started
+    ON forge_signals_sessions (started_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_signals_sessions_user
+    ON forge_signals_sessions (user_id, started_at DESC)
+    WHERE user_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_signals_sessions_referrer
+    ON forge_signals_sessions (referrer_domain, started_at DESC)
+    WHERE referrer_domain IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_signals_sessions_activity
+    ON forge_signals_sessions (last_activity_at)
+    WHERE ended_at IS NULL;
+
+-- Analytics user profiles (created on identify())
+CREATE TABLE IF NOT EXISTS forge_signals_users (
+    id                      UUID PRIMARY KEY,
+    first_seen_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    -- Acquisition (first-touch attribution)
+    first_referrer          TEXT,
+    first_referrer_domain   VARCHAR(255),
+    first_utm_source        VARCHAR(255),
+    first_utm_medium        VARCHAR(255),
+    first_utm_campaign      VARCHAR(255),
+
+    -- Aggregates
+    total_sessions          INTEGER NOT NULL DEFAULT 0,
+    total_events            INTEGER NOT NULL DEFAULT 0,
+
+    -- Custom traits from identify() calls
+    traits                  JSONB NOT NULL DEFAULT '{}',
+
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Materialized views for dashboard performance.
+-- Refreshed concurrently every 5 minutes by the runtime.
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS forge_signals_daily_stats AS
+SELECT
+    date_trunc('day', timestamp)::date AS day,
+    COUNT(DISTINCT user_id) FILTER (WHERE user_id IS NOT NULL) AS unique_users,
+    COUNT(DISTINCT session_id) FILTER (WHERE session_id IS NOT NULL) AS unique_sessions,
+    COUNT(*) AS total_events,
+    COUNT(*) FILTER (WHERE event_type = 'error') AS total_errors,
+    COUNT(*) FILTER (WHERE is_bot = TRUE) AS bot_events,
+    COUNT(*) FILTER (WHERE is_bot = FALSE) AS human_events
+FROM forge_signals_events
+WHERE timestamp > NOW() - INTERVAL '90 days'
+GROUP BY 1;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_signals_daily_stats_day
+    ON forge_signals_daily_stats (day);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS forge_signals_retention AS
+WITH cohorts AS (
+    SELECT id AS user_id, date_trunc('week', first_seen_at)::date AS cohort_week
+    FROM forge_signals_users
+),
+activity AS (
+    SELECT DISTINCT user_id, date_trunc('week', timestamp)::date AS activity_week
+    FROM forge_signals_events
+    WHERE user_id IS NOT NULL
+)
+SELECT
+    c.cohort_week,
+    EXTRACT(DAYS FROM (a.activity_week::timestamp - c.cohort_week::timestamp))::integer / 7 AS weeks_since,
+    COUNT(DISTINCT a.user_id) AS active_users,
+    (SELECT COUNT(*) FROM cohorts c2 WHERE c2.cohort_week = c.cohort_week) AS cohort_size
+FROM cohorts c
+JOIN activity a ON c.user_id = a.user_id
+GROUP BY c.cohort_week, weeks_since;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_signals_retention_key
+    ON forge_signals_retention (cohort_week, weeks_since);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS forge_signals_function_stats AS
+SELECT
+    function_name,
+    function_kind,
+    date_trunc('hour', timestamp) AS hour,
+    COUNT(*) AS call_count,
+    COUNT(*) FILTER (WHERE status = 'success') AS success_count,
+    COUNT(*) FILTER (WHERE status = 'error') AS error_count,
+    AVG(duration_ms)::integer AS avg_duration_ms,
+    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms)::integer AS p95_duration_ms,
+    PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY duration_ms)::integer AS p99_duration_ms
+FROM forge_signals_events
+WHERE event_type = 'rpc_call'
+  AND function_name IS NOT NULL
+  AND timestamp > NOW() - INTERVAL '30 days'
+GROUP BY 1, 2, 3;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_signals_function_stats_key
+    ON forge_signals_function_stats (function_name, function_kind, hour);
+
+-- Partition management helpers
+
+CREATE OR REPLACE FUNCTION forge_signals_ensure_partition(target_date DATE)
+RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+    month_start DATE := date_trunc('month', target_date);
+    month_end DATE := month_start + interval '1 month';
+    partition_name TEXT := 'forge_signals_events_' || to_char(month_start, 'YYYY_MM');
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_class WHERE relname = partition_name
+    ) THEN
+        EXECUTE format(
+            'CREATE TABLE IF NOT EXISTS %I PARTITION OF forge_signals_events
+             FOR VALUES FROM (%L) TO (%L)',
+            partition_name, month_start, month_end
+        );
+    END IF;
+END $$;
+
+CREATE OR REPLACE FUNCTION forge_signals_drop_old_partitions(retention_days INTEGER)
+RETURNS integer LANGUAGE plpgsql AS $$
+DECLARE
+    cutoff DATE := CURRENT_DATE - (retention_days || ' days')::interval;
+    rec RECORD;
+    dropped INTEGER := 0;
+BEGIN
+    FOR rec IN
+        SELECT inhrelid::regclass::text AS partition_name
+        FROM pg_inherits
+        WHERE inhparent = 'forge_signals_events'::regclass
+        AND inhrelid::regclass::text != 'forge_signals_events_default'
+    LOOP
+        -- Extract the YYYY_MM from partition name and check if it's before cutoff
+        IF to_date(
+            substring(rec.partition_name FROM 'forge_signals_events_(\d{4}_\d{2})'),
+            'YYYY_MM'
+        ) + interval '1 month' < cutoff THEN
+            EXECUTE format('DROP TABLE IF EXISTS %s', rec.partition_name);
+            dropped := dropped + 1;
+        END IF;
+    END LOOP;
+    RETURN dropped;
+END $$;
+
+CREATE OR REPLACE FUNCTION forge_signals_refresh_views()
+RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+    REFRESH MATERIALIZED VIEW CONCURRENTLY forge_signals_daily_stats;
+    REFRESH MATERIALIZED VIEW CONCURRENTLY forge_signals_retention;
+    REFRESH MATERIALIZED VIEW CONCURRENTLY forge_signals_function_stats;
+END $$;

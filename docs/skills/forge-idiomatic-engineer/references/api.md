@@ -308,6 +308,18 @@ path = "/mcp"
 [observability]
 enabled = false
 otlp_endpoint = "http://localhost:4318"
+
+[signals]
+enabled = true              # default: true
+auto_capture = true         # auto-track RPC calls
+diagnostics = true          # capture frontend errors
+session_timeout_mins = 30
+retention_days = 90
+anonymize_ip = false        # when true, store hashed visitor ID instead of raw IP
+batch_size = 100            # events per DB flush
+flush_interval_ms = 5000    # max ms between flushes
+excluded_functions = []     # function names to skip (exact match)
+bot_detection = true        # tag bot traffic via UA patterns
 ```
 
 Env var substitution: `${VAR}`, `${VAR-default}`, `${VAR:-default}`. Names: `[A-Z_][A-Z0-9_]*`.
@@ -392,3 +404,9 @@ Files: `migrations/NNNN_description.sql`. Markers: `-- @up` (required), `-- @dow
 | `/_api/ready` | Readiness (GET, 200/503) |
 | `/_api/webhooks/{path}` | Webhook handlers |
 | `/_api/mcp` | MCP endpoint (if enabled) |
+| `/_api/signal/event` | Signal: batch custom events (POST, max 50) |
+| `/_api/signal/view` | Signal: page view with UTM (POST) |
+| `/_api/signal/user` | Signal: identify user (POST) |
+| `/_api/signal/report` | Signal: diagnostic error reports (POST, max 50) |
+
+Signal endpoints return `{ "ok": true, "session_id": "UUID" }`. Headers: `x-session-id` (session continuity), `x-forge-platform` (device: `web`, `desktop-macos`, `ios`, `android`, etc.), `x-correlation-id` (links to RPC). Endpoint batch limit (50) is separate from server-side `batch_size` (100) which controls DB flush size.

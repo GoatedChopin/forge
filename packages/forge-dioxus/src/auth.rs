@@ -8,6 +8,7 @@ use dioxus::prelude::*;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+use crate::signals::{ForgeSignals, SignalsConfig, setup_auto_capture};
 use crate::{ConnectionState, ForgeClient, ForgeClientConfig};
 
 /// Persisted auth data: tokens + optional viewer.
@@ -283,6 +284,17 @@ pub fn ForgeAuthProvider(
                 }
             }
         }
+    });
+
+    // Initialize signals (must come after ForgeClient is provided)
+    let client: ForgeClient = use_context();
+    let signals_instance = use_context_provider(|| {
+        let s = ForgeSignals::new(client.clone(), SignalsConfig::default());
+        client.set_signals(s.clone());
+        s
+    });
+    use_hook(|| {
+        setup_auto_capture(signals_instance);
     });
 
     rsx! { {children} }

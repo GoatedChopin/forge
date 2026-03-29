@@ -43,6 +43,8 @@ use crate::realtime::{Reactor, ReactorConfig};
 const MAX_JSON_BODY_SIZE: usize = 1024 * 1024;
 const MAX_MULTIPART_BODY_SIZE: usize = 20 * 1024 * 1024;
 const MAX_MULTIPART_CONCURRENCY: usize = 32;
+/// Fallback for visitor ID hashing when no JWT secret is configured (dev only).
+const DEFAULT_SIGNAL_SECRET: &str = "forge-default-signal-secret";
 
 /// Gateway server configuration.
 #[derive(Debug, Clone)]
@@ -125,6 +127,7 @@ pub struct GatewayServer {
     workflow_dispatcher: Option<Arc<dyn WorkflowDispatch>>,
     mcp_registry: Option<McpToolRegistry>,
     token_ttl: forge_core::AuthTokenTtl,
+    signals_collector: Option<crate::signals::SignalsCollector>,
 }
 
 impl GatewayServer {
@@ -148,6 +151,7 @@ impl GatewayServer {
             workflow_dispatcher: None,
             mcp_registry: None,
             token_ttl,
+            signals_collector: None,
         }
     }
 
@@ -166,6 +170,13 @@ impl GatewayServer {
     /// Set the MCP tool registry.
     pub fn with_mcp_registry(mut self, registry: McpToolRegistry) -> Self {
         self.mcp_registry = Some(registry);
+        self
+    }
+
+    /// Set the signals collector for auto-capturing RPC events and
+    /// registering client signal ingestion endpoints.
+    pub fn with_signals_collector(mut self, collector: crate::signals::SignalsCollector) -> Self {
+        self.signals_collector = Some(collector);
         self
     }
 
@@ -223,6 +234,15 @@ impl GatewayServer {
             token_issuer,
         );
         rpc.set_token_ttl(self.token_ttl.clone());
+        if let Some(collector) = &self.signals_collector {
+            let secret = self
+                .config
+                .auth
+                .jwt_secret
+                .clone()
+                .unwrap_or_else(|| DEFAULT_SIGNAL_SECRET.to_string());
+            rpc.set_signals_collector(collector.clone(), secret);
+        }
         let rpc_handler_state = Arc::new(rpc);
 
         let auth_middleware_state = Arc::new(AuthMiddleware::new(self.config.auth.clone()));
@@ -263,6 +283,9 @@ impl GatewayServer {
                         axum::http::header::ACCEPT,
                         axum::http::HeaderName::from_static("x-webhook-signature"),
                         axum::http::HeaderName::from_static("x-idempotency-key"),
+                        axum::http::HeaderName::from_static("x-correlation-id"),
+                        axum::http::HeaderName::from_static("x-session-id"),
+                        axum::http::HeaderName::from_static("x-forge-platform"),
                     ])
                     .allow_credentials(true)
             }
@@ -338,10 +361,44 @@ impl GatewayServer {
             );
         }
 
+        // Signal ingestion endpoints (product analytics + diagnostics)
+        let mut signals_router = Router::new();
+        if let Some(collector) = &self.signals_collector {
+            let signals_state = Arc::new(crate::signals::endpoints::SignalsState {
+                collector: collector.clone(),
+                pool: self.db.analytics_pool().clone(),
+                server_secret: self
+                    .config
+                    .auth
+                    .jwt_secret
+                    .clone()
+                    .unwrap_or_else(|| DEFAULT_SIGNAL_SECRET.to_string()),
+            });
+            signals_router = Router::new()
+                .route(
+                    "/signal/event",
+                    post(crate::signals::endpoints::event_handler),
+                )
+                .route(
+                    "/signal/view",
+                    post(crate::signals::endpoints::view_handler),
+                )
+                .route(
+                    "/signal/user",
+                    post(crate::signals::endpoints::user_handler),
+                )
+                .route(
+                    "/signal/report",
+                    post(crate::signals::endpoints::report_handler),
+                )
+                .with_state(signals_state);
+        }
+
         main_router = main_router
             .merge(multipart_router)
             .merge(sse_router)
-            .merge(mcp_router);
+            .merge(mcp_router)
+            .merge(signals_router);
 
         // Build middleware stack
         let service_builder = ServiceBuilder::new()

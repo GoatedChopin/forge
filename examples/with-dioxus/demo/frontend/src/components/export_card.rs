@@ -1,10 +1,12 @@
 use dioxus::prelude::*;
-use forge_dioxus::JobStatus;
+use forge_dioxus::{JobStatus, use_signals};
+use serde_json::json;
 
 use crate::forge::{ExportInput, use_export_users};
 
 #[component]
 pub fn ExportCard() -> Element {
+    let signals = use_signals();
     let mut run_nonce = use_signal(|| 0_u64);
 
     rsx! {
@@ -12,7 +14,13 @@ pub fn ExportCard() -> Element {
             h2 { "Export Job " span { class: "badge", "job" } }
             if run_nonce() == 0 {
                 p { class: "muted small export-desc", "Ready to export users to CSV" }
-                button { onclick: move |_| run_nonce += 1, "Start Export" }
+                button { onclick: {
+                    let signals = signals.clone();
+                    move |_| {
+                        signals.track("export_started", json!({"format": "csv"}));
+                        run_nonce += 1;
+                    }
+                }, "Start Export" }
             } else {
                 ExportRun { key: "{run_nonce()}", on_restart: move |_| run_nonce += 1 }
             }

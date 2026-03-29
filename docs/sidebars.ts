@@ -61,6 +61,7 @@ const sidebars: SidebarsConfig = {
       collapsed: true,
       items: [
         'ship/configuration',
+        'ship/signals',
         'ship/mcp-security',
         'ship/testing',
         'ship/deploy',

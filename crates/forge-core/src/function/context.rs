@@ -616,6 +616,8 @@ pub struct RequestMetadata {
     pub client_ip: Option<String>,
     /// User agent string.
     pub user_agent: Option<String>,
+    /// Correlation ID linking frontend events to this backend call.
+    pub correlation_id: Option<String>,
     /// Request timestamp.
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
@@ -628,6 +630,7 @@ impl RequestMetadata {
             trace_id: Uuid::new_v4().to_string(),
             client_ip: None,
             user_agent: None,
+            correlation_id: None,
             timestamp: chrono::Utc::now(),
         }
     }
@@ -639,6 +642,7 @@ impl RequestMetadata {
             trace_id,
             client_ip: None,
             user_agent: None,
+            correlation_id: None,
             timestamp: chrono::Utc::now(),
         }
     }

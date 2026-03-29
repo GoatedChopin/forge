@@ -66,6 +66,17 @@ impl RpcHandler {
         }
     }
 
+    /// Set the signals collector for auto-capturing RPC events.
+    pub fn set_signals_collector(
+        &mut self,
+        collector: crate::signals::SignalsCollector,
+        server_secret: String,
+    ) {
+        if let Some(executor) = Arc::get_mut(&mut self.executor) {
+            executor.set_signals_collector(collector, server_secret);
+        }
+    }
+
     /// Handle an RPC request.
     pub async fn handle(
         &self,
@@ -87,21 +98,7 @@ impl RpcHandler {
     }
 }
 
-/// Extract client IP from X-Forwarded-For or X-Real-IP headers.
-fn extract_client_ip(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(',').next().unwrap_or("").trim().to_string())
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            headers
-                .get("x-real-ip")
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-        })
-}
+use super::extract_client_ip;
 
 /// Extract user agent from headers.
 fn extract_user_agent(headers: &HeaderMap) -> Option<String> {
@@ -119,8 +116,18 @@ fn build_metadata(tracing: TracingState, headers: &HeaderMap) -> RequestMetadata
         trace_id: tracing.trace_id,
         client_ip: extract_client_ip(headers),
         user_agent: extract_user_agent(headers),
+        correlation_id: extract_correlation_id(headers),
         timestamp: chrono::Utc::now(),
     }
+}
+
+/// Extract the correlation ID from the x-correlation-id header.
+fn extract_correlation_id(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("x-correlation-id")
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| !v.is_empty() && v.len() <= 64)
+        .map(String::from)
 }
 
 /// Axum handler for POST /rpc.
@@ -203,6 +210,7 @@ pub async fn rpc_batch_handler(
 
     let client_ip = extract_client_ip(&headers);
     let user_agent = extract_user_agent(&headers);
+    let correlation_id = extract_correlation_id(&headers);
     let mut results = Vec::with_capacity(batch.requests.len());
 
     for request in batch.requests {
@@ -218,6 +226,7 @@ pub async fn rpc_batch_handler(
             trace_id: tracing.trace_id.clone(),
             client_ip: client_ip.clone(),
             user_agent: user_agent.clone(),
+            correlation_id: correlation_id.clone(),
             timestamp: chrono::Utc::now(),
         };
 

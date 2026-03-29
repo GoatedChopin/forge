@@ -1,5 +1,7 @@
 use dioxus::prelude::*;
+use forge_dioxus::use_signals;
 use hmac::{Hmac, Mac};
+use serde_json::json;
 use sha2::Sha256;
 
 use super::{format_time, generate_key};
@@ -7,6 +9,7 @@ use crate::forge::use_get_webhook_events_live;
 
 #[component]
 pub fn WebhookCard(api_url: String) -> Element {
+    let signals = use_signals();
     let state = use_get_webhook_events_live();
     let events = state.data.clone().unwrap_or_default();
 
@@ -26,25 +29,37 @@ pub fn WebhookCard(api_url: String) -> Element {
                     readonly: true,
                 }
                 button { class: "small",
-                    onclick: move |_| {
-                        idempotency_key.set(generate_key());
-                        key_used.set(false);
-                        webhook_error.set(None);
+                    onclick: {
+                        let signals = signals.clone();
+                        move |_| {
+                            signals.track("webhook_key_generated", json!({}));
+                            idempotency_key.set(generate_key());
+                            key_used.set(false);
+                            webhook_error.set(None);
+                        }
                     },
                     "New"
                 }
                 button { disabled: key_used(),
                     onclick: {
                         let api_url = api_url.clone();
+                        let signals = signals.clone();
                         move |_| {
                             if key_used() { return; }
                             webhook_error.set(None);
                             let key = idempotency_key();
                             let api_url = api_url.clone();
+                            let signals = signals.clone();
                             spawn(async move {
                                 match trigger_webhook(&api_url, &key).await {
-                                    Ok(()) => key_used.set(true),
-                                    Err(msg) => webhook_error.set(Some(msg)),
+                                    Ok(()) => {
+                                        signals.track("webhook_sent", json!({"idempotency_key": &key}));
+                                        key_used.set(true);
+                                    }
+                                    Err(msg) => {
+                                        signals.track("webhook_error", json!({}));
+                                        webhook_error.set(Some(msg));
+                                    }
                                 }
                             });
                         }

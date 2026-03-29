@@ -1,6 +1,6 @@
 {
   "name": "@forge-rs/svelte",
-  "version": "0.7.4",
+  "version": "0.8.0",
   "type": "module",
   "main": "./index.ts",
   "types": "./index.ts",
@@ -8,7 +8,9 @@
     ".": "./index.ts",
     "./client": "./client.ts",
     "./stores": "./stores.ts",
-    "./context": "./context.ts"
+    "./context": "./context.ts",
+    "./signals": "./signals.ts",
+    "./signals-context": "./signals-context.ts"
   },
   "peerDependencies": {
     "svelte": "^5.0.0"

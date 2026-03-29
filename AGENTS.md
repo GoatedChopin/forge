@@ -12,10 +12,10 @@ Zero tech debt. Breaking changes are encouraged without a migration path if they
 crates/forge           CLI + public lib (publishes as `forgex`). Builder pattern, auto-registration via inventory crate, template scaffolding.
 crates/forge-core      Types, traits, contexts, errors, config, testing infra. All handler traits (ForgeQuery, ForgeMutation, ForgeJob, etc.) defined here.
 crates/forge-macros    Proc macros. Transforms #[query]/#[mutation]/#[job]/etc into trait impls + inventory::submit! registration. SQL table extraction via sqlparser.
-crates/forge-runtime   Gateway (Axum router, SSE, RPC dispatch), job worker (SKIP LOCKED polling), workflow executor, cron scheduler, daemon runner, reactivity (LISTEN/NOTIFY -> invalidation -> re-execute -> SSE fan-out), cluster coordination (advisory lock leader election), rate limiting, observability.
+crates/forge-runtime   Gateway (Axum router, SSE, RPC dispatch), job worker (SKIP LOCKED polling), workflow executor, cron scheduler, daemon runner, reactivity (LISTEN/NOTIFY -> invalidation -> re-execute -> SSE fan-out), cluster coordination (advisory lock leader election), rate limiting, observability, signals (product analytics + diagnostics).
 crates/forge-codegen   AST parser (syn) -> SchemaRegistry -> BindingSet IR -> emitters. TypeScript (SvelteKit) and Rust (Dioxus) targets. All type mapping in emit.rs (single source of truth).
-packages/forge-svelte  @forge-rs/svelte npm package. Runtime: ForgeClient, stores, SSE transport, auth.
-packages/forge-dioxus  forge-dioxus crate. Dioxus WASM client runtime, hooks, signals.
+packages/forge-svelte  @forge-rs/svelte npm package. Runtime: ForgeClient, stores, SSE transport, auth, ForgeSignals (analytics tracker).
+packages/forge-dioxus  forge-dioxus crate. Dioxus WASM client runtime, hooks, signals, ForgeSignals (analytics tracker).
 examples/with-svelte/  minimal, demo, realtime-todo-list (each a workspace member)
 examples/with-dioxus/  minimal, demo, realtime-todo-list
 benchmarks/app         Performance testing
@@ -74,7 +74,7 @@ Contexts: `QueryContext` (db pool, auth, env), `MutationContext` (+ conn, http c
 
 ForgeError variants: Config, Database, Function, Job, JobCancelled, Cluster, Serialization, Deserialization, Io, Sql, InvalidArgument(400), NotFound(404), Unauthorized(401), Forbidden(403), Validation(400), Timeout(504), Internal(500), InvalidState, WorkflowSuspended, RateLimitExceeded(429).
 
-Config: `ForgeConfig` loaded from TOML with `${ENV_VAR}` and `${VAR-default}` substitution. Sections: project, database (pool isolation: default/jobs/observability/analytics), gateway, function, worker, cluster, auth, mcp, observability.
+Config: `ForgeConfig` loaded from TOML with `${ENV_VAR}` and `${VAR-default}` substitution. Sections: project, database (pool isolation: default/jobs/observability/analytics), gateway, function, worker, cluster, auth, mcp, observability, signals.
 
 Testing module: `TestQueryContext`, `TestMutationContext`, `TestJobContext`, `TestCronContext`, `TestWorkflowContext`, `TestDaemonContext`, `TestWebhookContext`. Builders with `.as_user()`, `.with_role()`, `.with_claim()`, `.with_tenant()`, `.with_pool()`, `.with_env()`, `.mock_http()`. Assertion macros: `assert_ok!`, `assert_err!`, `assert_err_variant!`, `assert_job_dispatched!`, `assert_workflow_started!`, `assert_http_called!`.
 
@@ -215,6 +215,8 @@ Note: Integration testing means running `target/debug/forge test` on each exampl
 
 **Macro expansion**: `#[forge::query] pub async fn get_users(ctx: &QueryContext) -> Result<Vec<User>>` -> generates `GetUsersQuery` struct + `ForgeQuery` impl with `FunctionInfo` (name, cache_ttl, table_dependencies extracted from SQL, selected_columns) + `inventory::submit!` for auto-registration.
 
+**Signals** (product analytics + diagnostics): Auto-captures RPC calls in `FunctionExecutor`. Client trackers (`ForgeSignals` in forge-svelte/forge-dioxus) send page views, custom events, and error reports to `/_api/signal/{event,view,user,report}`. Events are buffered via mpsc channel and batch-inserted using UNNEST into `forge_signals_events` (partitioned by month). Daily-rotating visitor ID from `SHA256(ip+ua+daily_salt)` for GDPR-compliant tracking without cookies. Correlation IDs (`x-correlation-id` header) link frontend events to backend RPC calls. Bot detection via UA patterns. Grafana dashboard over PostgreSQL datasource. Config: `[signals]` in forge.toml (enabled by default).
+
 ## Extending the Framework
 
 **New handler type**: Add trait in forge-core -> add macro in forge-macros -> add registry + executor in forge-runtime -> add Auto* type in forge/auto_register.rs -> add codegen support in forge-codegen.
@@ -225,12 +227,16 @@ Note: Integration testing means running `target/debug/forge test` on each exampl
 
 **New CLI command**: Add variant to `Commands` enum in forge/cli/mod.rs -> implement command module -> wire execute().
 
-## Skill Reference (for using Forge, not developing it)
+## Documentation Policy
 
-Detailed docs for Forge users live in `docs/skills/forge-idiomatic-engineer/references/`:
-- `api.md`: macro attributes, context methods, forge.toml, CLI
-- `frontend.md`: stores, reactivity, uploads, errors
-- `frontend/svelte.md`: SvelteKit-specific patterns and stores
-- `frontend/dioxus.md`: Dioxus-specific hooks and signals
-- `patterns.md`: jobs, workflows, crons, daemons, auth, testing, operations, integrations
-- `pitfalls.md`: common mistakes and anti-patterns
+Any change to the framework (new feature, config option, endpoint, API, behavior change, bugfix that alters user-facing behavior) **must** update both documentation surfaces in the same changeset:
+
+1. **User docs** (`docs/docs/`): Docusaurus site. Pages organized by category (Start, Build, Connect, Ship, Scale, Reference, Tutorials). Sidebar defined in `docs/sidebars.ts`. This is what end users read.
+
+2. **Skill references** (`docs/skills/forge-idiomatic-engineer/references/`): Token-efficient lookup docs consumed by the forge-idiomatic-engineer AI skill. Four files:
+   - `api.md`: macro attributes, context methods, forge.toml config, CLI, endpoints
+   - `frontend.md`: stores, reactivity, uploads, errors, signals client API
+   - `patterns.md`: backend patterns, auth, integrations, testing, operations, signals
+   - `pitfalls.md`: common mistakes and anti-patterns
+
+Source code and docs must stay in sync. If you add a config option, it goes in `docs/docs/ship/configuration.mdx` AND `api.md`. If you add an endpoint, it goes in the relevant `docs/docs/` page AND `api.md`. If you change client behavior, it goes in `docs/docs/connect/` or `docs/docs/ship/` AND `frontend.md`. If you discover a new pitfall, it goes in `pitfalls.md`. Don't ship code without updating both.

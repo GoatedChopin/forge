@@ -1,3 +1,9 @@
+<script lang="ts">
+  import { getForgeSignals } from "@forge-rs/svelte";
+  const signals = getForgeSignals();
+  signals.track('about_page_viewed');
+</script>
+
 <h1>About</h1>
 <p>
   This app was scaffolded with Forge. Add new pages by creating a

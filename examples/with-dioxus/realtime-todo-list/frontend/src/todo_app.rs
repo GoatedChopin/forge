@@ -1,10 +1,13 @@
 use dioxus::prelude::*;
+use forge_dioxus::use_signals;
+use serde_json::json;
 
 use crate::forge::{CreateTodoInput, use_create_todo, use_list_todos_live};
 use crate::todo_item::TodoItem;
 
 #[component]
 pub fn TodoApp() -> Element {
+    let signals = use_signals();
     let create_todo = use_create_todo();
     let todo_state = use_list_todos_live();
     let mut new_title = use_signal(String::new);
@@ -35,6 +38,7 @@ pub fn TodoApp() -> Element {
                             oninput: move |event| new_title.set(event.value()),
                             onkeydown: {
                                 let create_todo = create_todo.clone();
+                                let signals = signals.clone();
                                 move |event: KeyboardEvent| {
                                     if event.key().to_string() == "Enter" {
                                         let title = new_title().trim().to_string();
@@ -44,10 +48,17 @@ pub fn TodoApp() -> Element {
                                         error.set(None);
                                         adding.set(true);
                                         let create_todo = create_todo.clone();
+                                        let signals = signals.clone();
                                         spawn(async move {
-                                            match create_todo.call(CreateTodoInput::new(title)).await {
-                                                Ok(_) => new_title.set(String::new()),
-                                                Err(err) => error.set(Some(err.message)),
+                                            match create_todo.call(CreateTodoInput::new(title.clone())).await {
+                                                Ok(_) => {
+                                                    signals.track("todo_created", json!({"title": &title}));
+                                                    new_title.set(String::new());
+                                                }
+                                                Err(err) => {
+                                                    signals.track("todo_create_error", json!({"error": &err.message}));
+                                                    error.set(Some(err.message));
+                                                }
                                             }
                                             adding.set(false);
                                         });
@@ -59,6 +70,7 @@ pub fn TodoApp() -> Element {
                             disabled: adding() || new_title().trim().is_empty(),
                             onclick: {
                                 let create_todo = create_todo.clone();
+                                let signals = signals.clone();
                                 move |_| {
                                     let title = new_title().trim().to_string();
                                     if title.is_empty() || adding() {
@@ -67,10 +79,17 @@ pub fn TodoApp() -> Element {
                                     error.set(None);
                                     adding.set(true);
                                     let create_todo = create_todo.clone();
+                                    let signals = signals.clone();
                                     spawn(async move {
-                                        match create_todo.call(CreateTodoInput::new(title)).await {
-                                            Ok(_) => new_title.set(String::new()),
-                                            Err(err) => error.set(Some(err.message)),
+                                        match create_todo.call(CreateTodoInput::new(title.clone())).await {
+                                            Ok(_) => {
+                                                signals.track("todo_created", json!({"title": &title}));
+                                                new_title.set(String::new());
+                                            }
+                                            Err(err) => {
+                                                signals.track("todo_create_error", json!({"error": &err.message}));
+                                                error.set(Some(err.message));
+                                            }
                                         }
                                         adding.set(false);
                                     });

@@ -1,7 +1,9 @@
 <script lang="ts">
   import { listTodos$, createTodo, updateTodo, deleteTodo } from "$lib/forge";
   import type { ForgeError } from "$lib/forge";
+  import { getForgeSignals } from "@forge-rs/svelte";
 
+  const signals = getForgeSignals();
   const todos = listTodos$();
 
   let newTitle: string = $state("");
@@ -16,33 +18,42 @@
     if (!newTitle.trim()) return;
     adding = true;
     error = null;
+    signals.breadcrumb("Adding todo", { title: newTitle.trim() });
     try {
       await createTodo({ title: newTitle.trim() });
+      signals.track("todo_created", { title: newTitle.trim() });
       newTitle = "";
     } catch (e) {
       error = e as ForgeError;
+      signals.track("todo_create_error", { error: (e as ForgeError).message });
     } finally {
       adding = false;
     }
   }
 
   async function handleToggle(id: string, completed: boolean) {
+    signals.track("todo_toggled", { id, completed: !completed });
     try {
       await updateTodo({ id, completed: !completed });
     } catch (e) {
       error = e as ForgeError;
+      signals.track("todo_toggle_error", { error: (e as ForgeError).message });
     }
   }
 
   async function handleDelete(id: string) {
+    signals.breadcrumb("Deleting todo", { id });
     try {
       await deleteTodo({ id });
+      signals.track("todo_deleted", { id });
     } catch (e) {
       error = e as ForgeError;
+      signals.track("todo_delete_error", { error: (e as ForgeError).message });
     }
   }
 
   function handleKeydown(e: KeyboardEvent) {
+    signals.breadcrumb("Enter key pressed in todo input");
     if (e.key === "Enter") handleAdd();
   }
 </script>

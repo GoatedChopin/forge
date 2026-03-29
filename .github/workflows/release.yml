@@ -87,10 +87,14 @@ jobs:
       - if: startsWith(matrix.template, 'with-dioxus/')
         run: cargo binstall dioxus-cli@0.7.3 --no-confirm
       - run: scripts/ci/test-template.sh "${{ matrix.template }}" /tmp/forge-bin/forge "${{ github.workspace }}"
+      - if: failure()
+        run: echo "ARTIFACT_NAME=playwright-${TEMPLATE//\//-}" >> "$GITHUB_ENV"
+        env:
+          TEMPLATE: ${{ matrix.template }}
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: playwright-${{ matrix.template }}
+          name: ${{ env.ARTIFACT_NAME }}
           path: /tmp/forge-test-artifacts/**
           retention-days: 7
 

@@ -560,16 +560,38 @@ impl Forge {
             };
 
             // Build gateway server (pass Database wrapper for read replica routing)
-            let gateway = GatewayServer::new(
+            let db_ref = self
+                .db
+                .clone()
+                .ok_or_else(|| ForgeError::Internal("Database not initialized".into()))?;
+
+            let mut gateway = GatewayServer::new(
                 gateway_config,
                 self.function_registry.clone(),
-                self.db
-                    .clone()
-                    .ok_or_else(|| ForgeError::Internal("Database not initialized".into()))?,
+                db_ref.clone(),
             )
             .with_job_dispatcher(job_dispatcher.clone())
             .with_workflow_dispatcher(workflow_executor.clone())
             .with_mcp_registry(self.mcp_registry.clone());
+
+            // Wire signals (product analytics + diagnostics)
+            if self.config.signals.enabled {
+                let signals_pool = std::sync::Arc::new(db_ref.analytics_pool().clone());
+                let collector = forge_runtime::signals::SignalsCollector::spawn(
+                    signals_pool.clone(),
+                    self.config.signals.batch_size,
+                    std::time::Duration::from_millis(self.config.signals.flush_interval_ms),
+                );
+                gateway = gateway.with_signals_collector(collector);
+
+                // Spawn session reaper
+                forge_runtime::signals::session::spawn_session_reaper(
+                    signals_pool,
+                    self.config.signals.session_timeout_mins,
+                );
+
+                tracing::info!("Signals enabled (analytics + diagnostics)");
+            }
 
             // Start the reactor for real-time updates
             let reactor = gateway.reactor();

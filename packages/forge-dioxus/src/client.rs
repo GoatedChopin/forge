@@ -9,6 +9,7 @@ use dioxus::prelude::{Signal, WritableExt, dioxus_core::Task};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use crate::signals::ForgeSignals;
 use crate::types::{
     ConnectionState, ForgeClientError, ForgeError, RpcEnvelopeRaw, StreamEvent,
 };
@@ -102,6 +103,7 @@ struct ForgeClientInner {
     on_auth_error: Option<AuthErrorHandler>,
     connection_state: Option<Signal<ConnectionState>>,
     sse: RefCell<SseManager>,
+    signals: RefCell<Option<ForgeSignals>>,
 }
 
 impl ForgeClient {
@@ -113,8 +115,24 @@ impl ForgeClient {
                 on_auth_error: config.on_auth_error,
                 connection_state: config.connection_state,
                 sse: RefCell::new(SseManager::default()),
+                signals: RefCell::new(None),
             }),
         }
+    }
+
+    /// Wire signals for correlation ID injection on RPC calls.
+    pub fn set_signals(&self, signals: ForgeSignals) {
+        *self.inner.signals.borrow_mut() = Some(signals);
+    }
+
+    /// Get the base URL of this client.
+    pub fn get_url(&self) -> &str {
+        &self.inner.url
+    }
+
+    /// Generate a correlation ID from the wired signals instance, if any.
+    fn correlation_id(&self) -> Option<String> {
+        self.inner.signals.borrow().as_ref().map(|s| s.next_correlation_id())
     }
 
     pub async fn call<TArgs, TResult>(
@@ -127,10 +145,12 @@ impl ForgeClient {
         TResult: DeserializeOwned,
     {
         let body = serde_json::json!({ "args": args });
+        let correlation_id = self.correlation_id();
         let envelope = platform::request_json(
             self,
             &format!("{}/_api/rpc/{}", self.inner.url, function_name),
             body,
+            correlation_id.as_deref(),
         )
         .await?;
         self.decode_envelope(envelope)
@@ -145,10 +165,12 @@ impl ForgeClient {
     where
         TResult: DeserializeOwned,
     {
+        let correlation_id = self.correlation_id();
         let envelope = platform::request_multipart(
             self,
             &format!("{}/_api/rpc/{}/upload", self.inner.url, function_name),
             form,
+            correlation_id.as_deref(),
         )
         .await?;
         self.decode_envelope(envelope)
@@ -163,10 +185,12 @@ impl ForgeClient {
     where
         TResult: DeserializeOwned,
     {
+        let correlation_id = self.correlation_id();
         let envelope = platform::request_multipart(
             self,
             &format!("{}/_api/rpc/{}/upload", self.inner.url, function_name),
             form,
+            correlation_id.as_deref(),
         )
         .await?;
         self.decode_envelope(envelope)
@@ -440,7 +464,7 @@ impl ForgeClient {
         };
 
         let url = format!("{}{}", self.inner.url, endpoint);
-        platform::request_json(self, &url, payload).await
+        platform::request_json(self, &url, payload, None).await
     }
 
     async fn force_reconnect(&self) {
@@ -601,7 +625,7 @@ impl SubscriptionHandle {
                     });
                     let client = client.clone();
                     dioxus::prelude::spawn(async move {
-                        let _ = platform::request_json(&client, &url, payload).await;
+                        let _ = platform::request_json(&client, &url, payload, None).await;
                     });
                 }
             }
@@ -658,6 +682,7 @@ mod platform {
     use js_sys::{JSON, encode_uri_component};
 
     use super::{ForgeClient, SseDispatch, sleep};
+    use crate::signals::platform_tag;
     use crate::types::{
         ConnectedEvent, ConnectionState, ForgeClientError, RpcEnvelopeRaw, SseEnvelopeRaw,
     };
@@ -666,12 +691,17 @@ mod platform {
         client: &ForgeClient,
         url: &str,
         body: serde_json::Value,
+        correlation_id: Option<&str>,
     ) -> Result<RpcEnvelopeRaw, ForgeClientError> {
         let mut request = Request::post(url)
             .header("Content-Type", "application/json")
+            .header("x-forge-platform", platform_tag())
             .credentials(web_sys::RequestCredentials::Include);
         if let Some(token) = client.get_token() {
             request = request.header("Authorization", &format!("Bearer {token}"));
+        }
+        if let Some(cid) = correlation_id {
+            request = request.header("x-correlation-id", cid);
         }
 
         let request = request.body(body.to_string()).map_err(request_error)?;
@@ -688,11 +718,16 @@ mod platform {
         client: &ForgeClient,
         url: &str,
         form: web_sys::FormData,
+        correlation_id: Option<&str>,
     ) -> Result<RpcEnvelopeRaw, ForgeClientError> {
         let mut request = Request::post(url)
+            .header("x-forge-platform", platform_tag())
             .credentials(web_sys::RequestCredentials::Include);
         if let Some(token) = client.get_token() {
             request = request.header("Authorization", &format!("Bearer {token}"));
+        }
+        if let Some(cid) = correlation_id {
+            request = request.header("x-correlation-id", cid);
         }
 
         let response = request.body(form).map_err(request_error)?;
@@ -846,6 +881,7 @@ mod platform {
     use reqwest_eventsource::{Event, EventSource};
 
     use super::{ForgeClient, SseDispatch, sleep};
+    use crate::signals::platform_tag;
     use crate::types::{
         ConnectedEvent, ConnectionState, ForgeClientError, RpcEnvelopeRaw, SseEnvelopeRaw,
     };
@@ -854,10 +890,17 @@ mod platform {
         client: &ForgeClient,
         url: &str,
         body: serde_json::Value,
+        correlation_id: Option<&str>,
     ) -> Result<RpcEnvelopeRaw, ForgeClientError> {
-        let mut request = Client::new().post(url).json(&body);
+        let mut request = Client::new()
+            .post(url)
+            .header("x-forge-platform", platform_tag())
+            .json(&body);
         if let Some(token) = client.get_token() {
             request = request.bearer_auth(token);
+        }
+        if let Some(cid) = correlation_id {
+            request = request.header("x-correlation-id", cid);
         }
 
         request
@@ -873,10 +916,17 @@ mod platform {
         client: &ForgeClient,
         url: &str,
         form: reqwest::multipart::Form,
+        correlation_id: Option<&str>,
     ) -> Result<RpcEnvelopeRaw, ForgeClientError> {
-        let mut request = Client::new().post(url).multipart(form);
+        let mut request = Client::new()
+            .post(url)
+            .header("x-forge-platform", platform_tag())
+            .multipart(form);
         if let Some(token) = client.get_token() {
             request = request.bearer_auth(token);
+        }
+        if let Some(cid) = correlation_id {
+            request = request.header("x-correlation-id", cid);
         }
 
         request

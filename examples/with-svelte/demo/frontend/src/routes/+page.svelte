@@ -22,6 +22,8 @@
 
   import { PUBLIC_API_URL } from "$env/static/public";
   import { auth } from "$lib/forge/auth.svelte";
+  import { getForgeSignals } from "@forge-rs/svelte";
+  const signals = getForgeSignals();
   const apiUrl = PUBLIC_API_URL;
 
   const users = getUsers$();
@@ -110,6 +112,8 @@
 
   async function handleAuth(e: Event) {
     e.preventDefault();
+    signals.breadcrumb(`Auth ${authMode} attempt`);
+    signals.track("auth_attempt", { mode: authMode });
     authLoading = true;
     authError = null;
     try {
@@ -120,9 +124,11 @@
         res = await login({ email: authEmail, password: authPassword });
       }
       auth.setAuth(res.access_token, res.refresh_token, res.user);
+      signals.track("auth_success", { mode: authMode, user_id: res.user.id });
       refreshCount = 0;
     } catch (err: unknown) {
       authError = err instanceof Error ? err.message : String(err);
+      signals.track("auth_error", { mode: authMode, error: authError });
     } finally {
       authLoading = false;
     }
@@ -135,12 +141,14 @@
       const pair: TokenPair = await refreshToken({ refresh_token: auth.refreshToken });
       auth.updateTokens(pair.access_token, pair.refresh_token);
       refreshCount++;
+      signals.track("token_refresh", { count: refreshCount });
     } catch (err: unknown) {
       authError = err instanceof Error ? err.message : String(err);
     }
   }
 
   function handleLogout() {
+    signals.track("logout");
     auth.clearAuth();
     refreshCount = 0;
     authError = null;
@@ -155,6 +163,7 @@
       cacheData = stats;
       responseMs = elapsed;
       fetchCount++;
+      signals.track("cache_fetch", { response_ms: elapsed, cache_hit: elapsed < 100, fetch_number: fetchCount });
     } catch {
       // ignore
     }
@@ -162,6 +171,7 @@
   }
 
   async function triggerWebhook() {
+    signals.breadcrumb("Sending webhook");
     webhookError = null;
     const secret = "demo-secret";
     const payload = JSON.stringify({ action: "test", ts: Date.now() });
@@ -191,8 +201,10 @@
 
     if (res.ok) {
       keyUsed = true;
+      signals.track("webhook_sent", { idempotency_key: idempotencyKey });
     } else {
       webhookError = `Error: ${res.status}`;
+      signals.track("webhook_error", { status: res.status });
     }
   }
 
@@ -200,6 +212,7 @@
     idempotencyKey = generateKey();
     keyUsed = false;
     webhookError = null;
+    signals.track("webhook_key_generated");
   }
 
   async function handleCreateUser(e: Event) {
@@ -207,19 +220,23 @@
     const n = name.trim();
     const em = email.trim();
     if (!n || !em || isSubmitting) return;
+    signals.breadcrumb("Creating user");
     crudError = null;
     isSubmitting = true;
     try {
       await createUser({ email: em, name: n, role: null });
+      signals.track("user_created", { name: n });
       name = "";
       email = "";
     } catch (err: unknown) {
       crudError = err instanceof Error ? err.message : String(err);
+      signals.track("user_create_error");
     }
     isSubmitting = false;
   }
 
   function startEditUser(user: User) {
+    signals.track("user_edit_start", { user_id: user.id });
     selectedUser = user;
     editingUserId = user.id;
     editName = user.name;
@@ -229,13 +246,16 @@
 
   async function handleUpdateUser() {
     if (!editingUserId || isEditing) return;
+    signals.breadcrumb("Updating user");
     isEditing = true;
     crudError = null;
     try {
       await updateUser({ id: editingUserId, name: editName, email: editEmail, role: null });
+      signals.track("user_updated", { user_id: editingUserId });
       editingUserId = null;
     } catch (err: unknown) {
       crudError = err instanceof Error ? err.message : String(err);
+      signals.track("user_update_error");
     }
     isEditing = false;
   }
@@ -245,26 +265,30 @@
   }
 
   async function confirmDeleteUser(id: string) {
+    signals.breadcrumb("Deleting user");
     deletePopoverUserId = null;
     crudError = null;
     try {
       await deleteUser({ id });
+      signals.track("user_deleted", { user_id: id });
       if (selectedUser?.id === id) selectedUser = null;
     } catch (err: unknown) {
       crudError = err instanceof Error ? err.message : String(err);
+      signals.track("user_delete_error");
     }
   }
 
   function startExportJob() {
+    signals.track("export_started", { format: "csv" });
     exportJobStore = trackExportUsers({ format: "csv" });
   }
 
   function startVerificationWorkflow() {
+    const account_id = selectedUser?.id || "demo-user";
+    const email = selectedUser?.email || "demo@example.com";
+    signals.track("workflow_started", { type: "verification", account_id, email });
     confirmSent = false;
-    workflowStore = trackAccountVerification({
-      account_id: selectedUser?.id || "demo-user",
-      email: selectedUser?.email || "demo@example.com",
-    });
+    workflowStore = trackAccountVerification({ account_id, email });
   }
 
   async function handleConfirmVerification() {
@@ -272,6 +296,7 @@
     const state = $workflowStore;
     if (!state?.workflowId) return;
     confirmSent = true;
+    signals.track("workflow_confirmed", { workflow_id: state.workflowId });
     try {
       await confirmVerification({ workflow_id: state.workflowId });
     } catch (err: unknown) {
@@ -462,8 +487,8 @@
           {/if}
         {:else}
           <div class="auth-tabs">
-            <button class="tab" class:active={authMode === "login"} onclick={() => authMode = "login"}>Login</button>
-            <button class="tab" class:active={authMode === "register"} onclick={() => authMode = "register"}>Register</button>
+            <button class="tab" class:active={authMode === "login"} onclick={() => { authMode = "login"; signals.track("auth_tab_switch", { tab: "login" }); }}>Login</button>
+            <button class="tab" class:active={authMode === "register"} onclick={() => { authMode = "register"; signals.track("auth_tab_switch", { tab: "register" }); }}>Register</button>
           </div>
           <form onsubmit={handleAuth}>
             {#if authMode === "register"}

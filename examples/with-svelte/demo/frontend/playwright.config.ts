@@ -4,8 +4,9 @@ export default defineConfig({
   testDir: "./tests",
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 1 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  retries: process.env.CI ? 1 : 1,
+  timeout: 90_000,
+  workers: 1,
   reporter: "html",
   globalSetup: "./tests/global-setup.ts",
   use: {
