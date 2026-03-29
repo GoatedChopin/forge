@@ -1043,7 +1043,7 @@ checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 
 [[package]]
 name = "forge-bench"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "chrono",
  "forgex 0.7.4",
@@ -1141,7 +1141,7 @@ dependencies = [
 
 [[package]]
 name = "forge-dioxus-demo-template"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "bcrypt 0.16.0",
  "chrono",
@@ -1163,7 +1163,7 @@ dependencies = [
 
 [[package]]
 name = "forge-dioxus-minimal-template"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "chrono",
  "dotenvy",
@@ -1286,7 +1286,7 @@ dependencies = [
 
 [[package]]
 name = "forge-svelte-demo-template"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "bcrypt 0.16.0",
  "chrono",
@@ -1308,7 +1308,7 @@ dependencies = [
 
 [[package]]
 name = "forge-svelte-minimal-template"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "chrono",
  "dotenvy",
@@ -4197,7 +4197,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "todo"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "chrono",
  "dotenvy",
@@ -4214,7 +4214,7 @@ dependencies = [
 
 [[package]]
 name = "todo-dioxus"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "chrono",
  "dotenvy",
