@@ -257,4 +257,4 @@ Pre-1.0: never bump to 1.x.x. Changelog-driven pipeline parses version from CHAN
 8. Commit: `git commit -m "Prepare release X.X.X"` using user's git config. Single line, no co-author.
 9. Push to main, monitor CI (`gh run watch`). All jobs must pass.
 10. Trigger release: `gh workflow run release.yml`. Monitor with `gh run watch`. Inspect publish jobs with `gh run view`.
-11. Verify packages live on crates.io and npm.
+11. Verify all the steps of the release pipelines passed and packages are live on crates.io and npm.

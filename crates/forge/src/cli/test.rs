@@ -214,11 +214,7 @@ impl TestCommand {
         result
     }
 
-    async fn execute_frontend_tests(
-        &self,
-        frontend_dir: &Path,
-        app_url: &str,
-    ) -> Result<bool> {
+    async fn execute_frontend_tests(&self, frontend_dir: &Path, app_url: &str) -> Result<bool> {
         // Install dependencies if needed
         if !frontend_dir.join("node_modules").exists() {
             println!("  {} Installing frontend dependencies...", ui::step());
@@ -498,10 +494,10 @@ async fn build_project(frontend_type: Option<FrontendTarget>) -> Result<std::pat
         .await;
 
     // Restore before checking build result so a failed build doesn't leave a patched .env
-    if let Some(content) = original_frontend_env {
-        if let Err(e) = std::fs::write(frontend_env, content) {
-            eprintln!("Warning: failed to restore frontend/.env: {e}");
-        }
+    if let Some(content) = original_frontend_env
+        && let Err(e) = std::fs::write(frontend_env, content)
+    {
+        eprintln!("Warning: failed to restore frontend/.env: {e}");
     }
 
     if !status?.success() {
@@ -571,11 +567,7 @@ fn read_env_file(path: &Path) -> Vec<(String, String)> {
         .collect()
 }
 
-async fn start_server(
-    binary: &Path,
-    port: u16,
-    db_url: &str,
-) -> Result<tokio::process::Child> {
+async fn start_server(binary: &Path, port: u16, db_url: &str) -> Result<tokio::process::Child> {
     let mut cmd = Command::new(binary);
 
     // Load all vars from .env so secrets, config, and custom vars carry through

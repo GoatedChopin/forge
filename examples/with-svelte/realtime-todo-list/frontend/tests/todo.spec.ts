@@ -35,11 +35,11 @@ test("todo flow stays reactive through create, toggle, and delete", async ({
 
   await gotoReady();
   await expect(page.locator("h1")).toHaveText("Todos");
-  await expect(page.locator(".status", { hasText: "No todos yet" })).toBeVisible(
-    {
-      timeout: ACTION_TIMEOUT,
-    },
-  );
+  await expect(
+    page.locator(".status", { hasText: "No todos yet" }),
+  ).toBeVisible({
+    timeout: ACTION_TIMEOUT,
+  });
 
   await page.fill(INPUT, title);
   await page.click(".input-row button");
@@ -49,7 +49,9 @@ test("todo flow stays reactive through create, toggle, and delete", async ({
   await expect(page.locator(".count")).toHaveText("1 remaining", {
     timeout: ACTION_TIMEOUT,
   });
-  await expect(page.locator(INPUT)).toHaveValue("", { timeout: ACTION_TIMEOUT });
+  await expect(page.locator(INPUT)).toHaveValue("", {
+    timeout: ACTION_TIMEOUT,
+  });
 
   await todoItem.locator("label").click();
   await expect(todoItem).toHaveClass(/completed/, { timeout: ACTION_TIMEOUT });
@@ -59,10 +61,10 @@ test("todo flow stays reactive through create, toggle, and delete", async ({
 
   await todoItem.locator("button.delete").click();
   await expect(todoItem).not.toBeVisible({ timeout: ACTION_TIMEOUT });
-  await expect(page.locator(".status", { hasText: "No todos yet" })).toBeVisible(
-    {
-      timeout: ACTION_TIMEOUT,
-    },
-  );
+  await expect(
+    page.locator(".status", { hasText: "No todos yet" }),
+  ).toBeVisible({
+    timeout: ACTION_TIMEOUT,
+  });
   expect(errors).toHaveLength(0);
 });

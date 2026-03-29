@@ -7,10 +7,17 @@ test.describe("signal ingestion endpoints", () => {
   }) => {
     const res = await request.post(`${API_URL}/_api/signal/view`, {
       headers: { "Content-Type": "application/json" },
-      data: { url: "/test-page", referrer: "https://google.com", title: "Test" },
+      data: {
+        url: "/test-page",
+        referrer: "https://google.com",
+        title: "Test",
+      },
     });
 
-    expect(res.ok(), `signal/view returned ${res.status()} from ${API_URL}`).toBeTruthy();
+    expect(
+      res.ok(),
+      `signal/view returned ${res.status()} from ${API_URL}`,
+    ).toBeTruthy();
     const body = await res.json();
     expect(body.ok).toBe(true);
     expect(body.session_id).toBeTruthy();

@@ -6,7 +6,7 @@ export const API_URL =
   process.env.FORGE_TEST_URL ||
   process.env.VITE_API_URL ||
   "http://localhost:9081";
-export const ACTION_TIMEOUT = process.env.CI ? 30_000 : 30_000;
+export const ACTION_TIMEOUT = process.env.CI ? 15_000 : 5_000;
 
 export function uniqueId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -53,7 +53,8 @@ export const test = base.extend<ForgeFixtures>({
         } catch (err) {
           // Retry connection errors (backend restarting), not HTTP errors
           const isConnectionError =
-            err instanceof TypeError && (err as TypeError).message === "fetch failed";
+            err instanceof TypeError &&
+            (err as TypeError).message === "fetch failed";
           if (!isConnectionError || attempt === 3) throw err;
           await new Promise((r) => setTimeout(r, attempt * 1000));
         }

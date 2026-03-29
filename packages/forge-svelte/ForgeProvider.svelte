@@ -29,6 +29,7 @@
   setForgeClient(client);
 
   // Initialize signals (enabled by default unless explicitly false)
+  // svelte-ignore state_referenced_locally -- signalsConfig is stable mount-time config, same as url/getToken
   const signalsCfg = signalsConfig === false ? { enabled: false } : (signalsConfig ?? {});
   const signals = new ForgeSignals(client, signalsCfg);
   setForgeSignals(signals);

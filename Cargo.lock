@@ -1073,9 +1073,9 @@ dependencies = [
 
 [[package]]
 name = "forge-codegen"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
- "forge-core 0.8.0",
+ "forge-core 0.8.1",
  "quote",
  "serde",
  "serde_json",
@@ -1113,7 +1113,7 @@ dependencies = [
 
 [[package]]
 name = "forge-core"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -1146,7 +1146,7 @@ dependencies = [
  "bcrypt 0.16.0",
  "chrono",
  "dotenvy",
- "forgex 0.8.0",
+ "forgex 0.8.1",
  "futures-util",
  "reqwest",
  "rust-embed",
@@ -1167,7 +1167,7 @@ version = "0.8.0"
 dependencies = [
  "chrono",
  "dotenvy",
- "forgex 0.8.0",
+ "forgex 0.8.1",
  "rust-embed",
  "serde",
  "serde_json",
@@ -1193,7 +1193,7 @@ dependencies = [
 
 [[package]]
 name = "forge-macros"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "cron",
  "proc-macro2",
@@ -1245,7 +1245,7 @@ dependencies = [
 
 [[package]]
 name = "forge-runtime"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -1255,7 +1255,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "dashmap",
- "forge-core 0.8.0",
+ "forge-core 0.8.1",
  "futures-util",
  "hmac",
  "jsonwebtoken 10.3.0",
@@ -1291,7 +1291,7 @@ dependencies = [
  "bcrypt 0.16.0",
  "chrono",
  "dotenvy",
- "forgex 0.8.0",
+ "forgex 0.8.1",
  "futures-util",
  "reqwest",
  "rust-embed",
@@ -1312,7 +1312,7 @@ version = "0.8.0"
 dependencies = [
  "chrono",
  "dotenvy",
- "forgex 0.8.0",
+ "forgex 0.8.1",
  "rust-embed",
  "serde",
  "serde_json",
@@ -1363,7 +1363,7 @@ dependencies = [
 
 [[package]]
 name = "forgex"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -1371,10 +1371,10 @@ dependencies = [
  "clap",
  "console",
  "dotenvy",
- "forge-codegen 0.8.0",
- "forge-core 0.8.0",
- "forge-macros 0.8.0",
- "forge-runtime 0.8.0",
+ "forge-codegen 0.8.1",
+ "forge-core 0.8.1",
+ "forge-macros 0.8.1",
+ "forge-runtime 0.8.1",
  "include_dir",
  "inventory",
  "mime_guess",
@@ -4201,7 +4201,7 @@ version = "0.8.0"
 dependencies = [
  "chrono",
  "dotenvy",
- "forgex 0.8.0",
+ "forgex 0.8.1",
  "rust-embed",
  "serde",
  "serde_json",
@@ -4218,7 +4218,7 @@ version = "0.8.0"
 dependencies = [
  "chrono",
  "dotenvy",
- "forgex 0.8.0",
+ "forgex 0.8.1",
  "rust-embed",
  "serde",
  "serde_json",
