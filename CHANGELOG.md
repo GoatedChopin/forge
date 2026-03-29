@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.8.1] - 2026-03-29
+## [0.8.2] - 2026-03-29
 
 ### Added
 
@@ -37,7 +37,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 - All legacy compatibility code: deprecated context decorators, old client generation path, obsolete config fields, and unused example functions removed as part of zero tech debt policy.
-
 ## [0.7.4] - 2026-03-26
 
 ### Added
@@ -470,8 +469,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust 2024 edition unsafe block compatibility
 - Release workflow cargo-edit installation
 
-[unreleased]: https://github.com/isala404/forge/compare/v0.7.4...HEAD
-[0.8.1]: https://github.com/isala404/forge/compare/v0.7.4...v0.8.1
+[unreleased]: https://github.com/isala404/forge/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/isala404/forge/compare/v0.7.4...v0.8.2
 [0.7.4]: https://github.com/isala404/forge/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/isala404/forge/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/isala404/forge/compare/v0.7.1...v0.7.2
