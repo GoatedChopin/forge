@@ -220,7 +220,7 @@ jobs:
           }
           # sqlx offline cache lives at the workspace root but cargo publish
           # only packages files under each crate dir
-          for crate_dir in crates/forge-core crates/forge-runtime; do
+          for crate_dir in crates/forge-core crates/forge-runtime crates/forge; do
             cp -r .sqlx "$crate_dir/.sqlx"
           done
 
