@@ -88,7 +88,10 @@ pub fn parse_duration_tokens(s: &str, default_secs: u64) -> TokenStream {
 pub fn parse_size_bytes(s: &str) -> Option<usize> {
     let s = s.trim().to_lowercase();
     if let Some(num) = s.strip_suffix("gb") {
-        num.trim().parse::<usize>().ok().map(|n| n * 1024 * 1024 * 1024)
+        num.trim()
+            .parse::<usize>()
+            .ok()
+            .map(|n| n * 1024 * 1024 * 1024)
     } else if let Some(num) = s.strip_suffix("mb") {
         num.trim().parse::<usize>().ok().map(|n| n * 1024 * 1024)
     } else if let Some(num) = s.strip_suffix("kb") {

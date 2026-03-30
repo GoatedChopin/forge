@@ -3,7 +3,9 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{FnArg, ItemFn, Pat, ReturnType, Type, parse_macro_input};
 
-use crate::utils::{has_attr_flag, parse_attr_value, parse_duration_secs, parse_size_bytes, to_pascal_case};
+use crate::utils::{
+    has_attr_flag, parse_attr_value, parse_duration_secs, parse_size_bytes, to_pascal_case,
+};
 
 /// Expand the #[forge::mutation] attribute.
 ///

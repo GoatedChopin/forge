@@ -5,7 +5,9 @@ use axum::{
     extract::{Extension, State},
     http::{HeaderMap, header::USER_AGENT},
 };
-use forge_core::function::{AuthContext, FunctionInfo, JobDispatch, RequestMetadata, WorkflowDispatch};
+use forge_core::function::{
+    AuthContext, FunctionInfo, JobDispatch, RequestMetadata, WorkflowDispatch,
+};
 
 use super::request::{BatchRpcRequest, BatchRpcResponse, RpcRequest};
 use super::response::{RpcError, RpcResponse};

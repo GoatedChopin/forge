@@ -298,7 +298,9 @@ impl GatewayServer {
             .route("/rpc/{function}", post(rpc_function_handler))
             // Prevent oversized JSON payloads from exhausting memory.
             .layer(DefaultBodyLimit::max(
-                self.config.max_body_size_bytes.max(DEFAULT_MAX_JSON_BODY_SIZE),
+                self.config
+                    .max_body_size_bytes
+                    .max(DEFAULT_MAX_JSON_BODY_SIZE),
             ))
             // Add state
             .with_state(rpc_handler_state.clone());
