@@ -294,7 +294,7 @@ Spins up a throwaway PG container via Docker. No local PG install needed.
 ```toml
 # Cargo.toml
 [dev-dependencies]
-forge = { version = "0.7.4", features = ["testcontainers"] }
+forge = { version = "0.8.2", features = ["testcontainers"] }
 ```
 
 ```rust
@@ -554,13 +554,11 @@ fn test_catch_up_cron() {
 fn test_workflow_execution() {
     let ctx = TestWorkflowContext::builder("order_fulfillment")
         .with_run_id(Uuid::new_v4())
-        .with_version(2)
         .as_user(Uuid::new_v4())
         .with_tenant(Uuid::new_v4())
         .build();
 
     assert_eq!(ctx.workflow_name, "order_fulfillment");
-    assert_eq!(ctx.version, 2);
     assert!(!ctx.is_resumed());
 }
 ```

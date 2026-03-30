@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT id, workflow_name, version, owner_subject, input, output, status, current_step,\n                   step_results, started_at, completed_at, error, trace_id\n            FROM forge_workflow_runs\n            WHERE id = $1\n            ",
+  "query": "\n            SELECT id, workflow_name, workflow_version, workflow_signature,\n                   owner_subject, input, output, status, blocking_reason,\n                   resolution_reason, current_step, step_results, started_at,\n                   completed_at, error, trace_id\n            FROM forge_workflow_runs\n            WHERE id = $1\n            ",
   "describe": {
     "columns": [
       {
@@ -15,56 +15,71 @@
       },
       {
         "ordinal": 2,
-        "name": "version",
-        "type_info": "Int4"
+        "name": "workflow_version",
+        "type_info": "Varchar"
       },
       {
         "ordinal": 3,
+        "name": "workflow_signature",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 4,
         "name": "owner_subject",
         "type_info": "Text"
       },
       {
-        "ordinal": 4,
+        "ordinal": 5,
         "name": "input",
         "type_info": "Jsonb"
       },
       {
-        "ordinal": 5,
+        "ordinal": 6,
         "name": "output",
         "type_info": "Jsonb"
       },
       {
-        "ordinal": 6,
+        "ordinal": 7,
         "name": "status",
         "type_info": "Varchar"
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
+        "name": "blocking_reason",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "resolution_reason",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
         "name": "current_step",
         "type_info": "Varchar"
       },
       {
-        "ordinal": 8,
+        "ordinal": 11,
         "name": "step_results",
         "type_info": "Jsonb"
       },
       {
-        "ordinal": 9,
+        "ordinal": 12,
         "name": "started_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 10,
+        "ordinal": 13,
         "name": "completed_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 11,
+        "ordinal": 14,
         "name": "error",
         "type_info": "Text"
       },
       {
-        "ordinal": 12,
+        "ordinal": 15,
         "name": "trace_id",
         "type_info": "Varchar"
       }
@@ -77,11 +92,14 @@
     "nullable": [
       false,
       false,
-      true,
-      true,
+      false,
       false,
       true,
       false,
+      true,
+      false,
+      true,
+      true,
       true,
       true,
       false,
@@ -90,5 +108,5 @@
       true
     ]
   },
-  "hash": "7131c1b620d36589327c4d495933ef54cf4e4f01995db7a42e93e3d749646c39"
+  "hash": "09352cb11a4e63294e20236e8371d4694c8b5e9f87cb0ba24db08a84f601b49a"
 }

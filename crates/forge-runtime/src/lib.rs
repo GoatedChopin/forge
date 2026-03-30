@@ -12,6 +12,7 @@ pub mod migrations;
 pub mod observability;
 pub mod rate_limit;
 pub mod realtime;
+pub mod signals;
 pub mod testing;
 pub mod webhook;
 pub mod workflow;

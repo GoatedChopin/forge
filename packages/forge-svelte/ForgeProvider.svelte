@@ -4,24 +4,38 @@
   import { onMount, onDestroy, type Snippet } from 'svelte';
   import { createForgeClient } from './client.js';
   import { setForgeClient, setAuthState } from './context.js';
+  import { ForgeSignals, type SignalsConfig } from './signals.js';
+  import { setForgeSignals } from './signals-context.js';
   import type { AuthState, ConnectionState } from './types.js';
 
   interface Props {
     url: string;
     getToken?: () => string | null | Promise<string | null>;
+    onAuthError?: (error: import('./types.js').ForgeError) => void;
     onConnectionChange?: (state: ConnectionState) => void;
+    signals?: SignalsConfig | false;
     children: Snippet;
   }
 
-  let { url, getToken, onConnectionChange, children }: Props = $props();
+  let { url, getToken, onAuthError, onConnectionChange, signals: signalsConfig, children }: Props = $props();
 
   // svelte-ignore state_referenced_locally -- url and getToken are stable config, not reactive state
   const client = createForgeClient({
     url,
     getToken,
+    onAuthError,
   });
 
   setForgeClient(client);
+
+  // Initialize signals (enabled by default unless explicitly false)
+  // svelte-ignore state_referenced_locally -- signalsConfig is stable mount-time config, same as url/getToken
+  const signalsCfg = signalsConfig === false ? { enabled: false } : (signalsConfig ?? {});
+  const signals = new ForgeSignals(client, signalsCfg);
+  setForgeSignals(signals);
+
+  // Wire correlation IDs into RPC calls
+  client.setSignals(signals);
 
   const authState: AuthState = $state({ user: null, token: null, loading: true });
   setAuthState(authState);
@@ -44,7 +58,10 @@
     return unsubscribe;
   });
 
-  onDestroy(() => client.disconnect());
+  onDestroy(() => {
+    signals.destroy();
+    client.disconnect();
+  });
 </script>
 
 {@render children()}

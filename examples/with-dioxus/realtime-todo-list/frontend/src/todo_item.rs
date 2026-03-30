@@ -1,9 +1,12 @@
 use dioxus::prelude::*;
+use forge_dioxus::use_signals;
+use serde_json::json;
 
 use crate::forge::{DeleteTodoParams, Todo, UpdateTodoInput, use_delete_todo, use_update_todo};
 
 #[component]
 pub fn TodoItem(todo: Todo, mut error: Signal<Option<String>>) -> Element {
+    let signals = use_signals();
     let update_todo = use_update_todo();
     let delete_todo = use_delete_todo();
     let completed = todo.completed;
@@ -12,15 +15,19 @@ pub fn TodoItem(todo: Todo, mut error: Signal<Option<String>>) -> Element {
     let toggle = {
         let update_todo = update_todo.clone();
         let id = id.clone();
+        let signals = signals.clone();
         move |_| {
             error.set(None);
             let update_todo = update_todo.clone();
             let id = id.clone();
+            let signals = signals.clone();
             spawn(async move {
+                signals.track("todo_toggled", json!({"id": &id, "completed": !completed}));
                 if let Err(err) = update_todo
                     .call(UpdateTodoInput::new(id).completed(!completed))
                     .await
                 {
+                    signals.track("todo_toggle_error", json!({"error": &err.message}));
                     error.set(Some(err.message));
                 }
             });
@@ -31,8 +38,11 @@ pub fn TodoItem(todo: Todo, mut error: Signal<Option<String>>) -> Element {
         error.set(None);
         let delete_todo = delete_todo.clone();
         let id = id.clone();
+        let signals = signals.clone();
         spawn(async move {
+            signals.track("todo_deleted", json!({"id": &id}));
             if let Err(err) = delete_todo.call(DeleteTodoParams::new(id)).await {
+                signals.track("todo_delete_error", json!({"error": &err.message}));
                 error.set(Some(err.message));
             }
         });

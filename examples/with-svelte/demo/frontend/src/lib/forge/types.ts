@@ -14,6 +14,10 @@ export interface BinanceTrade {
   is_buyer_maker: boolean;
 }
 
+export interface ConfirmVerificationInput {
+  workflow_id: string;
+}
+
 export interface DemoStats {
   total_users: number;
   total_trades: number;

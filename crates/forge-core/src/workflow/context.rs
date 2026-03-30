@@ -84,8 +84,6 @@ pub struct WorkflowContext {
     pub run_id: Uuid,
     /// Workflow name.
     pub workflow_name: String,
-    /// Workflow version.
-    pub version: u32,
     /// When the workflow started.
     pub started_at: DateTime<Utc>,
     /// Deterministic workflow time (consistent across replays).
@@ -122,7 +120,6 @@ impl WorkflowContext {
     pub fn new(
         run_id: Uuid,
         workflow_name: String,
-        version: u32,
         db_pool: sqlx::PgPool,
         http_client: CircuitBreakerClient,
     ) -> Self {
@@ -130,7 +127,6 @@ impl WorkflowContext {
         Self {
             run_id,
             workflow_name,
-            version,
             started_at: now,
             workflow_time: now,
             auth: AuthContext::unauthenticated(),
@@ -152,7 +148,6 @@ impl WorkflowContext {
     pub fn resumed(
         run_id: Uuid,
         workflow_name: String,
-        version: u32,
         started_at: DateTime<Utc>,
         db_pool: sqlx::PgPool,
         http_client: CircuitBreakerClient,
@@ -160,7 +155,6 @@ impl WorkflowContext {
         Self {
             run_id,
             workflow_name,
-            version,
             started_at,
             workflow_time: started_at,
             auth: AuthContext::unauthenticated(),
@@ -231,10 +225,6 @@ impl WorkflowContext {
 
     pub fn raw_http(&self) -> &reqwest::Client {
         self.http_client.inner()
-    }
-
-    pub fn http_with_circuit_breaker(&self) -> crate::http::HttpClient {
-        self.http()
     }
 
     pub fn set_http_timeout(&mut self, timeout: Option<Duration>) {
@@ -670,7 +660,18 @@ impl WorkflowContext {
     ) -> Result<T> {
         let correlation_id = self.run_id.to_string();
 
-        // Check if event already exists (race condition handling)
+        // On resume: check if the scheduler already consumed an event for this run.
+        // This happens when the scheduler wakes the workflow after an event arrives.
+        if self.is_resumed
+            && let Some(event) = self
+                .find_consumed_event(event_name, &correlation_id)
+                .await?
+        {
+            return serde_json::from_value(event.payload.unwrap_or_default())
+                .map_err(|e| ForgeError::Deserialization(e.to_string()));
+        }
+
+        // Check if event already exists but not yet consumed (race condition handling)
         if let Some(event) = self.try_consume_event(event_name, &correlation_id).await? {
             return serde_json::from_value(event.payload.unwrap_or_default())
                 .map_err(|e| ForgeError::Deserialization(e.to_string()));
@@ -716,6 +717,37 @@ impl WorkflowContext {
                     FOR UPDATE SKIP LOCKED
                 )
                 RETURNING id, event_name, correlation_id, payload, created_at
+                "#,
+            event_name,
+            correlation_id,
+            self.run_id
+        )
+        .fetch_optional(&self.db_pool)
+        .await
+        .map_err(|e| ForgeError::Database(e.to_string()))?;
+
+        Ok(result.map(|row| WorkflowEvent {
+            id: row.id,
+            event_name: row.event_name,
+            correlation_id: row.correlation_id,
+            payload: row.payload,
+            created_at: row.created_at,
+        }))
+    }
+
+    /// Find an event that was already consumed by the scheduler for this run.
+    /// Used on resume to retrieve the event payload without re-consuming.
+    async fn find_consumed_event(
+        &self,
+        event_name: &str,
+        correlation_id: &str,
+    ) -> Result<Option<WorkflowEvent>> {
+        let result = sqlx::query!(
+            r#"
+                SELECT id, event_name, correlation_id, payload, created_at
+                FROM forge_workflow_events
+                WHERE event_name = $1 AND correlation_id = $2 AND consumed_by = $3
+                ORDER BY created_at DESC LIMIT 1
                 "#,
             event_name,
             correlation_id,
@@ -884,14 +916,12 @@ mod tests {
         let ctx = WorkflowContext::new(
             run_id,
             "test_workflow".to_string(),
-            1,
             pool,
             CircuitBreakerClient::with_defaults(reqwest::Client::new()),
         );
 
         assert_eq!(ctx.run_id, run_id);
         assert_eq!(ctx.workflow_name, "test_workflow");
-        assert_eq!(ctx.version, 1);
     }
 
     #[tokio::test]
@@ -904,7 +934,6 @@ mod tests {
         let ctx = WorkflowContext::new(
             Uuid::new_v4(),
             "test".to_string(),
-            1,
             pool,
             CircuitBreakerClient::with_defaults(reqwest::Client::new()),
         );

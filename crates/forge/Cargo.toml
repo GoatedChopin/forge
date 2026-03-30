@@ -14,6 +14,7 @@ include = [
   "generated/examples.tar",
   "README.md",
   "src/**",
+  ".sqlx/**",
 ]
 
 [lints]
@@ -28,10 +29,10 @@ name = "forge"
 path = "src/main.rs"
 
 [dependencies]
-forge-core = { version = "0.7.4", path = "../forge-core" }
-forge-runtime = { version = "0.7.4", path = "../forge-runtime" }
-forge-codegen = { version = "0.7.4", path = "../forge-codegen" }
-forge-macros = { version = "0.7.4", path = "../forge-macros" }
+forge-core = { version = "0.8.2", path = "../forge-core" }
+forge-runtime = { version = "0.8.2", path = "../forge-runtime" }
+forge-codegen = { version = "0.8.2", path = "../forge-codegen" }
+forge-macros = { version = "0.8.2", path = "../forge-macros" }
 
 tokio = { workspace = true }
 tokio-util = "0.7"

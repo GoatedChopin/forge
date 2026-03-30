@@ -71,9 +71,12 @@ test("export job and verification workflow complete from the UI", async ({
   const exportSection = page.locator("section", {
     has: page.getByText("Export Job"),
   });
+  // Jobs run as background tasks with polling, so they need more time than simple CRUD
+  const JOB_TIMEOUT = 15_000;
+
   await exportSection.getByRole("button", { name: "Start Export" }).click();
   await expect(exportSection.getByText(/Export complete/i)).toBeVisible({
-    timeout: 15_000,
+    timeout: JOB_TIMEOUT,
   });
   await expect(exportSection.getByText(/100%/)).toBeVisible();
 
@@ -83,8 +86,17 @@ test("export job and verification workflow complete from the UI", async ({
   await verificationSection
     .getByRole("button", { name: "Start Workflow" })
     .click();
-  await expect(verificationSection.locator(".step.completed")).toHaveCount(5, {
-    timeout: 15_000,
+
+  // Workflow pauses at "await_confirmation" step, waiting for user to click confirm
+  const confirmBtn = verificationSection.getByRole("button", {
+    name: "Confirm Verification",
+  });
+  await expect(confirmBtn).toBeVisible({ timeout: JOB_TIMEOUT });
+  await confirmBtn.click();
+
+  // After confirmation, remaining steps complete (includes wait_period durable sleep)
+  await expect(verificationSection.locator(".step.completed")).toHaveCount(6, {
+    timeout: JOB_TIMEOUT,
   });
 });
 

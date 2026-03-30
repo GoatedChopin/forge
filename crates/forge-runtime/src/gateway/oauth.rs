@@ -244,6 +244,36 @@ pub async fn oauth_register(
             .into_response();
     }
 
+    // Validate redirect URIs: reject fragments, require HTTPS for non-localhost
+    for uri in &req.redirect_uris {
+        // Reject URIs with fragments (per OAuth 2.1 spec)
+        if uri.contains('#') {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "invalid_redirect_uri",
+                    "error_description": "redirect_uri must not contain a fragment"
+                })),
+            )
+                .into_response();
+        }
+        // Check scheme and host
+        let is_localhost = uri.starts_with("http://localhost")
+            || uri.starts_with("http://127.0.0.1")
+            || uri.starts_with("http://[::1]");
+        let is_https = uri.starts_with("https://");
+        if !is_localhost && !is_https {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "invalid_redirect_uri",
+                    "error_description": "redirect_uri must use HTTPS for non-localhost URIs"
+                })),
+            )
+                .into_response();
+        }
+    }
+
     let client_id = Uuid::new_v4().to_string();
     let auth_method = req.token_endpoint_auth_method.as_deref().unwrap_or("none");
 
@@ -418,8 +448,9 @@ pub async fn oauth_authorize_get(
         HeaderValue::from_static("frame-ancestors 'none'"),
     );
     // Set CSRF cookie (T1, T5)
+    let csrf_secure_flag = if is_https(&headers) { "; Secure" } else { "" };
     let cookie = format!(
-        "forge_oauth_csrf={csrf_token}; Path=/_api/oauth/; HttpOnly; SameSite=Lax; Max-Age=600"
+        "forge_oauth_csrf={csrf_token}; Path=/_api/oauth/; HttpOnly; SameSite=Lax; Max-Age=600{csrf_secure_flag}"
     );
     if let Ok(cookie_val) = HeaderValue::from_str(&cookie) {
         response

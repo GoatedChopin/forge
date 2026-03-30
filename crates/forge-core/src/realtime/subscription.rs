@@ -166,7 +166,7 @@ pub struct Subscriber {
     pub client_sub_id: String,
     /// Back-reference to the query group this subscriber belongs to.
     pub group_id: QueryGroupId,
-    /// Legacy subscription ID for compatibility with the session server.
+    /// Subscription ID used by the session server for tracking.
     pub subscription_id: SubscriptionId,
 }
 
@@ -229,84 +229,6 @@ impl<T> SubscriptionState<T> {
     pub fn clear_stale(&mut self) {
         self.stale = false;
     }
-}
-
-/// Information about a server-side subscription (kept for backward compat).
-#[derive(Debug, Clone)]
-pub struct SubscriptionInfo {
-    /// Unique subscription ID.
-    pub id: SubscriptionId,
-    /// Session that owns this subscription.
-    pub session_id: SessionId,
-    /// Query function name.
-    pub query_name: String,
-    /// Query arguments (as JSON).
-    pub args: serde_json::Value,
-    /// Hash of query + args for deduplication.
-    pub query_hash: String,
-    /// Read set from last execution.
-    pub read_set: ReadSet,
-    /// Hash of last result for delta computation.
-    pub last_result_hash: Option<String>,
-    /// When the subscription was created.
-    pub created_at: DateTime<Utc>,
-    /// When the subscription was last executed.
-    pub last_executed_at: Option<DateTime<Utc>>,
-    /// Number of times the subscription has been re-executed.
-    pub execution_count: u64,
-    /// Estimated memory usage in bytes.
-    pub memory_bytes: usize,
-}
-
-impl SubscriptionInfo {
-    /// Create a new subscription info.
-    pub fn new(
-        session_id: SessionId,
-        query_name: impl Into<String>,
-        args: serde_json::Value,
-    ) -> Self {
-        let query_name = query_name.into();
-        let query_hash = compute_query_hash(&query_name, &args);
-
-        Self {
-            id: SubscriptionId::new(),
-            session_id,
-            query_name,
-            args,
-            query_hash,
-            read_set: ReadSet::new(),
-            last_result_hash: None,
-            created_at: Utc::now(),
-            last_executed_at: None,
-            execution_count: 0,
-            memory_bytes: 0,
-        }
-    }
-
-    /// Update after execution.
-    pub fn record_execution(&mut self, read_set: ReadSet, result_hash: String) {
-        self.read_set = read_set;
-        self.memory_bytes = self.read_set.memory_bytes() + self.query_name.len() + 128;
-        self.last_result_hash = Some(result_hash);
-        self.last_executed_at = Some(Utc::now());
-        self.execution_count += 1;
-    }
-
-    /// Check if a change should invalidate this subscription.
-    pub fn should_invalidate(&self, change: &super::readset::Change) -> bool {
-        change.invalidates(&self.read_set)
-    }
-}
-
-/// Compute a hash of query name + args for deduplication.
-fn compute_query_hash(query_name: &str, args: &serde_json::Value) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    let mut hasher = DefaultHasher::new();
-    query_name.hash(&mut hasher);
-    args.to_string().hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
 }
 
 /// Delta format for subscription updates.
@@ -374,30 +296,6 @@ mod tests {
         assert!(!state.loading);
         assert_eq!(state.data, Some(vec![1, 2, 3]));
         assert!(state.error.is_none());
-    }
-
-    #[test]
-    fn test_subscription_info_creation() {
-        let session_id = SessionId::new();
-        let info = SubscriptionInfo::new(
-            session_id,
-            "get_projects",
-            serde_json::json!({"userId": "abc"}),
-        );
-
-        assert_eq!(info.query_name, "get_projects");
-        assert_eq!(info.execution_count, 0);
-        assert!(!info.query_hash.is_empty());
-    }
-
-    #[test]
-    fn test_query_hash_consistency() {
-        let hash1 = compute_query_hash("get_projects", &serde_json::json!({"userId": "abc"}));
-        let hash2 = compute_query_hash("get_projects", &serde_json::json!({"userId": "abc"}));
-        let hash3 = compute_query_hash("get_projects", &serde_json::json!({"userId": "xyz"}));
-
-        assert_eq!(hash1, hash2);
-        assert_ne!(hash1, hash3);
     }
 
     #[test]

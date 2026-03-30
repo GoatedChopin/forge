@@ -206,19 +206,7 @@ fn expand_mcp_tool_impl(input: ItemFn, attrs: McpToolAttrs) -> syn::Result<Token
         &format!("{}McpTool", to_pascal_case(tool_type_stem(&fn_name_value))),
         fn_name.span(),
     );
-    let legacy_struct_name = syn::Ident::new(
-        &format!("{}McpTool", to_pascal_case(&fn_name_value)),
-        fn_name.span(),
-    );
     let vis = &input.vis;
-    let legacy_alias = if struct_name != legacy_struct_name {
-        quote! {
-            #[doc(hidden)]
-            #vis type #legacy_struct_name = #struct_name;
-        }
-    } else {
-        quote! {}
-    };
     let asyncness = &input.sig.asyncness;
     let fn_block = &input.block;
     let fn_attrs = &input.attrs;
@@ -414,7 +402,6 @@ fn expand_mcp_tool_impl(input: ItemFn, attrs: McpToolAttrs) -> syn::Result<Token
                 #vis struct #args_struct_name {}
 
                 #vis struct #struct_name;
-                #legacy_alias
             },
             quote! { #args_struct_name },
             quote! { #fn_name(ctx).await },
@@ -423,7 +410,6 @@ fn expand_mcp_tool_impl(input: ItemFn, attrs: McpToolAttrs) -> syn::Result<Token
         (
             quote! {
                 #vis struct #struct_name;
-                #legacy_alias
             },
             quote! { #user_args_type },
             quote! { #fn_name(ctx, args).await },
@@ -438,7 +424,6 @@ fn expand_mcp_tool_impl(input: ItemFn, attrs: McpToolAttrs) -> syn::Result<Token
                 }
 
                 #vis struct #struct_name;
-                #legacy_alias
             },
             quote! { #args_struct_name },
             quote! { #fn_name(ctx, #(args.#arg_names),*).await },

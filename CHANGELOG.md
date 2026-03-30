@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-03-29
+
+### Added
+
+- Product analytics and diagnostics system (`[signals]` in forge.toml): auto-captures all RPC calls, page views, custom events, error reports, and breadcrumb trails with zero configuration. GDPR-compliant visitor tracking via daily-rotating SHA256(IP+UA+salt), bot detection, session management, and Grafana dashboards over PostgreSQL datasource.
+- `ForgeSignals` client API for Svelte and Dioxus with event batching, flushing, and page view auto-tracking.
+- Correlation IDs (`x-correlation-id`) linking frontend events to backend RPC calls.
+- Versioned workflows with signature guards: cryptographic contract signing via FNV-1a hash of persisted shape (name, version, step/wait keys, timeout, types). Mismatched runs block at resume with `BlockedSignatureMismatch`/`BlockedMissingVersion` status instead of silently corrupting.
+- Operator controls for blocked workflows: `cancel_by_operator` and `retire_unresumable` terminal actions.
+- `/_api/ready` reports unhealthy when blocked workflow runs exist.
+- `FORGE_HOST` and `FORGE_PORT` environment variables override config at runtime.
+- `FORGE_OTEL_TRACES`, `FORGE_OTEL_METRICS`, `FORGE_OTEL_LOGS` for per-signal observability toggle without config file changes.
+- Cluster node discovery and improved multi-node coordination.
+- MCP SSE streaming for Model Context Protocol tool calls.
+- Startup banner on server init.
+
+### Fixed
+
+- SvelteKit example `build.rs` files now track `frontend/.env` for rebuild, fixing `forge test` failures where stale `PUBLIC_API_URL` was embedded after env patching.
+- Normalized Playwright `ACTION_TIMEOUT` across all examples to 5s local / 15s CI; job/workflow tests use dedicated 15s timeout.
+
+### Changed
+
+- All internal `sqlx` queries migrated to compile-time checked `sqlx::query!`/`sqlx::query_as!` macros with inline parameters. Runtime dynamic queries removed.
+- Security hardened: JWT claims sanitized before trust, state machine transitions validated, RPC input size/rate DoS limits enforced.
+- Test infrastructure refactored for improved flexibility across Dioxus and Svelte Playwright configurations.
+
+### Removed
+
+- All legacy compatibility code: deprecated context decorators, old client generation path, obsolete config fields, and unused example functions removed as part of zero tech debt policy.
 ## [0.7.4] - 2026-03-26
 
 ### Added
@@ -439,7 +469,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust 2024 edition unsafe block compatibility
 - Release workflow cargo-edit installation
 
-[unreleased]: https://github.com/isala404/forge/compare/v0.7.4...HEAD
+[unreleased]: https://github.com/isala404/forge/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/isala404/forge/compare/v0.7.4...v0.8.2
 [0.7.4]: https://github.com/isala404/forge/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/isala404/forge/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/isala404/forge/compare/v0.7.1...v0.7.2

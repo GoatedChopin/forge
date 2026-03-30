@@ -134,8 +134,8 @@ Inside the provider tree, use these hooks:
 | `Uuid`                     | `string`            |
 | `i32`, `i64`, `f32`, `f64` | `number`            |
 | `bool`                     | `boolean`           |
-| `DateTime<Utc>`            | `string`            |
-| `NaiveDate`, `NaiveTime`   | `string`            |
+| `Instant`                  | `string`            |
+| `LocalDate`, `LocalTime`   | `string`            |
 | `Option<T>`                | `T \| null`         |
 | `Vec<T>`                   | `T[]`               |
 | `HashMap<K, V>`            | `Record<string, V>` |
@@ -150,7 +150,7 @@ Inside the provider tree, use these hooks:
 | -------------------------- | ----------------------- |
 | `String`, `&str`           | `String`                |
 | `Uuid`                     | `String`                |
-| `DateTime<Utc>`            | `String` (ISO 8601)     |
+| `Instant`                  | `String` (ISO 8601)     |
 | `i32`, `i64`, `f32`, `f64` | same                   |
 | `bool`                     | `bool`                  |
 | `Option<T>`                | `Option<T>`             |

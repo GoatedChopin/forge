@@ -1,0 +1,178 @@
+{
+  "description": "Product analytics: users, engagement, acquisition, feature adoption, and retention.",
+  "editable": true,
+  "schemaVersion": 39,
+  "tags": ["forge", "business"],
+  "templating": {
+    "list": [{
+      "name": "bot_filter", "label": "Traffic", "type": "custom",
+      "current": { "text": "humans", "value": "humans" },
+      "options": [
+        { "text": "all", "value": "all", "selected": false },
+        { "text": "humans", "value": "humans", "selected": true },
+        { "text": "bots", "value": "bots", "selected": false }
+      ],
+      "query": "all,humans,bots"
+    }]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timezone": "browser",
+  "title": "Forge Business",
+  "uid": "forge-biz",
+  "panels": [
+    { "type": "row", "title": "Key Metrics", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 } },
+    {
+      "type": "stat", "title": "Unique Users",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "datasource": { "uid": "forge_pg", "type": "grafana-postgresql-datasource" },
+      "targets": [{ "rawSql": "SELECT count(DISTINCT user_id) AS \"val\" FROM forge_signals_events WHERE $__timeFilter(timestamp) AND user_id IS NOT NULL AND CASE WHEN '${bot_filter}' = 'humans' THEN is_bot = FALSE WHEN '${bot_filter}' = 'bots' THEN is_bot = TRUE ELSE TRUE END", "format": "table", "refId": "A" }]
+    },
+    {
+      "type": "stat", "title": "Sessions",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "datasource": { "uid": "forge_pg", "type": "grafana-postgresql-datasource" },
+      "targets": [{ "rawSql": "SELECT count(*) AS \"val\" FROM forge_signals_sessions WHERE $__timeFilter(started_at) AND CASE WHEN '${bot_filter}' = 'humans' THEN is_bot = FALSE WHEN '${bot_filter}' = 'bots' THEN is_bot = TRUE ELSE TRUE END", "format": "table", "refId": "A" }]
+    },
+    {
+      "type": "stat", "title": "Avg Duration",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "datasource": { "uid": "forge_pg", "type": "grafana-postgresql-datasource" },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [{ "rawSql": "SELECT coalesce(avg(duration_secs), 0)::int AS \"val\" FROM forge_signals_sessions WHERE $__timeFilter(started_at) AND duration_secs IS NOT NULL AND CASE WHEN '${bot_filter}' = 'humans' THEN is_bot = FALSE WHEN '${bot_filter}' = 'bots' THEN is_bot = TRUE ELSE TRUE END", "format": "table", "refId": "A" }]
+    },
+    {
+      "type": "stat", "title": "Bounce Rate",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "datasource": { "uid": "forge_pg", "type": "grafana-postgresql-datasource" },
+      "fieldConfig": { "defaults": { "unit": "percent", "thresholds": { "steps": [{"color":"green","value":null},{"color":"yellow","value":40},{"color":"red","value":60}] } } },
+      "targets": [{ "rawSql": "SELECT CASE WHEN count(*) = 0 THEN 0 ELSE (100.0 * count(*) FILTER (WHERE is_bounce) / count(*))::numeric(5,1) END AS \"val\" FROM forge_signals_sessions WHERE $__timeFilter(started_at) AND CASE WHEN '${bot_filter}' = 'humans' THEN is_bot = FALSE WHEN '${bot_filter}' = 'bots' THEN is_bot = TRUE ELSE TRUE END", "format": "table", "refId": "A" }]
+    },
+    {
+      "type": "stat", "title": "Pages / Session",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
+      "datasource": { "uid": "forge_pg", "type": "grafana-postgresql-datasource" },
+      "targets": [{ "rawSql": "SELECT coalesce(avg(page_view_count), 0)::numeric(10,1) AS \"val\" FROM forge_signals_sessions WHERE $__timeFilter(started_at) AND CASE WHEN '${bot_filter}' = 'humans' THEN is_bot = FALSE WHEN '${bot_filter}' = 'bots' THEN is_bot = TRUE ELSE TRUE END", "format": "table", "refId": "A" }]
+    },
+    {
+      "type": "stat", "title": "DAU/MAU",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 },
+      "datasource": { "uid": "forge_pg", "type": "grafana-postgresql-datasource" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "thresholds": { "steps": [{"color":"red","value":null},{"color":"yellow","value":0.1},{"color":"green","value":0.2}] } } },
+      "targets": [{ "rawSql": "SELECT CASE WHEN mau = 0 THEN 0 ELSE dau::float / mau END AS \"val\" FROM (SELECT count(DISTINCT user_id) FILTER (WHERE timestamp >= CURRENT_DATE) AS dau, count(DISTINCT user_id) AS mau FROM forge_signals_events WHERE timestamp >= CURRENT_DATE - INTERVAL '30 days' AND user_id IS NOT NULL AND CASE WHEN '${bot_filter}' = 'humans' THEN is_bot = FALSE WHEN '${bot_filter}' = 'bots' THEN is_bot = TRUE ELSE TRUE END) t", "format": "table", "refId": "A" }]
+    },
+
+    { "type": "row", "title": "Trends", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 } },
+    {
+      "type": "timeseries", "title": "Unique Users Over Time",
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 6 },
+      "datasource": { "uid": "forge_pg", "type": "grafana-postgresql-datasource" },
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 15 } } },
+      "targets": [{ "rawSql": "SELECT date_trunc('hour', timestamp) AS time, count(DISTINCT user_id) AS \"users\" FROM forge_signals_events WHERE $__timeFilter(timestamp) AND user_id IS NOT NULL AND CASE WHEN '${bot_filter}' = 'humans' THEN is_bot = FALSE WHEN '${bot_filter}' = 'bots' THEN is_bot = TRUE ELSE TRUE END GROUP BY 1 ORDER BY 1", "format": "time_series", "refId": "A" }]
+    },
+    {
+      "type": "timeseries", "title": "Sessions Over Time",
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 6 },
+      "datasource": { "uid": "forge_pg", "type": "grafana-postgresql-datasource" },
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 15 } } },
+      "targets": [
+        { "rawSql": "SELECT date_trunc('hour', started_at) AS time, count(*) AS \"sessions\" FROM forge_signals_sessions WHERE $__timeFilter(started_at) AND CASE WHEN '${bot_filter}' = 'humans' THEN is_bot = FALSE WHEN '${bot_filter}' = 'bots' THEN is_bot = TRUE ELSE TRUE END GROUP BY 1 ORDER BY 1", "format": "time_series", "refId": "A" }
+      ]
+    },
+    {
+      "type": "timeseries", "title": "Avg Session Duration Over Time",
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 6 },
+      "datasource": { "uid": "forge_pg", "type": "grafana-postgresql-datasource" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 10 } } },
+      "targets": [{ "rawSql": "SELECT date_trunc('hour', started_at) AS time, avg(duration_secs)::int AS \"avg duration\" FROM forge_signals_sessions WHERE $__timeFilter(started_at) AND duration_secs IS NOT NULL AND CASE WHEN '${bot_filter}' = 'humans' THEN is_bot = FALSE WHEN '${bot_filter}' = 'bots' THEN is_bot = TRUE ELSE TRUE END GROUP BY 1 ORDER BY 1", "format": "time_series", "refId": "A" }]
+    },
+
+    { "type": "row", "title": "Feature Adoption", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 } },
+    {
+      "type": "barchart", "title": "Most Used Features (by unique users)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "datasource": { "uid": "forge_pg", "type": "grafana-postgresql-datasource" },
+      "options": { "orientation": "horizontal" },
+      "targets": [{ "rawSql": "SELECT function_name AS \"Feature\", count(DISTINCT user_id) AS \"Users\", count(*) AS \"Calls\" FROM forge_signals_events WHERE $__timeFilter(timestamp) AND event_type = 'rpc_call' AND function_name IS NOT NULL AND user_id IS NOT NULL AND CASE WHEN '${bot_filter}' = 'humans' THEN is_bot = FALSE WHEN '${bot_filter}' = 'bots' THEN is_bot = TRUE ELSE TRUE END GROUP BY function_name ORDER BY \"Users\" DESC LIMIT 10", "format": "table", "refId": "A" }]
+    },
+    {
+      "type": "table", "title": "Custom Events",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "datasource": { "uid": "forge_pg", "type": "grafana-postgresql-datasource" },
+      "targets": [{ "rawSql": "SELECT event_name AS \"Event\", count(*) AS \"Count\", count(DISTINCT user_id) AS \"Users\", count(DISTINCT session_id) AS \"Sessions\" FROM forge_signals_events WHERE $__timeFilter(timestamp) AND event_type = 'track' AND event_name IS NOT NULL AND CASE WHEN '${bot_filter}' = 'humans' THEN is_bot = FALSE WHEN '${bot_filter}' = 'bots' THEN is_bot = TRUE ELSE TRUE END GROUP BY event_name ORDER BY \"Count\" DESC LIMIT 20", "format": "table", "refId": "A" }]
+    },
+
+    { "type": "row", "title": "Acquisition", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 22 } },
+    {
+      "type": "barchart", "title": "Traffic Sources",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 23 },
+      "datasource": { "uid": "forge_pg", "type": "grafana-postgresql-datasource" },
+      "options": { "orientation": "horizontal" },
+      "targets": [{ "rawSql": "SELECT coalesce(referrer_domain, 'Direct') AS \"Source\", count(*) AS \"Sessions\" FROM forge_signals_sessions WHERE $__timeFilter(started_at) AND CASE WHEN '${bot_filter}' = 'humans' THEN is_bot = FALSE WHEN '${bot_filter}' = 'bots' THEN is_bot = TRUE ELSE TRUE END GROUP BY referrer_domain ORDER BY \"Sessions\" DESC LIMIT 8", "format": "table", "refId": "A" }]
+    },
+    {
+      "type": "table", "title": "Campaign Performance",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 23 },
+      "datasource": { "uid": "forge_pg", "type": "grafana-postgresql-datasource" },
+      "targets": [{ "rawSql": "SELECT coalesce(utm_source, '(organic)') AS \"Source\", coalesce(utm_medium, '-') AS \"Medium\", coalesce(utm_campaign, '-') AS \"Campaign\", count(*) AS \"Sessions\", count(DISTINCT visitor_id) AS \"Visitors\", (100.0 * count(*) FILTER (WHERE is_bounce) / GREATEST(count(*), 1))::numeric(5,1) AS \"Bounce %\" FROM forge_signals_sessions WHERE $__timeFilter(started_at) AND CASE WHEN '${bot_filter}' = 'humans' THEN is_bot = FALSE WHEN '${bot_filter}' = 'bots' THEN is_bot = TRUE ELSE TRUE END GROUP BY utm_source, utm_medium, utm_campaign ORDER BY \"Sessions\" DESC LIMIT 15", "format": "table", "refId": "A" }]
+    },
+    {
+      "type": "piechart", "title": "New vs Returning Users",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 23 },
+      "datasource": { "uid": "forge_pg", "type": "grafana-postgresql-datasource" },
+      "options": { "pieType": "donut", "reduceOptions": { "values": true, "calcs": [], "fields": "" }, "legend": { "placement": "right", "displayMode": "table", "values": ["value", "percent"] }, "tooltip": { "mode": "single" } },
+      "targets": [{
+        "rawSql": "SELECT 'New' AS metric, count(*) AS \"val\" FROM forge_signals_users WHERE first_seen_at >= $__timeFrom() AND last_seen_at >= $__timeFrom() UNION ALL SELECT 'Returning' AS metric, count(*) AS \"val\" FROM forge_signals_users WHERE first_seen_at < $__timeFrom() AND last_seen_at >= $__timeFrom()",
+        "format": "table", "refId": "A"
+      }]
+    },
+
+    { "type": "row", "title": "Retention & Paths", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 31 } },
+    {
+      "type": "table", "title": "Weekly Cohort Retention",
+      "gridPos": { "h": 8, "w": 16, "x": 0, "y": 32 },
+      "datasource": { "uid": "forge_pg", "type": "grafana-postgresql-datasource" },
+      "targets": [{ "rawSql": "WITH cohorts AS (SELECT id AS uid, date_trunc('week', first_seen_at)::date AS cohort FROM forge_signals_users), activity AS (SELECT DISTINCT user_id, date_trunc('week', timestamp)::date AS week FROM forge_signals_events WHERE user_id IS NOT NULL AND timestamp >= NOW() - INTERVAL '8 weeks') SELECT c.cohort::text AS \"Cohort\", count(DISTINCT c.uid) AS \"Size\", count(DISTINCT a.user_id) FILTER (WHERE a.week = c.cohort) AS \"W0\", count(DISTINCT a.user_id) FILTER (WHERE a.week = c.cohort + 7) AS \"W1\", count(DISTINCT a.user_id) FILTER (WHERE a.week = c.cohort + 14) AS \"W2\", count(DISTINCT a.user_id) FILTER (WHERE a.week = c.cohort + 21) AS \"W3\" FROM cohorts c LEFT JOIN activity a ON c.uid = a.user_id GROUP BY c.cohort ORDER BY c.cohort DESC LIMIT 8", "format": "table", "refId": "A" }]
+    },
+    {
+      "type": "table", "title": "Top Entry Pages",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 32 },
+      "datasource": { "uid": "forge_pg", "type": "grafana-postgresql-datasource" },
+      "targets": [{ "rawSql": "SELECT entry_page AS \"Page\", count(*) AS \"Sessions\", (100.0 * count(*) FILTER (WHERE is_bounce) / GREATEST(count(*), 1))::numeric(5,1) AS \"Bounce %\", coalesce(avg(duration_secs), 0)::int AS \"Avg Duration (s)\" FROM forge_signals_sessions WHERE $__timeFilter(started_at) AND entry_page IS NOT NULL AND CASE WHEN '${bot_filter}' = 'humans' THEN is_bot = FALSE WHEN '${bot_filter}' = 'bots' THEN is_bot = TRUE ELSE TRUE END GROUP BY entry_page ORDER BY \"Sessions\" DESC LIMIT 10", "format": "table", "refId": "A" }]
+    },
+    {
+      "type": "table", "title": "User Flow (Entry -> Exit)",
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 40 },
+      "datasource": { "uid": "forge_pg", "type": "grafana-postgresql-datasource" },
+      "targets": [{ "rawSql": "SELECT entry_page AS \"Entry\", exit_page AS \"Exit\", count(*) AS \"Sessions\", avg(page_view_count)::numeric(10,1) AS \"Avg Pages\", avg(duration_secs)::int AS \"Avg Duration (s)\" FROM forge_signals_sessions WHERE $__timeFilter(started_at) AND entry_page IS NOT NULL AND exit_page IS NOT NULL AND NOT is_bounce AND CASE WHEN '${bot_filter}' = 'humans' THEN is_bot = FALSE WHEN '${bot_filter}' = 'bots' THEN is_bot = TRUE ELSE TRUE END GROUP BY entry_page, exit_page ORDER BY \"Sessions\" DESC LIMIT 15", "format": "table", "refId": "A" }]
+    },
+
+    { "type": "row", "title": "Geography", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 47 } },
+    {
+      "type": "geomap", "title": "Users by Country", "gridPos": { "h": 12, "w": 14, "x": 0, "y": 48 },
+      "datasource": { "uid": "forge_pg", "type": "grafana-postgresql-datasource" },
+      "options": {
+        "view": { "id": "fit", "padding": 10 },
+        "basemap": { "type": "default" },
+        "layers": [{
+          "type": "markers",
+          "name": "Users",
+          "config": {
+            "style": {
+              "size": { "field": "Users", "min": 4, "max": 25 },
+              "color": { "field": "Users", "mode": "continuous-blues" },
+              "symbol": { "mode": "fixed", "fixed": "img/icons/marker/circle.svg" },
+              "opacity": 0.8
+            }
+          },
+          "location": { "mode": "lookup", "lookup": "Country", "gazetteer": "public/gazetteer/countries.json" }
+        }]
+      },
+      "targets": [{ "rawSql": "SELECT country AS \"Country\", count(DISTINCT user_id) AS \"Users\", count(DISTINCT session_id) AS \"Sessions\", count(*) AS \"Events\" FROM forge_signals_events WHERE $__timeFilter(timestamp) AND country IS NOT NULL AND user_id IS NOT NULL AND CASE WHEN '${bot_filter}' = 'humans' THEN is_bot = FALSE WHEN '${bot_filter}' = 'bots' THEN is_bot = TRUE ELSE TRUE END GROUP BY country ORDER BY \"Users\" DESC", "format": "table", "refId": "A" }]
+    },
+    {
+      "type": "table", "title": "Top Countries", "gridPos": { "h": 12, "w": 10, "x": 14, "y": 48 },
+      "datasource": { "uid": "forge_pg", "type": "grafana-postgresql-datasource" },
+      "targets": [{ "rawSql": "SELECT country AS \"Country\", count(DISTINCT user_id) AS \"Users\", count(DISTINCT session_id) AS \"Sessions\", count(*) AS \"Events\", (100.0 * count(DISTINCT user_id)::float / GREATEST((SELECT count(DISTINCT user_id) FROM forge_signals_events WHERE $__timeFilter(timestamp) AND user_id IS NOT NULL), 1))::numeric(5,1) AS \"% Users\" FROM forge_signals_events WHERE $__timeFilter(timestamp) AND country IS NOT NULL AND user_id IS NOT NULL AND CASE WHEN '${bot_filter}' = 'humans' THEN is_bot = FALSE WHEN '${bot_filter}' = 'bots' THEN is_bot = TRUE ELSE TRUE END GROUP BY country ORDER BY \"Users\" DESC LIMIT 15", "format": "table", "refId": "A" }]
+    }
+  ]
+}

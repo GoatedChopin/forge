@@ -471,6 +471,17 @@ impl AuthContext {
         self.roles.iter().any(|r| r == "admin")
     }
 
+    /// Get the tenant ID from the JWT claims, if present.
+    ///
+    /// Looks for a `tenant_id` claim in the token and attempts to parse it as
+    /// a UUID. Returns `None` if the claim is absent or not a valid UUID.
+    pub fn tenant_id(&self) -> Option<uuid::Uuid> {
+        self.claims
+            .get("tenant_id")
+            .and_then(|v| v.as_str())
+            .and_then(|s| uuid::Uuid::parse_str(s).ok())
+    }
+
     /// Validate that identity/tenant-scoped arguments in a function call match
     /// the authenticated principal.
     ///
@@ -605,6 +616,8 @@ pub struct RequestMetadata {
     pub client_ip: Option<String>,
     /// User agent string.
     pub user_agent: Option<String>,
+    /// Correlation ID linking frontend events to this backend call.
+    pub correlation_id: Option<String>,
     /// Request timestamp.
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
@@ -617,6 +630,7 @@ impl RequestMetadata {
             trace_id: Uuid::new_v4().to_string(),
             client_ip: None,
             user_agent: None,
+            correlation_id: None,
             timestamp: chrono::Utc::now(),
         }
     }
@@ -628,6 +642,7 @@ impl RequestMetadata {
             trace_id,
             client_ip: None,
             user_agent: None,
+            correlation_id: None,
             timestamp: chrono::Utc::now(),
         }
     }
@@ -905,11 +920,6 @@ impl MutationContext {
     /// Get the raw reqwest client, bypassing circuit breaker execution.
     pub fn raw_http(&self) -> &reqwest::Client {
         self.http_client.inner()
-    }
-
-    /// Get the circuit-breaker-backed HTTP client explicitly.
-    pub fn http_with_circuit_breaker(&self) -> crate::http::HttpClient {
-        self.http()
     }
 
     /// Set the default outbound HTTP request timeout for this context.

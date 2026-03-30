@@ -9,12 +9,15 @@ use tracing::{Instrument, debug, error, info, trace, warn};
 use super::registry::FunctionRegistry;
 use super::router::{FunctionRouter, RouteResult};
 use crate::db::Database;
+use crate::signals::SignalsCollector;
 
 /// Executes functions with timeout and error handling.
 pub struct FunctionExecutor {
     router: FunctionRouter,
     registry: Arc<FunctionRegistry>,
     default_timeout: Duration,
+    signals_collector: Option<SignalsCollector>,
+    signals_server_secret: String,
 }
 
 impl FunctionExecutor {
@@ -24,6 +27,8 @@ impl FunctionExecutor {
             router: FunctionRouter::new(Arc::clone(&registry), db),
             registry,
             default_timeout: Duration::from_secs(30),
+            signals_collector: None,
+            signals_server_secret: String::new(),
         }
     }
 
@@ -37,6 +42,8 @@ impl FunctionExecutor {
             router: FunctionRouter::new(Arc::clone(&registry), db),
             registry,
             default_timeout,
+            signals_collector: None,
+            signals_server_secret: String::new(),
         }
     }
 
@@ -72,7 +79,15 @@ impl FunctionExecutor {
             router,
             registry,
             default_timeout: Duration::from_secs(30),
+            signals_collector: None,
+            signals_server_secret: String::new(),
         }
+    }
+
+    /// Set the signals collector for auto-capturing RPC events.
+    pub fn set_signals_collector(&mut self, collector: SignalsCollector, server_secret: String) {
+        self.signals_collector = Some(collector);
+        self.signals_server_secret = server_secret;
     }
 
     /// Set the token TTL config on the underlying router.
@@ -97,6 +112,15 @@ impl FunctionExecutor {
             .get_function_kind(function_name)
             .map(|k| k.to_string())
             .unwrap_or_else(|| "unknown".to_string());
+
+        // Capture signal metadata before auth/request are consumed
+        let signal_ctx = self.signals_collector.as_ref().map(|_| SignalContext {
+            user_id: auth.user_id(),
+            tenant_id: auth.tenant_id(),
+            correlation_id: request.correlation_id.clone(),
+            client_ip: request.client_ip.clone(),
+            user_agent: request.user_agent.clone(),
+        });
 
         let span = tracing::info_span!(
             "fn.execute",
@@ -130,6 +154,7 @@ impl FunctionExecutor {
                     false,
                     duration.as_secs_f64(),
                 );
+                self.emit_signal(function_name, &kind, duration, false, &signal_ctx);
                 return Err(ForgeError::Timeout(format!(
                     "Function '{}' timed out after {:?}",
                     function_name, fn_timeout
@@ -163,6 +188,7 @@ impl FunctionExecutor {
                     true,
                     duration.as_secs_f64(),
                 );
+                self.emit_signal(function_name, result_kind, duration, true, &signal_ctx);
 
                 Ok(ExecutionResult {
                     function_name: function_name.to_string(),
@@ -189,10 +215,50 @@ impl FunctionExecutor {
                     false,
                     duration.as_secs_f64(),
                 );
+                self.emit_signal(function_name, &kind, duration, false, &signal_ctx);
 
                 Err(e)
             }
         }
+    }
+
+    /// Emit a signal event for RPC auto-capture.
+    fn emit_signal(
+        &self,
+        function_name: &str,
+        function_kind: &str,
+        duration: Duration,
+        success: bool,
+        ctx: &Option<SignalContext>,
+    ) {
+        let Some(collector) = &self.signals_collector else {
+            return;
+        };
+        let Some(ctx) = ctx else { return };
+
+        let is_bot = crate::signals::bot::is_bot(ctx.user_agent.as_deref());
+        let visitor_id = ctx.client_ip.as_ref().map(|_| {
+            crate::signals::visitor::generate_visitor_id(
+                ctx.client_ip.as_deref(),
+                ctx.user_agent.as_deref(),
+                &self.signals_server_secret,
+            )
+        });
+
+        let event = forge_core::signals::SignalEvent::rpc_call(
+            function_name,
+            function_kind,
+            duration.as_millis() as i32,
+            success,
+            ctx.user_id,
+            ctx.tenant_id,
+            ctx.correlation_id.clone(),
+            ctx.client_ip.clone(),
+            ctx.user_agent.clone(),
+            visitor_id,
+            is_bot,
+        );
+        collector.try_send(event);
     }
 
     /// Log function execution at the configured level.
@@ -283,6 +349,15 @@ impl FunctionExecutor {
     pub fn has_function(&self, function_name: &str) -> bool {
         self.router.has_function(function_name)
     }
+}
+
+/// Captured metadata from auth/request for signal emission.
+struct SignalContext {
+    user_id: Option<uuid::Uuid>,
+    tenant_id: Option<uuid::Uuid>,
+    correlation_id: Option<String>,
+    client_ip: Option<String>,
+    user_agent: Option<String>,
 }
 
 /// Result of executing a function.

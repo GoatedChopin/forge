@@ -183,8 +183,85 @@ impl Forge {
         self.webhook_registry.clone()
     }
 
+    /// Persist all registered workflow definitions to the database.
+    /// Fails startup if a definition's signature conflicts with a previously
+    /// registered one under the same name+version.
+    async fn persist_workflow_definitions(&self, pool: &sqlx::PgPool) -> Result<()> {
+        for info in self.workflow_registry.definitions() {
+            let status = if info.is_active {
+                "active"
+            } else if info.is_deprecated {
+                "deprecated"
+            } else {
+                "active"
+            };
+
+            // Try to insert. If row exists, check signature matches.
+            let existing = sqlx::query!(
+                r#"
+                SELECT workflow_signature FROM forge_workflow_definitions
+                WHERE workflow_name = $1 AND workflow_version = $2
+                "#,
+                info.name,
+                info.version,
+            )
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| ForgeError::Database(e.to_string()))?;
+
+            if let Some(row) = existing {
+                if row.workflow_signature != info.signature {
+                    return Err(ForgeError::Config(format!(
+                        "Workflow '{}' version '{}' has a different signature than previously registered. \
+                         Persisted contract changed under the same version. \
+                         Expected signature: {}, got: {}. \
+                         Create a new version instead of modifying the existing one.",
+                        info.name, info.version, row.workflow_signature, info.signature
+                    )));
+                }
+                // Update status if changed
+                sqlx::query!(
+                    "UPDATE forge_workflow_definitions SET status = $3 WHERE workflow_name = $1 AND workflow_version = $2",
+                    info.name,
+                    info.version,
+                    status,
+                )
+                .execute(pool)
+                .await
+                .map_err(|e| ForgeError::Database(e.to_string()))?;
+            } else {
+                sqlx::query!(
+                    r#"
+                    INSERT INTO forge_workflow_definitions (workflow_name, workflow_version, workflow_signature, status)
+                    VALUES ($1, $2, $3, $4)
+                    "#,
+                    info.name,
+                    info.version,
+                    info.signature,
+                    status,
+                )
+                .execute(pool)
+                .await
+                .map_err(|e| ForgeError::Database(e.to_string()))?;
+            }
+
+            tracing::debug!(
+                workflow = info.name,
+                version = info.version,
+                signature = info.signature,
+                status = status,
+                "Workflow definition registered"
+            );
+        }
+
+        Ok(())
+    }
+
     /// Run the FORGE server.
     pub async fn run(mut self) -> Result<()> {
+        // Apply FORGE_OTEL_* environment variable overrides before initializing
+        self.config.observability.apply_env_overrides();
+
         // Users shouldn't need tracing_subscriber boilerplate to see logs
         let telemetry_config = forge_runtime::TelemetryConfig::from_observability_config(
             &self.config.observability,
@@ -238,10 +315,26 @@ impl Forge {
         runner.run(user_migrations).await?;
         tracing::debug!("Migrations applied");
 
+        // Persist workflow definitions and validate signatures
+        if !self.workflow_registry.is_empty() {
+            self.persist_workflow_definitions(&pool).await?;
+        }
+
         // Get local node info
         let hostname = get_hostname();
 
-        let ip_address: IpAddr = "127.0.0.1".parse().expect("valid IP literal");
+        // Support HOST env var (default 0.0.0.0), PORT env var (overrides config)
+        let ip_address: IpAddr = std::env::var("HOST")
+            .unwrap_or_else(|_| "0.0.0.0".to_string())
+            .parse()
+            .unwrap_or_else(|_| "0.0.0.0".parse().expect("valid IP literal"));
+
+        if let Ok(port_str) = std::env::var("PORT")
+            && let Ok(port) = port_str.parse::<u16>()
+        {
+            self.config.gateway.port = port;
+        }
+
         let roles: Vec<NodeRole> = self
             .config
             .node
@@ -468,16 +561,38 @@ impl Forge {
             };
 
             // Build gateway server (pass Database wrapper for read replica routing)
-            let gateway = GatewayServer::new(
+            let db_ref = self
+                .db
+                .clone()
+                .ok_or_else(|| ForgeError::Internal("Database not initialized".into()))?;
+
+            let mut gateway = GatewayServer::new(
                 gateway_config,
                 self.function_registry.clone(),
-                self.db
-                    .clone()
-                    .ok_or_else(|| ForgeError::Internal("Database not initialized".into()))?,
+                db_ref.clone(),
             )
             .with_job_dispatcher(job_dispatcher.clone())
             .with_workflow_dispatcher(workflow_executor.clone())
             .with_mcp_registry(self.mcp_registry.clone());
+
+            // Wire signals (product analytics + diagnostics)
+            if self.config.signals.enabled {
+                let signals_pool = std::sync::Arc::new(db_ref.analytics_pool().clone());
+                let collector = forge_runtime::signals::SignalsCollector::spawn(
+                    signals_pool.clone(),
+                    self.config.signals.batch_size,
+                    std::time::Duration::from_millis(self.config.signals.flush_interval_ms),
+                );
+                gateway = gateway.with_signals_collector(collector);
+
+                // Spawn session reaper
+                forge_runtime::signals::session::spawn_session_reaper(
+                    signals_pool,
+                    self.config.signals.session_timeout_mins,
+                );
+
+                tracing::info!("Signals enabled (analytics + diagnostics)");
+            }
 
             // Start the reactor for real-time updates
             let reactor = gateway.reactor();
@@ -537,6 +652,8 @@ impl Forge {
                                 axum::http::header::CONTENT_TYPE,
                                 axum::http::header::AUTHORIZATION,
                                 axum::http::header::ACCEPT,
+                                axum::http::HeaderName::from_static("x-webhook-signature"),
+                                axum::http::HeaderName::from_static("x-idempotency-key"),
                             ])
                             .allow_credentials(true)
                     }
@@ -673,10 +790,20 @@ impl Forge {
             });
         }
 
+        // Startup banner: summary of config, roles, and capabilities
+        let role_names: Vec<&str> = roles.iter().map(|r| r.as_str()).collect();
+        let capabilities = &self.config.node.worker_capabilities;
         tracing::info!(
             node_id = %node_id,
-            roles = ?roles,
+            project = %self.config.project.name,
+            version = env!("CARGO_PKG_VERSION"),
+            roles = ?role_names,
+            worker_capabilities = ?capabilities,
             port = self.config.gateway.port,
+            db_pool_size = self.config.database.pool_size,
+            cluster_discovery = ?self.config.cluster.discovery,
+            observability = self.config.observability.enabled,
+            mcp = self.config.mcp.enabled,
             "Forge started"
         );
 

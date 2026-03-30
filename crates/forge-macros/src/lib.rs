@@ -229,6 +229,16 @@ pub fn cron(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Marks a function as a durable workflow.
 ///
 /// Workflows are multi-step processes that survive restarts and handle failures with compensation.
+/// Each workflow has a stable logical name, an explicit user-facing version, and a derived
+/// signature that acts as the hard runtime safety gate for resumption.
+///
+/// # Versioning
+/// When you make a breaking change to a workflow's persisted contract (add/remove steps,
+/// rename wait keys, change event contracts), create a new version. Keep the old version
+/// in the binary until its incomplete runs drain.
+///
+/// The runtime derives a signature from step keys, wait keys, timeout, and type shapes.
+/// If you change the persisted contract under the same version, registration will fail.
 ///
 /// # Authentication
 /// By default, workflows require an authenticated user to start. Override with:
@@ -236,28 +246,30 @@ pub fn cron(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// - `require_role("admin")` - Requires specific role to start
 ///
 /// # Attributes
-/// - `version = 1` - Workflow version (increment for breaking changes)
+/// - `name = "logical_name"` - Stable workflow name (defaults to function name)
+/// - `version = "2026-05"` - User-facing version id (dates, semver, or labels)
+/// - `active` - This is the active version; new runs start here (default if neither set)
+/// - `deprecated` - Kept for draining old runs; no new runs will start on this version
 /// - `timeout = "24h"` - Maximum execution time. Also becomes the default
 ///   outbound HTTP timeout for `ctx.http()` when explicitly set
-/// - `name = "custom_name"` - Override workflow name
 ///
 /// # Example
 /// ```ignore
-/// #[forge::workflow(version = 1, timeout = "24h")]  // Requires authenticated user (default)
-/// pub async fn user_onboarding(ctx: &WorkflowContext, input: OnboardingInput) -> Result<OnboardingResult> {
+/// // Old version kept alive for draining incomplete runs
+/// #[forge::workflow(name = "user_onboarding", version = "2026-03", deprecated)]
+/// pub async fn user_onboarding_v1(ctx: &WorkflowContext, input: Input) -> Result<Output> {
 ///     let user = ctx.step("create_user", || async { /* ... */ }).await?;
 ///     ctx.step("send_welcome", || async { /* ... */ }).await;
-///     Ok(OnboardingResult { user })
+///     Ok(Output { user })
 /// }
 ///
-/// #[forge::workflow(public)]  // Can be started without auth
-/// pub async fn process_webhook(ctx: &WorkflowContext, input: WebhookInput) -> Result<()> {
-///     // ...
-/// }
-///
-/// #[forge::workflow(version = 2, require_role("admin"))]
-/// pub async fn admin_workflow(ctx: &WorkflowContext, input: AdminInput) -> Result<AdminResult> {
-///     // Requires admin role to start
+/// // New active version with an additional step
+/// #[forge::workflow(name = "user_onboarding", version = "2026-05", active)]
+/// pub async fn user_onboarding_v2(ctx: &WorkflowContext, input: Input) -> Result<Output> {
+///     let user = ctx.step("create_user", || async { /* ... */ }).await?;
+///     ctx.step("send_welcome", || async { /* ... */ }).await;
+///     ctx.step("sync_crm", || async { /* ... */ }).await;
+///     Ok(Output { user })
 /// }
 /// ```
 #[proc_macro_attribute]

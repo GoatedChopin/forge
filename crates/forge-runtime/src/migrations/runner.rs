@@ -8,7 +8,6 @@
 //!
 //! 1. **System migrations** (`__forge_vXXX`): Internal FORGE schema changes.
 //!    These are versioned numerically and always run before user migrations.
-//!    Legacy installations may have `0000_forge_internal` which is treated as v001.
 //!
 //! 2. **User migrations** (`XXXX_name.sql`): Application-specific schema changes.
 //!    These are sorted alphabetically by name.
@@ -155,7 +154,7 @@ impl MigrationRunner {
         // Run built-in FORGE system migrations first (in version order)
         let system_migrations = super::builtin::get_system_migrations();
         for sys_migration in system_migrations {
-            // Skip if this version (or equivalent legacy) is already applied
+            // Skip if this version is already applied
             if let Some(max_ver) = max_applied_version
                 && sys_migration.version <= max_ver
             {
@@ -185,7 +184,6 @@ impl MigrationRunner {
     }
 
     /// Get the maximum system migration version that has been applied.
-    /// Considers both new-style `__forge_vXXX` and legacy `0000_forge_internal`.
     fn get_max_system_version(&self, applied: &HashSet<String>) -> Option<u32> {
         applied
             .iter()
@@ -238,17 +236,6 @@ impl MigrationRunner {
         .execute(&self.pool)
         .await
         .map_err(|e| ForgeError::Database(format!("Failed to create migrations table: {}", e)))?;
-
-        // Add down_sql column if it doesn't exist (for existing installations)
-        sqlx::query(
-            r#"
-            ALTER TABLE forge_migrations
-            ADD COLUMN IF NOT EXISTS down_sql TEXT
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| ForgeError::Database(format!("Failed to add down_sql column: {}", e)))?;
 
         Ok(())
     }
@@ -565,7 +552,6 @@ pub fn load_migrations_from_dir(dir: &Path) -> Result<Vec<Migration>> {
 #[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
-    use crate::migrations::LEGACY_MIGRATION_NAME;
     use std::collections::HashSet;
     use std::fs;
     use tempfile::TempDir;
@@ -688,7 +674,6 @@ DROP TABLE posts;
         let runner = MigrationRunner::new(pool);
 
         let applied = HashSet::from([
-            LEGACY_MIGRATION_NAME.to_string(),
             "__forge_v003".to_string(),
             "__forge_v001".to_string(),
             "0001_user_schema".to_string(),

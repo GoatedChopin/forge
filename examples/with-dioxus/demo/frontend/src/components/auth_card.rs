@@ -1,4 +1,6 @@
 use dioxus::prelude::*;
+use forge_dioxus::use_signals;
+use serde_json::json;
 
 use crate::forge::{
     AuthResponse, LoginInput, RefreshInput, RegisterInput, UserPublic, use_forge_auth, use_login,
@@ -8,6 +10,7 @@ use crate::forge::{
 #[component]
 pub fn AuthCard() -> Element {
     let mut auth = use_forge_auth();
+    let signals = use_signals();
 
     let mut mode = use_signal(|| "login".to_string());
     let mut auth_email = use_signal(|| "demo@example.com".to_string());
@@ -27,6 +30,7 @@ pub fn AuthCard() -> Element {
     let handle_auth = {
         let login_mut = login_mut.clone();
         let register_mut = register_mut.clone();
+        let signals = signals.clone();
         move |evt: FormEvent| {
             evt.prevent_default();
             let email = auth_email.read().clone();
@@ -35,10 +39,12 @@ pub fn AuthCard() -> Element {
             let is_register = mode.read().as_str() == "register";
             let login_mut = login_mut.clone();
             let register_mut = register_mut.clone();
+            let signals = signals.clone();
 
             spawn(async move {
                 loading.set(true);
                 auth_error.set(None);
+                signals.track("auth_attempt", json!({"mode": is_register}));
 
                 let result: Result<AuthResponse, _> = if is_register {
                     register_mut
@@ -52,6 +58,8 @@ pub fn AuthCard() -> Element {
 
                 match result {
                     Ok(res) => {
+                        signals.track("auth_success", json!({"mode": is_register}));
+                        signals.identify(&res.user.id, json!({"name": &res.user.name, "email": &res.user.email})).await;
                         let claims = parse_jwt_claims(&res.access_token);
                         token_claims.set(Some(claims));
                         // Wire auth into ForgeAuthProvider so the client
@@ -66,6 +74,7 @@ pub fn AuthCard() -> Element {
                         refresh_count.set(0);
                     }
                     Err(e) => {
+                        signals.track("auth_error", json!({"mode": is_register, "error": &e.message}));
                         auth_error.set(Some(e.message));
                     }
                 }
@@ -76,20 +85,24 @@ pub fn AuthCard() -> Element {
 
     let handle_refresh = {
         let refresh_mut = refresh_mut.clone();
+        let signals = signals.clone();
         move |_: MouseEvent| {
             let rt = auth.refresh_token();
             let refresh_mut = refresh_mut.clone();
+            let signals = signals.clone();
             if let Some(rt) = rt {
                 spawn(async move {
                     auth_error.set(None);
                     match refresh_mut.call(RefreshInput::new(&rt)).await {
                         Ok(pair) => {
+                            signals.track("token_refresh", json!({"count": refresh_count() + 1}));
                             let claims = parse_jwt_claims(&pair.access_token);
                             token_claims.set(Some(claims));
                             auth.update_tokens(pair.access_token.clone(), pair.refresh_token.clone());
                             refresh_count.set(refresh_count() + 1);
                         }
                         Err(e) => {
+                            signals.track("token_refresh_error", json!({}));
                             auth_error.set(Some(e.message));
                         }
                     }
@@ -98,12 +111,16 @@ pub fn AuthCard() -> Element {
         }
     };
 
-    let handle_logout = move |_: MouseEvent| {
-        auth.logout();
-        auth_user.set(None);
-        token_claims.set(None);
-        refresh_count.set(0);
-        auth_error.set(None);
+    let handle_logout = {
+        let signals = signals.clone();
+        move |_: MouseEvent| {
+            signals.track("logout", json!({}));
+            auth.logout();
+            auth_user.set(None);
+            token_claims.set(None);
+            refresh_count.set(0);
+            auth_error.set(None);
+        }
     };
 
     let is_logged_in = auth.is_authenticated();
@@ -166,12 +183,24 @@ pub fn AuthCard() -> Element {
                 div { class: "auth-tabs",
                     button {
                         class: if mode.read().as_str() == "login" { "tab active" } else { "tab" },
-                        onclick: move |_| mode.set("login".into()),
+                        onclick: {
+                            let signals = signals.clone();
+                            move |_| {
+                                signals.track("auth_tab_switch", json!({"tab": "login"}));
+                                mode.set("login".into());
+                            }
+                        },
                         "Login"
                     }
                     button {
                         class: if mode.read().as_str() == "register" { "tab active" } else { "tab" },
-                        onclick: move |_| mode.set("register".into()),
+                        onclick: {
+                            let signals = signals.clone();
+                            move |_| {
+                                signals.track("auth_tab_switch", json!({"tab": "register"}));
+                                mode.set("register".into());
+                            }
+                        },
                         "Register"
                     }
                 }

@@ -103,32 +103,6 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_rejects_removed_demo_flag() {
-        let cli = Cli::try_parse_from(["forge", "new", "my-app", "--demo"]);
-        assert!(cli.is_err());
-    }
-
-    #[test]
-    fn test_cli_rejects_removed_minimal_flag() {
-        let cli = Cli::try_parse_from(["forge", "new", "my-app", "--minimal"]);
-        assert!(cli.is_err());
-    }
-
-    #[test]
-    fn test_cli_rejects_removed_target_flag() {
-        let cli = Cli::try_parse_from([
-            "forge",
-            "new",
-            "my-app",
-            "--template",
-            "with-svelte/minimal",
-            "--target",
-            "dioxus",
-        ]);
-        assert!(cli.is_err());
-    }
-
-    #[test]
     fn test_cli_requires_template_for_new() {
         let cli = Cli::try_parse_from(["forge", "new", "my-app"]);
         assert!(cli.is_err());

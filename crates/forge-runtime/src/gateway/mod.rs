@@ -24,3 +24,27 @@ pub use sse::{
     sse_subscribe_handler, sse_unsubscribe_handler, sse_workflow_subscribe_handler,
 };
 pub use tracing::TracingMiddleware;
+
+pub(crate) fn extract_client_ip(headers: &axum::http::HeaderMap) -> Option<String> {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            headers
+                .get("x-real-ip")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        })
+}
+
+pub(crate) fn extract_header(headers: &axum::http::HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| !v.is_empty())
+        .map(String::from)
+}

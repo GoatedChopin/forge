@@ -108,14 +108,12 @@ fn gen_rpc(b: &FunctionBinding) -> String {
     }
 
     let args_type = ts_args_type(b);
-    let method = if b.has_upload {
-        "callWithFiles"
-    } else {
-        "call"
-    };
+    // The ForgeClient.call() method auto-detects File/Blob arguments and
+    // routes to the multipart upload endpoint when needed, so we always
+    // emit "call" regardless of whether the function has Upload parameters.
     format!(
-        "export const {} = (args: {}): Promise<{}> =>\n  getForgeClient().{}(\"{}\", args);",
-        ts_name, args_type, result_type, method, b.name
+        "export const {} = (args: {}): Promise<{}> =>\n  getForgeClient().call(\"{}\", args);",
+        ts_name, args_type, result_type, b.name
     )
 }
 
@@ -296,7 +294,9 @@ mod tests {
         let bindings = BindingSet::from_registry(&registry);
         let content = generate(&bindings).expect("upload bindings should generate");
 
-        assert!(content.contains("getForgeClient().callWithFiles(\"upload_avatar\""));
+        // Both upload and non-upload mutations use call() since the ForgeClient
+        // auto-detects File/Blob arguments and routes to multipart endpoint.
+        assert!(content.contains("getForgeClient().call(\"upload_avatar\""));
         assert!(content.contains("getForgeClient().call(\"update_name\""));
     }
 

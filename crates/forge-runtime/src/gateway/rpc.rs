@@ -73,6 +73,17 @@ impl RpcHandler {
         self.executor.function_info(name)
     }
 
+    /// Set the signals collector for auto-capturing RPC events.
+    pub fn set_signals_collector(
+        &mut self,
+        collector: crate::signals::SignalsCollector,
+        server_secret: String,
+    ) {
+        if let Some(executor) = Arc::get_mut(&mut self.executor) {
+            executor.set_signals_collector(collector, server_secret);
+        }
+    }
+
     /// Handle an RPC request.
     pub async fn handle(
         &self,
@@ -94,21 +105,7 @@ impl RpcHandler {
     }
 }
 
-/// Extract client IP from X-Forwarded-For or X-Real-IP headers.
-fn extract_client_ip(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(',').next().unwrap_or("").trim().to_string())
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            headers
-                .get("x-real-ip")
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-        })
-}
+use super::extract_client_ip;
 
 /// Extract user agent from headers.
 fn extract_user_agent(headers: &HeaderMap) -> Option<String> {
@@ -126,8 +123,18 @@ fn build_metadata(tracing: TracingState, headers: &HeaderMap) -> RequestMetadata
         trace_id: tracing.trace_id,
         client_ip: extract_client_ip(headers),
         user_agent: extract_user_agent(headers),
+        correlation_id: extract_correlation_id(headers),
         timestamp: chrono::Utc::now(),
     }
+}
+
+/// Extract the correlation ID from the x-correlation-id header.
+fn extract_correlation_id(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("x-correlation-id")
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| !v.is_empty() && v.len() <= 64)
+        .map(String::from)
 }
 
 /// Axum handler for POST /rpc.
@@ -138,6 +145,11 @@ pub async fn rpc_handler(
     headers: HeaderMap,
     Json(request): Json<RpcRequest>,
 ) -> RpcResponse {
+    if !is_valid_function_name(&request.function) {
+        return RpcResponse::error(RpcError::validation(
+            "Invalid function name: must be 1-256 alphanumeric characters, underscores, dots, colons, or hyphens",
+        ));
+    }
     handler
         .handle(request, auth, build_metadata(tracing, &headers))
         .await
@@ -151,6 +163,16 @@ pub struct RpcFunctionBody {
     pub args: serde_json::Value,
 }
 
+/// Validate that a function name contains only safe characters.
+/// Prevents log injection and unexpected behavior from special characters.
+fn is_valid_function_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 256
+        && name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == ':' || c == '-')
+}
+
 /// Axum handler for POST /rpc/:function (REST-style).
 pub async fn rpc_function_handler(
     State(handler): State<Arc<RpcHandler>>,
@@ -160,11 +182,19 @@ pub async fn rpc_function_handler(
     axum::extract::Path(function): axum::extract::Path<String>,
     Json(body): Json<RpcFunctionBody>,
 ) -> RpcResponse {
+    if !is_valid_function_name(&function) {
+        return RpcResponse::error(RpcError::validation(
+            "Invalid function name: must be 1-256 alphanumeric characters, underscores, dots, colons, or hyphens",
+        ));
+    }
     let request = RpcRequest::new(function, body.args);
     handler
         .handle(request, auth, build_metadata(tracing, &headers))
         .await
 }
+
+/// Maximum number of requests allowed in a single batch.
+const MAX_BATCH_SIZE: usize = 100;
 
 /// Axum handler for POST /rpc/batch.
 pub async fn rpc_batch_handler(
@@ -174,16 +204,36 @@ pub async fn rpc_batch_handler(
     headers: HeaderMap,
     Json(batch): Json<BatchRpcRequest>,
 ) -> BatchRpcResponse {
+    // Prevent DoS via unbounded batch size
+    if batch.requests.len() > MAX_BATCH_SIZE {
+        return BatchRpcResponse {
+            results: vec![RpcResponse::error(RpcError::validation(format!(
+                "Batch size {} exceeds maximum of {}",
+                batch.requests.len(),
+                MAX_BATCH_SIZE
+            )))],
+        };
+    }
+
     let client_ip = extract_client_ip(&headers);
     let user_agent = extract_user_agent(&headers);
+    let correlation_id = extract_correlation_id(&headers);
     let mut results = Vec::with_capacity(batch.requests.len());
 
     for request in batch.requests {
+        // Validate function names in batch requests
+        if !is_valid_function_name(&request.function) {
+            results.push(RpcResponse::error(RpcError::validation(
+                "Invalid function name: must be 1-256 alphanumeric characters, underscores, dots, colons, or hyphens",
+            )));
+            continue;
+        }
         let metadata = RequestMetadata {
             request_id: uuid::Uuid::new_v4(),
             trace_id: tracing.trace_id.clone(),
             client_ip: client_ip.clone(),
             user_agent: user_agent.clone(),
+            correlation_id: correlation_id.clone(),
             timestamp: chrono::Utc::now(),
         };
 

@@ -99,9 +99,7 @@ fn default_statement_timeout() -> u64 {
     30
 }
 
-fn default_true() -> bool {
-    true
-}
+use super::default_true;
 
 /// Pool isolation configuration for different workloads.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

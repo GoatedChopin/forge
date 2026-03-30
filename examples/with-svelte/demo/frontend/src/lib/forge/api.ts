@@ -8,6 +8,7 @@ import {
 } from "@forge-rs/svelte";
 import type {
   AuthResponse,
+  ConfirmVerificationInput,
   DemoStats,
   ExportInput,
   ExportOutput,
@@ -53,6 +54,9 @@ export const getWebhookEventsStore$ = () =>
   createSubscriptionStore<null, WebhookEvent[]>("get_webhook_events", null);
 
 // Mutations
+export const confirmVerification = (
+  args: ConfirmVerificationInput,
+): Promise<boolean> => getForgeClient().call("confirm_verification", args);
 export const createUser = (args: {
   email: string;
   name: string;

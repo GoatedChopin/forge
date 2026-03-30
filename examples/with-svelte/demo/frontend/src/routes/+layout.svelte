@@ -15,7 +15,7 @@
   });
 </script>
 
-<ForgeProvider url={PUBLIC_API_URL} {getToken}>
+<ForgeProvider url={PUBLIC_API_URL} {getToken} onAuthError={() => auth.handleAuthError()}>
   <nav class="app-nav">
     <a href="/" class="nav-brand">Forge Demo</a>
   </nav>

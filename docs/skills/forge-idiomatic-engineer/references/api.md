@@ -79,12 +79,36 @@ When explicitly set, `timeout` also becomes the default outbound HTTP timeout fo
 
 Generated struct: `{PascalCase}Workflow`.
 
-| Attribute | Type | Default |
-|---|---|---|
-| `version = 1` | u32 | 1 |
-| `timeout = "24h"` | duration | `"24h"` |
-| `deprecated` | flag | false |
-| `public` / `require_role(...)` | — | — |
+| Attribute | Type | Default | Notes |
+|---|---|---|---|
+| `name = "x"` | string | fn_name | Logical workflow identity. Two versions share the same name. |
+| `version = "2026-05"` | string | — | Freeform string. Paired with `name` to form the unique definition key. |
+| `active` | flag | true | This version handles new runs. At most one active version per name. |
+| `deprecated` | flag | false | Keeps executing in-flight runs but rejects new ones. Cannot combine with `active`. |
+| `timeout = "24h"` | duration | `"24h"` | |
+| `public` / `require_role(...)` | — | — | |
+
+Default is `active` when neither `active` nor `deprecated` is specified. Specifying both is a compile error.
+
+A workflow **signature** is derived automatically from step keys, wait keys, event names, timeout, and type shapes. The runtime persists definitions to `forge_workflow_definitions` on startup and stamps each run with `workflow_version` and `workflow_signature`. If a handler's signature differs from what was persisted under the same name+version, the node refuses to start.
+
+Versioned example:
+```rust
+#[forge::workflow(name = "user_onboarding", version = "2026-05", active)]
+pub async fn user_onboarding_v2(ctx: &WorkflowContext, input: OnboardingInput) -> Result<()> {
+    // current version — all new runs land here
+    ctx.step("verify_email", || async { verify(input.email).await }).run().await?;
+    ctx.step("provision", || async { provision(input.user_id).await }).run().await?;
+    Ok(())
+}
+
+#[forge::workflow(name = "user_onboarding", version = "2026-03", deprecated)]
+pub async fn user_onboarding_v1(ctx: &WorkflowContext, input: OnboardingInputV1) -> Result<()> {
+    // old version — only finishes in-flight runs, no new dispatches
+    ctx.step("send_welcome", || async { welcome(input.user_id).await }).run().await?;
+    Ok(())
+}
+```
 
 Compile-time: detects `tokio::sleep` > 100s and errors (must use `ctx.sleep()`). Signature: `async fn name(ctx: &WorkflowContext, input: T) -> Result<R>`.
 When explicitly set, `timeout` also becomes the default outbound HTTP timeout for `ctx.http()`.
@@ -284,6 +308,18 @@ path = "/mcp"
 [observability]
 enabled = false
 otlp_endpoint = "http://localhost:4318"
+
+[signals]
+enabled = true              # default: true
+auto_capture = true         # auto-track RPC calls
+diagnostics = true          # capture frontend errors
+session_timeout_mins = 30
+retention_days = 90
+anonymize_ip = false        # when true, store hashed visitor ID instead of raw IP
+batch_size = 100            # events per DB flush
+flush_interval_ms = 5000    # max ms between flushes
+excluded_functions = []     # function names to skip (exact match)
+bot_detection = true        # tag bot traffic via UA patterns
 ```
 
 Env var substitution: `${VAR}`, `${VAR-default}`, `${VAR:-default}`. Names: `[A-Z_][A-Z0-9_]*`.
@@ -316,7 +352,7 @@ Unconfigured pools fall back to primary.
 | `forge new <name> --template <id>` | Scaffold project |
 | `docker compose up --build` / `docker compose down -v` | Docker Compose dev environment |
 | `forge generate` | Generate frontend bindings from backend |
-| `forge test` | Run backend + Playwright tests |
+| `forge test` | Build binary, start PG container, run backend + Playwright tests. Set `FORGE_TEST_URL` to skip build/start and test against a running server. |
 | `forge check` | Validate config, structure, linting, bindings |
 | `forge migrate up` / `down [N]` / `status` / `prepare` | Database migrations |
 
@@ -368,3 +404,9 @@ Files: `migrations/NNNN_description.sql`. Markers: `-- @up` (required), `-- @dow
 | `/_api/ready` | Readiness (GET, 200/503) |
 | `/_api/webhooks/{path}` | Webhook handlers |
 | `/_api/mcp` | MCP endpoint (if enabled) |
+| `/_api/signal/event` | Signal: batch custom events (POST, max 50) |
+| `/_api/signal/view` | Signal: page view with UTM (POST) |
+| `/_api/signal/user` | Signal: identify user (POST) |
+| `/_api/signal/report` | Signal: diagnostic error reports (POST, max 50) |
+
+Signal endpoints return `{ "ok": true, "session_id": "UUID" }`. Headers: `x-session-id` (session continuity), `x-forge-platform` (device: `web`, `desktop-macos`, `ios`, `android`, etc.), `x-correlation-id` (links to RPC). Endpoint batch limit (50) is separate from server-side `batch_size` (100) which controls DB flush size.

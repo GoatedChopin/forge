@@ -105,13 +105,17 @@ impl JobDispatcher {
     }
 
     /// Request cancellation for a job.
+    ///
+    /// If `caller_subject` is provided, the cancellation will only succeed if
+    /// the caller owns the job or the job has no owner.
     pub async fn cancel(
         &self,
         job_id: Uuid,
         reason: Option<&str>,
+        caller_subject: Option<&str>,
     ) -> Result<bool, forge_core::ForgeError> {
         self.queue
-            .request_cancel(job_id, reason)
+            .request_cancel(job_id, reason, caller_subject)
             .await
             .map_err(|e| forge_core::ForgeError::Database(e.to_string()))
     }
@@ -217,7 +221,7 @@ impl JobDispatch for JobDispatcher {
         job_id: Uuid,
         reason: Option<String>,
     ) -> Pin<Box<dyn Future<Output = forge_core::Result<bool>> + Send + '_>> {
-        Box::pin(async move { self.cancel(job_id, reason.as_deref()).await })
+        Box::pin(async move { self.cancel(job_id, reason.as_deref(), None).await })
     }
 }
 

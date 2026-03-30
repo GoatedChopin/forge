@@ -9,6 +9,7 @@
     getDemoStats,
     trackExportUsers,
     trackAccountVerification,
+    confirmVerification,
     getUsers$,
     getIssLocation$,
     getTrades$,
@@ -21,6 +22,8 @@
 
   import { PUBLIC_API_URL } from "$env/static/public";
   import { auth } from "$lib/forge/auth.svelte";
+  import { getForgeSignals } from "@forge-rs/svelte";
+  const signals = getForgeSignals();
   const apiUrl = PUBLIC_API_URL;
 
   const users = getUsers$();
@@ -43,6 +46,7 @@
   // Export / Workflow
   let exportJobStore = $state<ReturnType<typeof trackExportUsers> | null>(null);
   let workflowStore = $state<ReturnType<typeof trackAccountVerification> | null>(null);
+  let confirmSent = $state(false);
 
   // Webhook
   let idempotencyKey = $state(generateKey());
@@ -108,6 +112,8 @@
 
   async function handleAuth(e: Event) {
     e.preventDefault();
+    signals.breadcrumb(`Auth ${authMode} attempt`);
+    signals.track("auth_attempt", { mode: authMode });
     authLoading = true;
     authError = null;
     try {
@@ -118,9 +124,11 @@
         res = await login({ email: authEmail, password: authPassword });
       }
       auth.setAuth(res.access_token, res.refresh_token, res.user);
+      signals.track("auth_success", { mode: authMode, user_id: res.user.id });
       refreshCount = 0;
     } catch (err: unknown) {
       authError = err instanceof Error ? err.message : String(err);
+      signals.track("auth_error", { mode: authMode, error: authError });
     } finally {
       authLoading = false;
     }
@@ -133,12 +141,14 @@
       const pair: TokenPair = await refreshToken({ refresh_token: auth.refreshToken });
       auth.updateTokens(pair.access_token, pair.refresh_token);
       refreshCount++;
+      signals.track("token_refresh", { count: refreshCount });
     } catch (err: unknown) {
       authError = err instanceof Error ? err.message : String(err);
     }
   }
 
   function handleLogout() {
+    signals.track("logout");
     auth.clearAuth();
     refreshCount = 0;
     authError = null;
@@ -153,6 +163,7 @@
       cacheData = stats;
       responseMs = elapsed;
       fetchCount++;
+      signals.track("cache_fetch", { response_ms: elapsed, cache_hit: elapsed < 100, fetch_number: fetchCount });
     } catch {
       // ignore
     }
@@ -160,6 +171,7 @@
   }
 
   async function triggerWebhook() {
+    signals.breadcrumb("Sending webhook");
     webhookError = null;
     const secret = "demo-secret";
     const payload = JSON.stringify({ action: "test", ts: Date.now() });
@@ -189,8 +201,10 @@
 
     if (res.ok) {
       keyUsed = true;
+      signals.track("webhook_sent", { idempotency_key: idempotencyKey });
     } else {
       webhookError = `Error: ${res.status}`;
+      signals.track("webhook_error", { status: res.status });
     }
   }
 
@@ -198,6 +212,7 @@
     idempotencyKey = generateKey();
     keyUsed = false;
     webhookError = null;
+    signals.track("webhook_key_generated");
   }
 
   async function handleCreateUser(e: Event) {
@@ -205,19 +220,23 @@
     const n = name.trim();
     const em = email.trim();
     if (!n || !em || isSubmitting) return;
+    signals.breadcrumb("Creating user");
     crudError = null;
     isSubmitting = true;
     try {
       await createUser({ email: em, name: n, role: null });
+      signals.track("user_created", { name: n });
       name = "";
       email = "";
     } catch (err: unknown) {
       crudError = err instanceof Error ? err.message : String(err);
+      signals.track("user_create_error");
     }
     isSubmitting = false;
   }
 
   function startEditUser(user: User) {
+    signals.track("user_edit_start", { user_id: user.id });
     selectedUser = user;
     editingUserId = user.id;
     editName = user.name;
@@ -227,13 +246,16 @@
 
   async function handleUpdateUser() {
     if (!editingUserId || isEditing) return;
+    signals.breadcrumb("Updating user");
     isEditing = true;
     crudError = null;
     try {
       await updateUser({ id: editingUserId, name: editName, email: editEmail, role: null });
+      signals.track("user_updated", { user_id: editingUserId });
       editingUserId = null;
     } catch (err: unknown) {
       crudError = err instanceof Error ? err.message : String(err);
+      signals.track("user_update_error");
     }
     isEditing = false;
   }
@@ -243,25 +265,44 @@
   }
 
   async function confirmDeleteUser(id: string) {
+    signals.breadcrumb("Deleting user");
     deletePopoverUserId = null;
     crudError = null;
     try {
       await deleteUser({ id });
+      signals.track("user_deleted", { user_id: id });
       if (selectedUser?.id === id) selectedUser = null;
     } catch (err: unknown) {
       crudError = err instanceof Error ? err.message : String(err);
+      signals.track("user_delete_error");
     }
   }
 
   function startExportJob() {
+    signals.track("export_started", { format: "csv" });
     exportJobStore = trackExportUsers({ format: "csv" });
   }
 
   function startVerificationWorkflow() {
-    workflowStore = trackAccountVerification({
-      account_id: selectedUser?.id || "demo-user",
-      email: selectedUser?.email || "demo@example.com",
-    });
+    const account_id = selectedUser?.id || "demo-user";
+    const email = selectedUser?.email || "demo@example.com";
+    signals.track("workflow_started", { type: "verification", account_id, email });
+    confirmSent = false;
+    workflowStore = trackAccountVerification({ account_id, email });
+  }
+
+  async function handleConfirmVerification() {
+    if (!workflowStore || confirmSent) return;
+    const state = $workflowStore;
+    if (!state?.workflowId) return;
+    confirmSent = true;
+    signals.track("workflow_confirmed", { workflow_id: state.workflowId });
+    try {
+      await confirmVerification({ workflow_id: state.workflowId });
+    } catch (err: unknown) {
+      confirmSent = false;
+      console.error("Failed to confirm verification:", err);
+    }
   }
 
   function formatCoord(value: number, isLat: boolean): string {
@@ -286,8 +327,6 @@
 </script>
 
 <main class="shell">
-  <h1>Forge Demo</h1>
-
   <div class="columns">
     <!-- Left column -->
     <div class="col">
@@ -448,8 +487,8 @@
           {/if}
         {:else}
           <div class="auth-tabs">
-            <button class="tab" class:active={authMode === "login"} onclick={() => authMode = "login"}>Login</button>
-            <button class="tab" class:active={authMode === "register"} onclick={() => authMode = "register"}>Register</button>
+            <button class="tab" class:active={authMode === "login"} onclick={() => { authMode = "login"; signals.track("auth_tab_switch", { tab: "login" }); }}>Login</button>
+            <button class="tab" class:active={authMode === "register"} onclick={() => { authMode = "register"; signals.track("auth_tab_switch", { tab: "register" }); }}>Register</button>
           </div>
           <form onsubmit={handleAuth}>
             {#if authMode === "register"}
@@ -506,11 +545,16 @@
               </div>
             {/each}
           </div>
-          {#if ["completed", "failed", "compensated"].includes($workflowStore.status)}
+          {#if $workflowStore.status === "waiting" || ($workflowStore.status === "running" && confirmSent)}
+            <p class="muted small">{confirmSent ? "Confirmation sent, finishing up..." : "Waiting for your confirmation..."}</p>
+            <button class="confirm-btn" onclick={handleConfirmVerification} disabled={confirmSent}>
+              {confirmSent ? "Confirmed" : "Confirm Verification"}
+            </button>
+          {:else if ["completed", "failed", "compensated"].includes($workflowStore.status)}
             <button onclick={startVerificationWorkflow}>Run Again</button>
           {/if}
         {:else}
-          <p class="muted small workflow-desc">Multi-step workflow with durable sleep</p>
+          <p class="muted small workflow-desc">Multi-step workflow with event wait</p>
           <button onclick={startVerificationWorkflow}>Start Workflow</button>
         {/if}
       </section>
@@ -580,7 +624,6 @@
     line-height: 1.5;
   }
 
-  h1 { margin: 0 0 1.5rem; font-size: 1.75rem; font-weight: 700; }
   h2 { margin: 0 0 0.75rem; font-size: 0.95rem; font-weight: 600; }
 
   /* Layout */
@@ -703,8 +746,8 @@
   /* Responsive */
   @media (max-width: 700px) {
     main { padding: 1rem; }
-    h1 { font-size: 1.5rem; margin-bottom: 1rem; }
     .columns { flex-direction: column; }
+    .col { width: 100%; }
     .card { padding: 1rem; }
     .stats { gap: 1rem; flex-wrap: wrap; }
     .value { font-size: 0.95rem; }
@@ -716,5 +759,7 @@
     th, td { padding: 0.5rem 0.25rem; }
     .action-cell { display: flex; flex-wrap: wrap; gap: 0.25rem; }
     .popover { position: fixed; top: 50%; right: auto; left: 50%; transform: translate(-50%, -50%); }
+    .trades-table { font-size: 0.8rem; }
+    .code-block code { font-size: 0.7rem; }
   }
 </style>

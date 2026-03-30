@@ -404,18 +404,18 @@ impl FunctionRouter {
                     }
 
                     for workflow in &buffer.workflows {
-                        let version = self
+                        if self
                             .workflow_dispatcher
                             .as_ref()
                             .and_then(|d| d.get_info(&workflow.workflow_name))
-                            .map(|info| info.version)
-                            .ok_or_else(|| {
-                                ForgeError::NotFound(format!(
-                                    "Workflow '{}' not found",
-                                    workflow.workflow_name
-                                ))
-                            })?;
-                        Self::insert_workflow(&mut tx, workflow, version).await?;
+                            .is_none()
+                        {
+                            return Err(ForgeError::NotFound(format!(
+                                "Workflow '{}' not found",
+                                workflow.workflow_name
+                            )));
+                        }
+                        Self::insert_workflow(&mut tx, workflow).await?;
                     }
 
                     tx.commit()
@@ -466,19 +466,17 @@ impl FunctionRouter {
     async fn insert_workflow(
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         workflow: &PendingWorkflow,
-        version: u32,
     ) -> Result<()> {
         let now = Utc::now();
         sqlx::query!(
             r#"
             INSERT INTO forge_workflow_runs (
-                id, workflow_name, version, owner_subject, input, status, current_step,
+                id, workflow_name, owner_subject, input, status, current_step,
                 step_results, started_at, trace_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             "#,
             workflow.id,
             &workflow.workflow_name,
-            version as i32,
             workflow.owner_subject as _,
             workflow.input as _,
             WorkflowStatus::Created.as_str(),

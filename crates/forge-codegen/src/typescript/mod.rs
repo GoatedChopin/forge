@@ -5,7 +5,6 @@
 //! produces file content without touching the filesystem.
 
 mod api;
-mod client;
 mod reactive;
 mod stores;
 mod types;
@@ -263,9 +262,18 @@ class AuthStore {
     }
   }
 
-  /** Call from ForgeProvider's onAuthError callback. */
+  #refreshPromise: Promise<boolean> | null = null;
+
+  /** Call from ForgeProvider's onAuthError callback.
+   *  Coalesces concurrent calls so multiple 401s don't race. */
   async handleAuthError(): Promise<void> {
-    const ok = await this.tryRefresh();
+    if (!this.isAuthenticated) return;
+    if (!this.#refreshPromise) {
+      this.#refreshPromise = this.tryRefresh().finally(() => {
+        this.#refreshPromise = null;
+      });
+    }
+    const ok = await this.#refreshPromise;
     if (!ok) this.clearAuth();
   }
 }

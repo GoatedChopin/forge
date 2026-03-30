@@ -3,6 +3,7 @@ use std::process::Command;
 fn main() {
     println!("cargo:rerun-if-changed=frontend/src");
     println!("cargo:rerun-if-changed=frontend/package.json");
+    println!("cargo:rerun-if-changed=frontend/.env");
 
     if std::env::var("CARGO_FEATURE_EMBEDDED_FRONTEND").is_ok() {
         build_frontend();

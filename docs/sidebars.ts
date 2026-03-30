@@ -18,8 +18,19 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
-      label: 'Build',
+      label: 'Tutorials',
       collapsed: false,
+      items: [
+        'tutorials/realtime-todo',
+        'tutorials/authentication',
+        'tutorials/background-processing',
+        'tutorials/shipping-to-production',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Build',
+      collapsed: true,
       items: [
         'build/read-data',
         'build/subscribe-to-changes',
@@ -32,6 +43,7 @@ const sidebars: SidebarsConfig = {
         'build/persistent-services',
         'build/webhooks',
         'build/expose-mcp-tools',
+        'build/custom-handlers',
       ],
     },
     {
@@ -49,6 +61,7 @@ const sidebars: SidebarsConfig = {
       collapsed: true,
       items: [
         'ship/configuration',
+        'ship/signals',
         'ship/mcp-security',
         'ship/testing',
         'ship/deploy',

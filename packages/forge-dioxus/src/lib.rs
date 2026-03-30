@@ -2,6 +2,7 @@ pub mod auth;
 mod client;
 mod context;
 mod hooks;
+pub mod signals;
 mod types;
 mod upload;
 
@@ -20,4 +21,5 @@ pub use types::{
     Mutation, QueryState, StreamEvent, SubscriptionState, TokenPair, WorkflowExecutionState,
     WorkflowState, WorkflowStatus, WorkflowStepState,
 };
+pub use signals::{ForgeSignals, SignalsConfig, use_signals};
 pub use upload::ForgeUpload;

@@ -1,8 +1,10 @@
 pub mod cluster;
 mod database;
+pub mod signals;
 
 pub use cluster::ClusterConfig;
 pub use database::{DatabaseConfig, PoolConfig};
+pub use signals::SignalsConfig;
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -54,6 +56,10 @@ pub struct ForgeConfig {
     /// MCP server configuration.
     #[serde(default)]
     pub mcp: McpConfig,
+
+    /// Signals configuration for product analytics and diagnostics.
+    #[serde(default)]
+    pub signals: SignalsConfig,
 }
 
 impl ForgeConfig {
@@ -115,6 +121,7 @@ impl ForgeConfig {
             auth: AuthConfig::default(),
             observability: ObservabilityConfig::default(),
             mcp: McpConfig::default(),
+            signals: SignalsConfig::default(),
         }
     }
 }
@@ -199,7 +206,11 @@ pub struct GatewayConfig {
     #[serde(default = "default_http_port")]
     pub port: u16,
 
-    /// gRPC port for inter-node communication.
+    /// gRPC port for inter-node communication (reserved for future use).
+    ///
+    /// This port is registered in the cluster node info but a gRPC listener
+    /// is not yet started. It will be used for efficient binary inter-node
+    /// RPC in a future release.
     #[serde(default = "default_grpc_port")]
     pub grpc_port: u16,
 
@@ -285,7 +296,14 @@ fn default_cors_origins() -> Vec<String> {
 }
 
 fn default_quiet_routes() -> Vec<String> {
-    vec!["/_api/health".to_string(), "/_api/ready".to_string()]
+    vec![
+        "/_api/health".to_string(),
+        "/_api/ready".to_string(),
+        "/_api/signal/event".to_string(),
+        "/_api/signal/view".to_string(),
+        "/_api/signal/user".to_string(),
+        "/_api/signal/report".to_string(),
+    ]
 }
 
 fn default_max_body_size() -> String {
@@ -303,7 +321,13 @@ pub struct FunctionConfig {
     #[serde(default = "default_function_timeout")]
     pub timeout_secs: u64,
 
-    /// Memory limit per function (in bytes).
+    /// Advisory memory limit per function execution (in bytes).
+    ///
+    /// This value is exposed as configuration metadata for orchestrators
+    /// (e.g., Kubernetes resource requests) and observability dashboards.
+    /// It is not enforced at the process level since Rust does not provide
+    /// per-function memory sandboxing. Use container-level limits for hard
+    /// enforcement.
     #[serde(default = "default_memory_limit")]
     pub memory_limit: usize,
 }
@@ -415,10 +439,6 @@ pub struct AuthConfig {
     /// If set, tokens with a different audience are rejected.
     pub jwt_audience: Option<String>,
 
-    /// Token expiry duration (e.g., "15m", "1h", "7d").
-    /// Deprecated: use `access_token_ttl` instead.
-    pub token_expiry: Option<String>,
-
     /// Access token lifetime (e.g., "15m", "1h").
     /// Used by `ctx.issue_token_pair()`. Defaults to "1h".
     pub access_token_ttl: Option<String>,
@@ -447,7 +467,6 @@ impl Default for AuthConfig {
             jwt_algorithm: JwtAlgorithm::default(),
             jwt_issuer: None,
             jwt_audience: None,
-            token_expiry: None,
             access_token_ttl: None,
             refresh_token_ttl: None,
             jwks_url: None,
@@ -459,12 +478,11 @@ impl Default for AuthConfig {
 
 impl AuthConfig {
     /// Resolved access token TTL in seconds.
-    /// Checks `access_token_ttl`, falls back to `token_expiry`, then default 3600s (1h).
+    /// Parses `access_token_ttl`, default 3600s (1h).
     /// Minimum 1 second to prevent zero-lifetime tokens.
     pub fn access_token_ttl_secs(&self) -> i64 {
         self.access_token_ttl
             .as_deref()
-            .or(self.token_expiry.as_deref())
             .and_then(crate::util::parse_duration)
             .map(|d| (d.as_secs() as i64).max(1))
             .unwrap_or(3600)
@@ -600,13 +618,31 @@ impl ObservabilityConfig {
     pub fn otlp_active(&self) -> bool {
         self.enabled && (self.enable_traces || self.enable_metrics || self.enable_logs)
     }
+
+    /// Apply FORGE_OTEL_* environment variable overrides.
+    ///
+    /// Supported variables:
+    /// - `FORGE_OTEL_TRACES` - "true"/"false" to enable/disable traces
+    /// - `FORGE_OTEL_METRICS` - "true"/"false" to enable/disable metrics
+    /// - `FORGE_OTEL_LOGS` - "true"/"false" to enable/disable logs
+    pub fn apply_env_overrides(&mut self) {
+        if let Ok(val) = std::env::var("FORGE_OTEL_TRACES") {
+            self.enable_traces = val.eq_ignore_ascii_case("true") || val == "1";
+        }
+        if let Ok(val) = std::env::var("FORGE_OTEL_METRICS") {
+            self.enable_metrics = val.eq_ignore_ascii_case("true") || val == "1";
+        }
+        if let Ok(val) = std::env::var("FORGE_OTEL_LOGS") {
+            self.enable_logs = val.eq_ignore_ascii_case("true") || val == "1";
+        }
+    }
 }
 
 fn default_otlp_endpoint() -> String {
     "http://localhost:4318".to_string()
 }
 
-fn default_true() -> bool {
+pub(crate) fn default_true() -> bool {
     true
 }
 

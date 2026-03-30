@@ -35,11 +35,28 @@ impl HeartbeatConfig {
     pub fn from_cluster_config(cluster: &ClusterConfig) -> Self {
         use forge_core::config::cluster::DiscoveryMethod;
 
-        if cluster.discovery != DiscoveryMethod::Postgres {
-            tracing::warn!(
-                discovery = ?cluster.discovery,
-                "Only Postgres discovery is currently supported; ignoring configured discovery method"
-            );
+        match cluster.discovery {
+            DiscoveryMethod::Postgres => {
+                tracing::debug!("Using PostgreSQL-based cluster discovery");
+            }
+            DiscoveryMethod::Dns => {
+                tracing::info!(
+                    dns_name = ?cluster.dns_name,
+                    "Using DNS-based cluster discovery"
+                );
+            }
+            DiscoveryMethod::Kubernetes => {
+                tracing::info!(
+                    dns_name = ?cluster.dns_name,
+                    "Using Kubernetes-based cluster discovery (via headless service DNS)"
+                );
+            }
+            DiscoveryMethod::Static => {
+                tracing::info!(
+                    seed_count = cluster.seed_nodes.len(),
+                    "Using static seed node discovery"
+                );
+            }
         }
 
         Self {
@@ -253,8 +270,8 @@ impl HeartbeatLoop {
             self.node_id.as_uuid(),
             current_connections as i32,
             current_jobs as i32,
-            cpu_usage,
-            memory_usage,
+            cpu_usage as f64,
+            memory_usage as f64,
         )
         .execute(&self.pool)
         .await

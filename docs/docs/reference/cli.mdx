@@ -102,45 +102,57 @@ The backend container uses cargo-watch with an `.ignore` file (deny-all `*` with
 
 ## forge test
 
-Run backend and frontend tests.
+Run backend unit tests and frontend Playwright tests.
 
 ```bash
 forge test [options] [-- test-args...]
 ```
 
-| Option             | Description                               |
-| ------------------ | ----------------------------------------- |
-| `--skip-backend`   | Skip Rust backend tests                   |
-| `--skip-frontend`  | Skip Playwright frontend tests            |
-| `--ui`             | Run Playwright in interactive UI mode     |
-| `--headed`         | Run in a visible browser window           |
+| Option            | Description                            |
+| ----------------- | -------------------------------------- |
+| `--skip-backend`  | Skip Rust backend unit tests           |
+| `--skip-frontend` | Skip Playwright frontend tests         |
+| `--ui`            | Run Playwright in interactive UI mode  |
+| `--headed`        | Run in a visible browser window        |
 
-Trailing arguments after `--` are forwarded to the test runner.
+Trailing arguments after `--` are forwarded to the Playwright test runner.
 
-### Docker Compose Lifecycle
+### How it works
 
-When frontend tests run and the backend isn't already up, `forge test` automatically manages the Docker environment:
+`forge test` runs a fully self-contained test cycle — no running dev server or docker compose needed:
 
-1. Runs `docker compose up -d --build`
-2. Waits up to 120 seconds for the health check to pass
-3. Executes the test suite
-4. Tears down with `docker compose down -v` after tests complete
+1. Builds the project with the `embedded-frontend` feature (frontend compiled in)
+2. Starts a PostgreSQL container on a random port
+3. Starts the built binary on a random port
+4. Waits up to 120 seconds for `/_api/health` to return healthy
+5. Runs the Playwright suite against that server
+6. Stops the binary and removes the PG container
+
+Docker must be available for frontend tests. If you already have a server running (e.g. in CI), set `FORGE_TEST_URL` to skip the build/start steps entirely.
+
+### FORGE_TEST_URL
+
+```bash
+FORGE_TEST_URL=http://localhost:9081 forge test --skip-backend
+```
+
+When `FORGE_TEST_URL` is set, `forge test` skips the build, PG container, and binary start — it just checks that the URL is reachable and runs Playwright against it.
 
 ### Playwright Browser Install
 
-Playwright browser binaries are installed automatically on first run if missing. No manual `npx playwright install` step is needed.
+Playwright browser binaries are installed automatically on first run if missing.
 
 ```bash
 # Run all tests
 forge test
 
-# Backend only
+# Backend unit tests only
 forge test --skip-frontend
 
-# Frontend only with visible browser
+# Frontend only, visible browser
 forge test --skip-backend --headed
 
-# Pass args to cargo test
+# Pass args through to Playwright
 forge test -- --test my_specific_test
 ```
 

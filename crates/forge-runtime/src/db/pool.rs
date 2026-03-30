@@ -77,11 +77,19 @@ impl Database {
             .map(|p| p.test_before_acquire)
             .unwrap_or(config.test_before_acquire);
 
-        let primary = Self::create_pool_with_opts(
+        let statement_timeout = config
+            .pools
+            .default
+            .as_ref()
+            .and_then(|p| p.statement_timeout_secs)
+            .unwrap_or(config.statement_timeout_secs);
+
+        let primary = Self::create_pool_with_statement_timeout(
             &config.url,
             primary_size,
             primary_min,
             primary_timeout,
+            statement_timeout,
             primary_test,
             service_name,
         )
@@ -136,6 +144,23 @@ impl Database {
             .log_slow_statements(LevelFilter::Warn, Duration::from_millis(500)))
     }
 
+    fn connect_options_with_timeout(
+        url: &str,
+        service_name: &str,
+        statement_timeout_secs: u64,
+    ) -> sqlx::Result<PgConnectOptions> {
+        let options: PgConnectOptions = url.parse()?;
+        let mut opts = options
+            .application_name(service_name)
+            .log_statements(LevelFilter::Off)
+            .log_slow_statements(LevelFilter::Warn, Duration::from_millis(500));
+        if statement_timeout_secs > 0 {
+            // Set PostgreSQL statement_timeout to prevent unbounded query execution
+            opts = opts.options([("statement_timeout", &format!("{}s", statement_timeout_secs))]);
+        }
+        Ok(opts)
+    }
+
     async fn create_pool(
         url: &str,
         size: u32,
@@ -153,7 +178,32 @@ impl Database {
         test_before_acquire: bool,
         service_name: &str,
     ) -> sqlx::Result<PgPool> {
-        let options = Self::connect_options(url, service_name)?;
+        Self::create_pool_with_statement_timeout(
+            url,
+            size,
+            min_size,
+            timeout_secs,
+            0,
+            test_before_acquire,
+            service_name,
+        )
+        .await
+    }
+
+    async fn create_pool_with_statement_timeout(
+        url: &str,
+        size: u32,
+        min_size: u32,
+        timeout_secs: u64,
+        statement_timeout_secs: u64,
+        test_before_acquire: bool,
+        service_name: &str,
+    ) -> sqlx::Result<PgPool> {
+        let options = if statement_timeout_secs > 0 {
+            Self::connect_options_with_timeout(url, service_name, statement_timeout_secs)?
+        } else {
+            Self::connect_options(url, service_name)?
+        };
         PgPoolOptions::new()
             .max_connections(size)
             .min_connections(min_size)

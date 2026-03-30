@@ -196,8 +196,6 @@ openssl rand -base64 32
 | `refresh_token_ttl`   | string | `"30d"`   | Refresh token lifetime                                                          |
 | `session_ttl_secs`    | u64    | `604800`  | Session TTL (7 days)                                                            |
 
-> `token_expiry` is deprecated; use `access_token_ttl` instead.
-
 #### HMAC (Symmetric)
 
 ```toml
@@ -384,6 +382,33 @@ Slow queries (over 500ms) emit a warning automatically. Database pool metrics (s
 Routes listed in `[gateway].quiet_routes` are excluded from all telemetry. Health and readiness probes are excluded by default to avoid noise from Kubernetes liveness checks. Set `quiet_routes = []` to monitor everything.
 
 Console logs always work regardless of the `enabled` flag. The flag only controls OTLP export.
+
+### [signals]
+
+Built-in product analytics and frontend diagnostics. Enabled by default. See [Signals](/docs/ship/signals) for the full guide.
+
+| Option                 | Type     | Default | Description                                      |
+| ---------------------- | -------- | ------- | ------------------------------------------------ |
+| `enabled`              | bool     | `true`  | Master switch for the signals pipeline           |
+| `auto_capture`         | bool     | `true`  | Auto-record RPC calls as events                  |
+| `diagnostics`          | bool     | `true`  | Accept frontend error reports                    |
+| `session_timeout_mins` | u32      | `30`    | Inactivity timeout before closing a session      |
+| `retention_days`       | u32      | `90`    | Drop monthly partitions older than this          |
+| `anonymize_ip`         | bool     | `false` | Store hashed visitor ID instead of raw IP        |
+| `batch_size`           | usize    | `100`   | Events per batch INSERT to PostgreSQL            |
+| `flush_interval_ms`    | u64      | `5000`  | Max milliseconds between event buffer flushes    |
+| `excluded_functions`   | string[] | `[]`    | Function names to skip in auto-capture           |
+| `bot_detection`        | bool     | `true`  | Tag bot traffic via User-Agent pattern matching  |
+
+```toml
+[signals]
+enabled = true
+session_timeout_mins = 30
+retention_days = 90
+excluded_functions = ["health_check"]
+```
+
+Signal events are stored in monthly-partitioned tables on the analytics connection pool. The collector buffers events in memory and flushes them in batches using PostgreSQL's `UNNEST()` for efficient writes.
 
 ## Patterns
 

@@ -13,6 +13,7 @@ pub mod oauth;
 pub mod rate_limit;
 pub mod realtime;
 pub mod schema;
+pub mod signals;
 pub mod tenant;
 pub mod types;
 pub mod util;
@@ -24,7 +25,7 @@ pub mod testing;
 
 pub use auth::{Claims, ClaimsBuilder, TokenPair};
 pub use cluster::{ClusterInfo, LeaderInfo, LeaderRole, NodeId, NodeInfo, NodeRole, NodeStatus};
-pub use config::{ForgeConfig, McpConfig};
+pub use config::{ForgeConfig, McpConfig, SignalsConfig};
 pub use cron::{CronContext, CronInfo, CronSchedule, ForgeCron};
 pub use daemon::{DaemonContext, DaemonInfo, DaemonStatus, ForgeDaemon};
 pub use env::{EnvAccess, EnvProvider, MockEnvProvider, RealEnvProvider};
@@ -47,7 +48,7 @@ pub use rate_limit::{RateLimitConfig, RateLimitHeaders, RateLimitKey, RateLimitR
 pub use realtime::{
     AuthScope, BloomFilter, Change, ChangeOperation, Delta, QueryGroup, QueryGroupId, ReadSet,
     SessionId, SessionInfo, SessionStatus, Subscriber, SubscriberId, SubscriptionId,
-    SubscriptionInfo, SubscriptionState, TrackingMode,
+    SubscriptionState, TrackingMode,
 };
 pub use schema::{FieldDef, ModelMeta, SchemaRegistry, TableDef};
 pub use schemars;

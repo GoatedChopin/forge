@@ -4,16 +4,7 @@ Forge is a Rust framework that compiles backend functions (queries, mutations, j
 workflows, and webhooks) into a single runtime backed by PostgreSQL. It generates frontend
 bindings from the same Rust source of truth, with first-class support for SvelteKit and Dioxus today.
 
-## Documentation map
-
-- **Start**: [First App](/docs/start/first-app), [Project Anatomy](/docs/start/anatomy)
-- **Build**: Queries, mutations, jobs, workflows, scheduled tasks, webhooks, and reactivity
-- **Connect**: Generated TypeScript client, authentication, caching, and frontend usage
-- **Ship**: Configuration, deployment, and testing
-- **Scale**: Multiple nodes, worker pools, and global deployments
-- **Reference**: CLI and configuration options
-
-## Quick start (development)
+## Quick start
 
 ```bash
 curl -fsSL https://tryforge.dev/install.sh | sh  # or: cargo install forgex
@@ -24,7 +15,28 @@ docker compose up --build
 
 Runs Docker Compose with PostgreSQL, backend (cargo-watch), and the selected frontend target. Use `docker compose down -v` to reset. Choose a `with-dioxus/*` template if you want a Dioxus frontend instead of SvelteKit.
 
-## Queries and mutations
+## Learn by building
+
+New to Forge? Follow the tutorials in order:
+
+1. **[Build a Real-Time Todo App](/docs/tutorials/realtime-todo)** -- queries, mutations, subscriptions, and type-safe frontend bindings with SvelteKit or Dioxus
+2. **[Add Authentication](/docs/tutorials/authentication)** -- JWT tokens, registration, login, refresh token rotation, and protected routes
+3. **[Master Background Processing](/docs/tutorials/background-processing)** -- background jobs with retries, cron schedules, and durable multi-step workflows
+4. **[Ship to Production](/docs/tutorials/shipping-to-production)** -- build a single binary, configure for production, add observability, and scale
+
+Each tutorial builds on the previous one and uses real code from the Forge example projects.
+
+## Documentation map
+
+- **[Start](/docs/start/first-app)**: Quick first app, project structure
+- **[Tutorials](/docs/tutorials/realtime-todo)**: Step-by-step guides that teach core features
+- **[Build](/docs/build/read-data)**: Deep reference for queries, mutations, jobs, workflows, scheduled tasks, webhooks, and reactivity
+- **[Connect](/docs/connect/generated-client)**: Generated TypeScript/Rust client, progress tracking
+- **[Ship](/docs/ship/configuration)**: Configuration, deployment, and testing
+- **[Scale](/docs/scale/multiple-nodes)**: Multiple nodes, worker pools, and global deployments
+- **[Reference](/docs/reference/cli)**: CLI, context methods, macro attributes, and error codes
+
+## Core concepts
 
 ```rust
 #[forge::query]
@@ -134,4 +146,4 @@ using the `embedded-frontend` feature.
 
 Forge requires PostgreSQL 15+ and is released under the MIT License.
 
-Next: [First App](/docs/start/first-app)
+Next: [First App](/docs/start/first-app) or jump to [Tutorials](/docs/tutorials/realtime-todo)

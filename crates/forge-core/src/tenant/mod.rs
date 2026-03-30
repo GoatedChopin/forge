@@ -100,9 +100,20 @@ impl TenantContext {
 
     /// Generate a SQL WHERE clause for tenant filtering with parameterized query.
     /// Returns a tuple of (SQL clause, parameter value) for safe parameterized queries.
+    ///
+    /// The column name is validated to contain only safe SQL identifier characters
+    /// (alphanumeric and underscores) to prevent SQL injection.
     pub fn sql_filter(&self, column: &str, param_index: u32) -> Option<(String, Uuid)> {
+        // Validate column name to prevent SQL injection via dynamic column names
+        if column.is_empty()
+            || !column
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        {
+            return None;
+        }
         self.tenant_id
-            .map(|id| (format!("{} = ${}", column, param_index), id))
+            .map(|id| (format!("\"{}\" = ${}", column, param_index), id))
     }
 }
 
@@ -150,7 +161,7 @@ mod tests {
         let filter = ctx.sql_filter("tenant_id", 1);
         assert!(filter.is_some());
         let (clause, id) = filter.unwrap();
-        assert_eq!(clause, "tenant_id = $1");
+        assert_eq!(clause, "\"tenant_id\" = $1");
         assert_eq!(id, tenant_id);
     }
 

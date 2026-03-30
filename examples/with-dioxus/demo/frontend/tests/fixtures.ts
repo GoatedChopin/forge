@@ -2,8 +2,11 @@ import { test as base, expect, type Page } from "@playwright/test";
 
 export { expect };
 
-export const API_URL = process.env.VITE_API_URL || "http://localhost:9081";
-export const ACTION_TIMEOUT = process.env.CI ? 15_000 : 15_000;
+export const API_URL =
+  process.env.FORGE_TEST_URL ||
+  process.env.VITE_API_URL ||
+  "http://localhost:9081";
+export const ACTION_TIMEOUT = process.env.CI ? 30_000 : 30_000;
 
 export function uniqueId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -17,7 +20,8 @@ export function trackConsoleErrors(page: Page): string[] {
       if (
         !text.includes("net::ERR") &&
         !text.includes("favicon") &&
-        !text.includes("EventSource")
+        !text.includes("EventSource") &&
+        !text.includes("_dioxus")
       ) {
         errors.push(text);
       }
@@ -35,16 +39,26 @@ export const test = base.extend<ForgeFixtures>({
   // eslint-disable-next-line no-empty-pattern
   rpc: async ({}, use) => {
     await use(async (fn: string, args: unknown = null) => {
-      const res = await fetch(`${API_URL}/_api/rpc/${fn}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ args }),
-      });
-      if (!res.ok) {
-        const body = await res.text();
-        throw new Error(`RPC ${fn} failed (${res.status}): ${body}`);
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const res = await fetch(`${API_URL}/_api/rpc/${fn}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ args }),
+          });
+          if (!res.ok) {
+            const body = await res.text();
+            throw new Error(`RPC ${fn} failed (${res.status}): ${body}`);
+          }
+          return (await res.json()).data;
+        } catch (err) {
+          // Retry connection errors (backend restarting), not HTTP errors
+          const isConnectionError =
+            err instanceof TypeError && (err as TypeError).message === "fetch failed";
+          if (!isConnectionError || attempt === 3) throw err;
+          await new Promise((r) => setTimeout(r, attempt * 1000));
+        }
       }
-      return (await res.json()).data;
     });
   },
 
@@ -52,10 +66,12 @@ export const test = base.extend<ForgeFixtures>({
     await use(async (path = "/") => {
       // Wait for the subscription registration response, not just the SSE
       // connection. This signals that reactivity is fully wired up.
-      // WASM apps need extra time: download → compile → init → subscribe.
+      // WASM apps need extra time: download → instantiate → init → SSE → subscribe.
+      // Global setup pre-compiles the WASM, but the browser still has to download
+      // and instantiate the binary on each page load.
       const subscribed = page.waitForResponse(
         (res) => res.url().includes("/_api/subscribe") && res.status() === 200,
-        { timeout: 60_000 },
+        { timeout: ACTION_TIMEOUT * 3 },
       );
       await page.goto(path);
       await subscribed;

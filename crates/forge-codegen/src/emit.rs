@@ -25,8 +25,6 @@ pub fn ts_type(rust_type: &RustType, pos: Position) -> String {
     match rust_type {
         RustType::String
         | RustType::Uuid
-        | RustType::DateTime
-        | RustType::Date
         | RustType::Instant
         | RustType::LocalDate
         | RustType::LocalTime => "string".into(),
@@ -113,11 +111,7 @@ pub fn dioxus_type(rust_type: &RustType) -> String {
         RustType::F32 => "f32".into(),
         RustType::F64 => "f64".into(),
         RustType::Bool => "bool".into(),
-        RustType::DateTime
-        | RustType::Date
-        | RustType::Instant
-        | RustType::LocalDate
-        | RustType::LocalTime => "String".into(),
+        RustType::Instant | RustType::LocalDate | RustType::LocalTime => "String".into(),
         RustType::Upload => "ForgeUpload".into(),
         RustType::Json => "JsonValue".into(),
         RustType::Bytes => "Vec<u8>".into(),
@@ -208,13 +202,7 @@ mod tests {
 
     #[test]
     fn ts_temporal_types() {
-        for ty in [
-            RustType::DateTime,
-            RustType::Date,
-            RustType::Instant,
-            RustType::LocalDate,
-            RustType::LocalTime,
-        ] {
+        for ty in [RustType::Instant, RustType::LocalDate, RustType::LocalTime] {
             assert_eq!(ts_type(&ty, Position::Arg), "string");
         }
     }

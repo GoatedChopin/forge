@@ -272,8 +272,8 @@ fn parse_node_fields(
     last_heartbeat: DateTime<Utc>,
     current_connections: i32,
     current_jobs: i32,
-    cpu_usage: f32,
-    memory_usage: f32,
+    cpu_usage: Option<f64>,
+    memory_usage: Option<f64>,
 ) -> Result<NodeInfo> {
     let ip_addr: IpAddr = ip_address.parse().map_err(|e| {
         ForgeError::Validation(format!("invalid IP address '{}': {}", ip_address, e))
@@ -305,8 +305,8 @@ fn parse_node_fields(
         last_heartbeat,
         current_connections: current_connections as u32,
         current_jobs: current_jobs as u32,
-        cpu_usage,
-        memory_usage,
+        cpu_usage: cpu_usage.unwrap_or(0.0) as f32,
+        memory_usage: memory_usage.unwrap_or(0.0) as f32,
     })
 }
 

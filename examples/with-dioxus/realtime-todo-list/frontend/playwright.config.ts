@@ -1,17 +1,18 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const TEST_URL = process.env.FORGE_TEST_URL;
+
 export default defineConfig({
   testDir: "./tests",
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 1 : 0,
+  retries: process.env.CI ? 1 : 1,
+  timeout: 180_000,
   workers: process.env.CI ? 1 : undefined,
   reporter: "html",
   globalSetup: "./tests/global-setup.ts",
-  // WASM cold start on CI can take 60-90s (download + compile + init)
-  timeout: process.env.CI ? 120_000 : 90_000,
   use: {
-    baseURL: "http://localhost:9080",
+    baseURL: TEST_URL || "http://localhost:9080",
     trace: "on-first-retry",
   },
   projects: [
@@ -20,10 +21,14 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
     },
   ],
-  webServer: {
-    command: "bun run dev",
-    url: "http://localhost:9080",
-    reuseExistingServer: true,
-    timeout: 120 * 1000,
-  },
+  ...(TEST_URL
+    ? {}
+    : {
+        webServer: {
+          command: "bun run dev",
+          url: "http://localhost:9080",
+          reuseExistingServer: true,
+          timeout: 120 * 1000,
+        },
+      }),
 });
