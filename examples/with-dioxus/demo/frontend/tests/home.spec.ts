@@ -124,6 +124,25 @@ test("auth flow logs in, refreshes, and logs out cleanly", async ({
   await expect(section.getByText("Logged in as")).not.toBeVisible();
 });
 
+test("file upload displays result metadata", async ({ page, gotoReady }) => {
+  await gotoReady();
+  const section = page.locator("section", {
+    has: page.getByRole("heading", { name: /file upload/i }),
+  });
+
+  await section.locator("input[type=file]").setInputFiles({
+    name: "test-upload.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("hello forge"),
+  });
+  await section.getByRole("button", { name: "Upload" }).click();
+  await expect(section.getByText("test-upload.txt")).toBeVisible({
+    timeout: ACTION_TIMEOUT,
+  });
+  await expect(section.getByText("11 bytes")).toBeVisible();
+  await expect(section.getByText("text/plain")).toBeVisible();
+});
+
 test("webhook endpoint rejects bad signatures and surfaces accepted events", async ({
   page,
   gotoReady,

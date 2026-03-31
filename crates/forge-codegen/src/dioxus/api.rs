@@ -102,9 +102,14 @@ fn render_params_struct(b: &FunctionBinding) -> String {
 
     let impl_block = render_struct_impl(&struct_name, &b.args);
 
-    format!(
-        "#[derive(Debug, Clone, PartialEq, serde::Serialize)]\npub struct {struct_name} {{\n{fields}}}\n{impl_block}"
-    )
+    let has_upload = b.args.iter().any(|a| emit::contains_upload(&a.rust_type));
+    let derives = if has_upload {
+        "#[derive(Debug, Clone, serde::Serialize)]"
+    } else {
+        "#[derive(Debug, Clone, PartialEq, serde::Serialize)]"
+    };
+
+    format!("{derives}\npub struct {struct_name} {{\n{fields}}}\n{impl_block}")
 }
 
 fn should_generate_params_struct(b: &FunctionBinding) -> bool {

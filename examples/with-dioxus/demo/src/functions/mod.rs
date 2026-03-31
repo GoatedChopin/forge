@@ -4,6 +4,7 @@ mod iss;
 mod mcp;
 mod stats;
 mod trades;
+mod upload;
 mod users;
 mod verification;
 mod webhook;

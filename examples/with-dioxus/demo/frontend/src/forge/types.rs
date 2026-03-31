@@ -297,6 +297,23 @@ impl Trade {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UploadResult {
+    pub name: String,
+    pub content_type: String,
+    pub size: usize,
+}
+
+impl UploadResult {
+    pub fn new(name: impl Into<String>, content_type: impl Into<String>, size: usize) -> Self {
+        Self {
+            name: name.into(),
+            content_type: content_type.into(),
+            size: size,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct User {
     pub id: String,
     pub email: String,

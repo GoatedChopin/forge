@@ -18,6 +18,7 @@ import type {
   RegisterInput,
   TokenPair,
   Trade,
+  UploadResult,
   User,
   UserRole,
   VerificationInput,
@@ -76,6 +77,8 @@ export const updateUser = (args: {
   name: string | null;
   role: UserRole | null;
 }): Promise<User> => getForgeClient().call("update_user", args);
+export const uploadFile = (args: { file: File | Blob }): Promise<UploadResult> =>
+  getForgeClient().call("upload_file", args);
 
 // Jobs
 export const trackExportUsers = (args: ExportInput) =>

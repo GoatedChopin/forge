@@ -229,6 +229,26 @@ pub async fn update_user(
 pub fn use_update_user() -> Mutation<UpdateUserParams, User> {
     use_forge_mutation("update_user")
 }
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct UploadFileParams {
+    pub file: ForgeUpload,
+}
+impl UploadFileParams {
+    pub fn new(file: ForgeUpload) -> Self {
+        Self { file: file }
+    }
+}
+
+pub async fn upload_file(
+    client: &ForgeClient,
+    args: UploadFileParams,
+) -> Result<UploadResult, ForgeClientError> {
+    client.call("upload_file", args).await
+}
+
+pub fn use_upload_file() -> Mutation<UploadFileParams, UploadResult> {
+    use_forge_mutation("upload_file")
+}
 pub fn use_export_users(args: ExportInput) -> JobExecutionState<ExportOutput> {
     use_forge_job("export_users", args)
 }

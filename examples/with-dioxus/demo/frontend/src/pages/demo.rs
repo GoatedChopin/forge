@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::components::{
-    AuthCard, CacheCard, ExportCard, IssCard, McpCard, TradesCard, UsersSection,
+    AuthCard, CacheCard, ExportCard, IssCard, McpCard, TradesCard, UploadCard, UsersSection,
     VerificationCard, WebhookCard,
 };
 use crate::forge::User;
@@ -18,6 +18,7 @@ pub fn DemoPage() -> Element {
                     IssCard {}
                     CacheCard {}
                     ExportCard {}
+                    UploadCard {}
                     McpCard { api_url: API_URL.to_string() }
                 }
                 div { class: "col",

@@ -10,6 +10,7 @@
     trackExportUsers,
     trackAccountVerification,
     confirmVerification,
+    uploadFile,
     getUsers$,
     getIssLocation$,
     getTrades$,
@@ -18,6 +19,7 @@
     type AuthResponse,
     type TokenPair,
     type DemoStats,
+    type UploadResult,
   } from "$lib/forge";
 
   import { PUBLIC_API_URL } from "$env/static/public";
@@ -64,6 +66,11 @@
 
   // Derived from the auth store (persisted across refreshes)
   let tokenClaims = $derived(auth.token ? parseJwtClaims(auth.token) : null);
+
+  // File upload state
+  let uploadResult = $state<UploadResult | null>(null);
+  let uploadError = $state<string | null>(null);
+  let isUploading = $state(false);
 
   // Cache demo state
   let cacheData = $state<DemoStats | null>(null);
@@ -213,6 +220,23 @@
     keyUsed = false;
     webhookError = null;
     signals.track("webhook_key_generated");
+  }
+
+  async function handleUpload() {
+    const input = document.getElementById("upload-input") as HTMLInputElement;
+    const file = input?.files?.[0];
+    if (!file || isUploading) return;
+    isUploading = true;
+    uploadError = null;
+    uploadResult = null;
+    try {
+      uploadResult = await uploadFile({ file });
+      signals.track("file_uploaded", { name: uploadResult.name, size: uploadResult.size });
+    } catch (err: unknown) {
+      uploadError = err instanceof Error ? err.message : String(err);
+      signals.track("file_upload_error");
+    }
+    isUploading = false;
   }
 
   async function handleCreateUser(e: Event) {
@@ -385,6 +409,24 @@
         {:else}
           <p class="muted small export-desc">Ready to export users to CSV</p>
           <button onclick={startExportJob}>Start Export</button>
+        {/if}
+      </section>
+
+      <section class="card">
+        <h2>File Upload <span class="badge green">multipart</span></h2>
+        <div class="upload-row">
+          <input id="upload-input" type="file" />
+          <button onclick={handleUpload} disabled={isUploading}>{isUploading ? "Uploading..." : "Upload"}</button>
+        </div>
+        {#if uploadResult}
+          <div class="upload-result">
+            <div class="stat-row"><span>Name</span><span class="mono">{uploadResult.name}</span></div>
+            <div class="stat-row"><span>Type</span><span class="mono">{uploadResult.content_type}</span></div>
+            <div class="stat-row"><span>Size</span><span class="mono">{uploadResult.size} bytes</span></div>
+          </div>
+        {/if}
+        {#if uploadError}
+          <p class="hint warning">{uploadError}</p>
         {/if}
       </section>
 
@@ -725,6 +767,11 @@
   .meta-row { display: flex; justify-content: space-between; font-size: 0.75rem; padding: 0.3rem 0.5rem; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; }
   .meta-key { font-weight: 500; color: #666; min-width: 2.5rem; }
   .auth-actions { display: flex; gap: 0.5rem; }
+
+  /* Upload card */
+  .upload-row { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.75rem; }
+  .upload-row input[type="file"] { flex: 1; min-width: 0; font-size: 0.85rem; }
+  .upload-result { display: flex; flex-direction: column; gap: 0.2rem; }
 
   /* Cache card */
   .cache-stats { margin-top: 0.75rem; display: flex; flex-direction: column; gap: 0.2rem; }

@@ -90,6 +90,12 @@ export interface Trade {
   created_at: string;
 }
 
+export interface UploadResult {
+  name: string;
+  content_type: string;
+  size: number;
+}
+
 export interface User {
   id: string;
   email: string;
