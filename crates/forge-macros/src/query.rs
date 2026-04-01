@@ -4,7 +4,10 @@ use quote::quote;
 use syn::visit::Visit;
 use syn::{FnArg, ItemFn, Pat, ReturnType, Type, parse_macro_input};
 
-use crate::sql_extractor::{SqlStringExtractor, extract_columns_from_sql, extract_tables_from_sql};
+use crate::sql_extractor::{
+    SqlStringExtractor, extract_columns_from_sql, extract_tables_from_sql,
+    sql_references_identity_scope,
+};
 use crate::utils::{has_attr_flag, parse_attr_value, parse_duration_secs, to_pascal_case};
 
 /// Expand the #[forge::query] attribute.
@@ -27,6 +30,7 @@ struct QueryAttrs {
     cache_ttl: Option<u64>,
     required_role: Option<String>,
     is_public: bool,
+    is_unscoped: bool,
     consistent: bool,
     timeout: Option<u64>,
     rate_limit_requests: Option<u32>,
@@ -48,6 +52,10 @@ fn parse_query_attrs(attr: TokenStream) -> QueryAttrs {
 
     if has_attr_flag(&attr_str, "consistent") {
         attrs.consistent = true;
+    }
+
+    if has_attr_flag(&attr_str, "unscoped") {
+        attrs.is_unscoped = true;
     }
 
     if let Some(role_start) = attr_str.find("require_role")
@@ -238,6 +246,23 @@ fn expand_query_impl(input: ItemFn, attrs: QueryAttrs) -> syn::Result<TokenStrea
         sorted
     };
 
+    // Compile-time scope check: private queries that touch tables must filter by user identity
+    if !attrs.is_public && !attrs.is_unscoped && !table_dependencies.is_empty() {
+        let mut scope_extractor = SqlStringExtractor::new();
+        scope_extractor.visit_block(fn_block);
+        if !sql_references_identity_scope(&scope_extractor.sql_strings) {
+            let tables_str = table_dependencies.join(", ");
+            return Err(syn::Error::new_spanned(
+                &input.sig.ident,
+                format!(
+                    "Private query `{fn_name_str}` references table(s) [{tables_str}] but SQL \
+                     does not filter by user_id or owner_id. Add a WHERE clause scoped to the \
+                     authenticated user, or use #[query(unscoped)] if this is intentional."
+                ),
+            ));
+        }
+    }
+
     // Get remaining params for args struct
     let arg_params: Vec<_> = params.iter().skip(1).cloned().collect();
 
@@ -386,8 +411,6 @@ fn expand_query_impl(input: ItemFn, attrs: QueryAttrs) -> syn::Result<TokenStrea
         None
     };
 
-    let has_input_args = !args_fields.is_empty();
-
     // Generate the args struct (use unit type if no args, user type if single custom args)
     let (args_struct, args_type, execute_call) = if args_fields.is_empty() {
         (
@@ -480,7 +503,6 @@ fn expand_query_impl(input: ItemFn, attrs: QueryAttrs) -> syn::Result<TokenStrea
                     transactional: false,
                     consistent: #consistent,
                     max_upload_size_bytes: None,
-                    has_input_args: #has_input_args,
                 }
             }
 

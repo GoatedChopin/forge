@@ -910,8 +910,6 @@ impl Reactor {
         match registry.get(query_name) {
             Some(FunctionEntry::Query { info, handler }) => {
                 Self::check_query_auth(info, auth_context)?;
-                let enforce = !info.is_public && info.has_input_args;
-                auth_context.check_identity_args(query_name, args, enforce)?;
 
                 let ctx = forge_core::function::QueryContext::new(
                     db_pool.clone(),
@@ -1113,42 +1111,6 @@ mod tests {
 
         assert_eq!(hash1, hash2);
         assert_ne!(hash1, hash3);
-    }
-
-    #[test]
-    fn test_check_identity_args_rejects_cross_user() {
-        let user_id = uuid::Uuid::new_v4();
-        let auth = forge_core::function::AuthContext::authenticated(
-            user_id,
-            vec!["user".to_string()],
-            HashMap::from([(
-                "sub".to_string(),
-                serde_json::Value::String(user_id.to_string()),
-            )]),
-        );
-
-        let result = auth.check_identity_args(
-            "list_orders",
-            &serde_json::json!({"user_id": uuid::Uuid::new_v4().to_string()}),
-            true,
-        );
-        assert!(matches!(result, Err(forge_core::ForgeError::Forbidden(_))));
-    }
-
-    #[test]
-    fn test_check_identity_args_requires_scope_for_non_public_queries() {
-        let user_id = uuid::Uuid::new_v4();
-        let auth = forge_core::function::AuthContext::authenticated(
-            user_id,
-            vec!["user".to_string()],
-            HashMap::from([(
-                "sub".to_string(),
-                serde_json::Value::String(user_id.to_string()),
-            )]),
-        );
-
-        let result = auth.check_identity_args("list_orders", &serde_json::json!({}), true);
-        assert!(matches!(result, Err(forge_core::ForgeError::Forbidden(_))));
     }
 
     #[test]

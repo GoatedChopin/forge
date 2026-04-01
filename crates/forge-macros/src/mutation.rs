@@ -27,6 +27,7 @@ pub fn expand_mutation(attr: TokenStream, item: TokenStream) -> TokenStream {
 struct MutationAttrs {
     required_role: Option<String>,
     is_public: bool,
+    is_unscoped: bool,
     timeout: Option<u64>,
     rate_limit_requests: Option<u32>,
     rate_limit_per_secs: Option<u64>,
@@ -47,6 +48,10 @@ fn parse_mutation_attrs(attr: TokenStream) -> MutationAttrs {
 
     if has_attr_flag(&attr_str, "public") {
         attrs.is_public = true;
+    }
+
+    if has_attr_flag(&attr_str, "unscoped") {
+        attrs.is_unscoped = true;
     }
 
     if let Some(role_start) = attr_str.find("require_role")
@@ -332,8 +337,6 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
         None
     };
 
-    let has_input_args = !args_fields.is_empty();
-
     // Generate the args struct (use unit type if no args, user type if single custom args)
     let (args_struct, args_type, execute_call) = if args_fields.is_empty() {
         (
@@ -426,7 +429,6 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
                     transactional: #transactional,
                     consistent: false,
                     max_upload_size_bytes: #max_upload_size_bytes,
-                    has_input_args: #has_input_args,
                 }
             }
 

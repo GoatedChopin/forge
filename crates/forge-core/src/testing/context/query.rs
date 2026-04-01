@@ -74,14 +74,9 @@ impl TestQueryContext {
         self.pool.as_ref()
     }
 
-    /// Get the authenticated user ID or return an error.
-    pub fn require_user_id(&self) -> Result<Uuid> {
+    /// Get the authenticated user's UUID. Returns 401 if not authenticated.
+    pub fn user_id(&self) -> Result<Uuid> {
         self.auth.require_user_id()
-    }
-
-    /// Like `require_user_id()` but for non-UUID auth providers.
-    pub fn require_subject(&self) -> Result<&str> {
-        self.auth.require_subject()
     }
 
     /// Check if a specific role is present.
@@ -206,7 +201,7 @@ mod tests {
         let user_id = Uuid::new_v4();
         let ctx = TestQueryContext::authenticated(user_id);
         assert!(ctx.auth.is_authenticated());
-        assert_eq!(ctx.require_user_id().unwrap(), user_id);
+        assert_eq!(ctx.user_id().unwrap(), user_id);
     }
 
     #[test]

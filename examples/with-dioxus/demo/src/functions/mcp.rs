@@ -8,7 +8,7 @@ use forge::forge_core::mcp::McpToolContext;
     read_only
 )]
 pub async fn mcp_me(ctx: &McpToolContext) -> forge::forge_core::Result<McpUserInfo> {
-    let user_id = ctx.require_user_id()?;
+    let user_id = ctx.user_id()?;
     let mut conn = ctx.conn().await?;
 
     let user = sqlx::query_as!(

@@ -339,6 +339,66 @@ Do NOT call `logout` inside `with_auth_error_handler` directly: it triggers a ke
 | Route guard | `use_require_auth("/login")` | SvelteKit layout `+page.server.ts` |
 | 401 recovery | Built into `ForgeAuthProvider` | `auth.handleAuthError()` |
 
+## Reusable Components
+
+Extract repeated UI patterns into reusable components. Don't inline everything into page-level components.
+
+```rust
+// ✅ Reusable loading/error wrapper
+#[component]
+fn QueryView<T: Clone + PartialEq + 'static>(
+    state: SubscriptionState<T>,
+    children: Element,
+) -> Element {
+    if state.loading {
+        rsx! { LoadingSpinner {} }
+    } else if let Some(error) = &state.error {
+        rsx! { ErrorMessage { message: "{error:?}" } }
+    } else {
+        children
+    }
+}
+
+// ✅ Small, focused UI atoms
+#[component]
+fn LoadingSpinner() -> Element {
+    rsx! { div { class: "loading-spinner" } }
+}
+
+#[component]
+fn ErrorMessage(message: String) -> Element {
+    rsx! { div { class: "error-message", "{message}" } }
+}
+
+// ❌ Duplicating loading/error handling in every page component
+```
+
+Compose pages from smaller components. Each component should do one thing.
+
+## Styles
+
+Keep styles in separate CSS files, not inline in RSX. Use `asset!()` to load them.
+
+```rust
+// ✅ Separate stylesheet
+fn App() -> Element {
+    rsx! {
+        document::Stylesheet { href: asset!("/public/style.css") }
+        Router::<Route> {}
+    }
+}
+
+// ✅ Component-scoped class names
+rsx! { div { class: "todo-item", /* ... */ } }
+```
+
+Organize CSS by component or feature, not in a single monolithic file:
+- `public/style.css` for global resets and variables
+- `public/components.css` for shared component styles
+- `public/{feature}.css` for feature-specific styles
+
+Avoid inline `style:` attributes in RSX except for truly dynamic values (e.g., computed widths). Prefer CSS classes for everything else.
+
 ## Common Mistakes
 
 - Editing `frontend/src/forge/*` (overwritten by `forge generate`)

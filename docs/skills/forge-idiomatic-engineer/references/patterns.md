@@ -269,20 +269,18 @@ Token methods (MutationContext, HMAC only): `issue_token_pair()`, `rotate_refres
 ### AuthContext Methods
 
 ```rust
-ctx.auth.require_user_id() -> Result<Uuid>
+ctx.user_id() -> Result<Uuid>       // shortcut for authenticated user
+ctx.tenant_id() -> Option<Uuid>     // from JWT claims
 ctx.auth.require_role("admin") -> Result<()>  // returns Forbidden
 ctx.auth.has_role("admin") -> bool
 ctx.auth.subject() -> Option<&str>
-ctx.auth.tenant_id() -> Option<Uuid>
 ctx.auth.claim("org_id") -> Option<&Value>
 ctx.auth.roles() -> &[String]
 ```
 
-### Identity Scope Enforcement
+### Compile-Time Scope Enforcement
 
-Private functions with input args must include at least one recognized identity key (`user_id`, `owner_id`, `subject`, `principal_id` and their camelCase variants). These are validated at runtime against the authenticated principal before the handler runs. Admins bypass scope checks. This works for both built-in and third-party auth (Firebase, Clerk, etc.) since it validates against JWT claims regardless of issuer.
-
-Use `input.user_id` directly in handlers. Do not manually compare it against `ctx.require_user_id()`, the router already validated the match. Reserve `ctx.require_user_id()` for context-only handlers (no input struct) that need the caller's UUID. Context-only handlers skip scope enforcement since there are no args to carry scope fields.
+Private queries must filter by `user_id` or `owner_id` in SQL. The `#[query]` macro checks this at compile time. Use `ctx.user_id()` to get the authenticated user's UUID. Public queries and `#[query(unscoped)]` skip this check.
 
 ### Claims Builder
 

@@ -52,10 +52,6 @@ pub struct FunctionInfo {
     pub consistent: bool,
     /// Per-function maximum upload size in bytes. Overrides gateway max_body_size.
     pub max_upload_size_bytes: Option<usize>,
-    /// Whether the function signature has input arguments beyond the context.
-    /// When false, identity scope enforcement is skipped since there are no
-    /// args to carry scope fields. Auth is still enforced via the JWT.
-    pub has_input_args: bool,
 }
 
 /// The kind of function.
@@ -152,7 +148,6 @@ mod tests {
             transactional: false,
             consistent: false,
             max_upload_size_bytes: None,
-            has_input_args: true,
         };
 
         assert_eq!(info.name, "get_user");

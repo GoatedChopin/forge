@@ -481,128 +481,6 @@ impl AuthContext {
             .and_then(|v| v.as_str())
             .and_then(|s| uuid::Uuid::parse_str(s).ok())
     }
-
-    /// Validate that identity/tenant-scoped arguments in a function call match
-    /// the authenticated principal.
-    ///
-    /// When `enforce_scope` is true (private functions), at least one scope key
-    /// must be present and match. When false, existing scope keys are still
-    /// validated but their absence is tolerated.
-    pub fn check_identity_args(
-        &self,
-        function_name: &str,
-        args: &serde_json::Value,
-        enforce_scope: bool,
-    ) -> crate::error::Result<()> {
-        use crate::error::ForgeError;
-
-        if self.is_admin() {
-            return Ok(());
-        }
-
-        if !self.is_authenticated() && !enforce_scope {
-            return Ok(());
-        }
-
-        let Some(obj) = args.as_object() else {
-            if enforce_scope && self.is_authenticated() {
-                return Err(ForgeError::Forbidden(format!(
-                    "Function '{function_name}' must include identity or tenant scope arguments"
-                )));
-            }
-            return Ok(());
-        };
-
-        let mut principal_values: Vec<String> = Vec::new();
-        if let Some(user_id) = self.user_id().map(|id| id.to_string()) {
-            principal_values.push(user_id);
-        }
-        if let Some(subject) = self.principal_id()
-            && !principal_values.iter().any(|v| v == &subject)
-        {
-            principal_values.push(subject);
-        }
-
-        let mut has_scope_key = false;
-
-        for key in [
-            "user_id",
-            "userId",
-            "owner_id",
-            "ownerId",
-            "owner_subject",
-            "ownerSubject",
-            "subject",
-            "sub",
-            "principal_id",
-            "principalId",
-        ] {
-            let Some(value) = obj.get(key) else {
-                continue;
-            };
-            has_scope_key = true;
-
-            if !self.is_authenticated() {
-                return Err(ForgeError::Unauthorized(format!(
-                    "Function '{function_name}' requires authentication for identity-scoped argument '{key}'"
-                )));
-            }
-
-            let serde_json::Value::String(actual) = value else {
-                return Err(ForgeError::InvalidArgument(format!(
-                    "Function '{function_name}' argument '{key}' must be a non-empty string"
-                )));
-            };
-
-            if actual.trim().is_empty() || !principal_values.iter().any(|v| v == actual) {
-                return Err(ForgeError::Forbidden(format!(
-                    "Function '{function_name}' argument '{key}' does not match authenticated principal"
-                )));
-            }
-        }
-
-        for key in ["tenant_id", "tenantId"] {
-            let Some(value) = obj.get(key) else {
-                continue;
-            };
-            has_scope_key = true;
-
-            if !self.is_authenticated() {
-                return Err(ForgeError::Unauthorized(format!(
-                    "Function '{function_name}' requires authentication for tenant-scoped argument '{key}'"
-                )));
-            }
-
-            let expected = self
-                .claim("tenant_id")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| {
-                    ForgeError::Forbidden(format!(
-                        "Function '{function_name}' argument '{key}' is not allowed for this principal"
-                    ))
-                })?;
-
-            let serde_json::Value::String(actual) = value else {
-                return Err(ForgeError::InvalidArgument(format!(
-                    "Function '{function_name}' argument '{key}' must be a non-empty string"
-                )));
-            };
-
-            if actual.trim().is_empty() || actual != expected {
-                return Err(ForgeError::Forbidden(format!(
-                    "Function '{function_name}' argument '{key}' does not match authenticated tenant"
-                )));
-            }
-        }
-
-        if enforce_scope && self.is_authenticated() && !has_scope_key {
-            return Err(ForgeError::Forbidden(format!(
-                "Function '{function_name}' must include identity or tenant scope arguments"
-            )));
-        }
-
-        Ok(())
-    }
 }
 
 /// Request metadata available to all functions.
@@ -704,13 +582,14 @@ impl QueryContext {
         ForgeDb(self.db_pool.clone())
     }
 
-    pub fn require_user_id(&self) -> crate::error::Result<Uuid> {
+    /// Get the authenticated user's UUID. Returns 401 if not authenticated.
+    pub fn user_id(&self) -> crate::error::Result<Uuid> {
         self.auth.require_user_id()
     }
 
-    /// Like `require_user_id()` but for non-UUID auth providers.
-    pub fn require_subject(&self) -> crate::error::Result<&str> {
-        self.auth.require_subject()
+    /// Get the tenant ID from JWT claims, if present.
+    pub fn tenant_id(&self) -> Option<Uuid> {
+        self.auth.tenant_id()
     }
 }
 
@@ -927,12 +806,14 @@ impl MutationContext {
         self.http_timeout = timeout;
     }
 
-    pub fn require_user_id(&self) -> crate::error::Result<Uuid> {
+    /// Get the authenticated user's UUID. Returns 401 if not authenticated.
+    pub fn user_id(&self) -> crate::error::Result<Uuid> {
         self.auth.require_user_id()
     }
 
-    pub fn require_subject(&self) -> crate::error::Result<&str> {
-        self.auth.require_subject()
+    /// Get the tenant ID from JWT claims, if present.
+    pub fn tenant_id(&self) -> Option<Uuid> {
+        self.auth.tenant_id()
     }
 
     /// Set the token issuer for this context.

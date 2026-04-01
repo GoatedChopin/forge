@@ -137,10 +137,6 @@ impl FunctionRouter {
             self.check_auth(entry.info(), &auth)?;
             self.check_rate_limit(entry.info(), function_name, &auth, &request)
                 .await?;
-            // Skip scope enforcement for functions with no input args.
-            // The JWT still carries identity, accessible via ctx.require_user_id().
-            let enforce = !entry.info().is_public && entry.info().has_input_args;
-            auth.check_identity_args(function_name, &args, enforce)?;
 
             return match entry {
                 FunctionEntry::Query { handler, info, .. } => {
@@ -207,7 +203,6 @@ impl FunctionRouter {
             && let Some(job_info) = job_dispatcher.get_info(function_name)
         {
             self.check_job_auth(&job_info, &auth)?;
-            auth.check_identity_args(function_name, &args, !job_info.is_public)?;
             match job_dispatcher
                 .dispatch_by_name(function_name, args.clone(), auth.principal_id())
                 .await
@@ -224,7 +219,6 @@ impl FunctionRouter {
             && let Some(workflow_info) = workflow_dispatcher.get_info(function_name)
         {
             self.check_workflow_auth(&workflow_info, &auth)?;
-            auth.check_identity_args(function_name, &args, !workflow_info.is_public)?;
             match workflow_dispatcher
                 .start_by_name(function_name, args.clone(), auth.principal_id())
                 .await
@@ -518,7 +512,6 @@ mod tests {
             transactional: false,
             consistent: false,
             max_upload_size_bytes: None,
-            has_input_args: false,
         };
 
         let _auth = AuthContext::unauthenticated();
@@ -526,87 +519,6 @@ mod tests {
         // Can't test check_auth directly without a router instance,
         // but we can test the logic
         assert!(info.is_public);
-    }
-
-    #[test]
-    fn test_identity_args_reject_cross_user_value() {
-        let user_id = uuid::Uuid::new_v4();
-        let auth = AuthContext::authenticated(
-            user_id,
-            vec!["user".to_string()],
-            HashMap::from([(
-                "sub".to_string(),
-                serde_json::Value::String(user_id.to_string()),
-            )]),
-        );
-        let args = serde_json::json!({
-            "user_id": uuid::Uuid::new_v4().to_string()
-        });
-
-        let result = auth.check_identity_args("list_orders", &args, true);
-        assert!(matches!(result, Err(ForgeError::Forbidden(_))));
-    }
-
-    #[test]
-    fn test_identity_args_allow_matching_subject() {
-        let sub = "user_123";
-        let auth = AuthContext::authenticated_without_uuid(
-            vec!["user".to_string()],
-            HashMap::from([(
-                "sub".to_string(),
-                serde_json::Value::String(sub.to_string()),
-            )]),
-        );
-        let args = serde_json::json!({
-            "subject": sub
-        });
-
-        let result = auth.check_identity_args("list_orders", &args, true);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_identity_args_require_auth_for_identity_keys() {
-        let auth = AuthContext::unauthenticated();
-        let args = serde_json::json!({
-            "user_id": uuid::Uuid::new_v4().to_string()
-        });
-
-        let result = auth.check_identity_args("list_orders", &args, true);
-        assert!(matches!(result, Err(ForgeError::Unauthorized(_))));
-    }
-
-    #[test]
-    fn test_identity_args_require_scope_for_non_public_calls() {
-        let user_id = uuid::Uuid::new_v4();
-        let auth = AuthContext::authenticated(
-            user_id,
-            vec!["user".to_string()],
-            HashMap::from([(
-                "sub".to_string(),
-                serde_json::Value::String(user_id.to_string()),
-            )]),
-        );
-
-        let result = auth.check_identity_args("list_orders", &serde_json::json!({}), true);
-        assert!(matches!(result, Err(ForgeError::Forbidden(_))));
-    }
-
-    #[test]
-    fn test_identity_args_skip_scope_for_no_input_functions() {
-        let user_id = uuid::Uuid::new_v4();
-        let auth = AuthContext::authenticated(
-            user_id,
-            vec!["user".to_string()],
-            HashMap::from([(
-                "sub".to_string(),
-                serde_json::Value::String(user_id.to_string()),
-            )]),
-        );
-
-        // enforce_scope=false simulates has_input_args=false
-        let result = auth.check_identity_args("list_todos", &serde_json::Value::Null, false);
-        assert!(result.is_ok());
     }
 
     #[test]

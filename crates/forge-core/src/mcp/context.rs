@@ -71,12 +71,14 @@ impl McpToolContext {
         ))
     }
 
-    pub fn require_user_id(&self) -> Result<Uuid> {
+    /// Get the authenticated user's UUID. Returns 401 if not authenticated.
+    pub fn user_id(&self) -> Result<Uuid> {
         self.auth.require_user_id()
     }
 
-    pub fn require_subject(&self) -> Result<&str> {
-        self.auth.require_subject()
+    /// Get the tenant ID from JWT claims, if present.
+    pub fn tenant_id(&self) -> Option<Uuid> {
+        self.auth.tenant_id()
     }
 
     /// Dispatch a background job.

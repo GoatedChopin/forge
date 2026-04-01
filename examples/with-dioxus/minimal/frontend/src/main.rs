@@ -9,7 +9,7 @@ use layout::AppLayout;
 use pages::{About, Home, NotFound};
 
 fn api_url() -> &'static str {
-    option_env!("FORGE_API_URL").unwrap_or("http://localhost:8080")
+    option_env!("FORGE_API_URL").unwrap_or("http://localhost:9081")
 }
 
 #[derive(Routable, Clone)]
@@ -33,6 +33,7 @@ fn main() {
 fn App() -> Element {
     rsx! {
         document::Title { "minimal" }
+        document::Stylesheet { href: asset!("/public/style.css") }
         ForgeProvider {
             url: api_url().to_string(),
             Router::<Route> {}

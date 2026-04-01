@@ -513,6 +513,49 @@ fn normalize_table_name(name: &str) -> String {
     }
 }
 
+/// Check if any SQL string references `user_id` or `owner_id` in a filtering
+/// context (WHERE, AND, ON). Used at compile time to verify that private
+/// queries scope data to the authenticated user.
+pub fn sql_references_identity_scope(sql_strings: &[String]) -> bool {
+    for sql in sql_strings {
+        let upper = sql.to_uppercase();
+        // Look for user_id or owner_id appearing after WHERE, AND, or ON keywords
+        for scope_col in ["USER_ID", "OWNER_ID"] {
+            for keyword in ["WHERE", "AND", "ON"] {
+                // Find each occurrence of the keyword and check if scope_col follows
+                let mut search_start = 0;
+                while let Some(kw_pos) = upper[search_start..].find(keyword) {
+                    let abs_pos = search_start + kw_pos + keyword.len();
+                    // Check that the keyword is preceded by a word boundary
+                    let before_ok = search_start + kw_pos == 0
+                        || !upper
+                            .as_bytes()
+                            .get(search_start + kw_pos - 1)
+                            .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_');
+                    if before_ok {
+                        // Look at the rest of the clause until the next keyword boundary
+                        let rest = &upper[abs_pos..];
+                        // Check a reasonable window (next 100 chars or until another major clause)
+                        let window_end = rest
+                            .find("ORDER BY")
+                            .or_else(|| rest.find("GROUP BY"))
+                            .or_else(|| rest.find("LIMIT"))
+                            .or_else(|| rest.find("RETURNING"))
+                            .unwrap_or(rest.len())
+                            .min(200);
+                        let window = &rest[..window_end];
+                        if window.contains(scope_col) {
+                            return true;
+                        }
+                    }
+                    search_start = abs_pos;
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Simple extraction for SQL that fails to parse (e.g., with placeholders).
 fn extract_tables_simple(sql: &str, tables: &mut HashSet<String>) {
     // Remove string literals to avoid false matches
@@ -751,6 +794,61 @@ mod tests {
             SqlStringExtractor::extract_string_content(r###"r#"SELECT * FROM users"#"###),
             Some("SELECT * FROM users".to_string())
         );
+    }
+
+    #[test]
+    fn test_scope_check_where_user_id() {
+        assert!(sql_references_identity_scope(&[
+            "SELECT * FROM tasks WHERE user_id = $1".to_string()
+        ]));
+    }
+
+    #[test]
+    fn test_scope_check_and_user_id() {
+        assert!(sql_references_identity_scope(&[
+            "SELECT * FROM tasks WHERE id = $1 AND user_id = $2".to_string()
+        ]));
+    }
+
+    #[test]
+    fn test_scope_check_owner_id() {
+        assert!(sql_references_identity_scope(&[
+            "DELETE FROM posts WHERE owner_id = $1".to_string()
+        ]));
+    }
+
+    #[test]
+    fn test_scope_check_join_on() {
+        assert!(sql_references_identity_scope(&[
+            "SELECT t.* FROM tasks t JOIN users u ON t.user_id = u.id".to_string()
+        ]));
+    }
+
+    #[test]
+    fn test_scope_check_select_only_no_where() {
+        assert!(!sql_references_identity_scope(&[
+            "SELECT user_id, name FROM tasks".to_string()
+        ]));
+    }
+
+    #[test]
+    fn test_scope_check_no_scope_column() {
+        assert!(!sql_references_identity_scope(&[
+            "SELECT * FROM tasks WHERE id = $1".to_string()
+        ]));
+    }
+
+    #[test]
+    fn test_scope_check_empty() {
+        assert!(!sql_references_identity_scope(&[]));
+    }
+
+    #[test]
+    fn test_scope_check_multiple_sql_one_scoped() {
+        assert!(sql_references_identity_scope(&[
+            "SELECT count(*) FROM tasks".to_string(),
+            "SELECT * FROM tasks WHERE user_id = $1".to_string(),
+        ]));
     }
 
     #[test]

@@ -88,14 +88,9 @@ impl TestMutationContext {
         &self.workflow_dispatch
     }
 
-    /// Get the authenticated user ID or return an error.
-    pub fn require_user_id(&self) -> Result<Uuid> {
+    /// Get the authenticated user's UUID. Returns 401 if not authenticated.
+    pub fn user_id(&self) -> Result<Uuid> {
         self.auth.require_user_id()
-    }
-
-    /// Like `require_user_id()` but for non-UUID auth providers.
-    pub fn require_subject(&self) -> Result<&str> {
-        self.auth.require_subject()
     }
 
     /// Dispatch a job (records for later verification).

@@ -58,6 +58,8 @@ Generated output per handler:
 
 SQL table extraction: finds string literals in fn body, parses with sqlparser (PG dialect), extracts FROM/JOIN/INSERT/UPDATE/DELETE tables + SELECT columns. Falls back to regex for unparseable dynamic SQL.
 
+Query macro validates: private queries must filter by `user_id` or `owner_id` in SQL. Compile-time error if missing. `#[query(unscoped)]` opts out for shared/admin data.
+
 Mutation macro validates: detects `dispatch_job()`/`start_workflow()` without `transactional` flag and errors at compile time.
 
 Cron macro validates: cron expression checked at compile time via `cron` crate.
