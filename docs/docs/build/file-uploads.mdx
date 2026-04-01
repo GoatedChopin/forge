@@ -218,7 +218,7 @@ async fn upload_large_file(ctx: &Ctx, file: Upload) -> Result<String> {
 }
 ```
 
-The gateway resolves the effective limit in priority order: per-mutation `max_size` > global `max_body_size` > 20 MB default floor. The field-count limit (20 upload fields) and concurrency cap (32 concurrent in-flight uploads) remain fixed.
+The gateway resolves the effective limit in priority order: per-mutation `max_size` > global `max_body_size` (default 20 MB). The field-count limit (20 upload fields) and concurrency cap (32 concurrent in-flight uploads) remain fixed.
 
 **Content-type detection**: MIME type comes from the browser's `Content-Type` header for each multipart field. If the client omits it, the server defaults to `application/octet-stream`.
 

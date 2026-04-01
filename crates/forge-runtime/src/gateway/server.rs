@@ -325,23 +325,27 @@ impl GatewayServer {
             // REST-style function endpoint (JSON)
             .route("/rpc/{function}", post(rpc_function_handler))
             // Prevent oversized JSON payloads from exhausting memory.
-            .layer(DefaultBodyLimit::max(
-                self.config
-                    .max_body_size_bytes
-                    .max(DEFAULT_MAX_JSON_BODY_SIZE),
-            ))
+            .layer(DefaultBodyLimit::max(DEFAULT_MAX_JSON_BODY_SIZE))
             // Add state
             .with_state(rpc_handler_state.clone());
 
-        // Multipart RPC router. Body limit is disabled at the Axum layer because
-        // per-mutation overrides (max_size) may exceed the global config. The handler
-        // enforces limits chunk-by-chunk during streaming, so memory is bounded.
+        // Multipart RPC router. The Axum layer limit is set to the highest
+        // configured size (global or any per-mutation override) so that
+        // per-mutation max_size values aren't rejected at the HTTP layer.
+        // The handler still enforces per-function limits chunk-by-chunk.
+        let max_per_mutation = self
+            .registry
+            .functions()
+            .filter_map(|(_, entry)| entry.info().max_upload_size_bytes)
+            .max()
+            .unwrap_or(0);
+        let layer_limit = self.config.max_body_size_bytes.max(max_per_mutation);
         let mp_config = MultipartConfig {
             max_body_size_bytes: self.config.max_body_size_bytes,
         };
         let multipart_router = Router::new()
             .route("/rpc/{function}/upload", post(rpc_multipart_handler))
-            .layer(DefaultBodyLimit::disable())
+            .layer(DefaultBodyLimit::max(layer_limit))
             .layer(Extension(mp_config))
             // Cap upload fan-out; each request buffers data in memory.
             .layer(ConcurrencyLimitLayer::new(MAX_MULTIPART_CONCURRENCY))

@@ -31,6 +31,7 @@ Generated struct: `{PascalCase}Mutation`. Trait: `ForgeMutation`.
 | `require_role("x")` | string | — |
 | `transactional` | flag | false |
 | `timeout = 30` | u64 | — |
+| `max_size = "200mb"` | string | — |
 | `rate_limit(...)` | group | — |
 | `log = "info"` | string | — |
 
@@ -277,6 +278,7 @@ sse_max_sessions = 10000
 request_timeout_secs = 30
 cors_origins = ["http://localhost:9080", "http://127.0.0.1:9080"]
 quiet_routes = ["/_api/health", "/_api/ready"]
+max_body_size = "20mb"    # global upload size limit, per-mutation max_size overrides
 
 [function]
 timeout_secs = 30

@@ -88,6 +88,7 @@ impl ForgeConfig {
         self.database.validate()?;
         self.auth.validate()?;
         self.mcp.validate()?;
+        self.gateway.max_body_size_bytes()?;
 
         // Cross-field: OAuth requires jwt_secret for signing tokens
         if self.mcp.oauth && self.auth.jwt_secret.is_none() {
@@ -261,9 +262,14 @@ impl Default for GatewayConfig {
 }
 
 impl GatewayConfig {
-    /// Parse `max_body_size` into bytes. Falls back to 20 MB on parse failure.
-    pub fn max_body_size_bytes(&self) -> usize {
-        crate::util::parse_size(&self.max_body_size).unwrap_or(20 * 1024 * 1024)
+    /// Parse `max_body_size` into bytes.
+    pub fn max_body_size_bytes(&self) -> crate::Result<usize> {
+        crate::util::parse_size(&self.max_body_size).ok_or_else(|| {
+            crate::ForgeError::Config(format!(
+                "invalid gateway.max_body_size '{}'. Expected a size like '20mb', '1gb', or '1048576'",
+                self.max_body_size
+            ))
+        })
     }
 }
 
@@ -1119,7 +1125,7 @@ mod tests {
     #[test]
     fn test_max_body_size_defaults() {
         let gw = GatewayConfig::default();
-        assert_eq!(gw.max_body_size_bytes(), 20 * 1024 * 1024);
+        assert_eq!(gw.max_body_size_bytes().unwrap(), 20 * 1024 * 1024);
     }
 
     #[test]
@@ -1128,17 +1134,16 @@ mod tests {
             max_body_size: "100mb".into(),
             ..Default::default()
         };
-        assert_eq!(gw.max_body_size_bytes(), 100 * 1024 * 1024);
+        assert_eq!(gw.max_body_size_bytes().unwrap(), 100 * 1024 * 1024);
     }
 
     #[test]
-    fn test_max_body_size_invalid_falls_back() {
+    fn test_max_body_size_invalid_errors() {
         let gw = GatewayConfig {
             max_body_size: "not-a-size".into(),
             ..Default::default()
         };
-        // Falls back to 20 MB
-        assert_eq!(gw.max_body_size_bytes(), 20 * 1024 * 1024);
+        assert!(gw.max_body_size_bytes().is_err());
     }
 
     #[test]

@@ -11,7 +11,6 @@ use forge_core::types::Upload;
 
 use super::rpc::RpcHandler;
 
-const DEFAULT_MAX_TOTAL_UPLOAD_SIZE: usize = 20 * 1024 * 1024;
 const MAX_UPLOAD_FIELDS: usize = 20;
 const MAX_FIELD_NAME_LENGTH: usize = 255;
 const MAX_JSON_FIELD_SIZE: usize = 1024 * 1024;
@@ -63,12 +62,11 @@ pub async fn rpc_multipart_handler(
         );
     }
 
-    // Per-function limit takes priority, then global config, then default floor.
+    // Per-function limit takes priority, then global config.
     let max_total = handler
         .function_info(&function)
         .and_then(|info| info.max_upload_size_bytes)
-        .unwrap_or(mp_config.max_body_size_bytes)
-        .max(DEFAULT_MAX_TOTAL_UPLOAD_SIZE);
+        .unwrap_or(mp_config.max_body_size_bytes);
     let max_file = max_total;
 
     let mut json_args: Option<serde_json::Value> = None;
