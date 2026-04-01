@@ -552,6 +552,7 @@ impl Forge {
                     .map_err(|e| ForgeError::Config(e.to_string()))?,
                 mcp: self.config.mcp.clone(),
                 quiet_routes: self.config.gateway.quiet_routes.clone(),
+                max_body_size_bytes: self.config.gateway.max_body_size_bytes(),
                 token_ttl: forge_core::AuthTokenTtl {
                     access_token_secs: self.config.auth.access_token_ttl_secs(),
                     refresh_token_days: self.config.auth.refresh_token_ttl_days(),

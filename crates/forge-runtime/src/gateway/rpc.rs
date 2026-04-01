@@ -5,7 +5,9 @@ use axum::{
     extract::{Extension, State},
     http::{HeaderMap, header::USER_AGENT},
 };
-use forge_core::function::{AuthContext, JobDispatch, RequestMetadata, WorkflowDispatch};
+use forge_core::function::{
+    AuthContext, FunctionInfo, JobDispatch, RequestMetadata, WorkflowDispatch,
+};
 
 use super::request::{BatchRpcRequest, BatchRpcResponse, RpcRequest};
 use super::response::{RpcError, RpcResponse};
@@ -64,6 +66,11 @@ impl RpcHandler {
         if let Some(executor) = Arc::get_mut(&mut self.executor) {
             executor.set_token_ttl(ttl);
         }
+    }
+
+    /// Look up function metadata by name.
+    pub fn function_info(&self, name: &str) -> Option<FunctionInfo> {
+        self.executor.function_info(name)
     }
 
     /// Set the signals collector for auto-capturing RPC events.

@@ -340,6 +340,11 @@ impl FunctionExecutor {
             .unwrap_or(self.default_timeout)
     }
 
+    /// Look up function metadata by name.
+    pub fn function_info(&self, function_name: &str) -> Option<forge_core::FunctionInfo> {
+        self.registry.get(function_name).map(|e| e.info().clone())
+    }
+
     /// Check if a function exists.
     pub fn has_function(&self, function_name: &str) -> bool {
         self.router.has_function(function_name)

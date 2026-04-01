@@ -479,6 +479,7 @@ fn expand_query_impl(input: ItemFn, attrs: QueryAttrs) -> syn::Result<TokenStrea
                     selected_columns: #selected_cols_tokens,
                     transactional: false,
                     consistent: #consistent,
+                    max_upload_size_bytes: None,
                     has_input_args: #has_input_args,
                 }
             }

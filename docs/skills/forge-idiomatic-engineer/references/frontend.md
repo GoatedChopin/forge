@@ -78,7 +78,7 @@ SvelteKit: pass `File` from `<input>` directly. Dioxus: use `ForgeUpload` type.
 
 Backend types: `Upload` (single file), `Vec<Upload>` (batch uploads), `Option<Upload>` (optional file). Upload serializes as base64 for JSON compatibility but the generated client handles multipart/form-data automatically when it detects `File`/`Blob` values.
 
-Limits: 10 MB per file, 20 fields max, 1 MB max JSON field, 255 char max field name. For files > 10 MB, use presigned URLs (mutation returns upload URL, client uploads directly to storage, then calls confirm mutation).
+Limits: total payload defaults to 20 MB, configurable globally via `gateway.max_body_size` in `forge.toml` or per-mutation via `#[forge::mutation(max_size = "200mb")]`. Other fixed limits: 20 fields max, 1 MB max JSON field, 255 char max field name. For uploads exceeding the configured limit, use presigned URLs (mutation returns upload URL, client uploads directly to storage, then calls confirm mutation).
 
 ## Performance
 
