@@ -280,7 +280,9 @@ ctx.auth.roles() -> &[String]
 
 ### Identity Scope Enforcement
 
-Input args with recognized identity keys (`user_id`, `owner_id`, `subject`, etc.) are validated at runtime against the authenticated principal. Admins bypass scope checks. Do not add redundant manual checks.
+Private functions with input args must include at least one recognized identity key (`user_id`, `owner_id`, `subject`, `principal_id` and their camelCase variants). These are validated at runtime against the authenticated principal before the handler runs. Admins bypass scope checks. This works for both built-in and third-party auth (Firebase, Clerk, etc.) since it validates against JWT claims regardless of issuer.
+
+Use `input.user_id` directly in handlers. Do not manually compare it against `ctx.require_user_id()`, the router already validated the match. Reserve `ctx.require_user_id()` for context-only handlers (no input struct) that need the caller's UUID. Context-only handlers skip scope enforcement since there are no args to carry scope fields.
 
 ### Claims Builder
 

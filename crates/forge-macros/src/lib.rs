@@ -116,7 +116,7 @@ pub fn query(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// ```ignore
 /// #[forge::mutation]  // Requires authenticated user (default)
 /// pub async fn create_project(ctx: &MutationContext, input: CreateProjectInput) -> Result<Project> {
-///     let user_id = ctx.require_user_id()?;
+///     // input.user_id is pre-validated against the JWT by the router
 ///     // ...
 /// }
 ///

@@ -118,8 +118,11 @@ let input = RefreshInput::new(refresh_token);
 refresh(&anon_client, input).await
 ```
 
-**Trusting client-supplied ownership fields.**
-Don't compare `input.user_id != ctx.require_user_id()`. The router's scope enforcement already validates identity fields at runtime. Manual checks are redundant and error-prone.
+**Manually validating identity fields the router already checks.**
+Don't compare `input.user_id != ctx.require_user_id()`. The router validates identity-scoped fields (`user_id`, `owner_id`, `subject`, `principal_id`) against the JWT before the handler runs. Use `input.user_id` directly. Reserve `ctx.require_user_id()` for context-only handlers (no input struct) that need the caller's UUID. This applies to both built-in and third-party auth since validation operates on JWT claims regardless of issuer.
+
+**Omitting identity fields from private function inputs.**
+Private functions with input args must include at least one identity or tenant scope field. Without it, the router rejects the call. If your function needs auth but not user scoping (shared data), either make the input struct include `user_id` for scope enforcement or make the function context-only (no input struct).
 
 **Relying on `#[serde(skip)]` to hide fields.**
 `forge generate` reads the Rust AST, not serde attributes. Skipped fields still appear in generated types. Create a separate public struct (e.g., `PublicUser`) without sensitive fields and use it in return types.

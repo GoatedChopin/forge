@@ -466,7 +466,7 @@ async fn run_user(
                 "get_counter",
                 json!({ "user_id": credential.user_id, "id": credential.home_counter_id }),
             ),
-            4..=6 => ("list_counters", json!({ "user_id": credential.user_id })),
+            4..=6 => ("list_counters", json!({})),
             _ => (
                 "increment",
                 json!({ "user_id": credential.user_id, "id": credential.home_counter_id }),

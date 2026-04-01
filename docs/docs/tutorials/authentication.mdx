@@ -246,7 +246,7 @@ pub async fn delete_user(ctx: &MutationContext, input: DeleteInput) -> Result<()
 }
 ```
 
-Inside any authenticated handler, use `ctx.require_user_id()` to get the caller's UUID. Never trust a user ID sent from the client.
+Private functions with input args must include an identity scope field like `user_id`, which the router validates against the JWT before your handler runs. Use `input.user_id` directly in your queries. For context-only handlers (no input struct), use `ctx.require_user_id()` to get the caller's UUID.
 
 ## Step 7: Wire Up the Frontend
 
@@ -450,5 +450,5 @@ mod tests {
 - **Tokens are short-lived.** Access tokens default to 1 hour; refresh tokens default to 30 days. Tune these with `access_token_ttl` and `refresh_token_ttl` in `forge.toml`.
 - **Refresh rotation is automatic.** The SvelteKit store runs a refresh loop every 40 minutes by default. The Dioxus `ForgeAuthProvider` does the same via `refresh_interval_secs`. Set the interval to roughly 2/3 of your `access_token_ttl`.
 - **SSE reconnects on auth changes.** Both frontends reconnect the real-time event stream when tokens change, so subscriptions pick up the new identity immediately.
-- **Never trust client-supplied user IDs.** Always call `ctx.require_user_id()` to get the authenticated user's UUID from the JWT. The framework also enforces identity scope on input fields like `user_id` and `owner_id` automatically.
+- **Identity scope is enforced automatically.** Private functions with input args must include an identity field (`user_id`, `owner_id`, `subject`, or `principal_id`), which is validated against the JWT before your handler runs. Use `input.user_id` directly in your SQL. Don't manually compare it against `ctx.require_user_id()`. For context-only handlers (no input struct), use `ctx.require_user_id()` to get the caller's UUID.
 - **Refresh tokens are single-use.** Each call to `rotate_refresh_token` invalidates the old token and returns a fresh pair. If a token is reused, Forge rejects it -- this limits the damage from token theft.

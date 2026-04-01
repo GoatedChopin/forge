@@ -21,11 +21,6 @@ pub struct GetCounterInput {
     pub id: Uuid,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ListCountersInput {
-    pub user_id: Uuid,
-}
-
 #[forge::mutation(public)]
 pub async fn create_counter(ctx: &MutationContext, input: CreateCounterInput) -> Result<Counter> {
     let mut conn = ctx.conn().await?;
@@ -43,11 +38,6 @@ pub async fn create_counter(ctx: &MutationContext, input: CreateCounterInput) ->
 /// Atomic increment. This is the hot write path.
 #[forge::mutation]
 pub async fn increment(ctx: &MutationContext, input: IncrementInput) -> Result<Counter> {
-    let user_id = ctx.require_user_id()?;
-    if input.user_id != user_id {
-        return Err(ForgeError::Forbidden("User scope mismatch".into()));
-    }
-
     let mut conn = ctx.conn().await?;
 
     sqlx::query_as!(
@@ -55,7 +45,7 @@ pub async fn increment(ctx: &MutationContext, input: IncrementInput) -> Result<C
         "UPDATE counters SET value = value + 1, updated_by = $2, updated_at = NOW()
          WHERE id = $1 RETURNING *",
         input.id,
-        user_id
+        input.user_id
     )
     .fetch_optional(&mut conn)
     .await?
@@ -65,11 +55,6 @@ pub async fn increment(ctx: &MutationContext, input: IncrementInput) -> Result<C
 /// Single counter read. Hot read path.
 #[forge::query(tables = ["counters"])]
 pub async fn get_counter(ctx: &QueryContext, input: GetCounterInput) -> Result<Counter> {
-    let user_id = ctx.require_user_id()?;
-    if input.user_id != user_id {
-        return Err(ForgeError::Forbidden("User scope mismatch".into()));
-    }
-
     sqlx::query_as!(Counter, "SELECT * FROM counters WHERE id = $1", input.id)
         .fetch_optional(ctx.db())
         .await?
@@ -78,12 +63,7 @@ pub async fn get_counter(ctx: &QueryContext, input: GetCounterInput) -> Result<C
 
 /// List all counters. Subscribed by watchers.
 #[forge::query(tables = ["counters"])]
-pub async fn list_counters(ctx: &QueryContext, input: ListCountersInput) -> Result<Vec<Counter>> {
-    let user_id = ctx.require_user_id()?;
-    if input.user_id != user_id {
-        return Err(ForgeError::Forbidden("User scope mismatch".into()));
-    }
-
+pub async fn list_counters(ctx: &QueryContext) -> Result<Vec<Counter>> {
     sqlx::query_as!(Counter, "SELECT * FROM counters ORDER BY name")
         .fetch_all(ctx.db())
         .await

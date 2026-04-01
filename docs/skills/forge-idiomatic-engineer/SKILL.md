@@ -69,7 +69,7 @@ If a port is occupied, DB is unreachable, or a tool is missing: report it and st
 
 **Never edit generated files.** If generated output is wrong, fix the Rust source or the codegen.
 
-**Derive identity from context, never trust the client.** Forge's scope enforcement validates ownership keys (`user_id`, `owner_id`, `subject`, `tenant_id`) at runtime. Do not manually compare identity fields.
+**Identity fields are validated automatically.** The router validates ownership keys (`user_id`, `owner_id`, `subject`, `principal_id`) and tenant keys (`tenant_id`) in input args against the JWT before the handler runs. Use `input.user_id` directly when present. Reserve `ctx.require_user_id()` for context-only handlers (no input struct). Do not manually compare identity fields.
 
 **Transactional integrity.** Never call `dispatch_job` or `start_workflow` outside a `transactional` mutation. Without it, jobs execute against uncommitted data.
 
