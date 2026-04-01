@@ -109,6 +109,10 @@ pub struct Forge {
     frontend_handler: Option<FrontendHandler>,
     /// Custom axum routes merged into the top-level router.
     custom_routes: Option<Router>,
+    /// Routes that receive the full middleware stack (auth, CORS, tracing).
+    authenticated_routes: Option<Router>,
+    /// Factory that produces authenticated routes after the pool is available.
+    authenticated_routes_factory: Option<Box<dyn FnOnce(sqlx::PgPool) -> Router + Send>>,
 }
 
 impl Forge {
@@ -594,6 +598,18 @@ impl Forge {
                 tracing::info!("Signals enabled (analytics + diagnostics)");
             }
 
+            let mut resolved_auth_routes = self.authenticated_routes.take();
+            if let Some(factory) = self.authenticated_routes_factory.take() {
+                let factory_router = factory(pool.clone());
+                resolved_auth_routes = Some(match resolved_auth_routes {
+                    Some(existing) => existing.merge(factory_router),
+                    None => factory_router,
+                });
+            }
+            if let Some(auth_routes) = resolved_auth_routes {
+                gateway = gateway.with_authenticated_routes(auth_routes);
+            }
+
             // Start the reactor for real-time updates
             let reactor = gateway.reactor();
             if let Err(e) = reactor.start().await {
@@ -869,6 +885,8 @@ pub struct ForgeBuilder {
     extra_migrations: Vec<Migration>,
     frontend_handler: Option<FrontendHandler>,
     custom_routes: Option<Router>,
+    authenticated_routes: Option<Router>,
+    authenticated_routes_factory: Option<Box<dyn FnOnce(sqlx::PgPool) -> Router + Send>>,
 }
 
 impl ForgeBuilder {
@@ -887,6 +905,8 @@ impl ForgeBuilder {
             extra_migrations: Vec::new(),
             frontend_handler: None,
             custom_routes: None,
+            authenticated_routes: None,
+            authenticated_routes_factory: None,
         }
     }
 
@@ -934,6 +954,23 @@ impl ForgeBuilder {
     /// ```
     pub fn custom_routes(mut self, router: Router) -> Self {
         self.custom_routes = Some(router);
+        self
+    }
+
+    /// Add routes that sit inside the gateway middleware stack and receive
+    /// auth, CORS, tracing, concurrency limits, and timeouts automatically.
+    pub fn authenticated_routes(mut self, router: Router) -> Self {
+        self.authenticated_routes = Some(router);
+        self
+    }
+
+    /// Like [`authenticated_routes`](Self::authenticated_routes) but accepts a
+    /// factory that receives Forge's managed `PgPool` (resolved during `run()`).
+    pub fn authenticated_routes_with<F>(mut self, f: F) -> Self
+    where
+        F: FnOnce(sqlx::PgPool) -> Router + Send + 'static,
+    {
+        self.authenticated_routes_factory = Some(Box::new(f));
         self
     }
 
@@ -1085,6 +1122,8 @@ impl ForgeBuilder {
             extra_migrations: self.extra_migrations,
             frontend_handler: self.frontend_handler,
             custom_routes: self.custom_routes,
+            authenticated_routes: self.authenticated_routes,
+            authenticated_routes_factory: self.authenticated_routes_factory,
         })
     }
 }

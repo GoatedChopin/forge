@@ -4,5 +4,6 @@ node_modules
 .env
 !examples/**/.env
 .agents/
+.claude/worktrees/
 crates/forge/generated/
 **/test-results/**

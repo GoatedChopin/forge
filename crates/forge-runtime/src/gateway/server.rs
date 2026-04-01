@@ -131,6 +131,7 @@ pub struct GatewayServer {
     mcp_registry: Option<McpToolRegistry>,
     token_ttl: forge_core::AuthTokenTtl,
     signals_collector: Option<crate::signals::SignalsCollector>,
+    authenticated_routes: Option<Router>,
 }
 
 impl GatewayServer {
@@ -155,6 +156,7 @@ impl GatewayServer {
             mcp_registry: None,
             token_ttl,
             signals_collector: None,
+            authenticated_routes: None,
         }
     }
 
@@ -180,6 +182,13 @@ impl GatewayServer {
     /// registering client signal ingestion endpoints.
     pub fn with_signals_collector(mut self, collector: crate::signals::SignalsCollector) -> Self {
         self.signals_collector = Some(collector);
+        self
+    }
+
+    /// Set additional routes that will receive the full middleware stack
+    /// (auth, CORS, tracing, concurrency limits, timeouts).
+    pub fn with_authenticated_routes(mut self, router: Router) -> Self {
+        self.authenticated_routes = Some(router);
         self
     }
 
@@ -416,6 +425,10 @@ impl GatewayServer {
             .merge(sse_router)
             .merge(mcp_router)
             .merge(signals_router);
+
+        if let Some(auth_routes) = &self.authenticated_routes {
+            main_router = main_router.merge(auth_routes.clone());
+        }
 
         // Build middleware stack
         let service_builder = ServiceBuilder::new()
