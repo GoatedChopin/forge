@@ -1043,7 +1043,7 @@ checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 
 [[package]]
 name = "forge-bench"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "chrono",
  "forgex 0.7.4",
@@ -1073,9 +1073,9 @@ dependencies = [
 
 [[package]]
 name = "forge-codegen"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
- "forge-core 0.8.2",
+ "forge-core 0.8.3",
  "quote",
  "serde",
  "serde_json",
@@ -1113,7 +1113,7 @@ dependencies = [
 
 [[package]]
 name = "forge-core"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -1141,12 +1141,12 @@ dependencies = [
 
 [[package]]
 name = "forge-dioxus-demo-template"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "bcrypt 0.16.0",
  "chrono",
  "dotenvy",
- "forgex 0.8.2",
+ "forgex 0.8.3",
  "futures-util",
  "reqwest",
  "rust-embed",
@@ -1163,11 +1163,11 @@ dependencies = [
 
 [[package]]
 name = "forge-dioxus-minimal-template"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "chrono",
  "dotenvy",
- "forgex 0.8.2",
+ "forgex 0.8.3",
  "rust-embed",
  "serde",
  "serde_json",
@@ -1193,7 +1193,7 @@ dependencies = [
 
 [[package]]
 name = "forge-macros"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "cron",
  "proc-macro2",
@@ -1245,7 +1245,7 @@ dependencies = [
 
 [[package]]
 name = "forge-runtime"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "anyhow",
  "axum",
@@ -1255,7 +1255,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "dashmap",
- "forge-core 0.8.2",
+ "forge-core 0.8.3",
  "futures-util",
  "hmac",
  "jsonwebtoken 10.3.0",
@@ -1286,12 +1286,12 @@ dependencies = [
 
 [[package]]
 name = "forge-svelte-demo-template"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "bcrypt 0.16.0",
  "chrono",
  "dotenvy",
- "forgex 0.8.2",
+ "forgex 0.8.3",
  "futures-util",
  "reqwest",
  "rust-embed",
@@ -1308,11 +1308,11 @@ dependencies = [
 
 [[package]]
 name = "forge-svelte-minimal-template"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "chrono",
  "dotenvy",
- "forgex 0.8.2",
+ "forgex 0.8.3",
  "rust-embed",
  "serde",
  "serde_json",
@@ -1363,7 +1363,7 @@ dependencies = [
 
 [[package]]
 name = "forgex"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "anyhow",
  "axum",
@@ -1371,10 +1371,10 @@ dependencies = [
  "clap",
  "console",
  "dotenvy",
- "forge-codegen 0.8.2",
- "forge-core 0.8.2",
- "forge-macros 0.8.2",
- "forge-runtime 0.8.2",
+ "forge-codegen 0.8.3",
+ "forge-core 0.8.3",
+ "forge-macros 0.8.3",
+ "forge-runtime 0.8.3",
  "include_dir",
  "inventory",
  "mime_guess",
@@ -4197,11 +4197,11 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "todo"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "chrono",
  "dotenvy",
- "forgex 0.8.2",
+ "forgex 0.8.3",
  "rust-embed",
  "serde",
  "serde_json",
@@ -4214,11 +4214,11 @@ dependencies = [
 
 [[package]]
 name = "todo-dioxus"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "chrono",
  "dotenvy",
- "forgex 0.8.2",
+ "forgex 0.8.3",
  "rust-embed",
  "serde",
  "serde_json",
