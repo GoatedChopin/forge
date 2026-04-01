@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-04-01
+
+### Added
+
+- Configurable global and per-mutation request body size limits (`max_body_size` in forge.toml and per-function attribute).
+- `.env.example` files for all example projects so fresh clones have visible environment setup.
+
+### Changed
+
+- Query scope enforcement (`user_id`/`owner_id` filtering for private queries) moved from runtime checks to compile-time SQL analysis via `sql_extractor`. Invalid scoping now fails at `cargo build` instead of at request time.
+- Dioxus frontend dependencies updated to published `forge-dioxus` crate versions, removing path dependency overrides.
+- Redundant auth checks removed from benchmark suite.
+
+### Fixed
+
+- `max_body_size` config no longer leaks into JSON RPC endpoints. Multipart size limits are now correctly scoped to upload routes only, restoring HTTP-layer safety for standard RPC calls.
+
 ## [0.8.2] - 2026-03-29
 
 ### Added
@@ -469,7 +486,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust 2024 edition unsafe block compatibility
 - Release workflow cargo-edit installation
 
-[unreleased]: https://github.com/isala404/forge/compare/v0.8.2...HEAD
+[unreleased]: https://github.com/isala404/forge/compare/v0.8.3...HEAD
+[0.8.3]: https://github.com/isala404/forge/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/isala404/forge/compare/v0.7.4...v0.8.2
 [0.7.4]: https://github.com/isala404/forge/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/isala404/forge/compare/v0.7.2...v0.7.3
