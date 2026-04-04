@@ -434,10 +434,23 @@ impl ForgeClient {
         if needs_retry {
             self.force_reconnect().await;
             self.ensure_connected().await?;
-            return self.try_register_subscription(sub_id).await;
+            let retried = self.try_register_subscription(sub_id).await?;
+            self.notify_auth_error_if_needed(&retried);
+            return Ok(retried);
         }
 
+        self.notify_auth_error_if_needed(&envelope);
         Ok(envelope)
+    }
+
+    fn notify_auth_error_if_needed(&self, envelope: &RpcEnvelopeRaw) {
+        if let Some(err) = envelope.error.as_ref().filter(|_| !envelope.success) {
+            if (err.code == "UNAUTHORIZED" || err.code == "FORBIDDEN")
+                && let Some(handler) = &self.inner.on_auth_error
+            {
+                handler(err.clone());
+            }
+        }
     }
 
     async fn try_register_subscription(
@@ -481,6 +494,41 @@ impl ForgeClient {
             task.cancel();
         }
         sleep(Duration::from_millis(10)).await;
+    }
+
+    /// Tear down the current SSE connection and start a fresh one.
+    ///
+    /// The new connection calls `get_token()` again, picking up any tokens
+    /// that were updated since the original connection was established.
+    /// Existing subscriptions are automatically re-registered once the new
+    /// connection's "connected" handshake completes.
+    pub fn reconnect_sse(&self) {
+        let has_listeners = {
+            let mut sse = self.inner.sse.borrow_mut();
+            if sse.state == SseState::Idle && sse.event_loop_task.is_none() && sse.listeners.is_empty() {
+                return;
+            }
+            // Already tearing down and reconnecting, don't stack another one
+            if sse.state == SseState::Connecting && sse.event_loop_task.is_some() {
+                return;
+            }
+            if let Some(task) = sse.event_loop_task.take() {
+                task.cancel();
+            }
+            sse.session_id = None;
+            sse.session_secret = None;
+            sse.reconnect_attempts = 0;
+            let has_listeners = !sse.listeners.is_empty();
+            sse.state = if has_listeners {
+                SseState::Connecting
+            } else {
+                SseState::Idle
+            };
+            has_listeners
+        };
+        if has_listeners {
+            platform::start_event_loop(self.clone());
+        }
     }
 
     async fn reregister_all(&self) {
@@ -570,6 +618,11 @@ impl ForgeClient {
                 message: "Unknown error".to_string(),
                 details: None,
             });
+            if error.code == "UNAUTHORIZED" || error.code == "FORBIDDEN" {
+                if let Some(handler) = &self.inner.on_auth_error {
+                    handler(error.clone());
+                }
+            }
             return Err(ForgeClientError::new(error.code, error.message, error.details));
         }
 
@@ -765,11 +818,24 @@ mod platform {
     pub(super) fn start_event_loop(client: ForgeClient) {
         let client_for_task = client.clone();
         let task = spawn(async move {
-            run_event_loop(&client_for_task).await;
+            let was_connected = run_event_loop(&client_for_task).await;
 
-            // Disconnected. Try to reconnect.
             client_for_task.mark_disconnected();
             client_for_task.broadcast_connection(ConnectionState::Disconnected);
+
+            // Never reached "connected" handshake while holding a token:
+            // almost certainly a 401. Trigger refresh instead of retrying
+            // with the same expired token.
+            if !was_connected && client_for_task.get_token().is_some() {
+                if let Some(handler) = &client_for_task.inner.on_auth_error {
+                    handler(crate::types::ForgeError {
+                        code: "UNAUTHORIZED".into(),
+                        message: "SSE authentication failed".into(),
+                        details: None,
+                    });
+                }
+                return;
+            }
 
             if let Some(attempts) = client_for_task.should_reconnect() {
                 let delay = 1000 * (1u64 << attempts.min(4));
@@ -784,46 +850,47 @@ mod platform {
         client.inner.sse.borrow_mut().event_loop_task = Some(task);
     }
 
-    async fn run_event_loop(client: &ForgeClient) {
+    /// Returns `true` if the connection was established at some point.
+    async fn run_event_loop(client: &ForgeClient) -> bool {
         let mut event_source = match EventSource::new(&events_url(client)) {
             Ok(source) => source,
             Err(_) => {
-                return;
+                return false;
             }
         };
 
         let mut connected_stream = match event_source.subscribe("connected") {
             Ok(stream) => stream,
-            Err(_) => return,
+            Err(_) => return false,
         };
         let update_stream = match event_source.subscribe("update") {
             Ok(stream) => stream,
-            Err(_) => return,
+            Err(_) => return false,
         };
         let error_stream = match event_source.subscribe("error") {
             Ok(stream) => stream,
-            Err(_) => return,
+            Err(_) => return false,
         };
 
         // Wait for the connected event
         let connected_event = match connected_stream.next().await {
             Some(Ok((_kind, message))) => {
                 let Some(raw) = message_data_as_string(&message) else {
-                    return;
+                    return false;
                 };
                 match serde_json::from_str::<ConnectedEvent>(&raw) {
                     Ok(event) => event,
-                    Err(_) => return,
+                    Err(_) => return false,
                 }
             }
-            _ => return,
+            _ => return false,
         };
 
         let session_id = connected_event.session_id.unwrap_or_default();
         let session_secret = connected_event.session_secret.unwrap_or_default();
 
         if session_id.is_empty() || session_secret.is_empty() {
-            return;
+            return false;
         }
 
         let is_reconnect = client.mark_connected(session_id, session_secret);
@@ -864,6 +931,7 @@ mod platform {
         }
 
         event_source.close();
+        true
     }
 
     fn request_error(err: gloo_net::Error) -> ForgeClientError {
@@ -942,10 +1010,21 @@ mod platform {
     pub(super) fn start_event_loop(client: ForgeClient) {
         let client_for_task = client.clone();
         let task = spawn(async move {
-            run_event_loop(&client_for_task).await;
+            let was_connected = run_event_loop(&client_for_task).await;
 
             client_for_task.mark_disconnected();
             client_for_task.broadcast_connection(ConnectionState::Disconnected);
+
+            if !was_connected && client_for_task.get_token().is_some() {
+                if let Some(handler) = &client_for_task.inner.on_auth_error {
+                    handler(crate::types::ForgeError {
+                        code: "UNAUTHORIZED".into(),
+                        message: "SSE authentication failed".into(),
+                        details: None,
+                    });
+                }
+                return;
+            }
 
             if let Some(attempts) = client_for_task.should_reconnect() {
                 let delay = 1000 * (1u64 << attempts.min(4));
@@ -959,7 +1038,8 @@ mod platform {
         client.inner.sse.borrow_mut().event_loop_task = Some(task);
     }
 
-    async fn run_event_loop(client: &ForgeClient) {
+    /// Returns `true` if the connection was established at some point.
+    async fn run_event_loop(client: &ForgeClient) -> bool {
         let mut request = Client::new().get(format!("{}/_api/events", client.inner.url));
         if let Some(token) = client.get_token() {
             request = request.bearer_auth(token);
@@ -967,24 +1047,24 @@ mod platform {
 
         let mut event_source = match EventSource::new(request) {
             Ok(source) => source,
-            Err(_) => return,
+            Err(_) => return false,
         };
 
         // Wait for connected event
         let connected_event = loop {
             let Some(event) = event_source.next().await else {
-                return;
+                return false;
             };
             match event {
                 Ok(Event::Open) => continue,
                 Ok(Event::Message(msg)) if msg.event == "connected" => {
                     match serde_json::from_str::<ConnectedEvent>(&msg.data) {
                         Ok(event) => break event,
-                        Err(_) => return,
+                        Err(_) => return false,
                     }
                 }
                 Ok(Event::Message(_)) => continue,
-                Err(_) => return,
+                Err(_) => return false,
             }
         };
 
@@ -992,7 +1072,7 @@ mod platform {
         let session_secret = connected_event.session_secret.unwrap_or_default();
 
         if session_id.is_empty() || session_secret.is_empty() {
-            return;
+            return false;
         }
 
         let is_reconnect = client.mark_connected(session_id, session_secret);
@@ -1030,6 +1110,7 @@ mod platform {
         }
 
         event_source.close();
+        true
     }
 
     fn request_error(err: reqwest::Error) -> ForgeClientError {

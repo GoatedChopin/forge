@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 use crate::signals::{ForgeSignals, SignalsConfig, setup_auto_capture};
 use crate::{ConnectionState, ForgeClient, ForgeClientConfig};
 
-/// Persisted auth data: tokens + optional viewer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredAuth {
     access_token: String,
@@ -19,7 +18,6 @@ struct StoredAuth {
     viewer: Option<serde_json::Value>,
 }
 
-/// Auth state tracked by the framework.
 #[derive(Debug, Clone)]
 pub enum ForgeAuthState {
     Unauthenticated,
@@ -243,7 +241,6 @@ pub fn ForgeAuthProvider(
     let connection_state = use_context_provider(|| Signal::new(ConnectionState::Disconnected));
     let needs_refresh = use_signal(|| false);
 
-    // Build ForgeClient with auto token provider and auth error handler
     let url_clone = url.clone();
     use_context_provider(move || {
         let auth_for_token = auth_state;
@@ -258,36 +255,49 @@ pub fn ForgeAuthProvider(
         ForgeClient::new(config)
     });
 
-    // Handle 401 errors by attempting token refresh
+    // Must follow use_context_provider above so ForgeClient is available
+    let client: ForgeClient = use_context();
+
     let url_for_refresh = url.clone();
+    let client_for_refresh = client.clone();
     use_effect(move || {
         if !*needs_refresh.read() {
             return;
         }
         let url = url_for_refresh.clone();
         let mut auth = forge_auth;
+        let client = client_for_refresh.clone();
+        let mut needs_refresh_sig = needs_refresh;
         spawn(async move {
-            try_refresh_tokens(&url, &mut auth).await;
+            try_refresh_tokens(&url, &mut auth, &client).await;
+            needs_refresh_sig.set(false);
         });
     });
 
-    // Periodic refresh (default every 40 minutes, configurable via refresh_interval_secs)
+    // Short sleeps (~30 s) instead of one long sleep so browser background-tab
+    // throttling can't push the refresh past token expiry.
     let url_for_periodic = url;
+    let client_for_periodic = client.clone();
     use_future(move || {
         let url = url_for_periodic.clone();
+        let client = client_for_periodic.clone();
         let mut auth = forge_auth;
         async move {
+            let poll_secs: u64 = 30;
+            let mut elapsed: u64 = 0;
             loop {
-                sleep(refresh_interval_secs).await;
+                sleep(poll_secs).await;
+                elapsed += poll_secs;
+                if elapsed < refresh_interval_secs {
+                    continue;
+                }
+                elapsed = 0;
                 if auth.is_authenticated() {
-                    try_refresh_tokens(&url, &mut auth).await;
+                    try_refresh_tokens(&url, &mut auth, &client).await;
                 }
             }
         }
     });
-
-    // Initialize signals (must come after ForgeClient is provided)
-    let client: ForgeClient = use_context();
     let signals_instance = use_context_provider(|| {
         let s = ForgeSignals::new(client.clone(), SignalsConfig::default());
         client.set_signals(s.clone());
@@ -300,15 +310,14 @@ pub fn ForgeAuthProvider(
     rsx! { {children} }
 }
 
-/// Attempt to refresh tokens using an anonymous client.
-///
-/// Only logs out on definitive auth failures (401/403). Network errors
-/// are silently ignored so transient connectivity issues in hospital
-/// networks don't force unnecessary logouts.
-async fn try_refresh_tokens(api_url: &str, auth: &mut ForgeAuth) {
+/// Ignores network errors so transient connectivity issues (hospital
+/// networks, flaky wifi) don't force unnecessary logouts. Only logs out
+/// on definitive 401/403. Reconnects SSE on success so the new token
+/// takes effect immediately.
+async fn try_refresh_tokens(api_url: &str, auth: &mut ForgeAuth, client: &ForgeClient) -> bool {
     let refresh_token = match auth.refresh_token() {
         Some(t) => t,
-        None => return,
+        None => return false,
     };
 
     let anon_client = ForgeClient::new(ForgeClientConfig::new(api_url.to_string()));
@@ -335,6 +344,8 @@ async fn try_refresh_tokens(api_url: &str, auth: &mut ForgeAuth) {
     {
         Ok(resp) => {
             auth.update_tokens(resp.access_token, resp.refresh_token);
+            client.reconnect_sse();
+            true
         }
         Err(ref e)
             if e.code == "UNAUTHORIZED"
@@ -343,15 +354,16 @@ async fn try_refresh_tokens(api_url: &str, auth: &mut ForgeAuth) {
         {
             // Definitive auth failure: token is invalid/expired/revoked.
             auth.logout();
+            false
         }
         Err(_) => {
             // Network or transient error. Keep current tokens and retry
             // on the next refresh cycle rather than forcing a logout.
+            false
         }
     }
 }
 
-/// Platform-specific sleep (works on both WASM and native).
 async fn sleep(secs: u64) {
     #[cfg(target_arch = "wasm32")]
     gloo_timers::future::TimeoutFuture::new((secs * 1000) as u32).await;
@@ -360,7 +372,6 @@ async fn sleep(secs: u64) {
     tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
 }
 
-// Platform-specific auth storage
 #[cfg(target_arch = "wasm32")]
 mod storage {
     use super::StoredAuth;

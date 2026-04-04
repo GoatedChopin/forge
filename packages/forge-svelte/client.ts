@@ -59,6 +59,7 @@ export class ForgeClient {
   private connectionId = 0;
   private hasConnectedBefore = false;
   private connectedTokenHash: string | null = null;
+  private reconnectPromise: Promise<void> | null = null;
   private signals: import("./signals.js").ForgeSignals | null = null;
 
   constructor(config: ForgeClientConfig) {
@@ -100,10 +101,9 @@ export class ForgeClient {
       if (currentConnectionId !== this.connectionId) return;
     }
 
-    // Resolve token BEFORE creating EventSource (token goes in query param)
+    // Token must be resolved before EventSource is created (sent as query param)
     const token = await this.getToken();
 
-    // Check if this connection attempt was superseded
     if (currentConnectionId !== this.connectionId) return;
 
     const params = new URLSearchParams();
@@ -112,7 +112,6 @@ export class ForgeClient {
     const sseUrl = `${this.config.url}/_api/events${params.toString() ? `?${params}` : ""}`;
 
     return new Promise((resolve) => {
-      // Check again after any async work
       if (currentConnectionId !== this.connectionId) {
         resolve();
         return;
@@ -211,7 +210,18 @@ export class ForgeClient {
   }
 
   async reconnect(): Promise<void> {
-    // Close current connection but preserve subscription metadata for re-registration
+    // Coalesce concurrent callers onto one reconnection attempt
+    if (this.reconnectPromise) return this.reconnectPromise;
+
+    this.reconnectPromise = this.doReconnect();
+    try {
+      await this.reconnectPromise;
+    } finally {
+      this.reconnectPromise = null;
+    }
+  }
+
+  private async doReconnect(): Promise<void> {
     const savedMeta = new Map(this.subscriptionMeta);
     const savedCallbacks = new Map(this.subscriptions);
 
@@ -224,7 +234,6 @@ export class ForgeClient {
     this.setConnectionState("disconnected");
     this.reconnectAttempts = 0;
 
-    // Restore subscriptions so they get re-registered on connect
     this.subscriptionMeta = savedMeta;
     this.subscriptions = savedCallbacks;
 
@@ -245,6 +254,14 @@ export class ForgeClient {
 
   async call<T>(functionName: string, args: unknown): Promise<T> {
     const token = await this.getToken();
+
+    // Token rotated since SSE was established; reconnect so subscriptions
+    // pick up the new identity without waiting for a new _registerQuery call.
+    const tokenHash = this.hashToken(token);
+    if (this.sessionId && tokenHash !== this.connectedTokenHash) {
+      this.reconnect();
+    }
+
     const hasFiles = this.containsFiles(args);
     const correlationId = this.signals?.nextCorrelationId();
 
@@ -279,7 +296,6 @@ export class ForgeClient {
       });
     }
 
-    // Trigger auth error callback on 401/403 so the app can refresh or logout
     if (response.status === 401 || response.status === 403) {
       const error: ForgeError = { code: "UNAUTHORIZED", message: "Authentication failed" };
       this.config.onAuthError?.(error);
@@ -309,23 +325,22 @@ export class ForgeClient {
   }
 
   async _registerQuery(subscriptionId: string, functionName: string, args: unknown): Promise<unknown> {
-    // Check if auth changed since connection was established
+    // Must await here (unlike the fire-and-forget in call()) because
+    // registration needs the new session_id before hitting /_api/subscribe.
     const currentToken = await this.getToken();
     const currentHash = this.hashToken(currentToken);
     if (this.sessionId && currentHash !== this.connectedTokenHash) {
       await this.reconnect();
     }
 
-    // Preserve info to re-register after reconnect
     this.subscriptionMeta.set(subscriptionId, { functionName, args, failedAttempts: 0 });
 
-    // Only SSE connections support push-based subscriptions
     if (this.sessionId) {
       const response = await this.registerSseSubscription(subscriptionId, functionName, args);
       return response.data;
     }
 
-    // Without SSE, use one-shot RPC until connection established
+    // No SSE session yet, fall back to one-shot RPC
     return this.call(functionName, args);
   }
 
@@ -362,10 +377,11 @@ export class ForgeClient {
 
     const result = await response.json();
     if (!result.success) {
-      throw new ForgeClientError(
-        result.error?.code ?? "SUBSCRIPTION_FAILED",
-        result.error?.message ?? "Failed to register subscription"
-      );
+      const code = result.error?.code ?? "SUBSCRIPTION_FAILED";
+      if (code === "UNAUTHORIZED" || code === "FORBIDDEN") {
+        this.config.onAuthError?.({ code, message: result.error?.message ?? "Authentication failed" });
+      }
+      throw new ForgeClientError(code, result.error?.message ?? "Failed to register subscription");
     }
     return result;
   }
@@ -436,7 +452,7 @@ export class ForgeClient {
   }
 
   private async reregisterSubscriptions(): Promise<void> {
-    // Snapshot subscription IDs to avoid issues if map is modified during iteration
+    // Snapshot keys; callbacks for failed subs may mutate the map mid-loop
     const subscriptionIds = Array.from(this.subscriptionMeta.keys());
 
     for (const id of subscriptionIds) {

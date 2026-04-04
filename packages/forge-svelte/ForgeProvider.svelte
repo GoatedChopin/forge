@@ -28,13 +28,11 @@
 
   setForgeClient(client);
 
-  // Initialize signals (enabled by default unless explicitly false)
   // svelte-ignore state_referenced_locally -- signalsConfig is stable mount-time config, same as url/getToken
   const signalsCfg = signalsConfig === false ? { enabled: false } : (signalsConfig ?? {});
   const signals = new ForgeSignals(client, signalsCfg);
   setForgeSignals(signals);
 
-  // Wire correlation IDs into RPC calls
   client.setSignals(signals);
 
   const authState: AuthState = $state({ user: null, token: null, loading: true });
@@ -45,7 +43,6 @@
       onConnectionChange?.(state);
     });
 
-    // Connect handles token resolution internally before establishing SSE
     client.connect().then(async () => {
       if (getToken) {
         authState.token = await getToken();
