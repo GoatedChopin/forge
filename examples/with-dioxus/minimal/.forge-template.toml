@@ -10,6 +10,7 @@ rewrite_paths = [
   "Dockerfile",
   "README.md",
   "frontend/Cargo.toml",
+  "frontend/Dioxus.toml",
   "frontend/src/main.rs",
   "frontend/src/layout.rs",
   "frontend/src/pages/home.rs",
@@ -76,6 +77,11 @@ to = "\"{{project_slug}}\""
 files = ["frontend/src/main.rs", "frontend/src/layout.rs", "frontend/src/pages/home.rs", "frontend/tests/home.spec.ts"]
 
 [[replacement]]
+from = 'title = "minimal"'
+to = 'title = "{{project_name}}"'
+files = ["frontend/Dioxus.toml"]
+
+[[replacement]]
 from = "forge-dioxus-minimal-template"
 to = "{{project_slug}}"
 files = ["Dockerfile"]
@@ -83,13 +89,13 @@ files = ["Dockerfile"]
 # Convert workspace dep to standalone versioned dep
 [[replacement]]
 from = 'forge = { workspace = true }'
-to = 'forge = { version = "0.8.1", package = "forgex" }'
+to = 'forge = { version = "{{forge_version}}", package = "forgex" }'
 files = ["Cargo.toml"]
 
 # Convert path dep to published version
 [[replacement]]
 from = 'forge-dioxus = { path = "../../../../packages/forge-dioxus" }'
-to = 'forge-dioxus = { version = "0.8.1" }'
+to = 'forge-dioxus = { version = "{{forge_version}}" }'
 files = ["frontend/Cargo.toml"]
 
 # Use published otel-lgtm image instead of local build context

@@ -586,6 +586,7 @@ pub fn create_project_from_template(
 
     let project_db_name = project_name.replace('-', "_");
     let frontend_package_name = format!("{project_name}-frontend");
+    let forge_version = env!("CARGO_PKG_VERSION");
     let rewrite_vars = HashMap::from([
         ("project_name", project_name),
         ("project_slug", project_name),
@@ -595,6 +596,7 @@ pub fn create_project_from_template(
             "canonical_internal_slug",
             template.canonical_internal_slug.as_str(),
         ),
+        ("forge_version", forge_version),
     ]);
 
     for bundled_file in template.bundled_files()? {

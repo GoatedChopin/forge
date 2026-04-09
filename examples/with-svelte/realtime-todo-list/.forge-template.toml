@@ -74,7 +74,7 @@ files = ["README.md"]
 # Convert workspace dep to standalone versioned dep
 [[replacement]]
 from = 'forge = { workspace = true }'
-to = 'forge = { version = "0.8.1", package = "forgex" }'
+to = 'forge = { version = "{{forge_version}}", package = "forgex" }'
 files = ["Cargo.toml"]
 
 # Use published otel-lgtm image instead of local build context
@@ -107,7 +107,7 @@ files = ["docker-compose.yml"]
 # Convert workspace-relative npm dep to published version
 [[replacement]]
 from = '"file:../../../../packages/forge-svelte"'
-to = '"0.8.1"'
+to = '"{{forge_version}}"'
 files = ["frontend/package.json"]
 
 # Dockerfile binary name
