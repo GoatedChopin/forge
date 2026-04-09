@@ -399,6 +399,42 @@ Organize CSS by component or feature, not in a single monolithic file:
 
 Avoid inline `style:` attributes in RSX except for truly dynamic values (e.g., computed widths). Prefer CSS classes for everything else.
 
+## Optimistic Updates
+
+Forge subscriptions push server state automatically, but some interactions (drag-and-drop, focus switching) need instant local feedback. The pattern is to overlay local "pending" state on top of subscription data:
+
+```rust
+let pending_moves: Signal<HashMap<String, (TaskStatus, i32, f64)>> = use_signal(HashMap::new);
+let server_tasks = use_list_tasks_live();
+
+let tasks = apply_pending_moves(
+    server_tasks.data.clone().unwrap_or_default(),
+    &pending_moves.read(),
+);
+```
+
+**Critical: pending entries must expire.** Without expiry, stale entries permanently override server state, breaking cross-device sync. The server debounce (50ms) + client subscription debounce (120ms) means round-trip takes ~200ms. A 2-3 second TTL gives plenty of margin:
+
+```rust
+fn apply_pending_moves(
+    mut tasks: Vec<Task>,
+    pending_moves: &HashMap<String, (TaskStatus, i32, f64)>,
+) -> Vec<Task> {
+    let now = now_secs();
+    for task in &mut tasks {
+        if let Some((status, position, created_at)) = pending_moves.get(&task.id) {
+            if now - created_at < 3.0 {
+                task.status = status.clone();
+                task.position = *position;
+            }
+        }
+    }
+    tasks
+}
+```
+
+Without this, Device A focuses Task-1 (stored in its local pending map), then Device B focuses Task-2. The server broadcasts correct state to both, but Device A's stale entry overrides Task-1 back to Focused. The result: Device A shows two focused tasks and appears out of sync.
+
 ## Common Mistakes
 
 - Editing `frontend/src/forge/*` (overwritten by `forge generate`)

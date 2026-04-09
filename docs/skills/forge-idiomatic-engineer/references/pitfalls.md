@@ -99,6 +99,9 @@ Reactive stores (`$`-suffixed in Svelte, `use_*_live` in Dioxus) handle subscrip
 **Forgetting `ForgeProvider`/`ForgeAuthProvider` at the root.**
 Without it, `getForgeClient()` / `use_forge_client()` returns nothing and components silently fail.
 
+**Optimistic updates without expiry (Dioxus).**
+If you overlay local state on top of `use_*_live()` data for optimistic UI (e.g., a `pending_moves` HashMap), entries must expire or be cleaned up once the server confirms them. Without expiry, stale entries permanently override incoming server state. This breaks cross-device sync: Device A focuses a task, its local override persists, and when Device B later changes focus, Device A's stale overlay fights the broadcast. Fix: timestamp each entry and ignore entries older than a few seconds, or remove entries when server data matches.
+
 **Dioxus: not cloning Mutation handles before async closures.**
 Mutation handles must be cloned into the closure's scope before `spawn` or async blocks.
 
