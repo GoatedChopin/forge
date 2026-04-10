@@ -1,3 +1,12 @@
+//! Forge runtime engine.
+//!
+//! Implements the Axum gateway, job worker, workflow executor, cron scheduler,
+//! daemon runner, reactivity system, cluster coordination, rate limiting,
+//! observability, and product analytics (signals).
+//!
+//! The runtime wires together types from `forge-core` into a production server
+//! started via `Forge::builder().auto_register().build()?.run().await`.
+
 pub use sqlx;
 
 pub mod cluster;

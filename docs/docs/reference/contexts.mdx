@@ -142,6 +142,10 @@ Transactional database access with HTTP client and job/workflow dispatch.
 | `cancel_job` | `async fn cancel_job(&self, job_id: Uuid, reason: Option<String>) -> Result<bool>` | Request cancellation for a job |
 | `start_workflow` | `async fn start_workflow<T: Serialize>(&self, workflow_name: &str, input: T) -> Result<Uuid>` | Start a workflow |
 | `issue_token` | `fn issue_token(&self, claims: &Claims) -> Result<String>` | Issue HMAC-signed JWT (requires HMAC auth config) |
+| `issue_token_pair` | `async fn issue_token_pair(&self, user_id: Uuid, roles: &[&str]) -> Result<TokenPair>` | Issue access + refresh token pair using TTLs from config |
+| `rotate_refresh_token` | `async fn rotate_refresh_token(&self, token: &str) -> Result<TokenPair>` | Atomically invalidate old refresh token and issue a new pair (single-use rotation) |
+| `revoke_refresh_token` | `async fn revoke_refresh_token(&self, token: &str) -> Result<()>` | Revoke a single refresh token |
+| `revoke_all_refresh_tokens` | `async fn revoke_all_refresh_tokens(&self, user_id: Uuid) -> Result<()>` | Revoke all refresh tokens for a user (password change, account deletion) |
 | `is_transactional` | `fn is_transactional(&self) -> bool` | Check if running inside a transaction |
 | `env` | `fn env(&self, key: &str) -> Option<String>` | Get environment variable |
 | `env_or` | `fn env_or(&self, key: &str, default: &str) -> String` | Get env var with default |
@@ -483,6 +487,7 @@ Metadata about the incoming request. Available on `QueryContext`, `MutationConte
 |-------|------|-------------|
 | `request_id` | `Uuid` | Unique request identifier |
 | `trace_id` | `String` | Distributed tracing ID |
+| `correlation_id` | `Option<String>` | Client-provided correlation ID from `x-correlation-id` header. Links frontend events (Signals) to backend RPC calls for end-to-end tracing. |
 | `client_ip` | `Option<String>` | Client IP address |
 | `user_agent` | `Option<String>` | User agent string |
 | `timestamp` | `DateTime<Utc>` | Request timestamp |

@@ -171,8 +171,11 @@ pub async fn get_profile(ctx: &QueryContext) -> Result<Profile> {
 | `auth.has_role("role")` | `bool` | Check if user has role |
 | `auth.require_role("role")` | `Result<()>` | Require role or return 403 |
 | `auth.claim("key")` | `Option<&Value>` | Get custom claim by key |
+| `auth.claims()` | `&HashMap<String, Value>` | Get all custom JWT claims |
 | `auth.tenant_id()` | `Option<Uuid>` | Read the `tenant_id` custom claim as a UUID. Returns `None` if the claim is absent or not a valid UUID |
 | `auth.roles()` | `&[String]` | Get all roles |
+| `auth.principal_id()` | `Option<String>` | Stable principal identifier (prefers `sub`, falls back to `user_id`). Used for ownership tracking in jobs and workflows. |
+| `auth.is_admin()` | `bool` | Check if principal has the `"admin"` role |
 
 ## Configuration
 
@@ -217,13 +220,19 @@ When auth is configured, Forge generates a Svelte auth store with localStorage p
 ```typescript
 import { auth, getToken } from '$lib/forge';
 
-// After login
-auth.setAuth(token, { id: user.id, email: user.email });
+// After login (with refresh token)
+auth.setAuth(accessToken, refreshToken, { id: user.id, email: user.email });
 
 // Check auth state
 if (auth.isAuthenticated) {
   console.log(auth.user.email);
 }
+
+// Update tokens after refresh
+auth.updateTokens(newAccessToken, newRefreshToken);
+
+// Start automatic refresh loop (calls your refresh mutation periodically)
+auth.startRefreshLoop('http://localhost:9081', 40 * 60 * 1000); // every 40 minutes
 
 // On logout
 auth.clearAuth();
@@ -235,11 +244,17 @@ The generated store:
 
 ```typescript
 interface AuthStore {
-  token: string | null;          // Current JWT
-  user: User | null;             // User object you passed to setAuth
-  isAuthenticated: boolean;      // true when token exists
-  setAuth(token: string, user: User): void;
+  token: string | null;              // Current access token
+  refreshToken: string | null;      // Current refresh token
+  user: User | null;                 // User object you passed to setAuth
+  isAuthenticated: boolean;          // true when token exists
+  setAuth(token: string, refreshToken: string, user: User): void;
+  updateTokens(token: string, refreshToken: string): void;
+  updateUser(user: User): void;
   clearAuth(): void;
+  startRefreshLoop(apiUrl: string, intervalMs?: number): void;
+  tryRefresh(): Promise<boolean>;
+  handleAuthError(): void;           // Coalesces concurrent 401s
 }
 
 export const auth: AuthStore;

@@ -133,16 +133,17 @@ Without pool isolation configured, everything shares the primary pool. With it c
 | `cors_origins`         | string[] | `[]`                              | Allowed CORS origins (use `["*"]` for any)     |
 | `quiet_routes`         | string[] | `[]`                              | Routes excluded from traces, metrics, and logs |
 | `sse_max_sessions`     | usize    | `10000`                           | Maximum concurrent SSE sessions                |
+| `max_body_size`        | string   | `"20mb"`                          | Global upload size limit. Supports `b`, `kb`, `mb`, `gb` suffixes. Per-mutation `max_size` overrides this. |
 
 #### Request Body Limits
 
-These limits are hard-coded and not configurable:
+| Payload        | Default | Configurable                                              |
+| -------------- | ------- | --------------------------------------------------------- |
+| JSON body      | 1 MiB   | Not configurable                                          |
+| Multipart total| 20 MiB  | `gateway.max_body_size` in forge.toml                     |
+| Per mutation   | -       | `#[forge::mutation(max_size = "200mb")]` per handler      |
 
-| Payload        | Limit   |
-| -------------- | ------- |
-| JSON body      | 1 MiB   |
-| Multipart total| 20 MiB  |
-| Per file       | 10 MiB  |
+The per-mutation `max_size` attribute overrides the global `max_body_size` for that specific mutation. Other fixed limits: 20 upload fields per request, 32 concurrent in-flight uploads.
 
 ### [function]
 

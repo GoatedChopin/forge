@@ -58,11 +58,13 @@ The macro validates your code at compile time. Using `tokio::sleep()` with durat
 
 | Attribute | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `version` | `u32` | `1` | Workflow version (for parallel deployments) |
+| `name` | `"string"` | fn name | Stable workflow identity. Two versions share the same name. |
+| `version` | `"string"` | `"v1"` | Freeform version label (`"2026-05"`, `"v2"`, `"1.0.0"`). Paired with `name` to form the unique definition key. |
+| `active` | flag | `true` | This version handles new runs. At most one active version per name. Default when neither flag is set. |
+| `deprecated` | flag | `false` | Keeps executing in-flight runs but rejects new starts. Cannot combine with `active`. |
 | `timeout` | `"duration"` | `"24h"` | Maximum workflow lifetime |
-| `public` | flag | - | Skip authentication |
+| `public` | flag | `false` | Skip authentication |
 | `require_role("x")` | string | - | Require specific role |
-| `deprecated` | flag | - | Mark workflow as deprecated |
 
 Duration formats: `30s`, `5m`, `1h`, `7d`, `30d`
 
@@ -313,21 +315,21 @@ Deploy workflow changes safely with versioning:
 
 ```rust
 // Old version continues running existing workflows
-#[forge::workflow(version = 1, deprecated)]
+#[forge::workflow(name = "user_signup", version = "v1", deprecated)]
 pub async fn user_signup_v1(ctx: &WorkflowContext, user: User) -> Result<()> {
     // Original implementation
     Ok(())
 }
 
 // New version handles new workflows
-#[forge::workflow(version = 2)]
+#[forge::workflow(name = "user_signup", version = "v2", active)]
 pub async fn user_signup(ctx: &WorkflowContext, user: User) -> Result<()> {
     // Updated implementation with new steps
     Ok(())
 }
 ```
 
-The version is recorded when a workflow is started. On resume, the runtime loads the handler matching the recorded version, so in-flight workflows always run against the code they started with. Mark old versions `deprecated` to prevent new starts while existing runs finish.
+The version and signature are recorded when a workflow is started. On resume, the runtime loads the handler matching the exact version and signature, so in-flight workflows always run against the code they started with. Mark old versions `deprecated` to prevent new starts while existing runs finish. Keep deprecated handlers deployed until all their in-flight runs complete.
 
 ## Context Methods
 

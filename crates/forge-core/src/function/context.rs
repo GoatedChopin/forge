@@ -307,6 +307,7 @@ impl<'c> sqlx::Executor<'c> for &'c mut ForgeConn<'_> {
     }
 }
 
+/// A job buffered for dispatch after transaction commit.
 #[derive(Debug, Clone)]
 pub struct PendingJob {
     pub id: Uuid,
@@ -319,6 +320,7 @@ pub struct PendingJob {
     pub worker_capability: Option<String>,
 }
 
+/// A workflow buffered for dispatch after transaction commit.
 #[derive(Debug, Clone)]
 pub struct PendingWorkflow {
     pub id: Uuid,
@@ -327,6 +329,10 @@ pub struct PendingWorkflow {
     pub owner_subject: Option<String>,
 }
 
+/// Buffer for jobs and workflows dispatched during a transactional mutation.
+///
+/// Entries are flushed to the database atomically after the mutation transaction commits.
+/// If the transaction rolls back, buffered dispatches are discarded.
 #[derive(Default)]
 pub struct OutboxBuffer {
     pub jobs: Vec<PendingJob>,

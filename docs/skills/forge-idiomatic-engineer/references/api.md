@@ -17,9 +17,10 @@ Generated struct: `{PascalCase}Query`. Trait: `ForgeQuery`.
 | `timeout = 30` | u64 | — | Seconds (bare integer, not quoted). For HTTP-capable handlers, an explicit timeout also becomes the default outbound HTTP timeout for `ctx.http()` |
 | `rate_limit(requests=100, per="1m", key="user")` | group | — | Keys: `user`, `ip`, `tenant`, `user_action`, `global` |
 | `log = "info"` | string | — | Must be quoted string, not bare flag |
+| `unscoped` | flag | false | Skip compile-time user_id/owner_id scope enforcement |
 | `tables = ["t1","t2"]` | array | auto | Override auto-extracted SQL table deps |
 
-Signature: `async fn name(ctx: &QueryContext, ...) -> Result<T>`. SQL tables and columns auto-extracted at compile time for reactive invalidation.
+Signature: `async fn name(ctx: &QueryContext, ...) -> Result<T>`. SQL tables and columns auto-extracted at compile time for reactive invalidation. Private queries must filter by `user_id` or `owner_id` in SQL unless `unscoped`.
 
 ### `#[forge::mutation]`
 
@@ -34,6 +35,7 @@ Generated struct: `{PascalCase}Mutation`. Trait: `ForgeMutation`.
 | `max_size = "200mb"` | string | — |
 | `rate_limit(...)` | group | — |
 | `log = "info"` | string | — |
+| `unscoped` | flag | false |
 
 Signature: `async fn name(ctx: &MutationContext, ...) -> Result<T>`. Compile-time check: if body contains `dispatch_job` or `start_workflow` without `transactional`, hard error.
 
@@ -195,6 +197,10 @@ All duration strings: `500ms`, `30s`, `5m`, `2h`, `7d`, or bare number (= second
 | `start_workflow` | — | yes | — | — | — | yes | — | yes |
 | `cancel_job` | — | yes | — | — | — | — | yes | — |
 | `issue_token` | — | yes | — | — | — | — | — | — |
+| `issue_token_pair` | — | yes | — | — | — | — | — | — |
+| `rotate_refresh_token` | — | yes | — | — | — | — | — | — |
+| `revoke_refresh_token` | — | yes | — | — | — | — | — | — |
+| `revoke_all_refresh_tokens` | — | yes | — | — | — | — | — | — |
 | `step()`/`parallel()` | — | — | — | — | yes | — | — | — |
 | `sleep()`/`wait_for_event()` | — | — | — | — | yes | — | — | — |
 | `heartbeat()` | — | — | yes | — | — | yes | — | — |

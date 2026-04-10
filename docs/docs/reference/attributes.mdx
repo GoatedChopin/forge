@@ -157,6 +157,7 @@ Transactional write operations.
 | `require_role("name")` | `string` | none | Require specific role (returns 403 if missing) |
 | `transactional` | flag | `false` | Wrap in database transaction (required if dispatching jobs) |
 | `timeout` | `u64` | none | Handler timeout in seconds; if explicitly set it also becomes the default outbound HTTP timeout for `ctx.http()` |
+| `max_size` | `"size"` | none | Maximum upload size for this mutation (`"100mb"`, `"1gb"`). Overrides the global `max_body_size` setting. Supports `b`, `kb`, `mb`, `gb` suffixes (case-insensitive). |
 | `log` | `"level"` | none | Log level (`trace`, `debug`, `info`, `warn`, `error`, `off`). Requires a quoted value (e.g., `log = "debug"`); a bare `log` without a value is silently accepted but has no effect. |
 | `unscoped` | flag | `false` | Opt out of compile-time scope checking. By default, private queries must filter by `user_id` or `owner_id` in SQL. This attribute disables that check for admin or shared data queries. |
 | `rate_limit(...)` | config | none | Rate limiting configuration (same as query) |
@@ -419,20 +420,19 @@ pub async fn daily_report(ctx: &CronContext) -> Result<()> {
 
 Multi-step durable processes with compensation.
 
-| Attribute              | Type         | Default | Description                                         |
-| ---------------------- | ------------ | ------- | --------------------------------------------------- |
-| `public`               | flag         | `false` | Allow start without authentication                  |
-| `require_role("name")` | `string`     | none    | Require role to start                               |
-| `timeout`              | `"duration"` | `"24h"` | Maximum workflow duration (`"1h"`, `"7d"`, `"30d"`); if explicitly set it also becomes the default outbound HTTP timeout for `ctx.http()` |
+| Attribute              | Type         | Default  | Description                                         |
+| ---------------------- | ------------ | -------- | --------------------------------------------------- |
+| `name`                 | `"string"`   | fn name  | Stable workflow identity. Two versions share the same name. |
+| `version`              | `"string"`   | `"v1"`   | Freeform version label (e.g., `"2026-05"`, `"v2"`, `"1.0.0"`). Paired with `name` to form the unique definition key. |
+| `active`               | flag         | `true`   | This version handles new runs. At most one active version per name. Default when neither `active` nor `deprecated` is set. |
+| `deprecated`           | flag         | `false`  | Keeps executing in-flight runs but rejects new starts. Cannot combine with `active` (compile error). |
+| `timeout`              | `"duration"` | `"24h"`  | Maximum workflow duration (`"1h"`, `"7d"`, `"30d"`); if explicitly set it also becomes the default outbound HTTP timeout for `ctx.http()` |
+| `public`               | flag         | `false`  | Allow start without authentication                  |
+| `require_role("name")` | `string`     | none     | Require role to start                               |
 
-### Duration Format
+### Workflow Signatures
 
-| Suffix | Unit    |
-| ------ | ------- |
-| `s`    | seconds |
-| `m`    | minutes |
-| `h`    | hours   |
-| `d`    | days    |
+A **signature** is derived automatically at compile time from the workflow's persisted contract: step keys, wait keys, timeout, and input/output types. The runtime stamps each run with the version and signature. On resume, the handler must match the exact version and signature the run was started with. If you add, remove, or rename steps, the signature changes — deploy a new `version` for the updated handler and mark the old version `deprecated` until its in-flight runs drain.
 
 ### Compile-Time Enforcement
 
@@ -448,7 +448,7 @@ Short sleeps for polling loops are allowed.
 ### Example
 
 ```rust
-#[forge::workflow(timeout = "7d", require_role("admin"))]
+#[forge::workflow(name = "order_fulfillment", version = "v1", timeout = "7d", require_role("admin"))]
 pub async fn order_fulfillment(ctx: &WorkflowContext, order: Order) -> Result<FulfillmentResult> {
     let payment = ctx.step("charge_card", || async {
         charge(&order.payment).await

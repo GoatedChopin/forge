@@ -1,3 +1,13 @@
+//! Core types, traits, and contexts for the Forge framework.
+//!
+//! This crate defines all handler traits ([`function::ForgeQuery`], [`function::ForgeMutation`],
+//! [`job::ForgeJob`], [`cron::ForgeCron`], [`workflow::ForgeWorkflow`], [`daemon::ForgeDaemon`],
+//! [`webhook::ForgeWebhook`], [`mcp::ForgeMcpTool`]), execution contexts, error types,
+//! configuration, and testing infrastructure.
+//!
+//! Library code depends on `forge-core` for types. The runtime (`forge-runtime`) implements
+//! the execution engine. Proc macros (`forge-macros`) generate trait implementations.
+
 pub mod auth;
 pub mod cluster;
 pub mod config;

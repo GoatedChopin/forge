@@ -359,7 +359,7 @@ When the auth token changes, the client detects it and reconnects:
 
 ```typescript
 // In auth.svelte.ts
-auth.setAuth(newToken, user); // Triggers reconnect
+auth.setAuth(newAccessToken, newRefreshToken, user); // Triggers reconnect
 auth.clearAuth(); // Triggers reconnect
 ```
 
