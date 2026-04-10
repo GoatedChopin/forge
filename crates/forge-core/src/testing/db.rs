@@ -255,10 +255,10 @@ impl IsolatedTestDb {
             .map_err(ForgeError::Sql)?;
 
         // Force disconnect other connections and drop
-        let _ = sqlx::query(&format!(
-            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{}'",
-            self.db_name
-        ))
+        let _ = sqlx::query(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1",
+        )
+        .bind(&self.db_name)
         .execute(&pool)
         .await;
 

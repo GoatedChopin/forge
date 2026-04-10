@@ -598,7 +598,19 @@ impl WorkflowExecutor {
     ) -> forge_core::Result<()> {
         let valid_from = Self::valid_source_states(&status);
 
-        if !valid_from.is_empty() {
+        if valid_from.is_empty() {
+            // Entry-only state (Created) – unconditional update.
+            sqlx::query!(
+                "UPDATE forge_workflow_runs SET status = $1 WHERE id = $2",
+                status.as_str(),
+                run_id,
+            )
+            .execute(&self.pool)
+            .await
+            .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+        } else {
+            // Fetch current status, then atomically update only if the row
+            // still has the expected status, closing the TOCTOU window.
             let current = sqlx::query_scalar!(
                 "SELECT status FROM forge_workflow_runs WHERE id = $1",
                 run_id,
@@ -607,8 +619,8 @@ impl WorkflowExecutor {
             .await
             .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
 
-            match current {
-                Some(ref s) if valid_from.contains(&s.as_str()) => {}
+            let current_status = match current {
+                Some(ref s) if valid_from.contains(&s.as_str()) => s.clone(),
                 Some(_) => {
                     return Err(forge_core::ForgeError::InvalidState(format!(
                         "Cannot transition workflow {} to {:?}: invalid current state",
@@ -621,17 +633,28 @@ impl WorkflowExecutor {
                         run_id
                     )));
                 }
+            };
+
+            // Atomic check-and-set: WHERE includes the expected current status
+            // so a concurrent change causes 0 rows affected instead of a silent
+            // state machine violation.
+            let result = sqlx::query!(
+                "UPDATE forge_workflow_runs SET status = $1 WHERE id = $2 AND status = $3",
+                status.as_str(),
+                run_id,
+                current_status,
+            )
+            .execute(&self.pool)
+            .await
+            .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+
+            if result.rows_affected() == 0 {
+                return Err(forge_core::ForgeError::InvalidState(format!(
+                    "Cannot transition workflow {} to {:?}: state changed concurrently",
+                    run_id, status
+                )));
             }
         }
-
-        sqlx::query!(
-            "UPDATE forge_workflow_runs SET status = $1 WHERE id = $2",
-            status.as_str(),
-            run_id,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
 
         Ok(())
     }

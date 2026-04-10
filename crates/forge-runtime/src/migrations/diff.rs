@@ -1,5 +1,11 @@
 use forge_core::schema::{FieldDef, TableDef};
 
+/// Quote a SQL identifier to prevent injection via malformed names.
+/// Doubles any embedded double-quotes per the SQL standard.
+fn quote_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
 /// Represents the difference between two schemas.
 ///
 /// The diff algorithm compares the Rust schema (source of truth) against the
@@ -83,7 +89,9 @@ impl SchemaDiff {
                                         ),
                                         sql: format!(
                                             "ALTER TABLE {} ALTER COLUMN {} TYPE {};",
-                                            rust_table.name, rust_field.column_name, rust_type
+                                            quote_ident(&rust_table.name),
+                                            quote_ident(&rust_field.column_name),
+                                            rust_type
                                         ),
                                     });
                                 }
@@ -105,7 +113,8 @@ impl SchemaDiff {
                                 details: format!("Drop column {}", db_col.name),
                                 sql: format!(
                                     "ALTER TABLE {} DROP COLUMN {};",
-                                    rust_table.name, db_col.name
+                                    quote_ident(&rust_table.name),
+                                    quote_ident(&db_col.name)
                                 ),
                             });
                         }
@@ -123,7 +132,7 @@ impl SchemaDiff {
                     action: DiffAction::DropTable,
                     table_name: db_table.name.clone(),
                     details: format!("Drop table {}", db_table.name),
-                    sql: format!("DROP TABLE {};", db_table.name),
+                    sql: format!("DROP TABLE {};", quote_ident(&db_table.name)),
                 });
             }
         }
@@ -134,8 +143,8 @@ impl SchemaDiff {
     fn add_column_sql(table_name: &str, field: &FieldDef) -> String {
         let mut sql = format!(
             "ALTER TABLE {} ADD COLUMN {} {}",
-            table_name,
-            field.column_name,
+            quote_ident(table_name),
+            quote_ident(&field.column_name),
             field.sql_type.to_sql()
         );
 

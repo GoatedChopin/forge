@@ -434,7 +434,7 @@ pub async fn oauth_authorize_get(
             "{{scope}}",
             &html_escape(params.scope.as_deref().unwrap_or("")),
         )
-        .replace("{{auth_mode}}", auth_mode)
+        .replace("{{auth_mode}}", &html_escape(auth_mode))
         .replace("{{authorize_url}}", "/_api/oauth/authorize")
         .replace("{{error_message}}", "");
 
@@ -611,26 +611,23 @@ pub async fn oauth_authorize_post(
         .fetch_optional(&state.pool)
         .await;
 
-        match row {
-            Ok(Some(r)) if r.password_hash.is_some() => {
-                match bcrypt::verify(
-                    password,
-                    r.password_hash.as_ref().expect("guarded by is_some check"),
-                ) {
-                    Ok(true) => {
-                        user_id = r.id;
-                    }
-                    _ => {
-                        return authorize_error_redirect(
-                            &form.redirect_uri,
-                            form.state.as_deref(),
-                            "access_denied",
-                            "Invalid email or password",
-                        );
-                    }
-                }
-            }
-            _ => {
+        // Constant-time login: always run bcrypt even if user not found to
+        // prevent timing side-channels that reveal valid email addresses.
+        // Cost 10 dummy hash generated via: bcrypt::hash("dummy", 10)
+        const DUMMY_HASH: &str =
+            "$2b$10$x5F0VyTQ6qjX5YKr.WPmXuGNQzGqGN1pYnHvMBRz5bFm3VUSqJGi";
+        let (found_id, hash) = match &row {
+            Ok(Some(r)) if r.password_hash.is_some() => (
+                Some(r.id),
+                r.password_hash.as_deref().unwrap_or(DUMMY_HASH),
+            ),
+            _ => (None, DUMMY_HASH),
+        };
+        let password_valid = bcrypt::verify(password, hash).unwrap_or(false);
+        if password_valid {
+            if let Some(id) = found_id {
+                user_id = id;
+            } else {
                 return authorize_error_redirect(
                     &form.redirect_uri,
                     form.state.as_deref(),
@@ -638,6 +635,13 @@ pub async fn oauth_authorize_post(
                     "Invalid email or password",
                 );
             }
+        } else {
+            return authorize_error_redirect(
+                &form.redirect_uri,
+                form.state.as_deref(),
+                "access_denied",
+                "Invalid email or password",
+            );
         }
     } else {
         return (

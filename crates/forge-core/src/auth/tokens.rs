@@ -126,7 +126,10 @@ pub async fn rotate_refresh_token_with_client(
 ) -> Result<TokenPair> {
     let hash = hash_token(old_refresh_token);
 
-    // Atomically delete only non-expired tokens, optionally matching client_id.
+    // Atomically delete only non-expired tokens, matching client_id binding.
+    // When client_id is provided, require exact match. When omitted, only
+    // allow rotation of tokens that were NOT bound to any client (prevents
+    // an attacker from bypassing client binding by omitting client_id).
     let row = if let Some(cid) = client_id {
         sqlx::query_scalar!(
             "DELETE FROM forge_refresh_tokens WHERE token_hash = $1 AND expires_at > now() AND client_id = $2 RETURNING user_id",
@@ -137,7 +140,7 @@ pub async fn rotate_refresh_token_with_client(
         .await
     } else {
         sqlx::query_scalar!(
-            "DELETE FROM forge_refresh_tokens WHERE token_hash = $1 AND expires_at > now()\n         RETURNING user_id",
+            "DELETE FROM forge_refresh_tokens WHERE token_hash = $1 AND expires_at > now() AND client_id IS NULL RETURNING user_id",
             hash
         )
         .fetch_optional(pool)

@@ -179,6 +179,14 @@ impl HmacTokenIssuer {
         if secret.is_empty() {
             return None;
         }
+        if secret.len() < 32 {
+            tracing::warn!(
+                secret_len = secret.len(),
+                "JWT secret is shorter than 32 bytes. This weakens HMAC security \
+                 and may allow brute-force attacks. Use a cryptographically random \
+                 secret of at least 32 bytes (e.g. `openssl rand -base64 32`)."
+            );
+        }
         Some(Self {
             secret,
             algorithm: config.algorithm.into(),

@@ -103,7 +103,11 @@ pub async fn rpc_multipart_handler(
             );
         }
 
-        if name.contains("..") || name.contains('/') || name.contains('\\') {
+        if name.contains("..")
+            || name.contains('/')
+            || name.contains('\\')
+            || name.contains(|c: char| c.is_control())
+        {
             return multipart_error(
                 StatusCode::BAD_REQUEST,
                 "INVALID_FIELD",
@@ -183,10 +187,24 @@ pub async fn rpc_multipart_handler(
                 }
             }
         } else {
-            let filename = field
+            let raw_filename = field
                 .file_name()
                 .map(String::from)
                 .unwrap_or_else(|| name.clone());
+            // Sanitize filename: strip path components to prevent path traversal
+            let filename = raw_filename
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or(&raw_filename)
+                .replace("..", "_")
+                .to_string();
+            if filename.is_empty() {
+                return multipart_error(
+                    StatusCode::BAD_REQUEST,
+                    "INVALID_FILENAME",
+                    "Filename is empty after sanitization",
+                );
+            }
             let content_type = field
                 .content_type()
                 .map(String::from)

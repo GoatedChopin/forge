@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "DELETE FROM forge_refresh_tokens WHERE token_hash = $1 AND expires_at > now()\n         RETURNING user_id",
+  "query": "DELETE FROM forge_refresh_tokens WHERE token_hash = $1 AND expires_at > now() AND client_id IS NULL RETURNING user_id",
   "describe": {
     "columns": [
       {
@@ -18,5 +18,5 @@
       false
     ]
   },
-  "hash": "38f0cbe746884d44ddf711bc242efed4c72a3975a48f4d20e5d92bc96b22a2b4"
+  "hash": "8d4ccc3353d1cf2b9bd554b244e634e6ffeadafa1569c444275825db76501480"
 }
