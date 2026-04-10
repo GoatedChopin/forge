@@ -99,11 +99,20 @@ Reactive stores (`$`-suffixed in Svelte, `use_*_live` in Dioxus) handle subscrip
 **Forgetting `ForgeProvider`/`ForgeAuthProvider` at the root.**
 Without it, `getForgeClient()` / `use_forge_client()` returns nothing and components silently fail.
 
+**Silently dropping mutation errors.**
+Most apps do `let _ = mutation.call(args).await` and never show errors to users. Use `.fire()` (Dioxus) or `fireMutation()` (Svelte) with a global `on_mutation_error` / `onMutationError` handler on the provider. This catches validation errors, network failures, and server errors in one place.
+
 **Optimistic updates without expiry (Dioxus).**
-If you overlay local state on top of `use_*_live()` data for optimistic UI (e.g., a `pending_moves` HashMap), entries must expire or be cleaned up once the server confirms them. Without expiry, stale entries permanently override incoming server state. This breaks cross-device sync: Device A focuses a task, its local override persists, and when Device B later changes focus, Device A's stale overlay fights the broadcast. Fix: timestamp each entry and ignore entries older than a few seconds, or remove entries when server data matches.
+If you overlay local state on top of `use_*_live()` data for optimistic UI (e.g., a `pending_moves` HashMap), entries must expire or be cleaned up once the server confirms them. Without expiry, stale entries permanently override incoming server state. This breaks cross-device sync: Device A focuses a task, its local override persists, and when Device B later changes focus, Device A's stale overlay fights the broadcast. Fix: use `use_optimistic()` which handles TTL automatically, or timestamp each entry and ignore entries older than a few seconds.
+
+**Optimistic TTL too low.**
+The default 3s TTL in `use_optimistic` / `createOptimisticMutation` accounts for server debounce (50ms) + client subscription debounce (120ms) + network latency. If your SSE latency is higher (slow network, large payloads), increase the TTL or you'll see the UI flicker back and forth.
 
 **Dioxus: not cloning Mutation handles before async closures.**
-Mutation handles must be cloned into the closure's scope before `spawn` or async blocks.
+Mutation handles must be cloned into the closure's scope before `spawn` or async blocks. Use `.fire()` to avoid this entirely.
+
+**Dioxus: reading signals inside spawned async closures.**
+`spawn(async move { sig.read() })` can panic if the component unmounted. Read signals before entering the async block and capture the values instead.
 
 **Dioxus: wrong TLS feature for non-WASM targets.**
 Use `reqwest` with `rustls-tls` for native targets. The default OpenSSL may not be available in all build environments.

@@ -5,6 +5,7 @@ export interface ForgeClientConfig {
   url: string;
   getToken?: () => string | null | Promise<string | null>;
   onAuthError?: (error: ForgeError) => void;
+  onMutationError?: (error: ForgeClientError) => void;
   timeout?: number;
 }
 
@@ -77,6 +78,11 @@ export class ForgeClient {
 
   getUrl(): string {
     return this.config.url;
+  }
+
+  /** Notify the registered mutation error handler, if any. Called by fireMutation(). */
+  notifyMutationError(error: ForgeClientError): void {
+    this.config.onMutationError?.(error);
   }
 
   getConnectionState(): ConnectionState {

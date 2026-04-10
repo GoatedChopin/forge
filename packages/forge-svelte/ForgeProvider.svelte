@@ -12,18 +12,20 @@
     url: string;
     getToken?: () => string | null | Promise<string | null>;
     onAuthError?: (error: import('./types.js').ForgeError) => void;
+    onMutationError?: (error: import('./client.js').ForgeClientError) => void;
     onConnectionChange?: (state: ConnectionState) => void;
     signals?: SignalsConfig | false;
     children: Snippet;
   }
 
-  let { url, getToken, onAuthError, onConnectionChange, signals: signalsConfig, children }: Props = $props();
+  let { url, getToken, onAuthError, onMutationError, onConnectionChange, signals: signalsConfig, children }: Props = $props();
 
   // svelte-ignore state_referenced_locally -- url and getToken are stable config, not reactive state
   const client = createForgeClient({
     url,
     getToken,
     onAuthError,
+    onMutationError,
   });
 
   setForgeClient(client);

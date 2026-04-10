@@ -18,12 +18,15 @@ export {
   createSubscriptionStore,
   createJobStore,
   createWorkflowStore,
+  fireMutation,
+  createOptimisticMutation,
   type Readable,
   type ConnectionStatusStore,
   type QueryStore,
   type SubscriptionStore,
   type JobStore,
   type WorkflowStore,
+  type OptimisticMutationStore,
 } from "./stores.js";
 export { ForgeSignals, type SignalsConfig } from "./signals.js";
 export { getForgeSignals, setForgeSignals } from "./signals-context.js";

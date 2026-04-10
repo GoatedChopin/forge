@@ -16,6 +16,7 @@ use crate::types::{
 
 type TokenProvider = Rc<dyn Fn() -> Option<String>>;
 type AuthErrorHandler = Rc<dyn Fn(ForgeError)>;
+type MutationErrorHandler = Rc<dyn Fn(ForgeClientError)>;
 type EventSender = futures_channel::mpsc::UnboundedSender<SseDispatch>;
 type ConnectWaiter = futures_channel::oneshot::Sender<Result<(), ForgeClientError>>;
 
@@ -60,6 +61,7 @@ pub struct ForgeClientConfig {
     pub url: String,
     pub get_token: Option<TokenProvider>,
     pub on_auth_error: Option<AuthErrorHandler>,
+    pub on_mutation_error: Option<MutationErrorHandler>,
     pub(crate) connection_state: Option<Signal<ConnectionState>>,
 }
 
@@ -69,6 +71,7 @@ impl ForgeClientConfig {
             url: url.into(),
             get_token: None,
             on_auth_error: None,
+            on_mutation_error: None,
             connection_state: None,
         }
     }
@@ -83,6 +86,15 @@ impl ForgeClientConfig {
         handler: impl Fn(ForgeError) + 'static,
     ) -> Self {
         self.on_auth_error = Some(Rc::new(handler));
+        self
+    }
+
+    /// Register a callback invoked when [`Mutation::fire`] encounters an error.
+    pub fn with_mutation_error_handler(
+        mut self,
+        handler: impl Fn(ForgeClientError) + 'static,
+    ) -> Self {
+        self.on_mutation_error = Some(Rc::new(handler));
         self
     }
 
@@ -101,6 +113,7 @@ struct ForgeClientInner {
     url: String,
     get_token: Option<TokenProvider>,
     on_auth_error: Option<AuthErrorHandler>,
+    on_mutation_error: Option<MutationErrorHandler>,
     connection_state: Option<Signal<ConnectionState>>,
     sse: RefCell<SseManager>,
     signals: RefCell<Option<ForgeSignals>>,
@@ -113,6 +126,7 @@ impl ForgeClient {
                 url: config.url.trim_end_matches('/').to_string(),
                 get_token: config.get_token,
                 on_auth_error: config.on_auth_error,
+                on_mutation_error: config.on_mutation_error,
                 connection_state: config.connection_state,
                 sse: RefCell::new(SseManager::default()),
                 signals: RefCell::new(None),
@@ -128,6 +142,14 @@ impl ForgeClient {
     /// Get the base URL of this client.
     pub fn get_url(&self) -> &str {
         &self.inner.url
+    }
+
+    /// Notify the registered mutation error handler, if any. Called by
+    /// [`Mutation::fire`] when a call fails and no per-call handler was provided.
+    pub fn notify_mutation_error(&self, error: ForgeClientError) {
+        if let Some(handler) = &self.inner.on_mutation_error {
+            handler(error);
+        }
     }
 
     /// Generate a correlation ID from the wired signals instance, if any.

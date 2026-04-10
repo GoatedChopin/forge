@@ -218,6 +218,7 @@ pub fn ForgeAuthProvider(
     url: String,
     #[props(default = "forge_app".to_string())] app_name: String,
     #[props(default = 2400)] refresh_interval_secs: u64,
+    #[props(default)] on_mutation_error: Option<EventHandler<crate::ForgeClientError>>,
     children: Element,
 ) -> Element {
     let initial = match storage::load(&app_name) {
@@ -245,13 +246,16 @@ pub fn ForgeAuthProvider(
     use_context_provider(move || {
         let auth_for_token = auth_state;
         let needs_refresh_clone = needs_refresh;
-        let config = ForgeClientConfig::new(url_clone)
+        let mut config = ForgeClientConfig::new(url_clone)
             .with_connection_state(connection_state)
             .with_token_provider(move || auth_for_token.read().access_token())
             .with_auth_error_handler(move |_err| {
                 let mut sig = needs_refresh_clone;
                 sig.set(true);
             });
+        if let Some(handler) = on_mutation_error {
+            config = config.with_mutation_error_handler(move |err| handler.call(err));
+        }
         ForgeClient::new(config)
     });
 

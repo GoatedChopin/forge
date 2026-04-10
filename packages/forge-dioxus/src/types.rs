@@ -1,6 +1,9 @@
 
 use std::marker::PhantomData;
+use std::rc::Rc;
+use std::time::Duration;
 
+use dioxus::prelude::{ReadableExt, Signal, WritableExt};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -260,6 +263,126 @@ where
 
     pub async fn call(&self, args: A) -> Result<R, ForgeClientError> {
         self.client.call(self.function_name, args).await
+    }
+
+    /// Fire-and-forget: spawns the mutation and routes errors to the global
+    /// mutation error handler registered on [`ForgeClient`].
+    pub fn fire(&self, args: A) {
+        let client = self.client.clone();
+        let function_name = self.function_name;
+        dioxus::prelude::spawn(async move {
+            if let Err(err) = client.call::<A, R>(function_name, args).await {
+                client.notify_mutation_error(err);
+            }
+        });
+    }
+
+    /// Fire-and-forget with a one-off error callback that overrides the global
+    /// handler for this invocation.
+    pub fn fire_with(&self, args: A, on_error: impl FnOnce(ForgeClientError) + 'static) {
+        let client = self.client.clone();
+        let function_name = self.function_name;
+        dioxus::prelude::spawn(async move {
+            if let Err(err) = client.call::<A, R>(function_name, args).await {
+                on_error(err);
+            }
+        });
+    }
+}
+
+pub(crate) struct PendingOptimistic<D> {
+    pub(crate) snapshot: Option<D>,
+    pub(crate) generation: u64,
+}
+
+type ApplyFn<D, A> = Rc<dyn Fn(&D, &A) -> D>;
+
+/// Handle returned by [`use_optimistic`](crate::use_optimistic). Provides
+/// `.fire()` that applies an optimistic transform immediately and `.data()`
+/// that returns the derived view layering local patches over subscription data.
+pub struct OptimisticMutation<A: 'static, R: 'static, D: 'static> {
+    pub(crate) mutation: Mutation<A, R>,
+    pub(crate) view: Signal<Option<D>>,
+    pub(crate) apply: ApplyFn<D, A>,
+    pub(crate) subscription: Signal<SubscriptionState<D>>,
+    pub(crate) pending: Signal<Option<PendingOptimistic<D>>>,
+}
+
+impl<A, R, D> OptimisticMutation<A, R, D>
+where
+    A: Serialize + Clone + 'static,
+    R: DeserializeOwned + 'static,
+    D: Clone + 'static,
+{
+    /// The current data, with any pending optimistic patches applied.
+    pub fn data(&self) -> Option<D> {
+        self.view.read().clone()
+    }
+
+    /// Signal accessor for use in RSX.
+    pub fn data_signal(&self) -> Signal<Option<D>> {
+        self.view
+    }
+
+    /// Fire the mutation with the optimistic transform applied immediately.
+    /// On SSE update the server data replaces the optimistic patch. On error
+    /// the view reverts to the pre-mutation snapshot.
+    pub fn fire(&self, args: A) {
+        let mut view = self.view;
+        let mut pending = self.pending;
+        let subscription = self.subscription;
+
+        let current_data = subscription.read().data.clone();
+        let generation = pending
+            .read()
+            .as_ref()
+            .map(|p| p.generation + 1)
+            .unwrap_or(1);
+
+        if let Some(ref data) = current_data {
+            let optimistic = (self.apply)(data, &args);
+            view.set(Some(optimistic));
+        }
+
+        pending.set(Some(PendingOptimistic {
+            snapshot: current_data,
+            generation,
+        }));
+
+        // TTL safety net: revert if SSE hasn't confirmed within 3 seconds
+        let ttl_generation = generation;
+        let mut ttl_pending = pending;
+        let mut ttl_view = view;
+        let ttl_subscription = subscription;
+        dioxus::prelude::spawn(async move {
+            crate::hooks::sleep(Duration::from_secs(3)).await;
+            let still_pending = ttl_pending
+                .read()
+                .as_ref()
+                .is_some_and(|p| p.generation == ttl_generation);
+            if still_pending {
+                ttl_view.set(ttl_subscription.read().data.clone());
+                ttl_pending.set(None);
+            }
+        });
+
+        // Send the actual mutation
+        let client = self.mutation.client.clone();
+        let function_name = self.mutation.function_name;
+        dioxus::prelude::spawn(async move {
+            if let Err(err) = client.call::<A, R>(function_name, args).await {
+                let should_rollback = pending
+                    .read()
+                    .as_ref()
+                    .is_some_and(|p| p.generation == generation);
+                if should_rollback
+                    && let Some(p) = pending.write().take()
+                {
+                    view.set(p.snapshot);
+                }
+                client.notify_mutation_error(err);
+            }
+        });
     }
 }
 

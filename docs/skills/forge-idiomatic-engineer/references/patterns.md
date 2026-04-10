@@ -725,3 +725,44 @@ Materialized views refreshed every 5 minutes:
 Ships with a pre-built "Forge Signals" dashboard (PostgreSQL datasource). Sections: Overview, Behavior, Acquisition, Retention, Performance, Diagnostics, Real-time.
 
 Enable in docker-compose by using the Forge OTEL-LGTM image and passing `POSTGRES_*` env vars.
+
+## 7. Common Application Patterns
+
+### Positional Ordering
+
+For sortable lists (Kanban boards, todo lists, priority queues), use an integer `position` column with a step constant:
+
+```sql
+CREATE TABLE tasks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id),
+    position INT NOT NULL,
+    -- ...
+);
+CREATE INDEX ON tasks (user_id, status);
+```
+
+Backend: calculate positions with a constant step (10,000 works well):
+
+```rust
+const POSITION_STEP: i32 = 10_000;
+
+fn next_position(max_position: Option<i32>) -> i32 {
+    max_position.unwrap_or_default() + POSITION_STEP
+}
+
+// In create handler:
+let max_pos = sqlx::query_scalar!("SELECT MAX(position) FROM tasks WHERE user_id = $1", user_id)
+    .fetch_one(&mut conn).await?;
+let position = next_position(max_pos);
+```
+
+Frontend: for insertion between items, use the midpoint. For prepend/append, use min - step or max + step.
+
+### Optimistic Mutations
+
+For interactions needing instant feedback (drag-drop, reorder, focus switching), use the framework's optimistic mutation support:
+
+**Dioxus:** `use_optimistic(mutation, subscription_signal, apply_fn)` returns an `OptimisticMutation` with `.fire()` and `.data()`. The view signal layers local patches over SSE data. Auto-reverts on error or 3s TTL.
+
+**Svelte:** `createOptimisticMutation(mutationFn, subscriptionStore, applyFn)` returns `{ fire, data }`. The `data` Readable layers local patches over the subscription store. Auto-reverts on error or 3s TTL (configurable via `{ ttlMs }`).

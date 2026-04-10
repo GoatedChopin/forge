@@ -176,6 +176,57 @@ dt.format(input, opts?)     // Intl.DateTimeFormat
 dt.relative(input, base?)   // Intl.RelativeTimeFormat
 ```
 
+## fireMutation
+
+Fire-and-forget wrapper for mutations. Errors route to the global `onMutationError` handler on ForgeProvider:
+
+```typescript
+import { fireMutation } from '@forge-rs/svelte';
+import { createTodo, deleteTodo } from '$lib/forge';
+
+// Fire-and-forget (errors go to global handler)
+fireMutation(createTodo, { title: 'New task' });
+
+// One-off error handling
+fireMutation(deleteTodo, { id }, (err) => {
+  errorMessage = err.message;
+});
+```
+
+Register the global handler on the provider:
+
+```svelte
+<ForgeProvider url={apiUrl} onMutationError={(err) => showToast(err.message)}>
+```
+
+Use direct `await` when you need the return value.
+
+## Optimistic Mutations
+
+`createOptimisticMutation` layers local patches over a live subscription store:
+
+```typescript
+import { createOptimisticMutation } from '@forge-rs/svelte';
+import { reorderTask, listTodosStore$ } from '$lib/forge';
+
+const todos = listTodosStore$();
+const reorder = createOptimisticMutation(
+  reorderTask,
+  todos,
+  (data, args) => data.map(t =>
+    t.id === args.id ? { ...t, status: args.status, position: args.position } : t
+  ),
+);
+
+// Read from the optimistic view
+// reorder.data is a Readable<Todo[] | null>
+
+// Fire applies transform instantly, sends mutation to server
+reorder.fire({ id, status: 'done', position: 10000 });
+```
+
+On SSE update, subscription data replaces the optimistic patch. On error, the view reverts. Default TTL is 3s, configurable via `{ ttlMs: 5000 }` options.
+
 ## Common Mistakes
 
 - Editing `$lib/forge/*` (overwritten on `forge generate`)
@@ -183,3 +234,4 @@ dt.relative(input, base?)   // Intl.RelativeTimeFormat
 - Forgetting `ForgeProvider` in root layout
 - Using `$effect` for data fetching instead of reactive stores
 - Not handling `loading` and `error` states in UI
+- Silently dropping mutation errors (use `fireMutation` with a global handler instead)

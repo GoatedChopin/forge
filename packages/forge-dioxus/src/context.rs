@@ -1,6 +1,7 @@
 
 use dioxus::prelude::*;
 
+use crate::ForgeClientError;
 use crate::signals::{ForgeSignals, SignalsConfig, setup_auto_capture};
 use crate::{ConnectionState, ForgeClient, ForgeClientConfig};
 
@@ -8,11 +9,15 @@ use crate::{ConnectionState, ForgeClient, ForgeClientConfig};
 pub fn ForgeProvider(
     url: String,
     #[props(default)] signals: Option<SignalsConfig>,
+    #[props(default)] on_mutation_error: Option<EventHandler<ForgeClientError>>,
     children: Element,
 ) -> Element {
     let connection_state = use_context_provider(|| Signal::new(ConnectionState::Disconnected));
     let client = use_context_provider(|| {
-        let config = ForgeClientConfig::new(url).with_connection_state(connection_state);
+        let mut config = ForgeClientConfig::new(url).with_connection_state(connection_state);
+        if let Some(handler) = on_mutation_error {
+            config = config.with_mutation_error_handler(move |err| handler.call(err));
+        }
         ForgeClient::new(config)
     });
 

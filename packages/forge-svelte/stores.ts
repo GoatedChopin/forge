@@ -1,5 +1,5 @@
 
-import type { ForgeClient } from "./client.js";
+import { ForgeClientError, type ForgeClient } from "./client.js";
 import { getForgeClient } from "./context.js";
 import type {
   QueryResult,
@@ -291,7 +291,7 @@ export function createJobStore<TArgs, TOutput>(
 
 export function createWorkflowStore<TArgs, TOutput>(
   functionName: string,
-  args: RejectEmptyObject<TArgs>
+  args: RejectEmptyObject<TArgs>,
 ): WorkflowStore<TOutput> {
   const client = getForgeClient();
   const subscribers = new Set<(value: WorkflowState<TOutput> & { loading: boolean }) => void>();
@@ -387,4 +387,128 @@ export function createWorkflowStore<TArgs, TOutput>(
       }
     },
   };
+}
+
+/**
+ * Fire-and-forget wrapper for mutations. Errors route to the global
+ * `onMutationError` handler registered on the ForgeClient, or to the
+ * optional per-call `onError` callback.
+ */
+export function fireMutation<TArgs, TResult>(
+  mutationFn: (args: TArgs) => Promise<TResult>,
+  args: TArgs,
+  onError?: (error: ForgeClientError) => void,
+): void {
+  const client = getForgeClient();
+  mutationFn(args).catch((err: unknown) => {
+    const error =
+      err instanceof ForgeClientError
+        ? err
+        : new ForgeClientError("UNKNOWN", String(err));
+    if (onError) {
+      onError(error);
+    } else {
+      client.notifyMutationError(error);
+    }
+  });
+}
+
+export interface OptimisticMutationStore<TArgs, TData> {
+  /** Fire the mutation with optimistic update applied immediately. */
+  fire: (args: TArgs) => void;
+  /** Readable store of the derived data (subscription + optimistic patches). */
+  data: Readable<TData | null>;
+}
+
+/**
+ * Create an optimistic mutation that layers local patches over a live
+ * subscription. Fires the mutation, applies the transform immediately,
+ * and auto-reverts on error or TTL expiry (default 3s).
+ */
+export function createOptimisticMutation<TArgs, TResult, TData>(
+  mutationFn: (args: TArgs) => Promise<TResult>,
+  subscription: SubscriptionStore<TData>,
+  apply: (data: TData, args: TArgs) => TData,
+  options?: { ttlMs?: number },
+): OptimisticMutationStore<TArgs, TData> {
+  const ttlMs = options?.ttlMs ?? 3000;
+  const client = getForgeClient();
+  const subscribers = new Set<(value: TData | null) => void>();
+  let currentView: TData | null = null;
+  let latestSubData: TData | null = null;
+  let pendingGeneration = 0;
+  let ttlTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const notify = () => subscribers.forEach((run) => run(currentView));
+
+  // Track subscription data and handle SSE confirmations
+  const unsubscribeSub = subscription.subscribe((result) => {
+    latestSubData = result.data;
+    if (pendingGeneration > 0) {
+      // SSE confirmed: adopt server data, clear pending
+      pendingGeneration = 0;
+      if (ttlTimer) {
+        clearTimeout(ttlTimer);
+        ttlTimer = null;
+      }
+    }
+    currentView = result.data;
+    notify();
+  });
+
+  const data: Readable<TData | null> = {
+    subscribe(run) {
+      subscribers.add(run);
+      run(currentView);
+      return () => {
+        subscribers.delete(run);
+        if (subscribers.size === 0) {
+          unsubscribeSub();
+          if (ttlTimer) clearTimeout(ttlTimer);
+        }
+      };
+    },
+  };
+
+  function fire(args: TArgs): void {
+    const snapshot = currentView;
+
+    if (currentView !== null) {
+      currentView = apply(currentView, args);
+      notify();
+    }
+
+    const generation = ++pendingGeneration;
+
+    // TTL safety net
+    if (ttlTimer) clearTimeout(ttlTimer);
+    ttlTimer = setTimeout(() => {
+      if (pendingGeneration === generation) {
+        pendingGeneration = 0;
+        currentView = latestSubData;
+        notify();
+      }
+    }, ttlMs);
+
+    // Send the actual mutation
+    mutationFn(args).catch((err: unknown) => {
+      // Rollback on error
+      if (pendingGeneration === generation) {
+        pendingGeneration = 0;
+        if (ttlTimer) {
+          clearTimeout(ttlTimer);
+          ttlTimer = null;
+        }
+        currentView = snapshot;
+        notify();
+      }
+      const error =
+        err instanceof ForgeClientError
+          ? err
+          : new ForgeClientError("UNKNOWN", String(err));
+      client.notifyMutationError(error);
+    });
+  }
+
+  return { fire, data };
 }

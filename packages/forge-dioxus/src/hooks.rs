@@ -11,8 +11,9 @@ use crate::{
     ConnectionState, JobExecutionState, Mutation, QueryState, StreamEvent, SubscriptionHandle,
     SubscriptionState, WorkflowExecutionState, use_forge_client,
 };
+use crate::types::{OptimisticMutation, PendingOptimistic};
 
-async fn sleep(duration: Duration) {
+pub(crate) async fn sleep(duration: Duration) {
     #[cfg(target_arch = "wasm32")]
     {
         gloo_timers::future::sleep(duration).await;
@@ -446,5 +447,59 @@ where
     TResult: DeserializeOwned + Clone + 'static,
 {
     use_forge_workflow_signal(function_name, args)()
+}
+
+/// Create an optimistic mutation that layers local patches over a live
+/// subscription. Returns an [`OptimisticMutation`] whose `.data()` reflects
+/// the optimistic state and whose `.fire()` applies the transform, sends the
+/// mutation, and auto-reverts on error or TTL expiry.
+///
+/// ```ignore
+/// let reorder = use_optimistic(
+///     use_reorder_task(),
+///     use_list_tasks_live_signal(),
+///     |tasks, args: &ReorderTaskInput| {
+///         tasks.iter().map(|t| {
+///             if t.id == args.id { Task { status: args.status, position: args.position, ..t.clone() } }
+///             else { t.clone() }
+///         }).collect()
+///     },
+/// );
+/// // Read from reorder.data() instead of the raw subscription
+/// // Call reorder.fire(args) for optimistic + server mutation
+/// ```
+pub fn use_optimistic<A, R, D>(
+    mutation: Mutation<A, R>,
+    subscription: Signal<SubscriptionState<D>>,
+    apply: impl Fn(&D, &A) -> D + 'static,
+) -> OptimisticMutation<A, R, D>
+where
+    A: Serialize + Clone + 'static,
+    R: DeserializeOwned + 'static,
+    D: Clone + PartialEq + 'static,
+{
+    let mut view: Signal<Option<D>> = use_signal(|| subscription.read().data.clone());
+    let mut pending: Signal<Option<PendingOptimistic<D>>> = use_signal(|| None);
+    let apply = use_hook(|| Rc::new(apply));
+
+    // Sync view with subscription data. When a pending optimistic update
+    // exists, an incoming SSE push is treated as server confirmation.
+    use_effect(move || {
+        let sub_data = subscription.read().data.clone();
+        if pending.read().is_some() {
+            // SSE delivered fresh data while optimistic patch was active.
+            // Treat as confirmation: adopt server state, clear pending.
+            pending.set(None);
+        }
+        view.set(sub_data);
+    });
+
+    OptimisticMutation {
+        mutation,
+        view,
+        apply,
+        subscription,
+        pending,
+    }
 }
 
