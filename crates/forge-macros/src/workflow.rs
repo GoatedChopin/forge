@@ -472,24 +472,7 @@ pub fn workflow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_to_pascal_case() {
-        assert_eq!(to_pascal_case("user_onboarding"), "UserOnboarding");
-        assert_eq!(to_pascal_case("order_processing"), "OrderProcessing");
-        assert_eq!(to_pascal_case("simple"), "Simple");
-    }
-
-    #[test]
-    fn test_parse_duration_days() {
-        let ts = parse_duration_tokens("7d", 604800);
-        assert!(!ts.is_empty());
-    }
-
-    #[test]
-    fn test_parse_duration_hours() {
-        let ts = parse_duration_tokens("24h", 86400);
-        assert!(!ts.is_empty());
-    }
+    // Tests for to_pascal_case and parse_duration are in utils.rs (single source of truth).
 
     #[test]
     fn test_derive_signature_deterministic() {

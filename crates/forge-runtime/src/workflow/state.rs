@@ -219,4 +219,98 @@ mod tests {
         step.complete(serde_json::json!({}));
         assert_eq!(step.status, StepStatus::Completed);
     }
+
+    #[test]
+    fn test_workflow_record_failure_path() {
+        let mut record = WorkflowRecord::new("test", "v1", "sig", serde_json::json!({}), None);
+        record.start();
+        record.fail("something went wrong");
+
+        assert_eq!(record.status, WorkflowStatus::Failed);
+        assert_eq!(record.error.as_deref(), Some("something went wrong"));
+        assert!(record.completed_at.is_some());
+    }
+
+    #[test]
+    fn test_workflow_record_compensation_path() {
+        let mut record = WorkflowRecord::new("test", "v1", "sig", serde_json::json!({}), None);
+        record.start();
+        record.compensating();
+        assert_eq!(record.status, WorkflowStatus::Compensating);
+
+        record.compensated();
+        assert_eq!(record.status, WorkflowStatus::Compensated);
+        assert!(record.completed_at.is_some());
+    }
+
+    #[test]
+    fn test_workflow_step_results_accumulate() {
+        let mut record = WorkflowRecord::new("test", "v1", "sig", serde_json::json!({}), None);
+        record.add_step_result("step1", serde_json::json!({"user_id": 42}));
+        record.add_step_result("step2", serde_json::json!({"verified": true}));
+
+        let results = record.step_results.as_object().expect("should be object");
+        assert_eq!(results.len(), 2);
+        assert_eq!(
+            results.get("step1").and_then(|v| v.get("user_id")),
+            Some(&serde_json::json!(42))
+        );
+        assert_eq!(
+            results.get("step2").and_then(|v| v.get("verified")),
+            Some(&serde_json::json!(true))
+        );
+    }
+
+    #[test]
+    fn test_workflow_current_step_tracking() {
+        let mut record = WorkflowRecord::new("test", "v1", "sig", serde_json::json!({}), None);
+        assert!(record.current_step.is_none());
+
+        record.set_current_step("validate_input");
+        assert_eq!(record.current_step.as_deref(), Some("validate_input"));
+
+        record.set_current_step("process_payment");
+        assert_eq!(record.current_step.as_deref(), Some("process_payment"));
+    }
+
+    #[test]
+    fn test_workflow_record_with_trace_id() {
+        let record = WorkflowRecord::new("test", "v1", "sig", serde_json::json!({}), None)
+            .with_trace_id("trace-abc-123");
+        assert_eq!(record.trace_id.as_deref(), Some("trace-abc-123"));
+    }
+
+    #[test]
+    fn test_workflow_record_with_owner() {
+        let record = WorkflowRecord::new(
+            "onboarding",
+            "v1",
+            "sig",
+            serde_json::json!({}),
+            Some("user-alice".into()),
+        );
+        assert_eq!(record.owner_subject.as_deref(), Some("user-alice"));
+    }
+
+    #[test]
+    fn test_step_record_failure() {
+        let mut step = WorkflowStepRecord::new(Uuid::new_v4(), "charge_card");
+        step.start();
+        step.fail("card declined");
+
+        assert_eq!(step.status, StepStatus::Failed);
+        assert_eq!(step.error.as_deref(), Some("card declined"));
+        assert!(step.completed_at.is_some());
+    }
+
+    #[test]
+    fn test_step_record_compensate() {
+        let mut step = WorkflowStepRecord::new(Uuid::new_v4(), "reserve_inventory");
+        step.start();
+        step.complete(serde_json::json!({"reserved": 5}));
+
+        // Later, compensation needed
+        step.compensate();
+        assert_eq!(step.status, StepStatus::Compensated);
+    }
 }

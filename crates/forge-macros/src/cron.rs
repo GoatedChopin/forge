@@ -160,26 +160,4 @@ pub fn cron_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_to_pascal_case() {
-        assert_eq!(to_pascal_case("daily_cleanup"), "DailyCleanup");
-        assert_eq!(to_pascal_case("hourly_report"), "HourlyReport");
-        assert_eq!(to_pascal_case("simple"), "Simple");
-    }
-
-    #[test]
-    fn test_parse_duration_hours() {
-        let ts = parse_duration_tokens("2h", 7200);
-        assert!(!ts.is_empty());
-    }
-
-    #[test]
-    fn test_parse_duration_minutes() {
-        let ts = parse_duration_tokens("30m", 1800);
-        assert!(!ts.is_empty());
-    }
-}
+// Tests for to_pascal_case and parse_duration are in utils.rs (single source of truth).

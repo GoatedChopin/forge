@@ -466,24 +466,7 @@ pub fn job_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_to_pascal_case() {
-        assert_eq!(to_pascal_case("send_welcome_email"), "SendWelcomeEmail");
-        assert_eq!(to_pascal_case("process_video"), "ProcessVideo");
-        assert_eq!(to_pascal_case("simple"), "Simple");
-    }
-
-    #[test]
-    fn test_parse_duration_seconds() {
-        let ts = parse_duration_tokens("30s", 30);
-        assert!(!ts.is_empty());
-    }
-
-    #[test]
-    fn test_parse_duration_minutes() {
-        let ts = parse_duration_tokens("5m", 300);
-        assert!(!ts.is_empty());
-    }
+    // Tests for to_pascal_case and parse_duration are in utils.rs (single source of truth).
 
     #[test]
     fn test_valid_priorities() {

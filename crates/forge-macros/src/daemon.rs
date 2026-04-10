@@ -150,32 +150,4 @@ pub fn daemon_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_to_pascal_case() {
-        assert_eq!(to_pascal_case("heartbeat_daemon"), "HeartbeatDaemon");
-        assert_eq!(to_pascal_case("data_sync"), "DataSync");
-        assert_eq!(to_pascal_case("simple"), "Simple");
-    }
-
-    #[test]
-    fn test_parse_duration_seconds() {
-        let ts = parse_duration_tokens("5s", 5);
-        assert!(!ts.is_empty());
-    }
-
-    #[test]
-    fn test_parse_duration_minutes() {
-        let ts = parse_duration_tokens("10m", 600);
-        assert!(!ts.is_empty());
-    }
-
-    #[test]
-    fn test_parse_duration_milliseconds() {
-        let ts = parse_duration_tokens("500ms", 500);
-        assert!(!ts.is_empty());
-    }
-}
+// Tests for to_pascal_case and parse_duration are in utils.rs (single source of truth).

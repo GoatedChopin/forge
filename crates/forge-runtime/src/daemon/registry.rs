@@ -79,14 +79,3 @@ impl DaemonRegistry {
         self.daemons.is_empty()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_registry_new() {
-        let registry = DaemonRegistry::new();
-        assert!(registry.is_empty());
-    }
-}

@@ -167,3 +167,104 @@ fn pluralize(s: &str) -> String {
         format!("{}s", s)
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
+mod tests {
+    use super::*;
+
+    // --- to_snake_case ---
+
+    #[test]
+    fn snake_case_simple() {
+        assert_eq!(to_snake_case("User"), "user");
+        assert_eq!(to_snake_case("UserProfile"), "user_profile");
+        assert_eq!(to_snake_case("HTTPRequest"), "h_t_t_p_request");
+    }
+
+    #[test]
+    fn snake_case_already_lowercase() {
+        assert_eq!(to_snake_case("user"), "user");
+        assert_eq!(to_snake_case("item"), "item");
+    }
+
+    // --- pluralize ---
+
+    #[test]
+    fn pluralize_regular_nouns() {
+        assert_eq!(pluralize("user"), "users");
+        assert_eq!(pluralize("item"), "items");
+        assert_eq!(pluralize("product"), "products");
+        assert_eq!(pluralize("order"), "orders");
+        assert_eq!(pluralize("account"), "accounts");
+    }
+
+    #[test]
+    fn pluralize_sibilant_endings() {
+        // Words ending in s, sh, ch, x, z get "es"
+        assert_eq!(pluralize("address"), "addresses");
+        assert_eq!(pluralize("crash"), "crashes");
+        assert_eq!(pluralize("match"), "matches");
+        assert_eq!(pluralize("box"), "boxes");
+        assert_eq!(pluralize("quiz"), "quizes");
+    }
+
+    #[test]
+    fn pluralize_consonant_y() {
+        // Consonant + y -> ies
+        assert_eq!(pluralize("category"), "categories");
+        assert_eq!(pluralize("company"), "companies");
+        assert_eq!(pluralize("policy"), "policies");
+        assert_eq!(pluralize("entry"), "entries");
+    }
+
+    #[test]
+    fn pluralize_vowel_y() {
+        // Vowel + y -> ys
+        assert_eq!(pluralize("key"), "keys");
+        assert_eq!(pluralize("day"), "days");
+        assert_eq!(pluralize("boy"), "boys");
+        assert_eq!(pluralize("buy"), "buys");
+    }
+
+    // --- extract_string_value ---
+
+    #[test]
+    fn extract_string_value_valid() {
+        assert_eq!(
+            extract_string_value(r#"name = "custom_table""#),
+            Some("custom_table".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_string_value_no_quotes() {
+        assert_eq!(extract_string_value("name = bare_value"), None);
+    }
+
+    #[test]
+    fn extract_string_value_no_equals() {
+        assert_eq!(extract_string_value(r#""just a string""#), None);
+    }
+
+    // --- Table name derivation (integration of to_snake_case + pluralize) ---
+
+    #[test]
+    fn table_name_from_struct_name() {
+        // Simulates what get_table_name does when no #[table] attribute is present
+        let cases = vec![
+            ("User", "users"),
+            ("UserProfile", "user_profiles"),
+            ("Category", "categories"),
+            ("Address", "addresses"),
+            ("TodoItem", "todo_items"),
+            ("OrderStatus", "order_statuses"),
+        ];
+
+        for (struct_name, expected_table) in cases {
+            let snake = to_snake_case(struct_name);
+            let table = pluralize(&snake);
+            assert_eq!(table, expected_table, "Failed for struct {struct_name}");
+        }
+    }
+}

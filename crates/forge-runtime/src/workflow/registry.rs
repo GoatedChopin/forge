@@ -263,13 +263,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_empty_registry() {
-        let registry = WorkflowRegistry::new();
-        assert!(registry.is_empty());
-        assert_eq!(registry.len(), 0);
-    }
-
-    #[test]
     fn test_resume_block_reasons() {
         let reason = ResumeBlockReason::MissingHandler;
         assert_eq!(

@@ -447,3 +447,217 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
         }));
     })
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
+mod tests {
+    use super::*;
+
+    // Note: proc_macro::TokenStream cannot be created outside the compiler bridge,
+    // so we test parse_mutation_attrs indirectly through the has_attr_flag/parse_attr_value
+    // utilities and test expand_mutation_impl directly with syn::ItemFn + MutationAttrs.
+
+    // --- MutationAttrs default ---
+
+    #[test]
+    fn default_attrs_are_all_none_or_false() {
+        let attrs = MutationAttrs::default();
+        assert!(!attrs.transactional);
+        assert!(!attrs.is_public);
+        assert!(!attrs.is_unscoped);
+        assert!(attrs.required_role.is_none());
+        assert!(attrs.timeout.is_none());
+        assert!(attrs.rate_limit_requests.is_none());
+        assert!(attrs.rate_limit_per_secs.is_none());
+        assert!(attrs.rate_limit_key.is_none());
+        assert!(attrs.log_level.is_none());
+        assert!(attrs.max_upload_size_bytes.is_none());
+    }
+
+    // --- Validation: transactional requirement ---
+
+    #[test]
+    fn rejects_dispatch_job_without_transactional() {
+        let input: ItemFn = syn::parse_str(
+            r#"
+            pub async fn create_user(ctx: &MutationContext, name: String) -> Result<User> {
+                ctx.dispatch_job("send_email", json!({})).await?;
+                Ok(User { name })
+            }
+            "#,
+        )
+        .unwrap();
+
+        let attrs = MutationAttrs::default();
+        let result = expand_mutation_impl(input, attrs);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("transactional"),
+            "Error should mention transactional: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_start_workflow_without_transactional() {
+        let input: ItemFn = syn::parse_str(
+            r#"
+            pub async fn begin_onboarding(ctx: &MutationContext) -> Result<()> {
+                ctx.start_workflow("onboarding", json!({})).await?;
+                Ok(())
+            }
+            "#,
+        )
+        .unwrap();
+
+        let attrs = MutationAttrs::default();
+        let result = expand_mutation_impl(input, attrs);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("transactional"));
+    }
+
+    #[test]
+    fn accepts_dispatch_job_with_transactional() {
+        let input: ItemFn = syn::parse_str(
+            r#"
+            pub async fn create_user(ctx: &MutationContext, name: String) -> Result<User> {
+                ctx.dispatch_job("send_email", json!({})).await?;
+                Ok(User { name })
+            }
+            "#,
+        )
+        .unwrap();
+
+        let attrs = MutationAttrs {
+            transactional: true,
+            ..Default::default()
+        };
+        let result = expand_mutation_impl(input, attrs);
+        assert!(
+            result.is_ok(),
+            "Should accept dispatch_job with transactional"
+        );
+    }
+
+    #[test]
+    fn accepts_mutation_without_dispatch() {
+        let input: ItemFn = syn::parse_str(
+            r#"
+            pub async fn update_name(ctx: &MutationContext, name: String) -> Result<()> {
+                Ok(())
+            }
+            "#,
+        )
+        .unwrap();
+
+        let attrs = MutationAttrs::default();
+        let result = expand_mutation_impl(input, attrs);
+        assert!(
+            result.is_ok(),
+            "Simple mutation without dispatch should work"
+        );
+    }
+
+    // --- Validation: async requirement ---
+
+    #[test]
+    fn rejects_non_async_mutation() {
+        let input: ItemFn = syn::parse_str(
+            r#"
+            pub fn create_user(ctx: &MutationContext) -> Result<()> {
+                Ok(())
+            }
+            "#,
+        )
+        .unwrap();
+
+        let attrs = MutationAttrs::default();
+        let result = expand_mutation_impl(input, attrs);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("async"),
+            "Error should mention async: {err_msg}"
+        );
+    }
+
+    // --- Validation: context parameter ---
+
+    #[test]
+    fn rejects_mutation_without_parameters() {
+        let input: ItemFn = syn::parse_str(
+            r#"
+            pub async fn create_user() -> Result<()> {
+                Ok(())
+            }
+            "#,
+        )
+        .unwrap();
+
+        let attrs = MutationAttrs::default();
+        let result = expand_mutation_impl(input, attrs);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("MutationContext"),
+            "Error should mention context param: {err_msg}"
+        );
+    }
+
+    // --- Generated output structure ---
+
+    #[test]
+    fn generates_struct_for_no_arg_mutation() {
+        let input: ItemFn = syn::parse_str(
+            r#"
+            pub async fn reset_all(ctx: &MutationContext) -> Result<()> {
+                Ok(())
+            }
+            "#,
+        )
+        .unwrap();
+
+        let attrs = MutationAttrs::default();
+        let output = expand_mutation_impl(input, attrs).expect("should expand");
+        let output_str = output.to_string();
+        assert!(
+            output_str.contains("ResetAllMutation"),
+            "Should generate PascalCase struct name"
+        );
+        assert!(
+            output_str.contains("ForgeMutation"),
+            "Should implement ForgeMutation trait"
+        );
+        assert!(
+            output_str.contains("inventory"),
+            "Should register via inventory"
+        );
+    }
+
+    #[test]
+    fn generates_info_with_attributes() {
+        let input: ItemFn = syn::parse_str(
+            r#"
+            pub async fn create_item(ctx: &MutationContext) -> Result<()> {
+                Ok(())
+            }
+            "#,
+        )
+        .unwrap();
+
+        let attrs = MutationAttrs {
+            is_public: true,
+            transactional: true,
+            required_role: Some("admin".into()),
+            ..Default::default()
+        };
+        let output = expand_mutation_impl(input, attrs).expect("should expand");
+        let output_str = output.to_string();
+        assert!(output_str.contains("is_public : true"));
+        assert!(output_str.contains("transactional : true"));
+        assert!(
+            output_str.contains(r#"Some ("admin")"#) || output_str.contains(r#"Some("admin")"#)
+        );
+    }
+}

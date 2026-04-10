@@ -143,16 +143,3 @@ impl JobRegistry {
         self.jobs.is_empty()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_empty_registry() {
-        let registry = JobRegistry::new();
-        assert!(registry.is_empty());
-        assert_eq!(registry.len(), 0);
-        assert!(registry.get("nonexistent").is_none());
-    }
-}

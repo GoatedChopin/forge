@@ -522,22 +522,4 @@ fn expand_query_impl(input: ItemFn, attrs: QueryAttrs) -> syn::Result<TokenStrea
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_to_pascal_case() {
-        assert_eq!(to_pascal_case("get_user"), "GetUser");
-        assert_eq!(to_pascal_case("list_all_projects"), "ListAllProjects");
-        assert_eq!(to_pascal_case("simple"), "Simple");
-    }
-
-    #[test]
-    fn test_parse_duration_secs() {
-        assert_eq!(parse_duration_secs("30s"), Some(30));
-        assert_eq!(parse_duration_secs("5m"), Some(300));
-        assert_eq!(parse_duration_secs("1h"), Some(3600));
-        assert_eq!(parse_duration_secs("60"), Some(60));
-    }
-}
+// Tests for to_pascal_case and parse_duration are in utils.rs (single source of truth).

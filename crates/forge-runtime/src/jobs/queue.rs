@@ -673,4 +673,405 @@ mod tests {
 
         assert_eq!(job.idempotency_key, Some("payment-123".to_string()));
     }
+
+    #[test]
+    fn test_job_record_with_owner_subject() {
+        let job = JobRecord::new("task", serde_json::json!({}), JobPriority::Normal, 3)
+            .with_owner_subject(Some("user-123".into()));
+        assert_eq!(job.owner_subject, Some("user-123".to_string()));
+    }
+
+    #[test]
+    fn test_priority_ordering() {
+        let bg = JobRecord::new("a", serde_json::json!({}), JobPriority::Background, 1);
+        let low = JobRecord::new("b", serde_json::json!({}), JobPriority::Low, 1);
+        let normal = JobRecord::new("c", serde_json::json!({}), JobPriority::Normal, 1);
+        let high = JobRecord::new("d", serde_json::json!({}), JobPriority::High, 1);
+        let critical = JobRecord::new("e", serde_json::json!({}), JobPriority::Critical, 1);
+
+        assert!(bg.priority < low.priority);
+        assert!(low.priority < normal.priority);
+        assert!(normal.priority < high.priority);
+        assert!(high.priority < critical.priority);
+    }
+}
+
+/// Integration tests requiring a real PostgreSQL database.
+/// Run with: cargo test -p forge-runtime --features testcontainers
+#[cfg(all(test, feature = "testcontainers"))]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
+mod integration_tests {
+    use super::*;
+    use forge_core::testing::{IsolatedTestDb, TestDatabase};
+
+    async fn setup_db(test_name: &str) -> IsolatedTestDb {
+        let base = TestDatabase::from_env()
+            .await
+            .expect("Failed to create test database");
+        let db = base
+            .isolated(test_name)
+            .await
+            .expect("Failed to create isolated db");
+        let system_sql = crate::migrations::get_all_system_sql();
+        db.run_sql(&system_sql)
+            .await
+            .expect("Failed to apply system schema");
+        db
+    }
+
+    #[tokio::test]
+    async fn enqueue_and_claim_job() {
+        let db = setup_db("enqueue_and_claim").await;
+        let queue = JobQueue::new(db.pool().clone());
+        let worker_id = Uuid::new_v4();
+
+        // Enqueue a job
+        let job = JobRecord::new(
+            "send_email",
+            serde_json::json!({"to": "a@b.com"}),
+            JobPriority::Normal,
+            3,
+        );
+        let job_id = queue.enqueue(job).await.expect("Failed to enqueue");
+
+        // Claim it
+        let claimed = queue
+            .claim(worker_id, &[], 10)
+            .await
+            .expect("Failed to claim");
+        assert_eq!(claimed.len(), 1);
+        assert_eq!(claimed[0].id, job_id);
+        assert_eq!(claimed[0].job_type, "send_email");
+        assert_eq!(claimed[0].status, JobStatus::Claimed);
+        assert_eq!(claimed[0].attempts, 1);
+        assert!(claimed[0].worker_id.is_some());
+
+        db.cleanup().await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn claim_respects_skip_locked() {
+        let db = setup_db("claim_skip_locked").await;
+        let queue = JobQueue::new(db.pool().clone());
+
+        // Enqueue 3 jobs
+        for i in 0..3 {
+            let job = JobRecord::new(
+                format!("job_{i}"),
+                serde_json::json!({}),
+                JobPriority::Normal,
+                3,
+            );
+            queue.enqueue(job).await.expect("enqueue");
+        }
+
+        // Worker 1 claims 2
+        let worker1 = Uuid::new_v4();
+        let batch1 = queue.claim(worker1, &[], 2).await.expect("claim1");
+        assert_eq!(batch1.len(), 2);
+
+        // Worker 2 claims remaining
+        let worker2 = Uuid::new_v4();
+        let batch2 = queue.claim(worker2, &[], 2).await.expect("claim2");
+        assert_eq!(batch2.len(), 1);
+
+        // No overlap
+        let ids1: Vec<Uuid> = batch1.iter().map(|j| j.id).collect();
+        let ids2: Vec<Uuid> = batch2.iter().map(|j| j.id).collect();
+        for id in &ids2 {
+            assert!(
+                !ids1.contains(id),
+                "SKIP LOCKED should prevent duplicate claims"
+            );
+        }
+
+        db.cleanup().await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn claim_respects_priority_ordering() {
+        let db = setup_db("claim_priority").await;
+        let queue = JobQueue::new(db.pool().clone());
+        let worker_id = Uuid::new_v4();
+
+        // Enqueue low then high priority
+        let low = JobRecord::new("low_job", serde_json::json!({}), JobPriority::Low, 3);
+        queue.enqueue(low).await.expect("enqueue low");
+
+        let high = JobRecord::new("high_job", serde_json::json!({}), JobPriority::Critical, 3);
+        queue.enqueue(high).await.expect("enqueue high");
+
+        // Claim 1 - should get the high-priority job first
+        let claimed = queue.claim(worker_id, &[], 1).await.expect("claim");
+        assert_eq!(claimed.len(), 1);
+        assert_eq!(claimed[0].job_type, "high_job");
+
+        db.cleanup().await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn complete_job_lifecycle() {
+        let db = setup_db("complete_lifecycle").await;
+        let queue = JobQueue::new(db.pool().clone());
+        let worker_id = Uuid::new_v4();
+
+        let job = JobRecord::new("process", serde_json::json!({}), JobPriority::Normal, 3);
+        let job_id = queue.enqueue(job).await.expect("enqueue");
+
+        // Claim
+        queue.claim(worker_id, &[], 1).await.expect("claim");
+
+        // Start
+        queue.start(job_id).await.expect("start");
+
+        // Complete
+        queue
+            .complete(job_id, serde_json::json!({"result": "done"}), None)
+            .await
+            .expect("complete");
+
+        // Verify via stats
+        let stats = queue.stats().await.expect("stats");
+        assert_eq!(stats.completed, 1);
+        assert_eq!(stats.pending, 0);
+
+        db.cleanup().await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn fail_with_retry_requeues_as_pending() {
+        let db = setup_db("fail_retry").await;
+        let queue = JobQueue::new(db.pool().clone());
+        let worker_id = Uuid::new_v4();
+
+        let job = JobRecord::new("flaky", serde_json::json!({}), JobPriority::Normal, 3);
+        let job_id = queue.enqueue(job).await.expect("enqueue");
+
+        queue.claim(worker_id, &[], 1).await.expect("claim");
+        queue.start(job_id).await.expect("start");
+
+        // Fail with retry delay
+        queue
+            .fail(
+                job_id,
+                "transient error",
+                Some(chrono::Duration::seconds(0)),
+                None,
+            )
+            .await
+            .expect("fail");
+
+        // Should be pending again (retryable)
+        let stats = queue.stats().await.expect("stats");
+        assert_eq!(stats.pending, 1);
+        assert_eq!(stats.dead_letter, 0);
+
+        db.cleanup().await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn fail_without_retry_goes_to_dead_letter() {
+        let db = setup_db("fail_dead_letter").await;
+        let queue = JobQueue::new(db.pool().clone());
+        let worker_id = Uuid::new_v4();
+
+        let job = JobRecord::new("fatal", serde_json::json!({}), JobPriority::Normal, 1);
+        let job_id = queue.enqueue(job).await.expect("enqueue");
+
+        queue.claim(worker_id, &[], 1).await.expect("claim");
+        queue.start(job_id).await.expect("start");
+
+        // Fail without retry (None delay) -> dead letter
+        queue
+            .fail(job_id, "permanent error", None, None)
+            .await
+            .expect("fail");
+
+        let stats = queue.stats().await.expect("stats");
+        assert_eq!(stats.dead_letter, 1);
+        assert_eq!(stats.pending, 0);
+
+        db.cleanup().await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn idempotency_key_deduplicates() {
+        let db = setup_db("idempotency").await;
+        let queue = JobQueue::new(db.pool().clone());
+
+        let job1 = JobRecord::new("pay", serde_json::json!({}), JobPriority::Normal, 3)
+            .with_idempotency_key("pay-123");
+        let id1 = queue.enqueue(job1).await.expect("enqueue1");
+
+        // Same key -> returns existing job ID
+        let job2 = JobRecord::new(
+            "pay",
+            serde_json::json!({"amount": 200}),
+            JobPriority::Normal,
+            3,
+        )
+        .with_idempotency_key("pay-123");
+        let id2 = queue.enqueue(job2).await.expect("enqueue2");
+
+        assert_eq!(id1, id2, "Idempotency key should return same job ID");
+
+        // Only one job should exist
+        let stats = queue.stats().await.expect("stats");
+        assert_eq!(stats.pending, 1);
+
+        db.cleanup().await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn cancel_pending_job() {
+        let db = setup_db("cancel_pending").await;
+        let queue = JobQueue::new(db.pool().clone());
+
+        let job = JobRecord::new("task", serde_json::json!({}), JobPriority::Normal, 3);
+        let job_id = queue.enqueue(job).await.expect("enqueue");
+
+        let cancelled = queue
+            .request_cancel(job_id, Some("no longer needed"), None)
+            .await
+            .expect("cancel");
+        assert!(cancelled);
+
+        let stats = queue.stats().await.expect("stats");
+        assert_eq!(stats.cancelled, 1);
+        assert_eq!(stats.pending, 0);
+
+        db.cleanup().await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn cancel_respects_ownership() {
+        let db = setup_db("cancel_ownership").await;
+        let queue = JobQueue::new(db.pool().clone());
+
+        let job = JobRecord::new("task", serde_json::json!({}), JobPriority::Normal, 3)
+            .with_owner_subject(Some("user-alice".into()));
+        let job_id = queue.enqueue(job).await.expect("enqueue");
+
+        // Wrong owner can't cancel
+        let denied = queue
+            .request_cancel(job_id, Some("reason"), Some("user-bob"))
+            .await
+            .expect("cancel attempt");
+        assert!(!denied, "Should deny cancellation from non-owner");
+
+        // Right owner can cancel
+        let allowed = queue
+            .request_cancel(job_id, Some("reason"), Some("user-alice"))
+            .await
+            .expect("cancel");
+        assert!(allowed, "Should allow owner to cancel");
+
+        db.cleanup().await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn claim_respects_worker_capability() {
+        let db = setup_db("claim_capability").await;
+        let queue = JobQueue::new(db.pool().clone());
+
+        // Job requires "gpu" capability
+        let job = JobRecord::new("render", serde_json::json!({}), JobPriority::Normal, 3)
+            .with_capability("gpu");
+        queue.enqueue(job).await.expect("enqueue");
+
+        // Worker without capability can't claim
+        let worker_no_cap = Uuid::new_v4();
+        let claimed = queue
+            .claim(worker_no_cap, &["cpu".into()], 10)
+            .await
+            .expect("claim");
+        assert!(
+            claimed.is_empty(),
+            "Worker without gpu cap should not claim gpu job"
+        );
+
+        // Worker with capability can claim
+        let worker_with_cap = Uuid::new_v4();
+        let claimed = queue
+            .claim(worker_with_cap, &["gpu".into()], 10)
+            .await
+            .expect("claim");
+        assert_eq!(claimed.len(), 1);
+
+        db.cleanup().await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn heartbeat_updates_timestamp() {
+        let db = setup_db("heartbeat").await;
+        let queue = JobQueue::new(db.pool().clone());
+        let worker_id = Uuid::new_v4();
+
+        let job = JobRecord::new("long_task", serde_json::json!({}), JobPriority::Normal, 3);
+        let job_id = queue.enqueue(job).await.expect("enqueue");
+        queue.claim(worker_id, &[], 1).await.expect("claim");
+        queue.start(job_id).await.expect("start");
+
+        // Heartbeat should not error
+        queue.heartbeat(job_id).await.expect("heartbeat");
+
+        db.cleanup().await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn progress_updates_persist() {
+        let db = setup_db("progress").await;
+        let queue = JobQueue::new(db.pool().clone());
+        let worker_id = Uuid::new_v4();
+
+        let job = JobRecord::new("export", serde_json::json!({}), JobPriority::Normal, 3);
+        let job_id = queue.enqueue(job).await.expect("enqueue");
+        queue.claim(worker_id, &[], 1).await.expect("claim");
+        queue.start(job_id).await.expect("start");
+
+        queue
+            .update_progress(job_id, 50, "Processing...")
+            .await
+            .expect("progress");
+        queue
+            .update_progress(job_id, 100, "Done")
+            .await
+            .expect("progress");
+
+        // Verify via direct query (using runtime query since .sqlx/ lacks metadata for ad-hoc queries)
+        let row: (Option<i32>, Option<String>) = sqlx::query_as(
+            "SELECT progress_percent, progress_message FROM forge_jobs WHERE id = $1",
+        )
+        .bind(job_id)
+        .fetch_one(db.pool())
+        .await
+        .expect("query");
+        assert_eq!(row.0, Some(100));
+        assert_eq!(row.1.as_deref(), Some("Done"));
+
+        db.cleanup().await.expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn queue_stats_accurate() {
+        let db = setup_db("stats").await;
+        let queue = JobQueue::new(db.pool().clone());
+
+        // Start empty
+        let stats = queue.stats().await.expect("stats");
+        assert_eq!(stats.pending, 0);
+
+        // Add 3 pending
+        for _ in 0..3 {
+            let job = JobRecord::new("task", serde_json::json!({}), JobPriority::Normal, 3);
+            queue.enqueue(job).await.expect("enqueue");
+        }
+
+        let stats = queue.stats().await.expect("stats");
+        assert_eq!(stats.pending, 3);
+        assert_eq!(stats.running, 0);
+        assert_eq!(stats.completed, 0);
+
+        db.cleanup().await.expect("cleanup");
+    }
 }

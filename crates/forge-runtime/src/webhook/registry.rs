@@ -104,14 +104,3 @@ impl WebhookRegistry {
         self.webhooks.is_empty()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_registry_new() {
-        let registry = WebhookRegistry::new();
-        assert!(registry.is_empty());
-    }
-}

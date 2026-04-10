@@ -478,4 +478,111 @@ mod tests {
             "postgres://localhost/newdb?sslmode=disable"
         );
     }
+
+    // --- SQL statement splitting ---
+
+    #[test]
+    fn split_simple_statements() {
+        let stmts = split_sql_statements("CREATE TABLE a (id int); CREATE TABLE b (id int);");
+        assert_eq!(stmts.len(), 2);
+        assert!(stmts[0].starts_with("CREATE TABLE a"));
+        assert!(stmts[1].starts_with("CREATE TABLE b"));
+    }
+
+    #[test]
+    fn split_preserves_dollar_quoted_content() {
+        let sql = r#"
+            CREATE FUNCTION test() RETURNS void AS $$
+            BEGIN
+                INSERT INTO logs (msg) VALUES ('hello; world');
+            END;
+            $$ LANGUAGE plpgsql;
+            SELECT 1;
+        "#;
+        let stmts = split_sql_statements(sql);
+        assert_eq!(
+            stmts.len(),
+            2,
+            "Should split into function + SELECT, not more"
+        );
+        assert!(
+            stmts[0].contains("$$"),
+            "Function body must include dollar quotes"
+        );
+    }
+
+    #[test]
+    fn split_handles_empty_input() {
+        let stmts = split_sql_statements("");
+        assert!(stmts.is_empty());
+    }
+
+    #[test]
+    fn split_handles_no_trailing_semicolon() {
+        let stmts = split_sql_statements("SELECT 1");
+        assert_eq!(stmts.len(), 1);
+        assert_eq!(stmts[0], "SELECT 1");
+    }
+
+    #[test]
+    fn split_skips_blank_statements() {
+        let stmts = split_sql_statements("; ; SELECT 1; ;");
+        assert_eq!(stmts.len(), 1);
+        assert_eq!(stmts[0], "SELECT 1");
+    }
+
+    // --- parse_up_sql ---
+
+    #[test]
+    fn parse_up_sql_strips_down_section() {
+        let content = "CREATE TABLE a (id int);\n-- @down\nDROP TABLE a;";
+        let up = parse_up_sql(content);
+        assert!(up.contains("CREATE TABLE"));
+        assert!(!up.contains("DROP TABLE"), "Down SQL should be excluded");
+    }
+
+    #[test]
+    fn parse_up_sql_handles_no_down_marker() {
+        let content = "CREATE TABLE a (id int);";
+        let up = parse_up_sql(content);
+        assert!(up.contains("CREATE TABLE"));
+    }
+
+    #[test]
+    fn parse_up_sql_strips_up_markers() {
+        let content = "-- @up\nCREATE TABLE a (id int);";
+        let up = parse_up_sql(content);
+        assert!(!up.contains("@up"), "Up marker should be stripped");
+        assert!(up.contains("CREATE TABLE"));
+    }
+
+    // --- is_blank_sql ---
+
+    #[test]
+    fn blank_sql_detection() {
+        assert!(is_blank_sql(""));
+        assert!(is_blank_sql("   "));
+        assert!(is_blank_sql("-- just a comment"));
+        assert!(is_blank_sql("-- comment\n-- another"));
+        assert!(!is_blank_sql("SELECT 1"));
+        assert!(!is_blank_sql("-- comment\nSELECT 1"));
+    }
+
+    // --- sanitize edge cases ---
+
+    #[test]
+    fn sanitize_truncates_long_names() {
+        let long_name = "a".repeat(100);
+        let sanitized = sanitize_db_name(&long_name);
+        assert_eq!(sanitized.len(), 32);
+    }
+
+    #[test]
+    fn sanitize_handles_special_characters() {
+        assert_eq!(
+            sanitize_db_name("test/with:special!chars"),
+            "test_with_special_chars"
+        );
+        assert_eq!(sanitize_db_name(""), "");
+    }
 }

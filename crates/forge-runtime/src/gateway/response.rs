@@ -232,4 +232,139 @@ mod tests {
         let resp = RpcResponse::success(serde_json::json!(null)).with_request_id("req-123");
         assert_eq!(resp.request_id, Some("req-123".to_string()));
     }
+
+    // --- ForgeError -> RpcError conversion (HTTP boundary contract) ---
+
+    #[test]
+    fn forge_not_found_maps_to_not_found_404() {
+        let rpc: RpcError = forge_core::ForgeError::NotFound("user 42".into()).into();
+        assert_eq!(rpc.code, "NOT_FOUND");
+        assert_eq!(rpc.message, "user 42");
+        assert_eq!(rpc.status_code(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn forge_unauthorized_maps_to_401() {
+        let rpc: RpcError = forge_core::ForgeError::Unauthorized("expired".into()).into();
+        assert_eq!(rpc.code, "UNAUTHORIZED");
+        assert_eq!(rpc.status_code(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn forge_forbidden_maps_to_403() {
+        let rpc: RpcError = forge_core::ForgeError::Forbidden("admin only".into()).into();
+        assert_eq!(rpc.code, "FORBIDDEN");
+        assert_eq!(rpc.status_code(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn forge_validation_maps_to_400() {
+        let rpc: RpcError = forge_core::ForgeError::Validation("email required".into()).into();
+        assert_eq!(rpc.code, "VALIDATION_ERROR");
+        assert_eq!(rpc.status_code(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn forge_invalid_argument_maps_to_400() {
+        let rpc: RpcError = forge_core::ForgeError::InvalidArgument("negative id".into()).into();
+        assert_eq!(rpc.code, "INVALID_ARGUMENT");
+        assert_eq!(rpc.status_code(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn forge_timeout_maps_to_504() {
+        let rpc: RpcError = forge_core::ForgeError::Timeout("5s".into()).into();
+        assert_eq!(rpc.code, "TIMEOUT");
+        assert_eq!(rpc.status_code(), StatusCode::GATEWAY_TIMEOUT);
+    }
+
+    #[test]
+    fn forge_job_cancelled_maps_to_409() {
+        let rpc: RpcError = forge_core::ForgeError::JobCancelled("user request".into()).into();
+        assert_eq!(rpc.code, "JOB_CANCELLED");
+        assert_eq!(rpc.status_code(), StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn forge_rate_limit_maps_to_429_with_details() {
+        let rpc: RpcError = forge_core::ForgeError::RateLimitExceeded {
+            retry_after: std::time::Duration::from_secs(60),
+            limit: 100,
+            remaining: 0,
+        }
+        .into();
+        assert_eq!(rpc.code, "RATE_LIMITED");
+        assert_eq!(rpc.status_code(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(rpc.details.is_some());
+        assert_eq!(rpc.details.unwrap()["retry_after_secs"], 60);
+    }
+
+    #[test]
+    fn forge_deserialization_hides_internal_details() {
+        let rpc: RpcError =
+            forge_core::ForgeError::Deserialization("missing field `id`".into()).into();
+        assert_eq!(rpc.code, "INVALID_ARGUMENT");
+        // Must NOT leak internal error details to clients
+        assert_eq!(rpc.message, "Invalid input format");
+        assert_eq!(rpc.status_code(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn forge_database_error_hides_internals() {
+        let rpc: RpcError =
+            forge_core::ForgeError::Database("relation foo does not exist".into()).into();
+        assert_eq!(rpc.code, "INTERNAL_ERROR");
+        assert_eq!(rpc.message, "Internal server error");
+        assert_eq!(rpc.status_code(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn forge_internal_variants_all_map_to_500() {
+        let internals: Vec<forge_core::ForgeError> = vec![
+            forge_core::ForgeError::Internal("oops".into()),
+            forge_core::ForgeError::Serialization("bad".into()),
+            forge_core::ForgeError::Function("handler".into()),
+            forge_core::ForgeError::Config("bad toml".into()),
+            forge_core::ForgeError::Cluster("split".into()),
+            forge_core::ForgeError::InvalidState("done".into()),
+            forge_core::ForgeError::Job("failed".into()),
+            forge_core::ForgeError::WorkflowSuspended,
+        ];
+
+        for err in internals {
+            let rpc: RpcError = err.into();
+            assert_eq!(
+                rpc.status_code(),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Expected 500 for code: {}",
+                rpc.code
+            );
+            // Must never leak internal details
+            assert_eq!(rpc.message, "Internal server error");
+        }
+    }
+
+    #[test]
+    fn rpc_response_serialization_round_trip() {
+        let resp = RpcResponse::success(serde_json::json!({"users": [1, 2, 3]}))
+            .with_request_id("req-abc");
+        let json = serde_json::to_string(&resp).unwrap();
+        let deserialized: RpcResponse = serde_json::from_str(&json).unwrap();
+        assert!(deserialized.success);
+        assert_eq!(deserialized.request_id, Some("req-abc".to_string()));
+        assert_eq!(deserialized.data.unwrap()["users"][0], 1);
+    }
+
+    #[test]
+    fn rpc_error_with_details_serialization() {
+        let err = RpcError::with_details(
+            "CUSTOM_ERROR",
+            "something broke",
+            serde_json::json!({"field": "email"}),
+        );
+        let json = serde_json::to_string(&err).unwrap();
+        let deserialized: RpcError = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.code, "CUSTOM_ERROR");
+        assert_eq!(deserialized.details.unwrap()["field"], "email");
+    }
 }

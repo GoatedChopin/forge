@@ -503,6 +503,7 @@ fn pluralize(s: &str) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 mod tests {
     use super::*;
 
@@ -670,5 +671,230 @@ mod tests {
                 .rust_type,
             RustType::LocalTime
         );
+    }
+
+    // --- End-to-end pipeline tests ---
+
+    /// Simulates a realistic Forge project with models, enums, queries, mutations,
+    /// jobs, and workflows, then verifies the full parse pipeline produces
+    /// consistent and complete schema.
+    #[test]
+    fn end_to_end_realistic_schema_pipeline() {
+        let source = r#"
+            use forge::prelude::*;
+
+            #[model]
+            struct User {
+                id: Uuid,
+                email: String,
+                name: Option<String>,
+                role: UserRole,
+                created_at: DateTime<Utc>,
+            }
+
+            #[model]
+            struct Post {
+                id: Uuid,
+                title: String,
+                body: String,
+                author_id: Uuid,
+                published: bool,
+                view_count: i64,
+                created_at: DateTime<Utc>,
+            }
+
+            #[forge_enum]
+            enum UserRole {
+                Admin,
+                Member,
+                Guest,
+            }
+
+            #[derive(Serialize, Deserialize)]
+            struct CreateUserArgs {
+                email: String,
+                name: Option<String>,
+                role: UserRole,
+            }
+
+            #[query]
+            async fn get_users(ctx: QueryContext) -> Result<Vec<User>> {
+                todo!()
+            }
+
+            #[query]
+            async fn get_user(ctx: QueryContext, id: Uuid) -> Result<User> {
+                todo!()
+            }
+
+            #[mutation]
+            async fn create_user(ctx: MutationContext, args: CreateUserArgs) -> Result<User> {
+                todo!()
+            }
+
+            #[mutation]
+            async fn delete_user(ctx: MutationContext, id: Uuid) -> Result<()> {
+                todo!()
+            }
+
+            #[job]
+            async fn send_welcome_email(ctx: JobContext, user_id: Uuid) -> Result<()> {
+                todo!()
+            }
+
+            #[workflow]
+            async fn onboarding(ctx: WorkflowContext, user_id: Uuid) -> Result<String> {
+                todo!()
+            }
+
+            #[cron]
+            async fn daily_cleanup(ctx: CronContext) -> Result<()> {
+                todo!()
+            }
+        "#;
+
+        let registry = SchemaRegistry::new();
+        parse_file(source, &registry).expect("realistic project should parse");
+
+        // Models
+        let users = registry.get_table("users").expect("users table");
+        assert_eq!(users.fields.len(), 5);
+        let posts = registry.get_table("posts").expect("posts table");
+        assert_eq!(posts.fields.len(), 7);
+
+        // Enum
+        let role_enum = registry.get_enum("UserRole").expect("UserRole enum");
+        assert_eq!(role_enum.variants.len(), 3);
+
+        // DTO
+        let args = registry
+            .get_table("CreateUserArgs")
+            .expect("CreateUserArgs DTO");
+        assert_eq!(args.fields.len(), 3);
+
+        // Functions
+        let all_fns = registry.all_functions();
+        assert_eq!(all_fns.len(), 7);
+
+        let queries: Vec<_> = all_fns
+            .iter()
+            .filter(|f| f.kind == FunctionKind::Query)
+            .collect();
+        assert_eq!(queries.len(), 2);
+
+        let mutations: Vec<_> = all_fns
+            .iter()
+            .filter(|f| f.kind == FunctionKind::Mutation)
+            .collect();
+        assert_eq!(mutations.len(), 2);
+
+        let jobs: Vec<_> = all_fns
+            .iter()
+            .filter(|f| f.kind == FunctionKind::Job)
+            .collect();
+        assert_eq!(jobs.len(), 1);
+
+        let workflows: Vec<_> = all_fns
+            .iter()
+            .filter(|f| f.kind == FunctionKind::Workflow)
+            .collect();
+        assert_eq!(workflows.len(), 1);
+
+        let crons: Vec<_> = all_fns
+            .iter()
+            .filter(|f| f.kind == FunctionKind::Cron)
+            .collect();
+        assert_eq!(crons.len(), 1);
+
+        // Verify function details
+        let get_users = registry.get_function("get_users").expect("get_users");
+        assert!(
+            get_users.args.is_empty(),
+            "get_users has no user args (context stripped)"
+        );
+
+        let create_user = registry.get_function("create_user").expect("create_user");
+        assert_eq!(create_user.args.len(), 1, "create_user has one user arg");
+        assert_eq!(create_user.args.first().expect("arg").name, "args");
+
+        let send_email = registry
+            .get_function("send_welcome_email")
+            .expect("send_welcome_email");
+        assert_eq!(send_email.kind, FunctionKind::Job);
+        assert_eq!(send_email.args.len(), 1);
+    }
+
+    /// Verify that BindingSet correctly groups and filters functions.
+    #[test]
+    fn binding_set_from_mixed_schema() {
+        use crate::binding::BindingSet;
+
+        let source = r#"
+            #[query]
+            async fn list_items(ctx: QueryContext) -> Result<Vec<Item>> { todo!() }
+
+            #[mutation]
+            async fn add_item(ctx: MutationContext, name: String) -> Result<Item> { todo!() }
+
+            #[job]
+            async fn process_item(ctx: JobContext, id: Uuid) -> Result<()> { todo!() }
+
+            #[cron]
+            async fn cleanup(ctx: CronContext) -> Result<()> { todo!() }
+
+            #[workflow]
+            async fn item_pipeline(ctx: WorkflowContext, id: Uuid) -> Result<String> { todo!() }
+        "#;
+
+        let registry = SchemaRegistry::new();
+        parse_file(source, &registry).expect("parse");
+
+        let bindings = BindingSet::from_registry(&registry);
+        assert_eq!(bindings.queries.len(), 1);
+        assert_eq!(bindings.mutations.len(), 1);
+        assert_eq!(bindings.jobs.len(), 1);
+        assert_eq!(bindings.workflows.len(), 1);
+        // Crons must NOT appear in client bindings
+    }
+
+    #[test]
+    fn parse_function_with_multiple_args() {
+        let source = r#"
+            #[mutation]
+            async fn update_user(ctx: MutationContext, id: Uuid, name: String, email: Option<String>) -> Result<User> {
+                todo!()
+            }
+        "#;
+
+        let registry = SchemaRegistry::new();
+        parse_file(source, &registry).expect("parse");
+
+        let func = registry.get_function("update_user").expect("update_user");
+        assert_eq!(func.args.len(), 3);
+        assert_eq!(func.args.first().expect("id").name, "id");
+        assert_eq!(func.args.get(1).expect("name").name, "name");
+        assert_eq!(func.args.get(2).expect("email").name, "email");
+    }
+
+    #[test]
+    fn parse_function_with_vec_return() {
+        let source = r#"
+            #[query]
+            async fn list_posts(ctx: QueryContext) -> Result<Vec<Post>> {
+                todo!()
+            }
+        "#;
+
+        let registry = SchemaRegistry::new();
+        parse_file(source, &registry).expect("parse");
+
+        let func = registry.get_function("list_posts").expect("list_posts");
+        match &func.return_type {
+            RustType::Vec(inner) => match inner.as_ref() {
+                RustType::Custom(name) => assert_eq!(name, "Post"),
+                other => panic!("Expected Custom(Post), got: {other:?}"),
+            },
+            other => panic!("Expected Vec, got: {other:?}"),
+        }
     }
 }

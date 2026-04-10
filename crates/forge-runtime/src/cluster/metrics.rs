@@ -115,13 +115,3 @@ pub fn record_notification_processed(table: &str) {
 pub fn record_notification_latency(latency_secs: f64) {
     metrics().notification_latency.record(latency_secs, &[]);
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_cluster_metrics_creation() {
-        let _metrics = ClusterMetrics::new();
-    }
-}

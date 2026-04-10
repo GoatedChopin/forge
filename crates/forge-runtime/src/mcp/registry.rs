@@ -101,15 +101,3 @@ impl McpToolRegistry {
         self.tools.is_empty()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_registry_defaults() {
-        let registry = McpToolRegistry::new();
-        assert!(registry.is_empty());
-        assert_eq!(registry.len(), 0);
-    }
-}

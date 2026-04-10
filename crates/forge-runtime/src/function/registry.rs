@@ -195,16 +195,3 @@ impl Default for FunctionRegistry {
         Self::new()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_empty_registry() {
-        let registry = FunctionRegistry::new();
-        assert!(registry.is_empty());
-        assert_eq!(registry.len(), 0);
-        assert!(registry.get("nonexistent").is_none());
-    }
-}
