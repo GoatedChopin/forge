@@ -246,7 +246,7 @@ async fn test_upload_avatar() {
     let ctx = TestMutationContext::builder()
         .as_user(user_id)
         .mock_http("storage.example.com/*", |_req| {
-            HttpResponse::ok().body("https://storage.example.com/avatar.png")
+            MockResponse::json(serde_json::json!("https://storage.example.com/avatar.png"))
         })
         .build();
 

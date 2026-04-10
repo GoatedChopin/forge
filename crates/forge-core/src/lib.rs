@@ -41,7 +41,7 @@ pub use daemon::{DaemonContext, DaemonInfo, DaemonStatus, ForgeDaemon};
 pub use env::{EnvAccess, EnvProvider, MockEnvProvider, RealEnvProvider};
 pub use error::{ForgeError, Result};
 pub use function::{
-    AuthContext, AuthTokenTtl, ForgeConn, ForgeDb, ForgeMutation, ForgeQuery, FunctionInfo,
+    AuthContext, AuthTokenTtl, DbConn, ForgeConn, ForgeDb, ForgeMutation, ForgeQuery, FunctionInfo,
     FunctionKind, JobDispatch, JobInfoLookup, MutationContext, OutboxBuffer, PendingJob,
     PendingWorkflow, QueryContext, RequestMetadata, TokenIssuer, WorkflowDispatch,
 };

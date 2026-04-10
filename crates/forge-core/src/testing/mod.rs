@@ -58,3 +58,9 @@ pub const DEFAULT_JOB_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Default workflow test timeout.
 pub const DEFAULT_WORKFLOW_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Default timeout for individual test actions (e.g., `tokio::time::timeout`).
+pub const ACTION_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Default timeout for eventually-consistent assertion helpers.
+pub const ASSERTION_TIMEOUT: Duration = Duration::from_secs(5);

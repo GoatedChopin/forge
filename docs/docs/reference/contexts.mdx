@@ -102,7 +102,7 @@ Read-only database access for query handlers.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `db` | `fn db(&self) -> &PgPool` | Database connection pool (works directly with `query_as!` macros) |
+| `db` | `fn db(&self) -> ForgeDb` | Database connection pool with tracing (works directly with `query_as!` macros) |
 | `db_conn` | `fn db_conn(&self) -> DbConn<'_>` | Database connection as `DbConn` for shared helpers |
 | `user_id` | `fn user_id(&self) -> Result<Uuid>` | Get authenticated user's UUID |
 | `tenant_id` | `fn tenant_id(&self) -> Option<Uuid>` | Get tenant ID from JWT claims |

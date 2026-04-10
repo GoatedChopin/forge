@@ -162,10 +162,10 @@ impl SubscriptionManager {
     /// Create a new subscription manager.
     pub fn new(max_per_session: usize) -> Self {
         Self {
-            groups: DashMap::new(),
-            group_lookup: DashMap::new(),
+            groups: DashMap::with_shard_amount(64),
+            group_lookup: DashMap::with_shard_amount(64),
             subscribers: Arc::new(Mutex::new(SubscriberStore::new())),
-            session_subscribers: DashMap::new(),
+            session_subscribers: DashMap::with_shard_amount(64),
             next_group_id: AtomicU32::new(0),
             max_per_session,
         }

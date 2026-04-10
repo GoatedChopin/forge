@@ -131,6 +131,7 @@ pub struct GatewayServer {
     mcp_registry: Option<McpToolRegistry>,
     token_ttl: forge_core::AuthTokenTtl,
     signals_collector: Option<crate::signals::SignalsCollector>,
+    signals_anonymize_ip: bool,
 }
 
 impl GatewayServer {
@@ -155,6 +156,7 @@ impl GatewayServer {
             mcp_registry: None,
             token_ttl,
             signals_collector: None,
+            signals_anonymize_ip: false,
         }
     }
 
@@ -180,6 +182,13 @@ impl GatewayServer {
     /// registering client signal ingestion endpoints.
     pub fn with_signals_collector(mut self, collector: crate::signals::SignalsCollector) -> Self {
         self.signals_collector = Some(collector);
+        self
+    }
+
+    /// Enable IP anonymization for signal events.
+    /// When true, raw client IPs are not stored in event records.
+    pub fn with_signals_anonymize_ip(mut self, anonymize: bool) -> Self {
+        self.signals_anonymize_ip = anonymize;
         self
     }
 
@@ -402,6 +411,7 @@ impl GatewayServer {
                         );
                         DEFAULT_SIGNAL_SECRET.to_string()
                     }),
+                anonymize_ip: self.signals_anonymize_ip,
             });
             signals_router = Router::new()
                 .route(

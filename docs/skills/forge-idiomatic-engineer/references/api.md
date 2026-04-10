@@ -227,9 +227,9 @@ Write shared helpers using `DbConn<'_>` to work across all context types:
 ```rust
 pub async fn get_item(db: DbConn<'_>, id: Uuid) -> Result<Item> { ... }
 ```
-- `QueryContext.db_conn()` returns `DbConn`
-- `MutationContext.db()` returns `DbConn`
-- `JobContext`, `CronContext`, `WorkflowContext`, `DaemonContext`, `WebhookContext`, `McpToolContext` all provide `db()` → `DbConn`
+- All contexts provide `db_conn()` → `DbConn` for shared helpers
+- `MutationContext.db()` also returns `DbConn` (transaction-aware)
+- `db()` on other contexts returns `ForgeDb` (pool wrapper with tracing, implements `sqlx::Executor`)
 - See `references/patterns.md` for the full pattern
 
 ### EnvAccess (all contexts)

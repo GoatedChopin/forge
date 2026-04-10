@@ -212,6 +212,11 @@ impl WorkflowContext {
         crate::function::ForgeDb::from_pool(&self.db_pool)
     }
 
+    /// Get a `DbConn` for use in shared helper functions.
+    pub fn db_conn(&self) -> crate::function::DbConn<'_> {
+        crate::function::DbConn::Pool(self.db_pool.clone())
+    }
+
     /// Acquire a connection compatible with sqlx compile-time checked macros.
     pub async fn conn(&self) -> sqlx::Result<crate::function::ForgeConn<'static>> {
         Ok(crate::function::ForgeConn::Pool(

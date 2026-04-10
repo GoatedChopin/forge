@@ -335,6 +335,7 @@ fn expand_query_impl(input: ItemFn, attrs: QueryAttrs) -> syn::Result<TokenStrea
         Some(t) => quote! { Some(#t) },
         None => quote! { None },
     };
+    let http_timeout = timeout.clone();
 
     let is_public = attrs.is_public;
     let consistent = attrs.consistent;
@@ -493,7 +494,7 @@ fn expand_query_impl(input: ItemFn, attrs: QueryAttrs) -> syn::Result<TokenStrea
                     is_public: #is_public,
                     cache_ttl: #cache_ttl,
                     timeout: #timeout,
-                    http_timeout: None,
+                    http_timeout: #http_timeout,
                     rate_limit_requests: #rate_limit_requests,
                     rate_limit_per_secs: #rate_limit_per_secs,
                     rate_limit_key: #rate_limit_key,

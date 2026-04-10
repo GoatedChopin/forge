@@ -44,6 +44,7 @@ fn make_signals_state(pool: &PgPool) -> Arc<SignalsState> {
         collector,
         pool: pool.clone(),
         server_secret: "test-secret".to_string(),
+        anonymize_ip: false,
     })
 }
 

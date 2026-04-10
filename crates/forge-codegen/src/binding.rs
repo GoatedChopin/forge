@@ -9,6 +9,8 @@ use forge_core::schema::{
     FunctionArg, FunctionDef, FunctionKind, RustType, SchemaRegistry, TableDef,
 };
 
+use crate::emit;
+
 /// Pre-computed, target-agnostic binding for a single function.
 #[derive(Debug)]
 pub struct FunctionBinding {
@@ -22,6 +24,8 @@ pub struct FunctionBinding {
     pub return_type: RustType,
     /// Whether the single argument is a known custom Args/Input struct.
     pub is_custom_args: bool,
+    /// Whether any argument contains an Upload type.
+    pub has_upload: bool,
 }
 
 impl FunctionBinding {
@@ -103,12 +107,18 @@ fn build_binding(func: FunctionDef, tables: &[TableDef]) -> FunctionBinding {
             .first()
             .is_some_and(|arg| is_custom_args_type(&arg.rust_type, tables));
 
+    let has_upload = func
+        .args
+        .iter()
+        .any(|arg| emit::contains_upload(&arg.rust_type));
+
     FunctionBinding {
         name: func.name,
         kind: func.kind,
         args: func.args,
         return_type: func.return_type,
         is_custom_args,
+        has_upload,
     }
 }
 

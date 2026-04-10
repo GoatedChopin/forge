@@ -208,6 +208,107 @@ impl sqlx::Executor<'static> for ForgeDb {
     }
 }
 
+/// Abstraction over pool and transaction connections.
+///
+/// Allows shared helper functions to work with any context type.
+/// Obtain via `ctx.db_conn()` on pool-based contexts (queries, jobs, crons,
+/// daemons, webhooks, MCP tools) or via `ctx.db()` on `MutationContext`.
+///
+/// # Example
+///
+/// ```ignore
+/// pub async fn list_items(db: DbConn<'_>) -> Result<Vec<Item>> {
+///     db.fetch_all(sqlx::query_as!(Item, "SELECT * FROM items ORDER BY created_at DESC"))
+///         .await
+///         .map_err(Into::into)
+/// }
+/// ```
+pub enum DbConn<'a> {
+    /// Direct pool connection (queries, jobs, crons, daemons, webhooks, MCP).
+    Pool(sqlx::PgPool),
+    /// Transaction handle (transactional mutations).
+    Transaction(
+        Arc<AsyncMutex<Transaction<'static, Postgres>>>,
+        &'a sqlx::PgPool,
+    ),
+}
+
+impl DbConn<'_> {
+    /// Fetch exactly one row.
+    pub async fn fetch_one<'q, O>(
+        &self,
+        query: sqlx::query::QueryAs<'q, Postgres, O, sqlx::postgres::PgArguments>,
+    ) -> sqlx::Result<O>
+    where
+        O: Send + Unpin + for<'r> sqlx::FromRow<'r, PgRow>,
+    {
+        match self {
+            DbConn::Pool(pool) => query.fetch_one(pool).await,
+            DbConn::Transaction(tx, _) => {
+                let mut guard = tx.lock().await;
+                query.fetch_one(&mut **guard).await
+            }
+        }
+    }
+
+    /// Fetch zero or one row.
+    pub async fn fetch_optional<'q, O>(
+        &self,
+        query: sqlx::query::QueryAs<'q, Postgres, O, sqlx::postgres::PgArguments>,
+    ) -> sqlx::Result<Option<O>>
+    where
+        O: Send + Unpin + for<'r> sqlx::FromRow<'r, PgRow>,
+    {
+        match self {
+            DbConn::Pool(pool) => query.fetch_optional(pool).await,
+            DbConn::Transaction(tx, _) => {
+                let mut guard = tx.lock().await;
+                query.fetch_optional(&mut **guard).await
+            }
+        }
+    }
+
+    /// Fetch all matching rows.
+    pub async fn fetch_all<'q, O>(
+        &self,
+        query: sqlx::query::QueryAs<'q, Postgres, O, sqlx::postgres::PgArguments>,
+    ) -> sqlx::Result<Vec<O>>
+    where
+        O: Send + Unpin + for<'r> sqlx::FromRow<'r, PgRow>,
+    {
+        match self {
+            DbConn::Pool(pool) => query.fetch_all(pool).await,
+            DbConn::Transaction(tx, _) => {
+                let mut guard = tx.lock().await;
+                query.fetch_all(&mut **guard).await
+            }
+        }
+    }
+
+    /// Execute a statement (INSERT, UPDATE, DELETE).
+    pub async fn execute<'q>(
+        &self,
+        query: sqlx::query::Query<'q, Postgres, sqlx::postgres::PgArguments>,
+    ) -> sqlx::Result<PgQueryResult> {
+        match self {
+            DbConn::Pool(pool) => query.execute(pool).await,
+            DbConn::Transaction(tx, _) => {
+                let mut guard = tx.lock().await;
+                query.execute(&mut **guard).await
+            }
+        }
+    }
+}
+
+impl std::fmt::Debug for DbConn<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DbConn::Pool(_) => f.debug_tuple("DbConn::Pool").finish(),
+            DbConn::Transaction(_, _) => f.debug_tuple("DbConn::Transaction").finish(),
+        }
+    }
+}
+
 impl std::fmt::Debug for ForgeConn<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -588,6 +689,23 @@ impl QueryContext {
         ForgeDb(self.db_pool.clone())
     }
 
+    /// Get a `DbConn` for use in shared helper functions.
+    ///
+    /// Returns a pool-backed `DbConn` that can be passed to functions
+    /// accepting `DbConn<'_>` for cross-context reuse.
+    ///
+    /// ```ignore
+    /// pub async fn list_items(db: DbConn<'_>) -> Result<Vec<Item>> { ... }
+    ///
+    /// #[forge::query]
+    /// pub async fn get_items(ctx: &QueryContext) -> Result<Vec<Item>> {
+    ///     list_items(ctx.db_conn()).await
+    /// }
+    /// ```
+    pub fn db_conn(&self) -> DbConn<'_> {
+        DbConn::Pool(self.db_pool.clone())
+    }
+
     /// Get the authenticated user's UUID. Returns 401 if not authenticated.
     pub fn user_id(&self) -> crate::error::Result<Uuid> {
         self.auth.require_user_id()
@@ -791,6 +909,31 @@ impl MutationContext {
     /// Direct pool access for operations that cannot run inside a transaction.
     pub fn pool(&self) -> &sqlx::PgPool {
         &self.db_pool
+    }
+
+    /// Get a `DbConn` for use in shared helper functions.
+    ///
+    /// In transactional mode, returns a transaction-backed `DbConn`.
+    /// Otherwise returns a pool-backed `DbConn`.
+    ///
+    /// ```ignore
+    /// pub async fn list_items(db: DbConn<'_>) -> Result<Vec<Item>> { ... }
+    ///
+    /// #[forge::mutation]
+    /// pub async fn items_snapshot(ctx: &MutationContext, input: Input) -> Result<Vec<Item>> {
+    ///     list_items(ctx.db()).await
+    /// }
+    /// ```
+    pub fn db(&self) -> DbConn<'_> {
+        match &self.tx {
+            Some(tx) => DbConn::Transaction(tx.clone(), &self.db_pool),
+            None => DbConn::Pool(self.db_pool.clone()),
+        }
+    }
+
+    /// Get a `DbConn` for use in shared helper functions (alias for `db()`).
+    pub fn db_conn(&self) -> DbConn<'_> {
+        self.db()
     }
 
     /// Get the HTTP client for external requests.

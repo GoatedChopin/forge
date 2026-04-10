@@ -34,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Versioned workflows with signature guards: cryptographic contract signing via FNV-1a hash of persisted shape (name, version, step/wait keys, timeout, types). Mismatched runs block at resume with `BlockedSignatureMismatch`/`BlockedMissingVersion` status instead of silently corrupting.
 - Operator controls for blocked workflows: `cancel_by_operator` and `retire_unresumable` terminal actions.
 - `/_api/ready` reports unhealthy when blocked workflow runs exist.
-- `FORGE_HOST` and `FORGE_PORT` environment variables override config at runtime.
+- `HOST` and `PORT` environment variables override config at runtime.
 - `FORGE_OTEL_TRACES`, `FORGE_OTEL_METRICS`, `FORGE_OTEL_LOGS` for per-signal observability toggle without config file changes.
 - Cluster node discovery and improved multi-node coordination.
 - MCP SSE streaming for Model Context Protocol tool calls.

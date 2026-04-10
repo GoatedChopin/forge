@@ -71,7 +71,7 @@ pub mod prelude {
     pub use forge_core::env::EnvAccess;
     pub use forge_core::error::{ForgeError, Result};
     pub use forge_core::function::{
-        AuthContext, ForgeMutation, ForgeQuery, MutationContext, QueryContext,
+        AuthContext, DbConn, ForgeMutation, ForgeQuery, MutationContext, QueryContext,
     };
     pub use forge_core::job::{ForgeJob, JobContext, JobPriority};
     pub use forge_core::mcp::{ForgeMcpTool, McpToolContext, McpToolResult};
@@ -583,7 +583,9 @@ impl Forge {
                     self.config.signals.batch_size,
                     std::time::Duration::from_millis(self.config.signals.flush_interval_ms),
                 );
-                gateway = gateway.with_signals_collector(collector);
+                gateway = gateway
+                    .with_signals_collector(collector)
+                    .with_signals_anonymize_ip(self.config.signals.anonymize_ip);
 
                 // Spawn session reaper
                 forge_runtime::signals::session::spawn_session_reaper(

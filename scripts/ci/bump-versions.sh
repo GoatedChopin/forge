@@ -22,8 +22,11 @@ done
 [ -f packages/forge-dioxus/Cargo.toml ] && \
   sed -i "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" packages/forge-dioxus/Cargo.toml
 
-# Examples use workspace/path deps and stay linked to source.
-# build-template-archive.sh rewrites them to published versions at archive time.
+# Regenerate lockfiles for Dioxus frontend examples (standalone projects with path deps)
+for lockfile in examples/with-dioxus/*/frontend/Cargo.lock; do
+  [ -f "$lockfile" ] || continue
+  (cd "$(dirname "$lockfile")" && cargo generate-lockfile --quiet)
+done
 
 # Docs
 [ -f docs/package.json ] && \

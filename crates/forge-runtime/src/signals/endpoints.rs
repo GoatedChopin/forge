@@ -37,6 +37,8 @@ pub struct SignalsState {
     pub collector: SignalsCollector,
     pub pool: PgPool,
     pub server_secret: String,
+    /// When true, strip raw client IP from stored events (GDPR-compliant).
+    pub anonymize_ip: bool,
 }
 
 /// POST /signal/event -- batch custom events.
@@ -53,7 +55,7 @@ pub async fn event_handler(
         });
     }
 
-    let ctx = extract_request_ctx(&headers, &auth, &state.server_secret);
+    let ctx = extract_request_ctx(&headers, &auth, &state.server_secret, state.anonymize_ip);
     let session_id =
         resolve_session_id(batch.context.as_ref().and_then(|c| c.session_id.as_deref()));
     let page_url = batch.context.as_ref().and_then(|c| c.page_url.clone());
@@ -120,7 +122,7 @@ pub async fn view_handler(
     headers: HeaderMap,
     Json(payload): Json<PageViewPayload>,
 ) -> impl IntoResponse {
-    let ctx = extract_request_ctx(&headers, &auth, &state.server_secret);
+    let ctx = extract_request_ctx(&headers, &auth, &state.server_secret, state.anonymize_ip);
     let session_id_header = extract_header(&headers, "x-session-id");
     let session_id = resolve_session_id(session_id_header.as_deref());
 
@@ -230,7 +232,7 @@ pub async fn user_handler(
     )
     .await;
 
-    let ctx = extract_request_ctx(&headers, &auth, &state.server_secret);
+    let ctx = extract_request_ctx(&headers, &auth, &state.server_secret, state.anonymize_ip);
 
     let signal = SignalEvent {
         event_type: SignalEventType::Identify,
@@ -281,7 +283,7 @@ pub async fn report_handler(
         });
     }
 
-    let ctx = extract_request_ctx(&headers, &auth, &state.server_secret);
+    let ctx = extract_request_ctx(&headers, &auth, &state.server_secret, state.anonymize_ip);
     let session_id_header = extract_header(&headers, "x-session-id");
     let session_id = resolve_session_id(session_id_header.as_deref());
 
@@ -359,20 +361,24 @@ fn extract_request_ctx(
     headers: &HeaderMap,
     auth: &Option<axum::Extension<AuthContext>>,
     server_secret: &str,
+    anonymize_ip: bool,
 ) -> RequestCtx {
     let user_agent = extract_header(headers, "user-agent");
     let platform_header = extract_header(headers, "x-forge-platform");
-    let client_ip = extract_client_ip(headers);
+    let raw_ip = extract_client_ip(headers);
     let ua_lower = user_agent
         .as_deref()
         .unwrap_or_default()
         .to_ascii_lowercase();
     let is_bot = bot::is_bot_lower(&ua_lower);
     let visitor_id =
-        visitor::generate_visitor_id(client_ip.as_deref(), user_agent.as_deref(), server_secret);
+        visitor::generate_visitor_id(raw_ip.as_deref(), user_agent.as_deref(), server_secret);
     let user_id = auth.as_ref().and_then(|a| a.user_id());
     let tenant_id = auth.as_ref().and_then(|a| a.tenant_id());
     let device_info = device::parse_lowered(platform_header.as_deref(), &ua_lower);
+    // When anonymize_ip is enabled, drop the raw IP from stored events.
+    // The hashed visitor_id is still computed from the IP above for analytics.
+    let client_ip = if anonymize_ip { None } else { raw_ip };
     RequestCtx {
         user_agent,
         client_ip,
