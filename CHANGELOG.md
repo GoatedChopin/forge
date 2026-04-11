@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-04-11
+
+### Added
+
+- Fire-and-forget mutation helpers (`mutate`, `mutateWith`) with global error routing via `onMutationError` callback in both Svelte and Dioxus clients.
+- `anonymize_ip` option in `[signals]` config for GDPR-compliant IP anonymization before visitor ID hashing.
+- Per-mutation upload size limits via `max_upload_size` attribute.
+- `DbConn` type exposed for direct database access in test contexts.
+- `TestMcpToolContext` builder for unit testing MCP tool handlers.
+- Performance benchmarking guide in documentation.
+
+### Changed
+
+- Template dependency versions derived from `CARGO_PKG_VERSION` at build time, keeping scaffolded projects in sync automatically.
+- Benchmark loadgen rewritten with sharded per-thread metrics, configurable warmup phase, and structured JSON output.
+- Test suite trimmed: low-value tests replaced with targeted coverage for security-sensitive paths and edge cases.
+
+### Fixed
+
+- SSE automatically reconnects after token refresh in both Svelte and Dioxus clients, fixing stale subscriptions after silent token rotation.
+- Auth errors from subscription registration now propagate to `onAuthError` callback instead of silently retrying with an expired token.
+- TOCTOU race conditions in OAuth token exchange and job claim paths where concurrent requests could bypass validation.
+- Token binding bypass where a rotated refresh token could be replayed from a different session.
+- Input validation gaps in webhook signature verification and signals endpoints.
+
 ## [0.8.3] - 2026-04-01
 
 ### Added
@@ -486,7 +511,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust 2024 edition unsafe block compatibility
 - Release workflow cargo-edit installation
 
-[unreleased]: https://github.com/isala404/forge/compare/v0.8.3...HEAD
+[unreleased]: https://github.com/isala404/forge/compare/v0.8.4...HEAD
+[0.8.4]: https://github.com/isala404/forge/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/isala404/forge/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/isala404/forge/compare/v0.7.4...v0.8.2
 [0.7.4]: https://github.com/isala404/forge/compare/v0.7.3...v0.7.4

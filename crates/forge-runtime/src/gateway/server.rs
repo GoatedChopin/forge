@@ -247,18 +247,13 @@ impl GatewayServer {
         );
         rpc.set_token_ttl(self.token_ttl.clone());
         if let Some(collector) = &self.signals_collector {
-            let secret = self
-                .config
-                .auth
-                .jwt_secret
-                .clone()
-                .unwrap_or_else(|| {
-                    tracing::warn!(
-                        "No jwt_secret configured; using default signal secret for visitor ID hashing. \
+            let secret = self.config.auth.jwt_secret.clone().unwrap_or_else(|| {
+                tracing::warn!(
+                    "No jwt_secret configured; using default signal secret for visitor ID hashing. \
                          Visitor IDs will be predictable. Set [auth] jwt_secret in forge.toml."
-                    );
-                    DEFAULT_SIGNAL_SECRET.to_string()
-                });
+                );
+                DEFAULT_SIGNAL_SECRET.to_string()
+            });
             rpc.set_signals_collector(collector.clone(), secret);
         }
         let rpc_handler_state = Arc::new(rpc);

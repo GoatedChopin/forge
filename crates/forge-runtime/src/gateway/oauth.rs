@@ -614,13 +614,11 @@ pub async fn oauth_authorize_post(
         // Constant-time login: always run bcrypt even if user not found to
         // prevent timing side-channels that reveal valid email addresses.
         // Cost 10 dummy hash generated via: bcrypt::hash("dummy", 10)
-        const DUMMY_HASH: &str =
-            "$2b$10$x5F0VyTQ6qjX5YKr.WPmXuGNQzGqGN1pYnHvMBRz5bFm3VUSqJGi";
+        const DUMMY_HASH: &str = "$2b$10$x5F0VyTQ6qjX5YKr.WPmXuGNQzGqGN1pYnHvMBRz5bFm3VUSqJGi";
         let (found_id, hash) = match &row {
-            Ok(Some(r)) if r.password_hash.is_some() => (
-                Some(r.id),
-                r.password_hash.as_deref().unwrap_or(DUMMY_HASH),
-            ),
+            Ok(Some(r)) if r.password_hash.is_some() => {
+                (Some(r.id), r.password_hash.as_deref().unwrap_or(DUMMY_HASH))
+            }
             _ => (None, DUMMY_HASH),
         };
         let password_valid = bcrypt::verify(password, hash).unwrap_or(false);
