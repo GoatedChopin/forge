@@ -72,6 +72,7 @@ const sidebars: SidebarsConfig = {
       label: 'Scale',
       collapsed: true,
       items: [
+        'scale/performance',
         'scale/multiple-nodes',
         'scale/worker-pools',
         'scale/global-deploy',

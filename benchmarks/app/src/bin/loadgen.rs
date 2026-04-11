@@ -18,8 +18,8 @@ use uuid::Uuid;
 type DynError = Box<dyn Error + Send + Sync>;
 type DynResult<T> = Result<T, DynError>;
 
-const DEFAULT_START_USERS: usize = 10;
-const DEFAULT_RAMP_STEP: usize = 250;
+const DEFAULT_WARMUP_USERS: usize = 50;
+const DEFAULT_RAMP_STEP: usize = 200;
 const DEFAULT_COUNTER_COUNT: usize = 128;
 const DEFAULT_SETUP_CONCURRENCY: usize = 64;
 const DEFAULT_ACTION_INTERVAL_MS: u64 = 100;
@@ -28,11 +28,13 @@ const DEFAULT_SETTLE_TIMEOUT_SECS: u64 = 20;
 const DEFAULT_P90_LIMIT_MS: u32 = 2_000;
 const DEFAULT_ERROR_THRESHOLD: f64 = 0.02;
 
+const METRIC_SHARDS: usize = 16;
+
 #[derive(Clone, Debug)]
 struct Options {
     forge_urls: Vec<String>,
     max_duration: Option<Duration>,
-    start_users: usize,
+    warmup_users: usize,
     ramp_step: usize,
     counter_count: usize,
     setup_concurrency: usize,
@@ -48,10 +50,9 @@ impl Default for Options {
             forge_urls: vec![
                 "http://127.0.0.1:9081".to_string(),
                 "http://127.0.0.1:9082".to_string(),
-                "http://127.0.0.1:9083".to_string(),
             ],
             max_duration: None,
-            start_users: DEFAULT_START_USERS,
+            warmup_users: DEFAULT_WARMUP_USERS,
             ramp_step: DEFAULT_RAMP_STEP,
             counter_count: DEFAULT_COUNTER_COUNT,
             setup_concurrency: DEFAULT_SETUP_CONCURRENCY,
@@ -74,26 +75,64 @@ impl Display for ArgError {
 
 impl Error for ArgError {}
 
-#[derive(Default)]
+struct LatencyShard {
+    samples: Mutex<Vec<u32>>,
+}
+
+impl LatencyShard {
+    fn new() -> Self {
+        Self {
+            samples: Mutex::new(Vec::with_capacity(1024)),
+        }
+    }
+}
+
 struct Metrics {
     requests: AtomicU64,
     request_errors: AtomicU64,
     subscription_failures: AtomicU64,
     sse_disconnects: AtomicU64,
     subscribed_users: AtomicUsize,
-    latencies_ms: Mutex<Vec<u32>>,
+    shards: Vec<LatencyShard>,
 }
 
 impl Metrics {
-    fn record_latency(&self, latency_ms: u32) {
-        self.latencies_ms
+    fn new() -> Self {
+        let shards = (0..METRIC_SHARDS).map(|_| LatencyShard::new()).collect();
+        Self {
+            requests: AtomicU64::new(0),
+            request_errors: AtomicU64::new(0),
+            subscription_failures: AtomicU64::new(0),
+            sse_disconnects: AtomicU64::new(0),
+            subscribed_users: AtomicUsize::new(0),
+            shards,
+        }
+    }
+
+    fn record_latency(&self, shard_key: usize, latency_ms: u32) {
+        let shard = &self.shards[shard_key % METRIC_SHARDS];
+        shard
+            .samples
             .lock()
-            .expect("latency buffer poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .push(latency_ms);
     }
 
-    fn take_latencies(&self) -> Vec<u32> {
-        std::mem::take(&mut *self.latencies_ms.lock().expect("latency buffer poisoned"))
+    fn drain_latencies(&self) -> Vec<u32> {
+        let mut combined = Vec::new();
+        for shard in &self.shards {
+            let mut guard = shard.samples.lock().unwrap_or_else(|e| e.into_inner());
+            combined.append(&mut *guard);
+        }
+        combined
+    }
+
+    fn reset(&self) {
+        self.requests.store(0, Ordering::Relaxed);
+        self.request_errors.store(0, Ordering::Relaxed);
+        self.subscription_failures.store(0, Ordering::Relaxed);
+        self.sse_disconnects.store(0, Ordering::Relaxed);
+        self.drain_latencies();
     }
 }
 
@@ -137,11 +176,20 @@ struct SubscribeRequest {
     args: Value,
 }
 
-#[derive(Debug)]
 struct SseConnection {
     session_id: String,
     session_secret: String,
     drain_handle: tokio::task::JoinHandle<()>,
+}
+
+struct LevelReport {
+    launched: usize,
+    active: usize,
+    rps: f64,
+    p50_ms: u32,
+    p90_ms: u32,
+    p99_ms: u32,
+    err_pct: f64,
 }
 
 #[tokio::main]
@@ -167,26 +215,103 @@ async fn main() -> DynResult<()> {
             .tcp_nodelay(true)
             .build()?,
     );
-    let metrics = Arc::new(Metrics::default());
+    let metrics = Arc::new(Metrics::new());
 
     for url in &options.forge_urls {
         ensure_healthy(rpc_client.as_ref(), url).await?;
     }
 
-    println!("Target URLs: {}", options.forge_urls.join(", "));
-    println!("Ramp: +{} active SSE users", options.ramp_step);
-    println!("Hold: {}s at each level", options.level_hold.as_secs());
-    println!(
-        "Stop: p90 > {}ms or err > {:.0}%\n",
-        options.p90_limit_ms,
-        options.error_threshold * 100.0
-    );
+    print_header(&options);
 
     let counters = setup_counters(&options, rpc_client.as_ref(), &run_id).await?;
     let canary = setup_canary_user(&options, rpc_client.as_ref(), &run_id).await?;
     wait_for_counter_visibility(&options, rpc_client.as_ref(), &canary, &counters).await?;
 
     run_controller(options, run_id, counters, rpc_client, sse_client, metrics).await
+}
+
+fn print_header(options: &Options) {
+    println!();
+    println!("Forge Benchmark");
+    println!("{}", "─".repeat(50));
+    println!("targets:    {}", options.forge_urls.join(", "));
+    println!("ramp:       +{} users/level", options.ramp_step);
+    println!("hold:       {}s per level", options.level_hold.as_secs());
+    println!(
+        "stop:       p90 > {}ms or errors > {:.0}%",
+        options.p90_limit_ms,
+        options.error_threshold * 100.0
+    );
+    if let Some(max) = options.max_duration {
+        println!("max:        {}m", max.as_secs() / 60);
+    }
+    println!();
+}
+
+fn print_table_header() {
+    println!(
+        " {:>6} | {:>6} | {:>8} | {:>6} {:>6} {:>6} | {:>6}",
+        "users", "active", "req/s", "p50", "p90", "p99", "err %"
+    );
+    println!(
+        "{}",
+        "─".repeat(6 + 3 + 6 + 3 + 8 + 3 + 6 + 1 + 6 + 1 + 6 + 3 + 6)
+    );
+}
+
+fn print_level(report: &LevelReport) {
+    println!(
+        " {:>6} | {:>6} | {:>8.0} | {:>5}ms {:>5}ms {:>5}ms | {:>5.2}%",
+        report.launched,
+        report.active,
+        report.rps,
+        report.p50_ms,
+        report.p90_ms,
+        report.p99_ms,
+        report.err_pct,
+    );
+}
+
+fn print_summary(
+    reason: &str,
+    launched: usize,
+    active: usize,
+    peak_users: usize,
+    peak_rps: f64,
+    elapsed: Duration,
+    levels: &[LevelReport],
+) {
+    println!();
+    println!("Summary");
+    println!("{}", "─".repeat(50));
+    println!("stop reason:     {reason}");
+    println!("launched users:  {launched}");
+    println!("active users:    {active}");
+    println!("peak users:      {peak_users}");
+    println!("peak req/s:      {:.0}", peak_rps);
+    println!(
+        "duration:        {}m {}s",
+        elapsed.as_secs() / 60,
+        elapsed.as_secs() % 60
+    );
+    println!("levels:          {}", levels.len());
+
+    if levels.len() >= 2 {
+        let first = levels.first().expect("checked len");
+        let last = levels.last().expect("checked len");
+        let rps_drop = if first.rps > 0.0 {
+            ((last.rps - first.rps) / first.rps * 100.0).abs()
+        } else {
+            0.0
+        };
+        println!(
+            "rps trend:       {:.0} -> {:.0} ({:.1}% {})",
+            first.rps,
+            last.rps,
+            rps_drop,
+            if last.rps >= first.rps { "up" } else { "down" }
+        );
+    }
 }
 
 async fn run_controller(
@@ -200,17 +325,19 @@ async fn run_controller(
     let started_at = Instant::now();
     let mut launched_users = 0usize;
     let mut next_user_index = 0usize;
-    let mut prev_requests = 0u64;
-    let mut prev_errors = 0u64;
-    let mut prev_subscription_failures = 0u64;
-    let mut prev_disconnects = 0u64;
-    let mut prev_time = Instant::now();
+    let mut tasks = Vec::new();
+    let mut levels: Vec<LevelReport> = Vec::new();
     let mut peak_rps = 0.0f64;
     let mut peak_users = 0usize;
-    let mut tasks = Vec::new();
 
+    // Warmup: connect initial users and let caches settle
+    println!(
+        "warming up ({} users, {}s)...",
+        options.warmup_users,
+        options.level_hold.as_secs()
+    );
     spawn_user_batch(
-        options.start_users,
+        options.warmup_users,
         &mut launched_users,
         &mut next_user_index,
         &run_id,
@@ -223,8 +350,35 @@ async fn run_controller(
     )
     .await?;
 
-    wait_for_subscribed_users(metrics.as_ref(), launched_users, settle_timeout(&options)).await;
-    println!("  starting at {} launched users\n", launched_users);
+    wait_for_subscribed_users(metrics.as_ref(), launched_users, settle_timeout()).await;
+    tokio::time::sleep(options.level_hold).await;
+    metrics.reset();
+    println!("warmup done, starting ramp\n");
+
+    print_table_header();
+
+    // Ramp the first batch on top of warmup users
+    spawn_user_batch(
+        options.ramp_step,
+        &mut launched_users,
+        &mut next_user_index,
+        &run_id,
+        &counters,
+        rpc_client.clone(),
+        sse_client.clone(),
+        metrics.clone(),
+        &mut tasks,
+        &options,
+    )
+    .await?;
+
+    wait_for_subscribed_users(metrics.as_ref(), launched_users, settle_timeout()).await;
+
+    let mut prev_requests = 0u64;
+    let mut prev_errors = 0u64;
+    let mut prev_sub_failures = 0u64;
+    let mut prev_disconnects = 0u64;
+    let mut prev_time = Instant::now();
 
     loop {
         tokio::time::sleep(options.level_hold).await;
@@ -237,19 +391,18 @@ async fn run_controller(
 
         let requests = metrics.requests.load(Ordering::Relaxed);
         let errors = metrics.request_errors.load(Ordering::Relaxed);
-        let subscription_failures = metrics.subscription_failures.load(Ordering::Relaxed);
+        let sub_failures = metrics.subscription_failures.load(Ordering::Relaxed);
         let disconnects = metrics.sse_disconnects.load(Ordering::Relaxed);
         let subscribed = metrics.subscribed_users.load(Ordering::Relaxed);
 
         let delta_requests = requests.saturating_sub(prev_requests);
         let delta_errors = errors.saturating_sub(prev_errors);
-        let delta_subscription_failures =
-            subscription_failures.saturating_sub(prev_subscription_failures);
+        let delta_sub_failures = sub_failures.saturating_sub(prev_sub_failures);
         let delta_disconnects = disconnects.saturating_sub(prev_disconnects);
 
         prev_requests = requests;
         prev_errors = errors;
-        prev_subscription_failures = subscription_failures;
+        prev_sub_failures = sub_failures;
         prev_disconnects = disconnects;
         prev_time = now;
 
@@ -257,52 +410,75 @@ async fn run_controller(
         peak_rps = peak_rps.max(rps);
         peak_users = peak_users.max(subscribed);
 
-        let p90_latency_ms = percentile_90(metrics.take_latencies());
-        let total_error_events = delta_errors + delta_subscription_failures + delta_disconnects;
+        let latencies = metrics.drain_latencies();
+        let p50 = percentile(&latencies, 50);
+        let p90 = percentile(&latencies, 90);
+        let p99 = percentile(&latencies, 99);
+
+        let total_errors = delta_errors + delta_sub_failures + delta_disconnects;
         let err_rate = if delta_requests == 0 {
-            if total_error_events == 0 { 0.0 } else { 1.0 }
+            if total_errors == 0 { 0.0 } else { 1.0 }
         } else {
-            total_error_events as f64 / delta_requests as f64
+            total_errors as f64 / delta_requests as f64
         };
 
-        println!(
-            "  {:>5} launched | {:>5} active | {:>7.0} req/s | p90={:>6}ms | err={:.2}%",
-            launched_users,
-            subscribed,
+        let report = LevelReport {
+            launched: launched_users,
+            active: subscribed,
             rps,
-            p90_latency_ms,
-            err_rate * 100.0
-        );
+            p50_ms: p50,
+            p90_ms: p90,
+            p99_ms: p99,
+            err_pct: err_rate * 100.0,
+        };
+        print_level(&report);
+        levels.push(report);
 
-        if p90_latency_ms > options.p90_limit_ms {
-            println!("\n  stopped: p90={}ms", p90_latency_ms);
-            println!("  launched users: {}", launched_users);
-            println!("  concurrent users: {}", subscribed);
-            println!("  peak concurrent users: {}", peak_users);
-            println!("  peak throughput: {:.0} req/s", peak_rps);
+        if p90 > options.p90_limit_ms {
+            print_summary(
+                &format!("p90 latency exceeded {}ms", options.p90_limit_ms),
+                launched_users,
+                subscribed,
+                peak_users,
+                peak_rps,
+                started_at.elapsed(),
+                &levels,
+            );
             break;
         }
 
         if err_rate > options.error_threshold {
-            println!("\n  stopped: err={:.2}%", err_rate * 100.0);
-            println!("  launched users: {}", launched_users);
-            println!("  concurrent users: {}", subscribed);
-            println!("  peak concurrent users: {}", peak_users);
-            println!("  peak throughput: {:.0} req/s", peak_rps);
+            print_summary(
+                &format!(
+                    "error rate exceeded {:.0}%",
+                    options.error_threshold * 100.0
+                ),
+                launched_users,
+                subscribed,
+                peak_users,
+                peak_rps,
+                started_at.elapsed(),
+                &levels,
+            );
             break;
         }
 
         if let Some(max_duration) = options.max_duration
             && started_at.elapsed() >= max_duration
         {
-            println!("\n  stopped: max duration reached");
-            println!("  launched users: {}", launched_users);
-            println!("  concurrent users: {}", subscribed);
-            println!("  peak concurrent users: {}", peak_users);
-            println!("  peak throughput: {:.0} req/s", peak_rps);
+            print_summary(
+                "max duration reached",
+                launched_users,
+                subscribed,
+                peak_users,
+                peak_rps,
+                started_at.elapsed(),
+                &levels,
+            );
             break;
         }
 
+        // Only ramp if all launched users are connected
         if subscribed < launched_users {
             continue;
         }
@@ -321,7 +497,7 @@ async fn run_controller(
         )
         .await?;
 
-        wait_for_subscribed_users(metrics.as_ref(), launched_users, settle_timeout(&options)).await;
+        wait_for_subscribed_users(metrics.as_ref(), launched_users, settle_timeout()).await;
     }
 
     for task in tasks {
@@ -404,6 +580,8 @@ async fn run_user(
     forge_urls: Vec<String>,
     action_interval: Duration,
 ) {
+    let shard_key = user_index % METRIC_SHARDS;
+
     let sse = match open_sse(sse_client.as_ref(), &credential.home_url, &credential.token).await {
         Ok(conn) => conn,
         Err(_) => {
@@ -444,6 +622,7 @@ async fn run_user(
         return;
     }
 
+    // Phase-offset so users don't all fire at the same instant
     let action_interval_ms = action_interval.as_millis() as u64;
     if action_interval_ms > 0 {
         let phase_offset_ms = user_index as u64 % action_interval_ms.max(1);
@@ -461,12 +640,14 @@ async fn run_user(
         }
 
         let action_url = &forge_urls[(iteration + user_index) % forge_urls.len()];
+
+        // 50% scoped read, 20% paginated list, 30% write
         let payload = match iteration % 10 {
-            0..=3 => (
+            0..=4 => (
                 "get_counter",
                 json!({ "user_id": credential.user_id, "id": credential.home_counter_id }),
             ),
-            4..=6 => ("list_counters", json!({})),
+            5..=6 => ("list_counters", json!({})),
             _ => (
                 "increment",
                 json!({ "user_id": credential.user_id, "id": credential.home_counter_id }),
@@ -485,7 +666,7 @@ async fn run_user(
         .unwrap_or(false);
 
         metrics.requests.fetch_add(1, Ordering::Relaxed);
-        metrics.record_latency(started.elapsed().as_millis() as u32);
+        metrics.record_latency(shard_key, started.elapsed().as_millis() as u32);
         if !ok {
             metrics.request_errors.fetch_add(1, Ordering::Relaxed);
         }
@@ -496,6 +677,8 @@ async fn run_user(
 
     metrics.subscribed_users.fetch_sub(1, Ordering::Relaxed);
 }
+
+// --- setup ---
 
 async fn setup_counters(options: &Options, client: &Client, run_id: &str) -> DynResult<Vec<Uuid>> {
     let mut counters = vec![Uuid::nil(); options.counter_count];
@@ -609,6 +792,8 @@ async fn wait_for_counter_visible(
     }
 }
 
+// --- HTTP helpers ---
+
 async fn ensure_healthy(client: &Client, base_url: &str) -> DynResult<()> {
     let response = client.get(format!("{base_url}/_api/health")).send().await?;
     if response.status().is_success() {
@@ -695,6 +880,8 @@ async fn post_json<B: Serialize, T: DeserializeOwned>(
     Ok(response.json().await?)
 }
 
+// --- SSE ---
+
 async fn open_sse(client: &Client, base_url: &str, token: &str) -> DynResult<SseConnection> {
     let mut response = client
         .get(format!("{base_url}/_api/events"))
@@ -720,13 +907,9 @@ async fn open_sse(client: &Client, base_url: &str, token: &str) -> DynResult<Sse
         }
     };
 
-    let drain_handle = tokio::spawn(async move {
-        let mut local_buffer = buffer;
-        while let Ok(Some(chunk)) = response.chunk().await {
-            local_buffer.push_str(&String::from_utf8_lossy(&chunk).replace('\r', ""));
-            let _ = pop_events(&mut local_buffer);
-        }
-    });
+    // Drain bytes without parsing to keep the stream alive
+    let drain_handle =
+        tokio::spawn(async move { while let Ok(Some(_)) = response.chunk().await {} });
 
     Ok(SseConnection {
         session_id: connected.session_id,
@@ -736,21 +919,14 @@ async fn open_sse(client: &Client, base_url: &str, token: &str) -> DynResult<Sse
 }
 
 fn pop_connected_event(buffer: &mut String) -> DynResult<Option<ConnectedPayload>> {
-    let mut events = pop_raw_events(buffer);
-    for raw in events.drain(..) {
-        let (event, data) = parse_sse_event(&raw);
+    let events = pop_raw_events(buffer);
+    for raw in &events {
+        let (event, data) = parse_sse_event(raw);
         if event == "connected" {
             return Ok(Some(serde_json::from_str(&data)?));
         }
     }
     Ok(None)
-}
-
-fn pop_events(buffer: &mut String) -> Vec<String> {
-    pop_raw_events(buffer)
-        .into_iter()
-        .map(|raw| parse_sse_event(&raw).0)
-        .collect()
 }
 
 fn pop_raw_events(buffer: &mut String) -> Vec<String> {
@@ -780,38 +956,41 @@ fn parse_sse_event(raw: &str) -> (String, String) {
     (event, data_lines.join("\n"))
 }
 
-async fn wait_for_subscribed_users(
+// --- util ---
+
+fn wait_for_subscribed_users(
     metrics: &Metrics,
     target_users: usize,
     timeout: Duration,
-) -> bool {
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        if metrics.subscribed_users.load(Ordering::Relaxed) >= target_users {
-            return true;
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + '_>> {
+    Box::pin(async move {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if metrics.subscribed_users.load(Ordering::Relaxed) >= target_users {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-
-    metrics.subscribed_users.load(Ordering::Relaxed) >= target_users
+        metrics.subscribed_users.load(Ordering::Relaxed) >= target_users
+    })
 }
 
-fn settle_timeout(options: &Options) -> Duration {
-    let _ = options;
+fn settle_timeout() -> Duration {
     Duration::from_secs(DEFAULT_SETTLE_TIMEOUT_SECS)
 }
 
-fn percentile_90(mut samples: Vec<u32>) -> u32 {
+/// O(n) percentile via `select_nth_unstable` instead of full sort.
+fn percentile(samples: &[u32], pct: usize) -> u32 {
     if samples.is_empty() {
         return 0;
     }
-    samples.sort_unstable();
-    let idx = samples
+    let mut buf = samples.to_vec();
+    let idx = buf
         .len()
-        .saturating_mul(90)
+        .saturating_mul(pct)
         .div_ceil(100)
         .saturating_sub(1);
-    samples[idx]
+    *buf.select_nth_unstable(idx).1
 }
 
 fn parse_args(args: impl Iterator<Item = String>) -> DynResult<Options> {
@@ -862,7 +1041,7 @@ fn print_help() {
     println!("Examples:");
     println!("  loadgen");
     println!("  loadgen --max-duration 30m");
-    println!("  loadgen http://127.0.0.1:9081 http://127.0.0.1:9082 http://127.0.0.1:9083");
+    println!("  loadgen http://127.0.0.1:9081 http://127.0.0.1:9082");
     println!("  loadgen https://forge-bench.example.com");
 }
 

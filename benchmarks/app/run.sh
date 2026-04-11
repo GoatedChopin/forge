@@ -8,17 +8,16 @@ APP_BINARY="$ROOT/target/release/forge-bench"
 LOADGEN_BINARY="$ROOT/target/release/loadgen"
 JWT_SECRET_VALUE="${JWT_SECRET:-bench-secret-not-for-production}"
 
-FORGE_INSTANCES=3
+FORGE_INSTANCES=2
 BASE_PORT=9081
 BASE_GRPC_PORT=9000
-POOL_SIZE=60
-GATEWAY_MAX_CONNECTIONS=25000
-SSE_MAX_SESSIONS=20000
+POOL_SIZE=40
+GATEWAY_MAX_CONNECTIONS=16000
+SSE_MAX_SESSIONS=12000
 
 LOCAL_PRIMARY_URL="postgres://postgres:postgres@localhost:5432/app"
 LOCAL_REPLICA_URLS=(
   "postgres://postgres:postgres@localhost:5433/app"
-  "postgres://postgres:postgres@localhost:5434/app"
 )
 
 DB_URL=""
@@ -26,6 +25,7 @@ REPLICA_URLS=()
 FORGE_URLS=()
 APP_PIDS=()
 APP_CONFIGS=()
+APP_LOGS=()
 STARTED_LOCAL_DB=0
 MAX_DURATION=""
 
@@ -34,21 +34,21 @@ usage() {
 Usage:
   ./benchmarks/app/run.sh
   ./benchmarks/app/run.sh --max-duration 30m
-  ./benchmarks/app/run.sh --database-url URL --replica-url URL --replica-url URL
+  ./benchmarks/app/run.sh --database-url URL [--replica-url URL]
   ./benchmarks/app/run.sh --forge-url URL [--forge-url URL ...]
 
 Modes:
   no args
-    Start 1 local primary, 2 local replicas, 3 local Forge instances, then ramp until stop.
+    Start 1 local primary, 1 local replica, 2 local Forge instances, then ramp until stop.
 
   --max-duration
     Optional upper bound. By default the run is unlimited and only stops on p90/error thresholds.
 
-  --database-url + two --replica-url
-    Use that database, start 3 local Forge instances against it, then ramp until stop.
+  --database-url [+ --replica-url]
+    Use that database, start 2 local Forge instances against it, then ramp until stop.
 
   --forge-url
-    Skip local database and local Forge. Hit the supplied Forge URL(s) or load balancer directly.
+    Skip local database and local Forge. Hit the supplied Forge URL(s) directly.
 EOF
 }
 
@@ -61,6 +61,9 @@ cleanup() {
   done
   for config in "${APP_CONFIGS[@]:-}"; do
     rm -f "$config"
+  done
+  for log in "${APP_LOGS[@]:-}"; do
+    rm -f "$log"
   done
   if [[ "$STARTED_LOCAL_DB" -eq 1 ]]; then
     docker compose -f "$INFRA_DIR/docker-compose.yml" down -v >/dev/null 2>&1 || true
@@ -137,13 +140,12 @@ start_local_database() {
   REPLICA_URLS=("${LOCAL_REPLICA_URLS[@]}")
 
   echo ""
-  echo "=== Starting PostgreSQL (1 primary + 2 replicas) ==="
+  echo "=== Starting PostgreSQL (1 primary + 1 replica) ==="
   docker compose -f "$INFRA_DIR/docker-compose.yml" down -v >/dev/null 2>&1 || true
   docker compose -f "$INFRA_DIR/docker-compose.yml" up -d >/dev/null
 
   wait_for_postgres bench-pg-primary
-  wait_for_postgres bench-pg-replica1
-  wait_for_postgres bench-pg-replica2
+  wait_for_postgres bench-pg-replica
 }
 
 write_config() {
@@ -200,6 +202,7 @@ start_local_forge() {
     config_file="$(mktemp "${TMPDIR:-/tmp}/forge-bench-${port}.toml.XXXXXX")"
     log_file="$(mktemp "${TMPDIR:-/tmp}/forge-bench-${port}.log.XXXXXX")"
     APP_CONFIGS+=("$config_file")
+    APP_LOGS+=("$log_file")
     FORGE_URLS+=("http://127.0.0.1:${port}")
 
     write_config "$config_file" "$port" "$grpc_port" "forge-bench-${port}"
@@ -237,8 +240,8 @@ else
     command -v docker >/dev/null 2>&1 || { echo "Missing: docker"; exit 1; }
     start_local_database
   else
-    if [[ -z "$DB_URL" || ${#REPLICA_URLS[@]} -ne 2 ]]; then
-      echo "External database mode requires 1 primary (--database-url) and 2 replicas (--replica-url twice)." >&2
+    if [[ -z "$DB_URL" ]]; then
+      echo "External database mode requires --database-url." >&2
       exit 1
     fi
   fi
@@ -247,7 +250,7 @@ else
 fi
 
 echo ""
-echo "=== Running adaptive SSE benchmark ==="
+echo "=== Running benchmark ==="
 CMD=("$LOADGEN_BINARY")
 if [[ -n "$MAX_DURATION" ]]; then
   CMD+=(--max-duration "$MAX_DURATION")

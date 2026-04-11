@@ -10,9 +10,11 @@ use serde_json::Value;
 
 /// Normalize args for deserialization.
 /// - Keeps `null` as-is so unit `()` deserializes correctly.
+/// - Treats `{}` as `null` so no-arg functions accept empty objects.
 /// - Unwraps `{"args": ...}` or `{"input": ...}` wrapper if present (callers may use either format).
 fn normalize_args(args: Value) -> Value {
     match &args {
+        Value::Object(map) if map.is_empty() => Value::Null,
         Value::Object(map) if map.len() == 1 => {
             if map.contains_key("args") {
                 map.get("args").cloned().unwrap_or(Value::Null)

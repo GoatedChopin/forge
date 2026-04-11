@@ -766,3 +766,13 @@ For interactions needing instant feedback (drag-drop, reorder, focus switching),
 **Dioxus:** `use_optimistic(mutation, subscription_signal, apply_fn)` returns an `OptimisticMutation` with `.fire()` and `.data()`. The view signal layers local patches over SSE data. Auto-reverts on error or 3s TTL.
 
 **Svelte:** `createOptimisticMutation(mutationFn, subscriptionStore, applyFn)` returns `{ fire, data }`. The `data` Readable layers local patches over the subscription store. Auto-reverts on error or 3s TTL (configurable via `{ ttlMs }`).
+
+## 8. Performance Benchmark
+
+Adaptive capacity benchmark in `benchmarks/app/`. Ramps concurrent SSE users until p90 > 2s or errors > 2%. Each user holds live SSE subscription + makes RPC calls (50% reads, 20% paginated list, 30% writes triggering NOTIFY + reactivity).
+
+Baseline (laptop, Docker PG 18, 2 Forge instances, 80 total DB connections): 12,500 req/s peak, 2,250 concurrent SSE users at zero errors. Bottleneck order: connection pool -> Forge CPU -> PG write throughput.
+
+Subscription dedup: hash(query_name + args + auth_scope) -> QueryGroup. One re-execution per group per debounce window, fan-out via mpsc. Per-user cost is a channel send, not a DB query.
+
+Run: `./benchmarks/app/run.sh`. External DB: `--database-url` + `--replica-url`. External Forge: `--forge-url`. Docs: `/docs/scale/performance`.

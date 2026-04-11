@@ -1046,7 +1046,7 @@ name = "forge-bench"
 version = "0.8.3"
 dependencies = [
  "chrono",
- "forgex 0.7.4",
+ "forgex",
  "jsonwebtoken 9.3.1",
  "reqwest",
  "serde",
@@ -1058,57 +1058,15 @@ dependencies = [
 
 [[package]]
 name = "forge-codegen"
-version = "0.7.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "435f3ceb9add43fb49c44f7c30366f371fc8889029a9cc4255e97bf2f92560eb"
-dependencies = [
- "forge-core 0.7.4",
- "quote",
- "serde",
- "serde_json",
- "syn",
- "thiserror 2.0.18",
- "tracing",
-]
-
-[[package]]
-name = "forge-codegen"
 version = "0.8.3"
 dependencies = [
- "forge-core 0.8.3",
+ "forge-core",
  "quote",
  "serde",
  "serde_json",
  "syn",
  "thiserror 2.0.18",
  "tracing",
-]
-
-[[package]]
-name = "forge-core"
-version = "0.7.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b087c90fbe7197e723a1b188e15a9d3e553bbda3db0c98c844641b255c4cf272"
-dependencies = [
- "base64 0.22.1",
- "bytes",
- "chrono",
- "chrono-tz",
- "cron",
- "futures-core",
- "opentelemetry",
- "reqwest",
- "schemars 0.8.22",
- "serde",
- "serde_json",
- "sha2",
- "sqlx",
- "thiserror 2.0.18",
- "tokio",
- "toml",
- "tracing",
- "tracing-opentelemetry",
- "uuid",
 ]
 
 [[package]]
@@ -1146,7 +1104,7 @@ dependencies = [
  "bcrypt 0.16.0",
  "chrono",
  "dotenvy",
- "forgex 0.8.3",
+ "forgex",
  "futures-util",
  "reqwest",
  "rust-embed",
@@ -1167,7 +1125,7 @@ version = "0.8.3"
 dependencies = [
  "chrono",
  "dotenvy",
- "forgex 0.8.3",
+ "forgex",
  "rust-embed",
  "serde",
  "serde_json",
@@ -1180,19 +1138,6 @@ dependencies = [
 
 [[package]]
 name = "forge-macros"
-version = "0.7.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5dd3715fb88202a981bd60e61c596eeb9dcaa057ca400d1fb804192daa9f4633"
-dependencies = [
- "cron",
- "proc-macro2",
- "quote",
- "sqlparser",
- "syn",
-]
-
-[[package]]
-name = "forge-macros"
 version = "0.8.3"
 dependencies = [
  "cron",
@@ -1200,47 +1145,6 @@ dependencies = [
  "quote",
  "sqlparser",
  "syn",
-]
-
-[[package]]
-name = "forge-runtime"
-version = "0.7.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "28580cb47e0e69d71a8769f1849ffd53dcd6cf1d3e2b445d916f68e77af23fcc"
-dependencies = [
- "anyhow",
- "axum",
- "base64 0.22.1",
- "bcrypt 0.17.1",
- "bytes",
- "chrono",
- "chrono-tz",
- "dashmap",
- "forge-core 0.7.4",
- "futures-util",
- "hmac",
- "jsonwebtoken 10.3.0",
- "opentelemetry",
- "opentelemetry-appender-tracing",
- "opentelemetry-otlp",
- "opentelemetry-semantic-conventions",
- "opentelemetry_sdk",
- "reqwest",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "sha1",
- "sha2",
- "sqlx",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util",
- "tower",
- "tower-http",
- "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "uuid",
 ]
 
 [[package]]
@@ -1255,7 +1159,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "dashmap",
- "forge-core 0.8.3",
+ "forge-core",
  "futures-util",
  "hmac",
  "jsonwebtoken 10.3.0",
@@ -1291,7 +1195,7 @@ dependencies = [
  "bcrypt 0.16.0",
  "chrono",
  "dotenvy",
- "forgex 0.8.3",
+ "forgex",
  "futures-util",
  "reqwest",
  "rust-embed",
@@ -1312,7 +1216,7 @@ version = "0.8.3"
 dependencies = [
  "chrono",
  "dotenvy",
- "forgex 0.8.3",
+ "forgex",
  "rust-embed",
  "serde",
  "serde_json",
@@ -1325,44 +1229,6 @@ dependencies = [
 
 [[package]]
 name = "forgex"
-version = "0.7.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a63835da5aac2c09b40d7c74b3484ca54e0e4f64659bf67c930012a4d75a9c5"
-dependencies = [
- "anyhow",
- "axum",
- "chrono",
- "clap",
- "console",
- "dotenvy",
- "forge-codegen 0.7.4",
- "forge-core 0.7.4",
- "forge-macros 0.7.4",
- "forge-runtime 0.7.4",
- "include_dir",
- "inventory",
- "nix",
- "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry_sdk",
- "reqwest",
- "serde",
- "serde_json",
- "sqlx",
- "tar",
- "tokio",
- "tokio-util",
- "toml",
- "tower",
- "tower-http",
- "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "forgex"
 version = "0.8.3"
 dependencies = [
  "anyhow",
@@ -1371,10 +1237,10 @@ dependencies = [
  "clap",
  "console",
  "dotenvy",
- "forge-codegen 0.8.3",
- "forge-core 0.8.3",
- "forge-macros 0.8.3",
- "forge-runtime 0.8.3",
+ "forge-codegen",
+ "forge-core",
+ "forge-macros",
+ "forge-runtime",
  "include_dir",
  "inventory",
  "mime_guess",
@@ -4201,7 +4067,7 @@ version = "0.8.3"
 dependencies = [
  "chrono",
  "dotenvy",
- "forgex 0.8.3",
+ "forgex",
  "rust-embed",
  "serde",
  "serde_json",
@@ -4218,7 +4084,7 @@ version = "0.8.3"
 dependencies = [
  "chrono",
  "dotenvy",
- "forgex 0.8.3",
+ "forgex",
  "rust-embed",
  "serde",
  "serde_json",

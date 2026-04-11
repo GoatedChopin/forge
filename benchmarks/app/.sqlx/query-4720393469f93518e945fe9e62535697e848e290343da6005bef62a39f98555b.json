@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT * FROM counters ORDER BY name",
+  "query": "SELECT * FROM counters ORDER BY name LIMIT 20",
   "describe": {
     "columns": [
       {
@@ -40,5 +40,5 @@
       false
     ]
   },
-  "hash": "be9a7b2126a868398e1cfe34ee3e7908dabf6f455d7d144e1d2672150e41c326"
+  "hash": "4720393469f93518e945fe9e62535697e848e290343da6005bef62a39f98555b"
 }
