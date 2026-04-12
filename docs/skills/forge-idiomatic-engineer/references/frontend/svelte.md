@@ -227,11 +227,79 @@ reorder.fire({ id, status: 'done', position: 10000 });
 
 On SSE update, subscription data replaces the optimistic patch. On error, the view reverts. Default TTL is 3s, configurable via `{ ttlMs: 5000 }` options.
 
+## Dynamic Subscriptions
+
+When a subscription depends on a dynamic parameter (route param, selected item), use `$effect` with explicit cleanup. Do NOT create stores inside `$derived` -- each re-evaluation leaks a subscription.
+
+```svelte
+<script lang="ts">
+  import { createSubscriptionStore } from '@forge-rs/svelte';
+  import { toReactive, type ReactiveQuery } from '$lib/forge/runes.svelte';
+  import { onDestroy } from 'svelte';
+
+  let { id } = $props();
+  let item: ReactiveQuery<any> | null = $state(null);
+  let prevId = "";
+
+  $effect(() => {
+    if (id === prevId) return;
+    prevId = id;
+    item?.unsubscribe();
+    item = null;
+    if (!id) return;
+    item = toReactive(createSubscriptionStore("get_item", { id }));
+  });
+
+  onDestroy(() => item?.unsubscribe());
+</script>
+```
+
+For static subscriptions (no changing params), use the generated `$`-suffixed reactive functions at module scope:
+```svelte
+<script>
+  import { listTodos$ } from '$lib/forge';
+  const todos = listTodos$();
+</script>
+```
+
+## Custom Auth with ForgeProvider Remount
+
+When rolling your own auth store (not using the generated `auth.svelte.ts`), the SSE session won't automatically reconnect on login/logout. Wrap `ForgeProvider` in a `{#key}` block keyed to an auth generation counter:
+
+```typescript
+// lib/auth.svelte.ts
+let authGeneration = $state(0);
+export function getAuthGeneration(): number { return authGeneration; }
+
+export function setAuth(accessToken: string, refreshToken: string, userId: string, email: string) {
+  // ... persist to localStorage ...
+  authGeneration++;  // triggers ForgeProvider remount
+}
+
+export function clearAuth() {
+  // ... clear localStorage ...
+  authGeneration++;
+}
+```
+
+```svelte
+<!-- +layout.svelte -->
+{#key getAuthGeneration()}
+<ForgeProvider url={apiUrl} {getToken} onMutationError={handleError}>
+  {@render children()}
+</ForgeProvider>
+{/key}
+```
+
+Without this, logging in shows stale anonymous data, and logging out continues streaming the previous user's data until a full page reload.
+
 ## Common Mistakes
 
 - Editing `$lib/forge/*` (overwritten on `forge generate`)
 - Manual refetch loops instead of using `Store$` subscriptions
 - Forgetting `ForgeProvider` in root layout
-- Using `$effect` for data fetching instead of reactive stores
+- Using `$effect` for data fetching instead of reactive stores (except dynamic subscriptions, see above)
+- Creating subscription stores inside `$derived` (leaks subscriptions on every re-evaluation)
 - Not handling `loading` and `error` states in UI
 - Silently dropping mutation errors (use `fireMutation` with a global handler instead)
+- Custom auth without `{#key}` remount on ForgeProvider (SSE bound to stale principal)

@@ -46,11 +46,17 @@ Workflow `status` values: `pending`, `running`, `suspended`, `completed`, `faile
 
 ## Auth Pattern
 
-1. Backend: `[auth]` config in `forge.toml` + public `register`/`login`/`refresh` mutations using `ctx.issue_token_pair()`
+1. Backend: `[auth]` config in `forge.toml` (must include `access_token_ttl` and `refresh_token_ttl`) + public `register`/`login`/`refresh` mutations using `ctx.issue_token_pair()`
 2. Frontend: auth layer persists tokens + user/viewer to localStorage, provides token to the client, runs periodic refresh
-3. On auth change: client reconnects SSE automatically (subscriptions re-register with new identity)
+3. On auth change: client reconnects SSE (how depends on framework, see below)
 
 Both SvelteKit (`auth.setAuth(token, refreshToken, user)`) and Dioxus (`auth.login_with_viewer(token, refreshToken, &viewer)`) store the authenticated user alongside tokens. This avoids apps needing their own user persistence layer.
+
+**SSE reconnect on auth change:**
+- Generated auth store (SvelteKit `auth.setAuth`/`clearAuth`, Dioxus `use_auth_key()`): automatic. The store signals the client to tear down and reconnect.
+- Custom auth store: manual. SvelteKit: wrap `ForgeProvider` in `{#key authGeneration}` so it remounts on auth changes. Dioxus: use a keyed component wrapper. Without this, the SSE session stays bound to the old principal and either shows stale data or returns `SESSION_PRINCIPAL_MISMATCH`.
+
+**Backend auth mutations must drop `conn()` before calling `issue_token_pair()`.** The token pair call acquires its own connection. Holding both under load exhausts the pool.
 
 Protected endpoints require `Authorization: Bearer <token>`. Public endpoints (`#[forge::query(public)]`) skip auth.
 

@@ -68,6 +68,12 @@ Call `SELECT forge_enable_reactivity('table_name');` in migrations. Hand-written
 **Using `SELECT *` in subscribed queries.**
 Column-aware invalidation only works with explicit column lists. `SELECT *` falls back to table-level invalidation, triggering unnecessary re-fetches.
 
+**Forgetting `forge_enable_reactivity` on joined tables.**
+If a query joins `sites` and `scans`, both tables need reactivity enabled. The Reactor only fires on tables it watches. A missing `forge_enable_reactivity('scans')` means changes to scans won't push updates to the query, even though `sites` is reactive.
+
+**Returning stale data from queries that join related tables.**
+Queries like `list_sites` that use LATERAL JOIN to include latest scan data must use the actual joined columns in their return type, not the base model. Create a dedicated struct (e.g., `SiteSummary`) with the enriched fields. If you return the base `Site` struct, the joined data is silently dropped and the frontend shows stale or missing values.
+
 ## 4. Workflows
 
 **Using `tokio::sleep` for long waits.**
@@ -91,10 +97,33 @@ Deprecated handlers must stay deployed until all their in-flight runs finish. If
 SSE pushes updates automatically. `refetch()` doubles traffic and causes flicker. Exception: after workflow step completion in tests where SSE timing is unreliable.
 
 **Reusing ForgeClient across auth state changes.**
-The SSE session binds to a principal on first connection. Toggling the token causes `SESSION_PRINCIPAL_MISMATCH`. Destroy and recreate the client when auth changes. Dioxus: keyed remount via `use_auth_key()`. SvelteKit: SSE auto-reconnects on `setAuth`/`clearAuth`.
+The SSE session binds to a principal on first connection. Toggling the token causes `SESSION_PRINCIPAL_MISMATCH`. Destroy and recreate the client when auth changes. Dioxus: keyed remount via `use_auth_key()`. SvelteKit with generated auth store: `setAuth`/`clearAuth` reconnect SSE automatically. SvelteKit with custom auth: wrap `ForgeProvider` in `{#key authGeneration}` so the provider remounts and opens a fresh SSE session with the new token.
+```svelte
+<!-- Custom auth: track a generation counter, increment on login/logout -->
+{#key getAuthGeneration()}
+<ForgeProvider url={apiUrl} {getToken} onMutationError={handleError}>
+  {@render children()}
+</ForgeProvider>
+{/key}
+```
 
 **Using effects/watchers for data fetching.**
 Reactive stores (`$`-suffixed in Svelte, `use_*_live` in Dioxus) handle subscriptions. Effects create race conditions, duplicate subscriptions, and memory leaks.
+
+**Creating subscription stores inside `$derived` (SvelteKit).**
+`$derived` re-runs on every dependency change. Placing `createSubscriptionStore()` or `listTodosStore$()` inside `$derived` creates a new SSE subscription each time without cleaning up the old one. Use `$effect` with explicit `unsubscribe()` cleanup instead:
+```typescript
+let store: ReactiveQuery<any> | null = $state(null);
+let prevId = "";
+$effect(() => {
+  if (id === prevId) return;
+  prevId = id;
+  store?.unsubscribe();
+  store = id ? toReactive(createSubscriptionStore("get_item", { id })) : null;
+});
+onDestroy(() => store?.unsubscribe());
+```
+This is the one case where `$effect` is correct for subscription lifecycle, because the subscription depends on a dynamic parameter.
 
 **Forgetting `ForgeProvider`/`ForgeAuthProvider` at the root.**
 Without it, `getForgeClient()` / `use_forge_client()` returns nothing and components silently fail.
@@ -121,6 +150,26 @@ Use `reqwest` with `rustls-tls` for native targets. The default OpenSSL may not 
 Logout triggers a keyed remount that destroys the refresh timer. Signal a refresh attempt instead; let the refresh logic decide whether to log out.
 
 ## 6. Auth
+
+**Missing `access_token_ttl`/`refresh_token_ttl` in forge.toml.**
+`issue_token_pair()` reads TTL values from the `[auth]` config. If they're missing, the call fails at runtime. Always add both when using self-issued auth:
+```toml
+[auth]
+jwt_algorithm = "HS256"
+jwt_secret = "${JWT_SECRET}"
+access_token_ttl = "1h"
+refresh_token_ttl = "30d"
+```
+
+**Holding `conn()` while calling `issue_token_pair()`.**
+`issue_token_pair()` acquires its own connection from the pool. If the mutation is still holding a `conn()`, you're using two connections for one request, and under load this can exhaust the pool. Drop the connection before issuing tokens:
+```rust
+let mut conn = ctx.conn().await?;
+let user_id = sqlx::query_scalar!("INSERT INTO users ... RETURNING id")
+    .fetch_one(&mut conn).await?;
+drop(conn);  // release before acquiring another
+let pair = ctx.issue_token_pair(user_id, &["user"]).await?;
+```
 
 **Using authenticated client for refresh calls.**
 The `ForgeClient` sends the expired token in the `Authorization` header. The runtime validates the token before checking if the endpoint is public. Use an anonymous `ForgeClient` for refresh:

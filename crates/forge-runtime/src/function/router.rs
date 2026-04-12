@@ -378,6 +378,10 @@ impl FunctionRouter {
 
             match handler(&ctx, args).await {
                 Ok(value) => {
+                    // Drop the context so its Arc<Transaction> clone is released
+                    // before we try_unwrap the transaction handle for commit.
+                    drop(ctx);
+
                     let buffer = {
                         let guard = outbox.lock().unwrap_or_else(|poisoned| {
                             tracing::error!("Outbox mutex was poisoned, recovering");
@@ -418,7 +422,10 @@ impl FunctionRouter {
 
                     Ok(RouteResult::Mutation(value))
                 }
-                Err(e) => Err(e),
+                Err(e) => {
+                    drop(ctx);
+                    Err(e)
+                }
             }
         }
         .instrument(span)
