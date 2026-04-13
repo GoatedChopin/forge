@@ -2,6 +2,8 @@
 
 Common mistakes and their fixes, organized by topic. Load this when starting implementation or when builds fail.
 
+**Murphy's Law applies.** Every pitfall here is something that WILL happen in production. Don't assume happy paths. Don't assume entities exist. Don't assume tokens are valid. Don't assume networks are reliable. Code defensively.
+
 ## 1. Generated Code
 
 **Editing generated files.**
@@ -46,6 +48,23 @@ Macros generate structs but don't make them reachable. Each handler needs a regi
 
 ## 3. Database & Transactions
 
+**Using runtime SQL instead of compile-time checked queries.**
+Never use `sqlx::query()` or `sqlx::query_as::<_, T>()`. Always use the bang-macro forms: `sqlx::query!()` and `sqlx::query_as!()`. Compile-time checking catches SQL typos, type mismatches, and schema drift before deployment. After modifying queries, run `forge migrate prepare` to update the `.sqlx/` cache.
+```rust
+// wrong - runtime checked, errors at runtime
+sqlx::query_as::<_, User>("SELECT id, name FROM users WHERE id = $1")
+    .bind(id)
+    .fetch_one(&mut conn)
+    .await
+
+// correct - compile-time checked, errors at build time
+sqlx::query_as!(User, "SELECT id, name FROM users WHERE id = $1", id)
+    .fetch_one(&mut conn)
+    .await
+```
+
+For enums, use explicit type casts in the SELECT: `status as "status: ScanStatus"`. SQLx infers nullability from the database schema. Use the `"column?"` suffix only when overriding inference (e.g., forcing a non-nullable column to be treated as nullable in complex queries).
+
 **Calling `dispatch_job`/`start_workflow` without `transactional`.**
 Without it, job inserts happen before the mutation commits. If the mutation rolls back, orphan jobs execute against non-existent data.
 
@@ -53,8 +72,7 @@ Without it, job inserts happen before the mutation commits. If the mutation roll
 Mutations need `ctx.conn()` for transactional access. Bind to a mutable variable:
 ```rust
 let mut conn = ctx.conn().await?;
-sqlx::query_as::<_, User>("SELECT id, name FROM users WHERE id = $1")
-    .bind(id)
+sqlx::query_as!(User, "SELECT id, name FROM users WHERE id = $1", id)
     .fetch_one(&mut conn)
     .await
 ```
@@ -185,13 +203,64 @@ Don't use `#[query(unscoped)]` as the default escape hatch. If your query touche
 **Relying on `#[serde(skip)]` to hide fields.**
 `forge generate` reads the Rust AST, not serde attributes. Skipped fields still appear in generated types. Create a separate public struct (e.g., `PublicUser`) without sensitive fields and use it in return types.
 
+### Social Login
+
+**Confusing OAuth callbacks with webhooks.**
+OAuth = browser GET redirect with `code`+`state`. Webhooks = server POST with signature. Use frontend route + mutation for OAuth.
+
+**Validating OAuth tokens client-side.**
+Frontend sends authorization code to mutation. Mutation exchanges it server-side. Never validate in browser.
+
+**Storing provider access tokens.**
+Provider tokens are for immediate userinfo fetch only. Issue Forge JWT via `issue_token_pair()` for ongoing auth.
+
+**Putting provider IDs directly on users table.**
+Single-provider columns (`google_sub`, `github_id` on users) break when adding more providers or handling email changes. Use separate `user_identities` table with `(provider, provider_id)` unique constraint. See patterns.md for schema.
+
+**Using email as unique identifier.**
+Emails change and overlap across providers. Use provider's stable ID (`sub` for Google/OIDC, `id` for GitHub).
+
+**Not handling account linking.**
+Same email from different provider: (1) auto-link by matching email to existing user and adding new identity, or (2) require explicit linking. Never silently create duplicate accounts.
+
+**Leaking client secrets.**
+`{PROVIDER}_CLIENT_SECRET` stays server-side via `ctx.env_require()`. Frontend only needs client ID for OAuth redirect.
+
+**Missing CSRF protection on OAuth flow.**
+Always use `state` parameter with DB-stored expiry. Validate on callback.
+
+**OAuth redirect URI mismatch.**
+Provider console URI must exactly match code. Trailing slashes and protocol matter.
+
+### Webhooks
+
+**Wrong webhook path.**
+`path = "/webhooks/stripe"` mounts at `/_api/webhooks/stripe`. Configure provider with full URL.
+
+**Missing signature/idempotency.**
+Always set `signature` and `idempotency`. `allow_unsigned` is dev-only. Providers retry on timeout.
+
+**Sync webhook processing.**
+Dispatch job and return `Accepted`. Long processing causes retry storms.
+
+### Redirect URLs
+
+**Hardcoding URLs.**
+Use `ctx.env_require("PUBLIC_URL")?`. Hardcoded URLs break in staging.
+
+**Open redirects.**
+Validate `redirect_after` against allowlist. Never redirect to arbitrary user input.
+
+**Token hygiene.**
+Tokens need `expires_at` (10-15min for sensitive, 24h max). Delete after use (single-use).
+
 ## 7. Build & Runtime
 
 **Killing processes on occupied ports.**
 If `lsof` shows the port is taken, tell the user and stop. Don't kill processes or change ports — another Forge instance may be running intentionally.
 
-**Skipping `forge check` before finishing.**
-`forge check` validates structure, formatting, and linting. Always run it. If formatting fails, run `cargo fmt` and `bun run format` first.
+**Skipping `forge check` after changes.**
+Run `forge check` after every backend change, not just before finishing. It validates structure, formatting, clippy, SQLx cache, and frontend bindings. If it fails, fix the issue before moving on. If formatting fails, run `cargo fmt` and `bun run format` first.
 
 **Skipping `forge generate` between backend and frontend work.**
 Backend contract changes require regeneration before frontend code will compile correctly.
@@ -202,7 +271,7 @@ Backend contract changes require regeneration before frontend code will compile 
 Handler function is not `pub`, or the module path in `main.rs` is wrong. Make the function `pub` and verify the registration path.
 
 **SQLx compile errors (`SQLX_OFFLINE`)**
-Run `cargo sqlx prepare` after the app has run against a real DB to populate the `.sqlx/` cache. Or use the runtime function form (`query_as::<_, T>(...)`) instead of the bang macro.
+Run `forge migrate prepare` (or `cargo sqlx prepare`) after modifying queries to update the `.sqlx/` cache. This requires a running database with current migrations applied. Never fall back to runtime queries as a workaround.
 
 **"type mismatch" in generated frontend code**
 Re-run `forge generate`. The generated types are stale relative to the backend.
@@ -241,3 +310,54 @@ Bot detection tags events with `is_bot = true` but doesn't filter them. Dashboar
 
 **Events dropped silently**
 Collector uses a bounded channel (capacity 10,000). Under extreme load, events drop with a warning log (`signals collector channel full`). Increase `batch_size` or decrease `flush_interval_ms` to drain faster.
+
+## 9. Resilience Anti-Patterns
+
+**Assuming entities exist because you have an ID.**
+User got the ID from somewhere, so the entity must exist, right? Wrong. It was deleted, soft-deleted, or never existed. Always use `fetch_optional` + `ok_or_else(NotFound)`.
+```rust
+// Wrong: panics or returns confusing error
+let item = sqlx::query_as!(Item, "SELECT * FROM items WHERE id = $1", id)
+    .fetch_one(ctx.db()).await?;
+
+// Correct: explicit not-found handling
+let item = sqlx::query_as!(Item, "SELECT * FROM items WHERE id = $1", id)
+    .fetch_optional(ctx.db()).await?
+    .ok_or_else(|| ForgeError::NotFound(format!("Item {id} not found")))?;
+```
+
+**Assuming auth state persists across the request.**
+JWT was valid when request started, so the user is still valid, right? Wrong. Their row was deleted. Their role was revoked. Always verify critical permissions against current DB state for sensitive operations.
+
+**Trusting frontend state for authorization.**
+User's local state shows they have access, so they must still have access, right? Wrong. Permissions changed. Always enforce authorization server-side.
+
+**Assuming prior mutations succeeded.**
+This request follows another one, so the prior data exists, right? Wrong. Prior request failed. Data was deleted between requests. Concurrent user modified it. Check existence and validity at every step.
+
+**Ignoring concurrent modification.**
+Nobody else will edit this while the user has the form open, right? Wrong. Add version/etag checking for any mutable entity. Return `Conflict` when versions don't match.
+
+**Happy-path-only error messages.**
+"An error occurred" when something fails. Users can't report issues. Include entity IDs, action attempted, and what went wrong in error messages.
+
+**Fire-and-forget mutations without feedback.**
+Mutation fires, no loading state, no success confirmation, no error handling. User doesn't know if it worked. Always show loading state, confirm success, and handle errors visibly.
+
+**Assuming network reliability.**
+Request will complete because it started, right? Wrong. Network drops. Timeouts occur. Show offline indicators. Retry or fail gracefully. Don't leave UI in broken state.
+
+**Assuming SSE stays connected.**
+Data will update because SSE is connected, right? Wrong. Connection dropped silently. Tab was backgrounded. Handle stale states. Show reconnection indicators.
+
+**Assuming job targets still exist.**
+Job was dispatched to process entity X, so entity X exists, right? Wrong. Deleted before job ran. Always check existence at job start and exit gracefully.
+
+**Assuming form state matches DB state.**
+User has the latest version in their form, right? Wrong. Another user edited it. Another tab edited it. DB migration changed the schema. Include version checks on submit.
+
+**Assuming token refresh will succeed.**
+Refresh token is valid, so refresh will work, right? Wrong. Token was revoked on another device. User was deactivated. Always handle refresh failure with logout and explanation.
+
+**Only testing the happy path.**
+Tests pass, so the code works, right? Wrong. Tests only cover success. Add tests for: missing auth, wrong role, missing entity, invalid input, duplicate entry, concurrent modification. If you only write one test, write the failure test.

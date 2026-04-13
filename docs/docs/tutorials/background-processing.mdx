@@ -112,7 +112,7 @@ The mutation returns the `job_id` immediately. If the transaction rolls back, th
 
 Forge generates type-safe tracking functions for every `public` job. Call the tracker and it dispatches the job, then polls for progress automatically.
 
-<Tabs>
+<Tabs groupId="frontend">
 <TabItem value="svelte" label="SvelteKit">
 
 ```svelte
@@ -370,7 +370,7 @@ After the sleep, even if the server restarted multiple times, the workflow picks
 
 Like jobs, `public` workflows get generated frontend bindings that track step-level progress.
 
-<Tabs>
+<Tabs groupId="frontend">
 <TabItem value="svelte" label="SvelteKit">
 
 ```svelte

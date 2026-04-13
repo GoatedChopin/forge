@@ -252,7 +252,7 @@ Private functions get the authenticated user via `ctx.user_id()`. The framework 
 
 Run `forge generate` to produce typed client bindings. Then wire up auth in your frontend:
 
-<Tabs>
+<Tabs groupId="frontend">
 <TabItem value="sveltekit" label="SvelteKit" default>
 
 Forge generates an `auth.svelte.ts` store that handles localStorage persistence, token refresh, and SSE reconnection.
@@ -452,3 +452,248 @@ mod tests {
 - **SSE reconnects on auth changes.** Both frontends reconnect the real-time event stream when tokens change, so subscriptions pick up the new identity immediately.
 - **User scoping is enforced at compile time.** Private queries must filter by `user_id` or `owner_id` in their SQL WHERE clause. Use `ctx.user_id()` to get the authenticated user's UUID. The macro rejects queries that reference tables without identity filtering. Use `#[query(unscoped)]` to opt out.
 - **Refresh tokens are single-use.** Each call to `rotate_refresh_token` invalidates the old token and returns a fresh pair. If a token is reused, Forge rejects it -- this limits the damage from token theft.
+
+## Social Login (Google, GitHub, etc.)
+
+Forge's auth system works with any identity provider. Instead of password validation, you exchange an OAuth authorization code for user info, then issue a Forge JWT. No Firebase or external auth service required.
+
+### How It Works
+
+1. Frontend redirects user to provider (Google, GitHub, etc.)
+2. Provider redirects back with an authorization code
+3. Frontend sends the code to your mutation
+4. Mutation exchanges code for provider's access token (server-side)
+5. Mutation fetches user info from provider
+6. Mutation upserts user in your database
+7. Mutation calls `ctx.issue_token_pair()` to create Forge tokens
+8. Frontend stores tokens and uses them like any other Forge auth
+
+### Example: Google Sign-In
+
+Add a `google_sub` column to your users table:
+
+```sql title="migrations/0002_google_auth.sql"
+-- @up
+ALTER TABLE users ADD COLUMN google_sub TEXT UNIQUE;
+CREATE INDEX idx_users_google_sub ON users(google_sub);
+
+-- @down
+DROP INDEX idx_users_google_sub;
+ALTER TABLE users DROP COLUMN google_sub;
+```
+
+Create the sign-in mutation:
+
+```rust title="src/functions/auth.rs"
+#[derive(Debug, serde::Deserialize)]
+struct GoogleTokenResponse {
+    access_token: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct GoogleUserInfo {
+    id: String,
+    email: String,
+    name: String,
+    picture: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct GoogleSignInInput {
+    pub code: String,
+    pub redirect_uri: String,
+}
+
+#[forge::mutation(public)]
+pub async fn google_sign_in(
+    ctx: &MutationContext,
+    input: GoogleSignInInput,
+) -> Result<AuthResponse> {
+    // Exchange code for Google access token
+    let tokens: GoogleTokenResponse = ctx.http()
+        .post("https://oauth2.googleapis.com/token")
+        .form(&[
+            ("code", input.code.as_str()),
+            ("client_id", ctx.env_require("GOOGLE_CLIENT_ID")?.as_str()),
+            ("client_secret", ctx.env_require("GOOGLE_CLIENT_SECRET")?.as_str()),
+            ("redirect_uri", input.redirect_uri.as_str()),
+            ("grant_type", "authorization_code"),
+        ])
+        .send().await
+        .map_err(|e| ForgeError::Internal(format!("Google token exchange failed: {e}")))?
+        .json().await
+        .map_err(|e| ForgeError::Internal(format!("Invalid Google response: {e}")))?;
+
+    // Fetch user info
+    let info: GoogleUserInfo = ctx.http()
+        .get("https://www.googleapis.com/oauth2/v2/userinfo")
+        .bearer_auth(&tokens.access_token)
+        .send().await
+        .map_err(|e| ForgeError::Internal(format!("Google userinfo failed: {e}")))?
+        .json().await
+        .map_err(|e| ForgeError::Internal(format!("Invalid userinfo response: {e}")))?;
+
+    // Upsert user
+    let mut conn = ctx.conn().await?;
+    let user = sqlx::query_as!(
+        User,
+        r#"
+        INSERT INTO users (id, google_sub, email, name, role, created_at, updated_at)
+        VALUES (gen_random_uuid(), $1, $2, $3, $4, now(), now())
+        ON CONFLICT (google_sub) DO UPDATE SET
+            email = EXCLUDED.email,
+            name = EXCLUDED.name,
+            updated_at = now()
+        RETURNING id, email, name, role as "role: UserRole",
+                  password_hash, created_at, updated_at
+        "#,
+        info.id,
+        info.email,
+        info.name,
+        UserRole::Member as UserRole
+    )
+    .fetch_one(&mut conn)
+    .await?;
+    drop(conn);
+
+    // Issue Forge tokens
+    auth_response(ctx, &user).await
+}
+```
+
+### Frontend Integration
+
+<Tabs groupId="frontend">
+<TabItem value="sveltekit" label="SvelteKit" default>
+
+Use the Google Sign-In SDK to get an authorization code, then call your mutation:
+
+```svelte title="src/routes/login/+page.svelte"
+<script lang="ts">
+  import { googleSignIn } from "$lib/forge/api";
+  import { auth } from "$lib/forge/auth.svelte";
+  import { goto } from "$app/navigation";
+  import { onMount } from "svelte";
+
+  const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+  const REDIRECT_URI = `${window.location.origin}/login`;
+
+  let error = $state("");
+
+  function startGoogleLogin() {
+    const params = new URLSearchParams({
+      client_id: GOOGLE_CLIENT_ID,
+      redirect_uri: REDIRECT_URI,
+      response_type: "code",
+      scope: "openid email profile",
+      access_type: "offline",
+    });
+    window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
+  }
+
+  onMount(async () => {
+    const code = new URLSearchParams(window.location.search).get("code");
+    if (code) {
+      try {
+        const res = await googleSignIn({ code, redirect_uri: REDIRECT_URI });
+        auth.setAuth(res.access_token, res.refresh_token, res.user);
+        goto("/");
+      } catch (e) {
+        error = e.message;
+      }
+    }
+  });
+</script>
+
+<button onclick={startGoogleLogin}>Sign in with Google</button>
+{#if error}<p class="error">{error}</p>{/if}
+```
+
+</TabItem>
+<TabItem value="dioxus" label="Dioxus">
+
+```rust title="src/pages/login.rs"
+use dioxus::prelude::*;
+use forge_dioxus::prelude::*;
+use web_sys::window;
+
+static GOOGLE_CLIENT_ID: &str = env!("GOOGLE_CLIENT_ID");
+
+fn get_redirect_uri() -> String {
+    let origin = window().unwrap().location().origin().unwrap();
+    format!("{origin}/login")
+}
+
+#[component]
+pub fn LoginPage() -> Element {
+    let mut auth = use_forge_auth();
+    let mut error = use_signal(|| None::<String>);
+
+    // Check for OAuth callback
+    use_effect(move || {
+        let url = window().unwrap().location().search().unwrap();
+        if let Some(code) = url.strip_prefix("?code=") {
+            let code = code.split('&').next().unwrap().to_string();
+            spawn(async move {
+                match google_sign_in(GoogleSignInInput {
+                    code,
+                    redirect_uri: get_redirect_uri(),
+                }).await {
+                    Ok(res) => {
+                        auth.login_with_viewer(res.access_token, res.refresh_token, &res.user);
+                        navigator().push(Route::Home);
+                    }
+                    Err(e) => error.set(Some(e.message)),
+                }
+            });
+        }
+    });
+
+    let start_google_login = move |_| {
+        let params = format!(
+            "client_id={}&redirect_uri={}&response_type=code&scope=openid%20email%20profile",
+            GOOGLE_CLIENT_ID,
+            get_redirect_uri()
+        );
+        window().unwrap()
+            .location()
+            .set_href(&format!("https://accounts.google.com/o/oauth2/v2/auth?{params}"))
+            .unwrap();
+    };
+
+    rsx! {
+        button { onclick: start_google_login, "Sign in with Google" }
+        if let Some(msg) = error() {
+            p { class: "error", "{msg}" }
+        }
+    }
+}
+```
+
+</TabItem>
+</Tabs>
+
+### Setup Checklist
+
+1. Create a project in [Google Cloud Console](https://console.cloud.google.com/)
+2. Enable the Google+ API (for userinfo endpoint)
+3. Create OAuth 2.0 credentials (Web application)
+4. Add your redirect URIs (e.g., `http://localhost:9080/login`, `https://yourapp.com/login`)
+5. Set environment variables:
+   ```bash
+   GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+   GOOGLE_CLIENT_SECRET=your-client-secret
+   ```
+6. For the frontend, expose only the client ID via Vite/build config
+
+### Other Providers
+
+The pattern is identical for GitHub, Apple, Microsoft, etc. Change the endpoints:
+
+| Provider | Token Endpoint | UserInfo Endpoint |
+|----------|---------------|-------------------|
+| Google | `https://oauth2.googleapis.com/token` | `https://www.googleapis.com/oauth2/v2/userinfo` |
+| GitHub | `https://github.com/login/oauth/access_token` | `https://api.github.com/user` |
+| Microsoft | `https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token` | `https://graph.microsoft.com/v1.0/me` |
+
+Use the provider's stable user ID (`sub` for Google, `id` for GitHub) as your unique key, not email. Emails can change.

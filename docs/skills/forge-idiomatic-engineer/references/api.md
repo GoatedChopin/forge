@@ -132,20 +132,19 @@ Generated struct: `{PascalCase}Daemon`.
 Signature: `async fn name(ctx: &DaemonContext) -> Result<()>`.
 `timeout` on daemons sets the default outbound HTTP timeout for `ctx.http()`.
 
-### `#[forge::webhook(path = "/hooks/stripe")]`
+### `#[forge::webhook(path = "/webhooks/stripe")]`
 
-Generated struct: `{PascalCase}Webhook`. `path` is required.
+Generated struct: `{PascalCase}Webhook`. `path` is required. For server-to-server event delivery (Stripe, GitHub), not browser redirects (OAuth callbacks).
 
 | Attribute | Type | Default |
 |---|---|---|
-| `path = "/hooks/x"` | string | REQUIRED |
+| `path = "/webhooks/stripe"` | string | REQUIRED |
 | `signature = WebhookSignature::hmac_sha256("Header", "ENV")` | — | — |
 | `allow_unsigned` | flag | false |
 | `idempotency = "header:X-Id"` or `"body:$.id"` | string | — |
 | `timeout = "30s"` | duration | `"30s"` |
 
-Algorithms: `hmac_sha256`, `hmac_sha1`, `hmac_sha512`. Webhooks mount under `/_api/webhooks`.
-When explicitly set, `timeout` also becomes the default outbound HTTP timeout for `ctx.http()`.
+Algorithms: `hmac_sha256`, `hmac_sha1`, `hmac_sha512`. Path `/webhooks/stripe` mounts at `/_api/webhooks/stripe`. `timeout` also sets default for `ctx.http()`. OAuth callbacks are not webhooks (see patterns.md).
 
 ### `#[forge::model]`
 
@@ -212,7 +211,7 @@ All duration strings: `500ms`, `30s`, `5m`, `2h`, `7d`, or bare number (= second
 
 ### Key Context Notes
 
-- `MutationContext` uses `conn()` for transactional access, not `db()`. `ctx.conn().await?` returns `ForgeConn<'_>`. Must bind to `let mut conn` before passing to sqlx: `sqlx::query_as::<_, T>("...").fetch_one(&mut conn)`. Passing `ctx.conn().await?` directly fails because sqlx needs `&mut ForgeConn`, not owned `ForgeConn`.
+- `MutationContext` uses `conn()` for transactional access, not `db()`. `ctx.conn().await?` returns `ForgeConn<'_>`. Must bind to `let mut conn` before passing to sqlx: `sqlx::query_as!(T, "...", args).fetch_one(&mut conn)`. Passing `ctx.conn().await?` directly fails because sqlx needs `&mut ForgeConn`, not owned `ForgeConn`. Always use compile-time checked macros (`query!`, `query_as!`), never runtime forms.
 - `QueryContext.db()` returns `ForgeDb` for pool-level access (works with query methods directly, no `&mut` needed).
 - Production `ctx.http()` is circuit-breaker-backed by default. Use `raw_http()` only when you intentionally need bare `reqwest`.
 - An explicit handler `timeout` also becomes the default outbound HTTP timeout for `ctx.http()`. If omitted, outbound requests stay unlimited unless the request sets its own timeout.
@@ -220,6 +219,7 @@ All duration strings: `500ms`, `30s`, `5m`, `2h`, `7d`, or bare number (= second
 - `WorkflowContext.elapsed()` returns `chrono::Duration`, not `std::time::Duration`.
 - `StepRunner.run()` returns `Result<Option<T>>`. `Some(T)` on success, `None` if step was optional and failed.
 - `StepRunner.retry(count, delay)`: count = retries, so total attempts = count + 1.
+- `issue_token_pair(user_id, roles)` works for any auth flow (password, social OAuth, magic link). Exchange provider code server-side, upsert user, then issue Forge JWT. See patterns.md "Social Login".
 
 ### DbConn Abstraction
 

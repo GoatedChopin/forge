@@ -231,34 +231,44 @@ jwt_audience = "my-app"
 
 ### Self-Issued Auth (HS256)
 
-```rust
-#[forge::mutation(public)]
-pub async fn register(ctx: &MutationContext, input: AuthInput) -> Result<AuthResponse> {
-    let hash = bcrypt::hash(&input.password, bcrypt::DEFAULT_COST)
-        .map_err(|e| ForgeError::Internal(e.to_string()))?;
-    let user: User = sqlx::query_as!(User, "INSERT INTO users ...").fetch_one(ctx.pool()).await?;
-
-    let pair = ctx.issue_token_pair(user.id, &["user"]).await?;
-    Ok(AuthResponse {
-        access_token: pair.access_token,
-        refresh_token: pair.refresh_token,
-        user: user.into(),  // User -> PublicUser (omit password_hash)
-    })
-}
-
-#[forge::mutation(public)]
-pub async fn refresh(ctx: &MutationContext, input: RefreshInput) -> Result<RefreshResponse> {
-    let pair = ctx.rotate_refresh_token(&input.refresh_token).await?;
-    Ok(RefreshResponse { access_token: pair.access_token, refresh_token: pair.refresh_token })
-}
-
-#[forge::mutation]
-pub async fn logout(ctx: &MutationContext, input: LogoutInput) -> Result<()> {
-    ctx.revoke_refresh_token(&input.refresh_token).await
-}
-```
+Password auth: hash with bcrypt, insert user, call `ctx.issue_token_pair(user_id, roles)`. Return `AuthResponse { access_token, refresh_token, user }`.
 
 Token methods (MutationContext, HMAC only): `issue_token_pair()`, `rotate_refresh_token()`, `revoke_refresh_token()`, `revoke_all_refresh_tokens()`.
+
+### Social Login (OAuth Bridge)
+
+No Firebase needed. Pattern: frontend gets auth code from provider → mutation exchanges code server-side → upsert user → `issue_token_pair()`.
+
+**Schema** (supports multiple providers + email changes):
+```sql
+CREATE TABLE users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email TEXT NOT NULL,  -- not unique, can change
+    name TEXT, avatar_url TEXT, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ
+);
+CREATE TABLE user_identities (
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,     -- 'google', 'github', 'email'
+    provider_id TEXT NOT NULL,  -- stable ID from provider
+    UNIQUE (provider, provider_id)
+);
+```
+
+**Mutation flow**:
+1. Exchange `code` for provider access token via `ctx.http().post(token_endpoint).form(...)`
+2. Fetch user info via `ctx.http().get(userinfo_endpoint).bearer_auth(token)`
+3. Look up `user_identities` by `(provider, provider_id)`
+4. If exists: update user info, return existing user
+5. If not: check if email matches existing user → link identity, else create new user + identity
+6. `ctx.issue_token_pair(user_id, &["user"])`
+
+**Provider endpoints**:
+| Provider | Token | UserInfo |
+|----------|-------|----------|
+| Google | `https://oauth2.googleapis.com/token` | `https://www.googleapis.com/oauth2/v2/userinfo` |
+| GitHub | `https://github.com/login/oauth/access_token` | `https://api.github.com/user` |
+
+**Env vars**: `{PROVIDER}_CLIENT_ID`, `{PROVIDER}_CLIENT_SECRET` (server-side only).
 
 ### Access Control
 
@@ -322,20 +332,29 @@ Limits: 10 MB per file. For larger files, use presigned URLs (mutation returns U
 
 ### Webhooks
 
+Server-to-server POST with signature. `path = "/webhooks/stripe"` mounts at `/_api/webhooks/stripe`.
+
 ```rust
-#[forge::webhook(
-    path = "/hooks/stripe",
-    signature = WebhookSignature::hmac_sha256("Stripe-Signature", "STRIPE_WEBHOOK_SECRET"),
-    idempotency = "header:Stripe-Idempotency-Key",
-    timeout = "30s"
-)]
+#[forge::webhook(path = "/webhooks/stripe", signature = WebhookSignature::hmac_sha256("Stripe-Signature", "STRIPE_WEBHOOK_SECRET"), idempotency = "body:$.id")]
 pub async fn stripe(ctx: &WebhookContext, payload: Value) -> Result<WebhookResult> {
     ctx.dispatch_job("process_payment", payload.clone()).await?;
     Ok(WebhookResult::Accepted)
 }
 ```
 
-Webhooks skip JWT auth (use signature verification). Return `Ok` (200), `Accepted` (202), or `Custom { status_code, body }`.
+Provider signatures: Stripe `Stripe-Signature`, GitHub `X-Hub-Signature-256`, Shopify `X-Shopify-Hmac-Sha256`. Idempotency: Stripe `body:$.id`, GitHub `header:X-GitHub-Delivery`, Shopify `header:X-Shopify-Webhook-Id`. Returns `Ok`/`Accepted`/`Custom { status_code, body }`.
+
+### OAuth Callbacks
+
+Browser GET redirects, not webhooks. Frontend route extracts `code`+`state` from URL, calls public mutation.
+
+Flow: `start_oauth` mutation generates state (store in DB with 10min expiry), returns auth URL with state param. Provider redirects to frontend route `/auth/callback/{provider}?code=X&state=Y`. Frontend calls `exchange_code` mutation. Mutation validates state, exchanges code via `ctx.http().post()` to provider token endpoint, fetches userinfo, upserts user to `user_identities` table, returns `ctx.issue_token_pair()`.
+
+Key points: state for CSRF, `ctx.env_require("CLIENT_SECRET")` server-side only, redirect URIs are frontend routes not backend endpoints, use provider's stable ID not email.
+
+### Token Links
+
+Email verification, password reset, magic login: generate token with `expires_at`, store in DB, email link `https://app.com/verify?token=X`. Frontend route extracts token, calls public mutation. Mutation validates expiry, performs action, deletes token (single-use).
 
 ### MCP Tools
 
