@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, password_hash, role::TEXT FROM users WHERE email = $1",
+  "query": "INSERT INTO todos (title) VALUES ($1) RETURNING *",
   "describe": {
     "columns": [
       {
@@ -10,13 +10,18 @@
       },
       {
         "ordinal": 1,
-        "name": "password_hash",
+        "name": "title",
         "type_info": "Text"
       },
       {
         "ordinal": 2,
-        "name": "role",
-        "type_info": "Text"
+        "name": "completed",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 3,
+        "name": "created_at",
+        "type_info": "Timestamptz"
       }
     ],
     "parameters": {
@@ -26,9 +31,10 @@
     },
     "nullable": [
       false,
-      true,
-      null
+      false,
+      false,
+      false
     ]
   },
-  "hash": "d8db055d2ef2331cc22813a9e25e241a7eccd5968b68b857bdc0a0e30d6cea92"
+  "hash": "289c71ceebdcb32b1fa7de751cca0918c3286db00bfe90e56cdec7458e1e7b39"
 }

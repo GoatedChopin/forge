@@ -135,6 +135,9 @@ impl FunctionRouter {
     ) -> Result<RouteResult> {
         if let Some(entry) = self.registry.get(function_name) {
             self.check_auth(entry.info(), &auth)?;
+            if !entry.info().is_public {
+                self.verify_user_exists(&auth).await?;
+            }
             self.check_rate_limit(entry.info(), function_name, &auth, &request)
                 .await?;
 
@@ -241,6 +244,26 @@ impl FunctionRouter {
 
     fn check_auth(&self, info: &FunctionInfo, auth: &AuthContext) -> Result<()> {
         require_auth(info.is_public, info.required_role, auth)
+    }
+
+    /// Verify that the authenticated user still exists in the database.
+    /// Tokens remain valid after a user is deleted; this catches that case
+    /// and returns 401 so the frontend can clear the stale session.
+    async fn verify_user_exists(&self, auth: &AuthContext) -> Result<()> {
+        let user_id = match auth.user_id() {
+            Some(id) => id,
+            None => return Ok(()),
+        };
+        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)")
+            .bind(user_id)
+            .fetch_one(self.db.read_pool())
+            .await
+            .unwrap_or(false);
+
+        if !exists {
+            return Err(ForgeError::Unauthorized("User no longer exists".into()));
+        }
+        Ok(())
     }
 
     fn check_job_auth(&self, info: &forge_core::job::JobInfo, auth: &AuthContext) -> Result<()> {
@@ -472,12 +495,15 @@ impl FunctionRouter {
         sqlx::query!(
             r#"
             INSERT INTO forge_workflow_runs (
-                id, workflow_name, owner_subject, input, status, current_step,
+                id, workflow_name, workflow_version, workflow_signature,
+                owner_subject, input, status, current_step,
                 step_results, started_at, trace_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             "#,
             workflow.id,
             &workflow.workflow_name,
+            &workflow.workflow_version,
+            &workflow.workflow_signature,
             workflow.owner_subject as _,
             workflow.input as _,
             WorkflowStatus::Created.as_str(),

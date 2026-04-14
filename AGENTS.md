@@ -40,6 +40,58 @@ cargo fmt --all --check
 scripts/ci/test-template.sh with-svelte/demo target/debug/forge .
 ```
 
+### Regenerating .sqlx cache
+
+The `.sqlx/` directory holds compile-time query metadata for `SQLX_OFFLINE=true` builds. Regenerate it when queries change.
+
+The workspace has a shared schema problem: `benchmarks/app` and the demo examples both define a `users` table with different shapes. The solution is a single "super" database with all tables merged, plus a combined `forge_migrations` table that satisfies both `migrations/executor.rs` (uses `version` + `checksum`) and `migrations/runner.rs` (uses `name` + `down_sql`).
+
+```bash
+# 1. Start a temporary PG instance
+docker run -d --name forge-sqlx-pg -e POSTGRES_PASSWORD=forge -e POSTGRES_DB=forge \
+  -p 5433:5432 postgres:18
+until docker exec forge-sqlx-pg pg_isready -U postgres -d forge 2>/dev/null; do sleep 1; done
+
+# 2. Apply system schema
+docker exec -i forge-sqlx-pg psql -U postgres -d forge \
+  < crates/forge-runtime/migrations/system/v001_initial.sql
+
+# 3. Apply example migrations (demo covers users/trades/etc; todos adds todos table)
+sed '/^-- @down/,$d' examples/with-svelte/demo/migrations/0001_initial.sql \
+  | docker exec -i forge-sqlx-pg psql -U postgres -d forge
+sed '/^-- @down/,$d' examples/with-svelte/realtime-todo-list/migrations/0001_todos.sql \
+  | docker exec -i forge-sqlx-pg psql -U postgres -d forge
+
+# 4. Add benchmark-only tables (counters; skip its users — conflicts with demo)
+docker exec forge-sqlx-pg psql -U postgres -d forge -c "
+  CREATE TABLE counters (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL UNIQUE,
+    value BIGINT NOT NULL DEFAULT 0,
+    updated_by UUID REFERENCES users(id),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );"
+
+# 5. Create combined forge_migrations table (merges both internal schemas)
+docker exec forge-sqlx-pg psql -U postgres -d forge -c "
+  CREATE TABLE forge_migrations (
+    id SERIAL PRIMARY KEY,
+    version VARCHAR(255) NOT NULL DEFAULT '',
+    name VARCHAR(255) NOT NULL DEFAULT '',
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    checksum VARCHAR(64),
+    execution_time_ms INTEGER,
+    down_sql TEXT
+  );"
+
+# 6. Generate
+DATABASE_URL="postgres://postgres:forge@localhost:5433/forge" \
+  cargo sqlx prepare --workspace
+
+# 7. Cleanup
+docker stop forge-sqlx-pg && docker rm forge-sqlx-pg
+```
+
 ## Crate Architecture
 
 ### forge-macros: Code Generation Pipeline
@@ -251,12 +303,13 @@ Pre-1.0: never bump to 1.x.x. Changelog-driven pipeline parses version from CHAN
 
 1. `cargo fmt --all` across entire workspace
 2. Frontend lint/format: eslint, tscheck, prettier on examples + packages
-3. `cargo test --workspace` (SQLX_OFFLINE=true)
-4. `target/debug/forge test` on every example (with-svelte/minimal, with-svelte/demo, with-svelte/realtime-todo-list, with-dioxus/minimal, with-dioxus/demo, with-dioxus/realtime-todo-list)
-5. If any step 1-4 errors: fix root cause, not bandaids. Iterate until clean.
-6. Sub-agents review each commit since last tag (`git log $(git describe --tags --abbrev=0)..HEAD --oneline`), summarize main changes per commit
-7. Write CHANGELOG.md: new `## [X.X.X] - YYYY-MM-DD` section under `[Unreleased]` with Added/Changed/Fixed/Removed. Call out breaking changes explicitly. Update comparison links at bottom.
-8. Commit: `git commit -m "Prepare release X.X.X"` using user's git config. Single line, no co-author.
-9. Push to main, monitor CI (`gh run watch`). All jobs must pass.
-10. Trigger release: `gh workflow run release.yml`. Monitor with `gh run watch`. Inspect publish jobs with `gh run view`.
-11. Verify all the steps of the release pipelines passed and packages are live on crates.io and npm.
+3. Regenerate `.sqlx/` cache using the steps under [Regenerating .sqlx cache](#regenerating-sqlx-cache), then commit any changes
+4. `cargo test --workspace` (SQLX_OFFLINE=true)
+5. `target/debug/forge test` on every example (with-svelte/minimal, with-svelte/demo, with-svelte/realtime-todo-list, with-dioxus/minimal, with-dioxus/demo, with-dioxus/realtime-todo-list)
+6. If any step 1-5 errors: fix root cause, not bandaids. Iterate until clean.
+7. Sub-agents review each commit since last tag (`git log $(git describe --tags --abbrev=0)..HEAD --oneline`), summarize main changes per commit
+8. Write CHANGELOG.md: new `## [X.X.X] - YYYY-MM-DD` section under `[Unreleased]` with Added/Changed/Fixed/Removed. Call out breaking changes explicitly. Update comparison links at bottom.
+9. Commit: `git commit -m "Prepare release X.X.X"` using user's git config. Single line, no co-author.
+10. Push to main, monitor CI (`gh run watch`). All jobs must pass.
+11. Trigger release: `gh workflow run release.yml`. Monitor with `gh run watch`. Inspect publish jobs with `gh run view`.
+12. Verify all the steps of the release pipelines passed and packages are live on crates.io and npm.

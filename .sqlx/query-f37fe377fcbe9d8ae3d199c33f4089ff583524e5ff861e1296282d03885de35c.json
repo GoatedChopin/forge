@@ -7,7 +7,7 @@
       "Left": [
         "Varchar",
         "Uuid",
-        "Varchar"
+        "Text"
       ]
     },
     "nullable": []

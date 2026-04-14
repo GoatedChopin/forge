@@ -36,7 +36,7 @@ pub async fn register(ctx: &MutationContext, input: RegisterInput) -> Result<Aut
 
     let user = sqlx::query_as!(
         User,
-        "INSERT INTO users (name) VALUES ($1) RETURNING *",
+        "INSERT INTO users (name) VALUES ($1) RETURNING id, name, created_at",
         &input.name
     )
     .fetch_one(&mut conn)

@@ -426,6 +426,8 @@ pub struct PendingJob {
 pub struct PendingWorkflow {
     pub id: Uuid,
     pub workflow_name: String,
+    pub workflow_version: String,
+    pub workflow_signature: String,
     pub input: serde_json::Value,
     pub owner_subject: Option<String>,
 }
@@ -1190,9 +1192,25 @@ impl MutationContext {
 
         // Transactional mode: buffer the workflow for atomic commit
         if let Some(outbox) = &self.outbox {
+            // Resolve version and signature eagerly so the INSERT has them ready.
+            // The executor would do this anyway on flush, but doing it here surfaces
+            // "no active version" errors at call time rather than after commit.
+            let info = self
+                .workflow_dispatch
+                .as_ref()
+                .and_then(|d| d.get_info(workflow_name))
+                .ok_or_else(|| {
+                    crate::error::ForgeError::NotFound(format!(
+                        "No active version of workflow '{}'",
+                        workflow_name
+                    ))
+                })?;
+
             let pending = PendingWorkflow {
                 id: Uuid::new_v4(),
                 workflow_name: workflow_name.to_string(),
+                workflow_version: info.version.to_string(),
+                workflow_signature: info.signature.to_string(),
                 input: input_json,
                 owner_subject: self.auth.principal_id(),
             };

@@ -114,6 +114,28 @@ Deprecated handlers must stay deployed until all their in-flight runs finish. If
 **Calling `refetch()` on reactive queries.**
 SSE pushes updates automatically. `refetch()` doubles traffic and causes flicker. Exception: after workflow step completion in tests where SSE timing is unreliable.
 
+**Null subscription state showing "not found" instead of loading.**
+When subscription stores depend on a dynamic parameter (e.g., a URL query param), tearing down and recreating the store sets the reactive variable to `null` briefly. If the template uses optional chaining (`store?.loading`), `null?.loading` is `undefined` (falsy) and falls through to the else/"not found" branch. Guard with `!store || store.loading`:
+```svelte
+<!-- wrong: null store falls through to "not found" -->
+{#if store?.loading}
+  <p>Loading...</p>
+{:else if store?.data}
+  <p>{store.data.name}</p>
+{:else}
+  <p>Not found</p>
+{/if}
+
+<!-- correct: null store shows loading -->
+{#if !store || store.loading}
+  <p>Loading...</p>
+{:else if store.data}
+  <p>{store.data.name}</p>
+{:else}
+  <p>Not found</p>
+{/if}
+```
+
 **Reusing ForgeClient across auth state changes.**
 The SSE session binds to a principal on first connection. Toggling the token causes `SESSION_PRINCIPAL_MISMATCH`. Destroy and recreate the client when auth changes. Dioxus: keyed remount via `use_auth_key()`. SvelteKit with generated auth store: `setAuth`/`clearAuth` reconnect SSE automatically. SvelteKit with custom auth: wrap `ForgeProvider` in `{#key authGeneration}` so the provider remounts and opens a fresh SSE session with the new token.
 ```svelte
@@ -196,6 +218,26 @@ let anon_client = ForgeClient::new(ForgeClientConfig::new(api_url.to_string()));
 let input = RefreshInput::new(refresh_token);
 refresh(&anon_client, input).await
 ```
+
+**Using `ForgeError::Forbidden` for business logic (paywalls, plan checks).**
+`ForgeClient` treats HTTP 403 as an auth failure and fires `onAuthError`, which typically clears the session and redirects to login. If a handler returns `Forbidden` because the user hasn't paid or lacks a feature entitlement, the user gets logged out instead of seeing an upgrade prompt. Return empty/gated data with a flag instead:
+```rust
+// wrong: triggers onAuthError, logs user out
+if !matches!(user.plan_status, PlanStatus::Active) {
+    return Err(ForgeError::Forbidden("Upgrade to view details.".into()));
+}
+
+// correct: return data with a gate flag, let frontend show paywall
+Ok(Response { items: vec![], needs_upgrade: !is_paid })
+
+// or for list endpoints where changing the return type is too heavy:
+// return empty vec, let frontend infer paywall from context
+// (e.g., scan has issues_found > 0 but grouped response is empty)
+if !matches!(user.plan_status, PlanStatus::Active) {
+    return Ok(vec![]);
+}
+```
+Reserve `Forbidden` for actual permission violations (wrong role, wrong tenant, accessing another user's data).
 
 **Using `#[query(unscoped)]` as the default escape hatch.**
 Don't use `#[query(unscoped)]` as the default escape hatch. If your query touches user data, filter by `ctx.user_id()` in SQL. The compile error exists to prevent data leaks. Only use `unscoped` for genuinely shared data (public content, admin dashboards, aggregate stats).
