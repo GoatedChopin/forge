@@ -376,7 +376,16 @@ impl FunctionRouter {
             ctx.set_token_ttl(self.token_ttl.clone());
             ctx.set_http_timeout(info.http_timeout.map(Duration::from_secs));
 
-            match handler(&ctx, args).await {
+            let result = handler(&ctx, args).await;
+
+            // Drop `ctx` before unwrapping the transaction Arc. The
+            // MutationContext holds an Arc clone of the transaction handle
+            // (via `with_transaction`). If we don't drop it first,
+            // `Arc::try_unwrap` sees refcount > 1 and fails with
+            // "Transaction still in use".
+            drop(ctx);
+
+            match result {
                 Ok(value) => {
                     let buffer = {
                         let guard = outbox.lock().unwrap_or_else(|poisoned| {
