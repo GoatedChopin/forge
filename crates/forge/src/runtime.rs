@@ -107,8 +107,10 @@ pub struct Forge {
     extra_migrations: Vec<Migration>,
     /// Optional frontend handler for embedded SPA.
     frontend_handler: Option<FrontendHandler>,
-    /// Custom axum routes merged into the top-level router.
+    /// Custom axum routes that receive the full gateway middleware stack.
     custom_routes: Option<Router>,
+    /// Factory that produces custom routes after the pool is available.
+    custom_routes_factory: Option<Box<dyn FnOnce(sqlx::PgPool) -> Router + Send + Sync>>,
 }
 
 impl Forge {
@@ -596,6 +598,21 @@ impl Forge {
                 tracing::info!("Signals enabled (analytics + diagnostics)");
             }
 
+            // Resolve custom routes (static + factory) and pass to the gateway
+            // so they sit inside the middleware stack.
+            let mut resolved_custom = self.custom_routes.take();
+            if let Some(factory) = self.custom_routes_factory.take() {
+                let factory_router = factory(pool.clone());
+                resolved_custom = Some(match resolved_custom {
+                    Some(existing) => existing.merge(factory_router),
+                    None => factory_router,
+                });
+            }
+            if let Some(custom) = resolved_custom {
+                gateway = gateway.with_custom_routes(custom);
+                tracing::debug!("Custom routes merged into gateway middleware stack");
+            }
+
             // Start the reactor for real-time updates
             let reactor = gateway.reactor();
             if let Err(e) = reactor.start().await {
@@ -744,12 +761,6 @@ impl Forge {
                 }
             }
 
-            // Merge custom routes before frontend fallback so they take precedence
-            if let Some(custom) = self.custom_routes.take() {
-                router = router.merge(custom);
-                tracing::debug!("Custom routes merged");
-            }
-
             // Add frontend handler as fallback if configured
             if let Some(handler) = self.frontend_handler {
                 use axum::routing::get;
@@ -871,6 +882,7 @@ pub struct ForgeBuilder {
     extra_migrations: Vec<Migration>,
     frontend_handler: Option<FrontendHandler>,
     custom_routes: Option<Router>,
+    custom_routes_factory: Option<Box<dyn FnOnce(sqlx::PgPool) -> Router + Send + Sync>>,
 }
 
 impl ForgeBuilder {
@@ -889,6 +901,7 @@ impl ForgeBuilder {
             extra_migrations: Vec::new(),
             frontend_handler: None,
             custom_routes: None,
+            custom_routes_factory: None,
         }
     }
 
@@ -922,20 +935,42 @@ impl ForgeBuilder {
 
     /// Add custom axum routes to the server.
     ///
-    /// Routes are merged at the top level, outside `/_api`, giving full
-    /// control over headers, extractors, and response types. Avoid paths
-    /// starting with `/_api` as they conflict with internal routes.
+    /// Routes are merged inside the gateway's `/_api` router and receive
+    /// the full middleware stack (auth, CORS, tracing, concurrency limits,
+    /// timeouts) automatically. Avoid paths that conflict with built-in
+    /// routes like `/health`, `/rpc/*`, or `/webhooks/*`.
     ///
     /// ```ignore
     /// use axum::{Router, routing::get};
     ///
     /// let routes = Router::new()
-    ///     .route("/custom/health", get(|| async { "ok" }));
+    ///     .route("/export/data", get(|| async { "ok" }));
     ///
     /// builder.custom_routes(routes);
     /// ```
     pub fn custom_routes(mut self, router: Router) -> Self {
         self.custom_routes = Some(router);
+        self
+    }
+
+    /// Like [`custom_routes`](Self::custom_routes) but accepts a factory
+    /// that receives Forge's managed `PgPool` (resolved during `run()`).
+    ///
+    /// ```ignore
+    /// use axum::{Router, routing::get, extract::State};
+    /// use std::sync::Arc;
+    ///
+    /// builder.custom_routes_with(|pool| {
+    ///     Router::new()
+    ///         .route("/export/csv", get(my_handler))
+    ///         .with_state(Arc::new(pool))
+    /// });
+    /// ```
+    pub fn custom_routes_with<F>(mut self, f: F) -> Self
+    where
+        F: FnOnce(sqlx::PgPool) -> Router + Send + Sync + 'static,
+    {
+        self.custom_routes_factory = Some(Box::new(f));
         self
     }
 
@@ -1087,6 +1122,7 @@ impl ForgeBuilder {
             extra_migrations: self.extra_migrations,
             frontend_handler: self.frontend_handler,
             custom_routes: self.custom_routes,
+            custom_routes_factory: self.custom_routes_factory,
         })
     }
 }

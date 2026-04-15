@@ -132,6 +132,7 @@ pub struct GatewayServer {
     token_ttl: forge_core::AuthTokenTtl,
     signals_collector: Option<crate::signals::SignalsCollector>,
     signals_anonymize_ip: bool,
+    custom_routes: Option<Router>,
 }
 
 impl GatewayServer {
@@ -157,6 +158,7 @@ impl GatewayServer {
             token_ttl,
             signals_collector: None,
             signals_anonymize_ip: false,
+            custom_routes: None,
         }
     }
 
@@ -189,6 +191,13 @@ impl GatewayServer {
     /// When true, raw client IPs are not stored in event records.
     pub fn with_signals_anonymize_ip(mut self, anonymize: bool) -> Self {
         self.signals_anonymize_ip = anonymize;
+        self
+    }
+
+    /// Set additional routes that receive the full middleware stack
+    /// (auth, CORS, tracing, concurrency limits, timeouts).
+    pub fn with_custom_routes(mut self, router: Router) -> Self {
+        self.custom_routes = Some(router);
         self
     }
 
@@ -433,6 +442,10 @@ impl GatewayServer {
             .merge(sse_router)
             .merge(mcp_router)
             .merge(signals_router);
+
+        if let Some(custom) = &self.custom_routes {
+            main_router = main_router.merge(custom.clone());
+        }
 
         // Build middleware stack
         let service_builder = ServiceBuilder::new()

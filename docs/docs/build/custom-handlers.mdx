@@ -1,58 +1,73 @@
 # Custom Handlers
 
-Add raw axum routes when you need full control over HTTP handling outside Forge's RPC system.
+Add raw axum routes when you need full control over HTTP handling while still receiving Forge's middleware stack.
 
 ## The Code
 
+The recommended pattern uses `custom_routes_with`, which gives your routes access to Forge's managed `PgPool` and the full middleware stack (auth, CORS, tracing, concurrency limits, timeouts):
+
 ```rust
+use std::sync::Arc;
 use forge::prelude::*;
 use forge::prelude::axum::{
     Router, Json,
-    extract::{Path, Query, State},
-    http::{HeaderMap, StatusCode},
+    Extension,
+    extract::{Query, State},
+    http::StatusCode,
     response::IntoResponse,
-    routing::{get, post},
+    routing::get,
 };
 
-async fn health_check() -> impl IntoResponse {
-    Json(serde_json::json!({ "status": "ok" }))
-}
-
-async fn proxy_webhook(
-    headers: HeaderMap,
-    body: axum::body::Bytes,
+async fn csv_export(
+    State(pool): State<Arc<sqlx::PgPool>>,
+    Extension(auth): Extension<AuthContext>,
+    Query(params): Query<ExportParams>,
 ) -> impl IntoResponse {
-    // Full access to headers, raw body, status codes
-    let signature = headers
-        .get("x-signature")
-        .and_then(|v| v.to_str().ok());
-
-    match signature {
-        Some(_sig) => (StatusCode::OK, "accepted"),
-        None => (StatusCode::UNAUTHORIZED, "missing signature"),
+    if !auth.is_authenticated() {
+        return (StatusCode::UNAUTHORIZED, "Authentication required").into_response();
     }
+    // auth.user_id() is available — the middleware already parsed the JWT
+    let user_id = auth.user_id().unwrap();
+    // ... query the pool, stream CSV, etc.
+    (StatusCode::OK, "ok").into_response()
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let config = ForgeConfig::from_file("forge.toml")?;
 
-    let custom = Router::new()
-        .route("/healthz", get(health_check))
-        .route("/hooks/external", post(proxy_webhook));
-
     Forge::builder()
         .config(config)
-        .custom_routes(custom)
+        .custom_routes_with(|pool| {
+            Router::new()
+                .route("/export/csv", get(csv_export))
+                .with_state(Arc::new(pool))
+        })
         .build()?
         .run()
         .await
 }
 ```
 
+If your routes don't need the database pool, use `custom_routes` instead:
+
+```rust
+let custom = Router::new()
+    .route("/healthz", get(health_check));
+
+Forge::builder()
+    .config(config)
+    .custom_routes(custom)
+    .build()?
+    .run()
+    .await
+```
+
 ## What Happens
 
-Custom routes are merged at the top level of the HTTP server, outside the `/_api` namespace. They run without Forge's auth middleware, rate limiting, or tracing. You handle everything yourself.
+Custom routes are merged inside the gateway's `/_api` router and receive the full middleware stack automatically: auth, CORS, tracing, concurrency limits, and timeouts. Your handlers can extract `Extension<AuthContext>` to access the authenticated user without any manual JWT parsing.
+
+The `custom_routes_with(|pool| ...)` variant accepts a factory closure that receives Forge's managed `PgPool` once the database connection is established during `run()`. This is the intended way to give custom handlers database access, since the pool isn't available at builder time.
 
 ## When to Use
 
@@ -61,37 +76,46 @@ Custom routes are merged at the top level of the HTTP server, outside the `/_api
 | Standard queries and mutations | `#[forge::query]`, `#[forge::mutation]` |
 | Webhook endpoints with signatures | `#[forge::webhook]` |
 | AI tool exposure | `#[forge::mcp_tool]` |
-| Custom health checks, metrics, proxies | `custom_routes()` |
+| Streaming responses, file downloads, custom content types | `custom_routes_with()` |
 | Third-party integrations needing exact HTTP semantics | `custom_routes()` |
 
 ## Route Conflicts
 
-Custom routes must not start with `/_api`. That prefix is reserved for Forge internal endpoints (RPC, SSE, MCP, webhooks). Conflicting paths cause a runtime panic.
+Custom routes share the `/_api` namespace with built-in Forge endpoints. Avoid paths that conflict with `/health`, `/ready`, `/rpc/*`, `/webhooks/*`, `/events`, or `/mcp/*`. Conflicting paths cause a runtime panic.
 
-## Shared State
+## Database Access
 
-Pass shared state to custom handlers using axum's `State` extractor:
+Use `custom_routes_with` to receive the pool as a closure argument, then pass it to your router via axum's `State`:
 
 ```rust
-use std::sync::Arc;
-
-struct AppState {
-    pool: sqlx::PgPool,
-}
-
-async fn custom_handler(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
-    // Use state.pool for database access
-    Json(serde_json::json!({ "ok": true }))
-}
-
-let state = Arc::new(AppState { pool: pool.clone() });
-let custom = Router::new()
-    .route("/custom", get(custom_handler))
-    .with_state(state);
-
-builder.custom_routes(custom);
+Forge::builder()
+    .custom_routes_with(|pool| {
+        Router::new()
+            .route("/export/csv", get(csv_export))
+            .with_state(Arc::new(pool))
+    })
+    .build()?
+    .run()
+    .await
 ```
 
-Since custom routes bypass Forge middleware, you must handle authentication, logging, and error responses yourself.
+Your handler extracts it with `State(pool): State<Arc<sqlx::PgPool>>`.
+
+## Authentication
+
+The auth middleware runs before your handler. Extract the authenticated user with:
+
+```rust
+async fn my_handler(
+    Extension(auth): Extension<AuthContext>,
+) -> impl IntoResponse {
+    let user_id = match auth.user_id() {
+        Some(id) => id,
+        None => return (StatusCode::UNAUTHORIZED, "Not authenticated").into_response(),
+    };
+    // user_id is available for authorization checks
+    (StatusCode::OK, "ok").into_response()
+}
+```
+
+Unauthenticated requests still reach your handler (with an unauthenticated `AuthContext`), so check `auth.is_authenticated()` or `auth.user_id()` if the endpoint requires login.
