@@ -14,9 +14,6 @@ use super::rpc::RpcHandler;
 const MAX_UPLOAD_FIELDS: usize = 20;
 const MAX_FIELD_NAME_LENGTH: usize = 255;
 const MAX_JSON_FIELD_SIZE: usize = 1024 * 1024;
-/// Per-file limit: 10 MiB. Total multipart body can be larger (default 20 MiB)
-/// but no single file may exceed this.
-const DEFAULT_MAX_FILE_SIZE: usize = 10 * 1024 * 1024;
 const JSON_FIELD_NAME: &str = "_json";
 
 /// Configurable limits for multipart uploads, injected via Axum extension.
@@ -70,7 +67,7 @@ pub async fn rpc_multipart_handler(
         .function_info(&function)
         .and_then(|info| info.max_upload_size_bytes)
         .unwrap_or(mp_config.max_body_size_bytes);
-    let max_file = max_total.min(DEFAULT_MAX_FILE_SIZE);
+    let max_file = max_total;
 
     let mut json_args: Option<serde_json::Value> = None;
     let mut uploads: HashMap<String, Upload> = HashMap::new();
