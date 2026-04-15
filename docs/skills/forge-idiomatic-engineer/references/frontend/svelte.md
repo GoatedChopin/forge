@@ -1,48 +1,30 @@
 # SvelteKit Reference
 
-Load when the repo has `frontend/package.json` with Svelte deps and generated bindings in `frontend/src/lib/forge/`.
+This guide provides specific instructions for projects using SvelteKit. You can identify these projects by the presence of a `frontend/package.json` file containing Svelte dependencies and a `frontend/src/lib/forge/` directory.
 
 ## Generated Naming Patterns
 
-For a backend function `list_todos`:
+Forge generates both static and reactive APIs to handle different frontend use cases. For a backend query named `list_todos`:
 
 | Export | File | Returns | Usage |
 |---|---|---|---|
-| `listTodos()` | api.ts | `Promise<Vec<Todo>>` | One-shot RPC |
-| `listTodosStore$()` | api.ts | `SubscriptionStore<Todo[]>` | Svelte store subscription |
-| `listTodos$()` | reactive.svelte.ts | `ReactiveQuery<Todo[]>` | Svelte 5 runes reactive |
+| `listTodos()` | `api.ts` | `Promise<T[]>` | Performing a one-shot, manual RPC call. |
+| `listTodosStore$()` | `api.ts` | `SubscriptionStore<T[]>` | Standard Svelte store for classic applications. |
+| `listTodos$()` | `reactive.svelte.ts` | `ReactiveQuery<T[]>` | Svelte 5 runes for high-performance reactive logic. |
 
-Mutations: `createTodo()` → `Promise<Todo>` (no Store$ variant).
+### Mutations, Jobs, and Workflows
+- **Mutations**: `createTodo()` returns a `Promise<T>` for manual execution.
+- **Jobs**: `trackExportUsers(args)` returns a `JobStore<T>` to monitor background processing.
+- **Workflows**: `trackOnboardUser(args)` returns a `WorkflowStore<T>` for tracking multi-step execution.
+- **Uploads**: The generated `call()` function automatically detects `File` or `Blob` types and switches to `multipart/form-data`.
 
-Jobs: `trackExportUsers(args)` → `JobStore<Output>` (`track` + PascalCase).
+## Reactive Store and Rune Contract
 
-Workflows: `trackOnboardUser(args)` → `WorkflowStore<Output>`.
+Every reactive store or rune-based query follows a consistent interface. See [Frontend Playbook](../frontend.md#subscription-state-shape) for the standard state shape.
 
-Upload mutations (args contain `Upload` type): `call()` auto-detects `File`/`Blob` and routes to multipart endpoint. No special import needed.
+## Using Svelte 5 Runes
 
-## Store Contract
-
-```typescript
-interface SubscriptionResult<T> {
-  loading: boolean;
-  data: T | null;
-  error: ForgeError | null;  // { code, message, details? }
-  stale: boolean;
-}
-
-// Store methods
-store.refetch()      // force re-fetch
-store.unsubscribe()  // stop updates
-store.reset()        // clear data, set loading
-```
-
-Auto-cleanup: subscriptions stop when all Svelte subscribers detach.
-
-`createQueryStore(fn, args)` is the underlying factory; generated `listTodosStore$()` calls this internally. Use for custom store wrappers.
-
-## Svelte 5 Runes
-
-Use `$state`, `$derived`, `$effect` (sparingly). The `$`-suffixed reactive wrappers (`listTodos$()`) return `ReactiveQuery<T>` which is `$state`-backed.
+When using `listTodos$()`, you receive a `$state`-backed object. These are ideal for building highly reactive interfaces with minimal boilerplate.
 
 ```svelte
 <script>
@@ -61,245 +43,127 @@ Use `$state`, `$derived`, `$effect` (sparingly). The `$`-suffixed reactive wrapp
 {/if}
 ```
 
-## App Setup
+## Application Configuration
 
-Root layout (`+layout.svelte`):
-```svelte
-<script>
-  import { ForgeProvider } from '$lib/forge';
-  import { getToken } from '$lib/auth';
-</script>
+- **Setup**: In your `+layout.svelte`, wrap your application in a `ForgeProvider`. Define a `getToken` function to manage authentication and use `onMutationError` for global error handling.
+- **Disable SSR**: Always set `export const ssr = false;` in your root `+layout.ts`. Forge's SSE and reactive models are designed for client-side execution.
 
-<ForgeProvider url="http://localhost:9081" getToken={getToken}>
-  {@render children()}
-</ForgeProvider>
-```
+## Authentication and Session Management
 
-Disable SSR: `+layout.ts` with `export const ssr = false;`
+Forge generates an `auth.svelte.ts` helper providing a global `auth` object for session management.
 
-## Auth Store
+- **Session Handling**: Use `auth.setAuth(token, refresh, user)` to persist tokens and trigger SSE reconnection. Use `auth.clearAuth()` to sign out.
+- **Auto-Refresh**: Call `auth.startRefreshLoop(url)` to automatically rotate tokens before they expire.
+- **Automatic Reconnection**: `auth.setAuth()` and `auth.clearAuth()` automatically call `getForgeClient()?.reconnect()` to re-establish the SSE stream under the new identity. No manual remounting is needed in Svelte.
 
-Generated `auth.svelte.ts` provides:
-```typescript
-class AuthStore {
-  get token(): string | null
-  get refreshToken(): string | null
-  get user(): User | null
-  get isAuthenticated(): boolean
-  setAuth(token: string, refreshToken: string, user: User): void  // persists to localStorage, reconnects SSE
-  updateTokens(token: string, refreshToken: string): void          // updates tokens, preserves user
-  updateUser(user: User): void                                     // updates user, preserves tokens
-  clearAuth(): void                                                // clears localStorage, stops refresh, reconnects SSE
-  startRefreshLoop(apiUrl: string, intervalMs?: number): void      // periodic token refresh (default 40min)
-  stopRefreshLoop(): void
-  tryRefresh(): Promise<boolean>                                   // manual refresh attempt
-  handleAuthError(): Promise<void>                                 // call from ForgeProvider's onAuthError
-}
-export const auth: AuthStore;
-export function getToken(): string | null;
-```
 
-`setForgeClient(client)` and `setAuthState(state)` manually set context values. Normally handled by `ForgeProvider`.
+## Mutation Best Practices
 
-```typescript
-// After login/register:
-auth.setAuth(response.access_token, response.refresh_token, response.user);
-
-// In root layout (once):
-auth.startRefreshLoop("http://localhost:9081");
-
-// Logout:
-auth.clearAuth();
-```
-
-SSE reconnects automatically on `setAuth` and `clearAuth`. The `user` property persists to localStorage alongside tokens, similar to Dioxus `login_with_viewer`.
-
-## Navigation
-
-Use `resolve()` from `$app/paths` for all hrefs and goto calls:
-```svelte
-<script>
-  import { resolve } from '$app/paths';
-</script>
-<a href={resolve('/settings')}>Settings</a>
-```
-
-## Route Structure
-
-```
-frontend/src/
-  routes/
-    +layout.svelte          # ForgeProvider, nav
-    +layout.ts              # export const ssr = false
-    +page.svelte            # landing
-    (auth)/
-      login/+page.svelte
-      register/+page.svelte
-    (app)/
-      +layout.svelte        # auth guard
-      dashboard/+page.svelte
-  lib/
-    components/             # reusable UI
-    forge/                  # GENERATED, never edit
-    auth.ts                 # auth store helpers
-```
-
-## Type Mappings
-
-| Rust | TypeScript (args) | TypeScript (returns) |
-|---|---|---|
-| `String`, `Uuid` | `string` | `string` |
-| `DateTime<Utc>` | `string` | `string` (ISO 8601) |
-| `i32`, `i64`, `f32`, `f64` | `number` | `number` |
-| `bool` | `boolean` | `boolean` |
-| `Option<T>` | `T \| null` | `T \| null` |
-| `Vec<T>` | `T[]` | `T[]` |
-| `Upload` | `File \| Blob` | `File \| Blob` |
-| `serde_json::Value` | `unknown` | `unknown` |
-| `Bytes` | `Uint8Array` | `Blob` |
-
-## SSE Internals
-
-- Connects to `/_api/events?token=<jwt>`
-- Receives `session_id` + `session_secret` on connect
-- Subscriptions register via POST to `/_api/subscribe`
-- Reconnection: exponential backoff with jitter, base 1s, cap 30s, max 10 attempts
-- Events: `connected`, `update` (with target routing), `error`
-
-## Datetime Utility
-
-```typescript
-import { dt } from '@forge-rs/svelte';
-dt.now()                    // UTC ISO string
-dt.parse(input)             // Date
-dt.format(input, opts?)     // Intl.DateTimeFormat
-dt.relative(input, base?)   // Intl.RelativeTimeFormat
-```
-
-## fireMutation
-
-Fire-and-forget wrapper for mutations. Errors route to the global `onMutationError` handler on ForgeProvider:
+Use `fireMutation` for simple operations. This utility automatically routes any errors to your global `onMutationError` handler, ensuring users are notified of failures without manual catch blocks.
 
 ```typescript
 import { fireMutation } from '@forge-rs/svelte';
-import { createTodo, deleteTodo } from '$lib/forge';
+import { createTodo } from '$lib/forge';
 
-// Fire-and-forget (errors go to global handler)
 fireMutation(createTodo, { title: 'New task' });
-
-// One-off error handling
-fireMutation(deleteTodo, { id }, (err) => {
-  errorMessage = err.message;
-});
 ```
-
-Register the global handler on the provider:
-
-```svelte
-<ForgeProvider url={apiUrl} onMutationError={(err) => showToast(err.message)}>
-```
-
-Use direct `await` when you need the return value.
 
 ## Optimistic Mutations
 
-`createOptimisticMutation` layers local patches over a live subscription store:
+Improve user experience by using `createOptimisticMutation` to apply local patches over a live subscription store. This provides instant visual feedback while the server processes the change.
 
 ```typescript
-import { createOptimisticMutation } from '@forge-rs/svelte';
-import { reorderTask, listTodosStore$ } from '$lib/forge';
-
 const todos = listTodosStore$();
-const reorder = createOptimisticMutation(
-  reorderTask,
-  todos,
-  (data, args) => data.map(t =>
-    t.id === args.id ? { ...t, status: args.status, position: args.position } : t
-  ),
+const reorder = createOptimisticMutation(reorderTask, todos, (data, args) => 
+  data.map(t => t.id === args.id ? { ...t, ...args } : t)
 );
-
-// Read from the optimistic view
-// reorder.data is a Readable<Todo[] | null>
-
-// Fire applies transform instantly, sends mutation to server
-reorder.fire({ id, status: 'done', position: 10000 });
+// Use reorder.data for UI display; fire applies instantly and auto-reverts on error or 3s TTL.
+reorder.fire({ id, status: 'done' });
 ```
 
-On SSE update, subscription data replaces the optimistic patch. On error, the view reverts. Default TTL is 3s, configurable via `{ ttlMs: 5000 }` options.
+## Common Failure Cases
 
-## Dynamic Subscriptions
+These are the patterns that most frequently cause infinite loops, memory leaks, or stale session bugs.
 
-When a subscription depends on a dynamic parameter (route param, selected item), use `$effect` with explicit cleanup. Do NOT create stores inside `$derived` -- each re-evaluation leaks a subscription.
+### Subscription inside `$derived` leaks unboundedly
+
+Creating a store inside `$derived` opens a new SSE subscription on every recomputation and never closes the old one. After a few navigation cycles the server is flooded with dead connections.
 
 ```svelte
-<script lang="ts">
-  import { createSubscriptionStore } from '@forge-rs/svelte';
-  import { toReactive, type ReactiveQuery } from '$lib/forge/runes.svelte';
-  import { onDestroy } from 'svelte';
-
-  let { id } = $props();
-  let item: ReactiveQuery<any> | null = $state(null);
-  let prevId = "";
-
-  $effect(() => {
-    if (id === prevId) return;
-    prevId = id;
-    item?.unsubscribe();
-    item = null;
-    if (!id) return;
-    item = toReactive(createSubscriptionStore("get_item", { id }));
-  });
-
-  onDestroy(() => item?.unsubscribe());
-</script>
-```
-
-For static subscriptions (no changing params), use the generated `$`-suffixed reactive functions at module scope:
-```svelte
+<!-- WRONG — new subscription every time id changes -->
 <script>
-  import { listTodos$ } from '$lib/forge';
-  const todos = listTodos$();
+  const item = $derived(getItemStore$({ id: currentId }));
+</script>
+
+<!-- RIGHT — use $effect to manage lifecycle manually -->
+<script>
+  let item = $state(null);
+  let unsub;
+  $effect(() => {
+    unsub?.();
+    const store = getItemStore$({ id: currentId });
+    unsub = store.subscribe(v => { item = v; });
+    return () => unsub?.();
+  });
 </script>
 ```
 
-## Custom Auth with ForgeProvider Remount
+### Not calling `auth.setAuth()` / `auth.clearAuth()` after login/logout breaks SSE
 
-When rolling your own auth store (not using the generated `auth.svelte.ts`), the SSE session won't automatically reconnect on login/logout. Wrap `ForgeProvider` in a `{#key}` block keyed to an auth generation counter:
+`ForgeProvider` gets the token via your `getToken` callback, but the SSE connection only reconnects when explicitly told to. `auth.setAuth()` and `auth.clearAuth()` handle this automatically — they update the stored token AND call `getForgeClient()?.reconnect()` to re-establish the stream.
+
+If you store tokens manually (e.g. direct `localStorage.setItem`) and skip these methods, the SSE stream keeps running under the old identity and returns stale or wrong data.
+
+```svelte
+<!-- WRONG — SSE never reconnects under new user -->
+<script>
+  async function login(email, password) {
+    const result = await signIn({ email, password });
+    localStorage.setItem('token', result.access_token); // bypass auth store
+  }
+</script>
+
+<!-- RIGHT — reconnect happens inside setAuth -->
+<script>
+  import { auth } from '$lib/forge/auth.svelte';
+  async function login(email, password) {
+    const result = await signIn({ email, password });
+    auth.setAuth(result.access_token, result.refresh_token, result.user);
+  }
+</script>
+```
+
+### Mutation errors silently swallowed without `onMutationError`
+
+Calling `createTodo(args)` directly swallows errors unless you wrap it in a try/catch. `fireMutation` routes errors to the global handler automatically.
 
 ```typescript
-// lib/auth.svelte.ts
-let authGeneration = $state(0);
-export function getAuthGeneration(): number { return authGeneration; }
+// WRONG — errors lost silently
+createTodo({ title });
 
-export function setAuth(accessToken: string, refreshToken: string, userId: string, email: string) {
-  // ... persist to localStorage ...
-  authGeneration++;  // triggers ForgeProvider remount
-}
+// RIGHT — routes to onMutationError
+fireMutation(createTodo, { title });
 
-export function clearAuth() {
-  // ... clear localStorage ...
-  authGeneration++;
+// also RIGHT if you need local handling
+try {
+    await createTodo({ title });
+} catch (e) {
+    showToast(e.message);
 }
 ```
 
-```svelte
-<!-- +layout.svelte -->
-{#key getAuthGeneration()}
-<ForgeProvider url={apiUrl} {getToken} onMutationError={handleError}>
-  {@render children()}
-</ForgeProvider>
-{/key}
+### `ssr = false` missing causes hydration failures
+
+Forge's SSE and reactive stores require a browser environment. Without this, SvelteKit will attempt server-side rendering and crash on `EventSource` or `localStorage`.
+
+```typescript
+// frontend/src/routes/+layout.ts — REQUIRED
+export const ssr = false;
 ```
 
-Without this, logging in shows stale anonymous data, and logging out continues streaming the previous user's data until a full page reload.
+## Critical Constraints
 
-## Common Mistakes
-
-- Editing `$lib/forge/*` (overwritten on `forge generate`)
-- Manual refetch loops instead of using `Store$` subscriptions
-- Forgetting `ForgeProvider` in root layout
-- Using `$effect` for data fetching instead of reactive stores (except dynamic subscriptions, see above)
-- Creating subscription stores inside `$derived` (leaks subscriptions on every re-evaluation)
-- Not handling `loading` and `error` states in UI
-- Silently dropping mutation errors (use `fireMutation` with a global handler instead)
-- Custom auth without `{#key}` remount on ForgeProvider (SSE bound to stale principal)
+- **Do not edit generated files**: Never modify files in `$lib/forge/*`.
+- **Subscription leaks in runes**: Never create a store inside a `$derived` rune — use `$effect` with `unsubscribe()` cleanup when parameters change.
+- **Avoid refetch loops**: Rely on reactive stores instead of manual polling to reduce server load.
+- **Handle all mutation errors**: Use the global `onMutationError` to ensure users receive feedback when backend operations fail.

@@ -44,6 +44,14 @@ fn parse_webhook_attrs(attr: TokenStream) -> syn::Result<WebhookAttrs> {
             result.signature_algorithm = Some("HmacSha1".to_string());
         } else if remaining.contains("hmac_sha512") {
             result.signature_algorithm = Some("HmacSha512".to_string());
+        } else if remaining.contains("standard_webhooks") {
+            result.signature_algorithm = Some("StandardWebhooks".to_string());
+        } else if remaining.contains("stripe_webhooks") {
+            result.signature_algorithm = Some("StripeWebhooks".to_string());
+        } else if remaining.contains("shopify_webhooks") {
+            result.signature_algorithm = Some("HmacSha256Base64".to_string());
+        } else if remaining.contains("ed25519") {
+            result.signature_algorithm = Some("Ed25519".to_string());
         }
 
         if let Some(paren_start) = remaining.find('(') {
@@ -68,7 +76,23 @@ fn parse_webhook_attrs(attr: TokenStream) -> syn::Result<WebhookAttrs> {
             let args_str = &inside_parens[..end_pos];
 
             let quotes: Vec<_> = args_str.match_indices('"').collect();
-            if quotes.len() >= 4 {
+            // Single-arg variants: secret only, header is hardcoded per spec
+            let single_arg_header = match result.signature_algorithm.as_deref() {
+                Some("StandardWebhooks") => Some("webhook-signature"),
+                Some("StripeWebhooks") => Some("stripe-signature"),
+                Some("HmacSha256Base64") => Some("x-shopify-hmac-sha256"),
+                _ => None,
+            };
+            if let Some(fixed_header) = single_arg_header {
+                if quotes.len() >= 2 {
+                    let secret_start = quotes[0].0 + 1;
+                    let secret_end = quotes[1].0;
+                    result.signature_secret_env =
+                        Some(args_str[secret_start..secret_end].to_string());
+                    result.signature_header = Some(fixed_header.to_string());
+                }
+            } else if quotes.len() >= 4 {
+                // Two-arg variants: header name then secret/public-key env
                 let header_start = quotes[0].0 + 1;
                 let header_end = quotes[1].0;
                 result.signature_header = Some(args_str[header_start..header_end].to_string());
@@ -153,6 +177,16 @@ pub fn webhook_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
             "HmacSha256" => quote! { forge::forge_core::webhook::SignatureAlgorithm::HmacSha256 },
             "HmacSha1" => quote! { forge::forge_core::webhook::SignatureAlgorithm::HmacSha1 },
             "HmacSha512" => quote! { forge::forge_core::webhook::SignatureAlgorithm::HmacSha512 },
+            "StandardWebhooks" => {
+                quote! { forge::forge_core::webhook::SignatureAlgorithm::StandardWebhooks }
+            }
+            "StripeWebhooks" => {
+                quote! { forge::forge_core::webhook::SignatureAlgorithm::StripeWebhooks }
+            }
+            "HmacSha256Base64" => {
+                quote! { forge::forge_core::webhook::SignatureAlgorithm::HmacSha256Base64 }
+            }
+            "Ed25519" => quote! { forge::forge_core::webhook::SignatureAlgorithm::Ed25519 },
             _ => quote! { forge::forge_core::webhook::SignatureAlgorithm::HmacSha256 },
         };
         quote! {

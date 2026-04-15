@@ -71,7 +71,7 @@ tracing-opentelemetry = "0.28"
 # OpenTelemetry
 opentelemetry = { version = "0.27", features = ["trace", "metrics", "logs"] }
 opentelemetry_sdk = { version = "0.27", features = ["rt-tokio", "trace", "metrics", "logs"] }
-opentelemetry-otlp = { version = "0.27", default-features = false, features = ["http-json", "reqwest-client", "trace", "metrics", "logs", "internal-logs"] }
+opentelemetry-otlp = { version = "0.27", default-features = false, features = ["http-json", "reqwest-rustls", "trace", "metrics", "logs", "internal-logs"] }
 opentelemetry-semantic-conventions = "0.27"
 opentelemetry-appender-tracing = "0.27"
 

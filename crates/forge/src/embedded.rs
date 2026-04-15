@@ -23,9 +23,14 @@ use axum::response::Response;
 
 /// Serve embedded assets from a `rust_embed::Embed` type with SPA fallback.
 ///
-/// Handles MIME type detection and falls back to `index.html` for
-/// client-side routing. Use as a type-parameterized function pointer
-/// with `ForgeBuilder::frontend_handler()`.
+/// Resolution order:
+/// 1. Exact path match (e.g. `_app/immutable/...`, `sitemap.xml`)
+/// 2. `{path}.html` for flat pre-rendered SvelteKit output (e.g. `/about` → `about.html`)
+/// 3. `{path}/index.html` for nested pre-rendered output (e.g. `/about` → `about/index.html`)
+/// 4. `200.html` SPA fallback for client-side routes (SvelteKit adapter-static convention)
+/// 5. `index.html` fallback for backwards compatibility
+///
+/// Use as a type-parameterized function pointer with `ForgeBuilder::frontend_handler()`.
 pub fn serve_embedded_assets<E: rust_embed::Embed + 'static>(
     req: Request<Body>,
 ) -> Pin<Box<dyn Future<Output = Response> + Send>> {
@@ -36,17 +41,28 @@ pub fn serve_embedded_assets<E: rust_embed::Embed + 'static>(
         let path = req.uri().path().trim_start_matches('/');
         let path = if path.is_empty() { "index.html" } else { path };
 
-        match E::get(path) {
-            Some(content) => {
-                let mime = mime_guess::from_path(path).first_or_octet_stream();
-                ([(header::CONTENT_TYPE, mime.as_ref())], content.data).into_response()
-            }
-            None => match E::get("index.html") {
-                Some(content) => {
-                    ([(header::CONTENT_TYPE, "text/html")], content.data).into_response()
-                }
-                None => (StatusCode::NOT_FOUND, "not found").into_response(),
-            },
+        if let Some(content) = E::get(path) {
+            let mime = mime_guess::from_path(path).first_or_octet_stream();
+            return ([(header::CONTENT_TYPE, mime.as_ref())], content.data).into_response();
+        }
+
+        // Flat pre-rendered SvelteKit page: /about → about.html
+        let flat = format!("{}.html", path);
+        if let Some(content) = E::get(&flat) {
+            return ([(header::CONTENT_TYPE, "text/html")], content.data).into_response();
+        }
+
+        // Nested pre-rendered page: /about → about/index.html
+        let nested = format!("{}/index.html", path);
+        if let Some(content) = E::get(&nested) {
+            return ([(header::CONTENT_TYPE, "text/html")], content.data).into_response();
+        }
+
+        // SPA fallback for client-side routes
+        let fallback = E::get("200.html").or_else(|| E::get("index.html"));
+        match fallback {
+            Some(content) => ([(header::CONTENT_TYPE, "text/html")], content.data).into_response(),
+            None => (StatusCode::NOT_FOUND, "not found").into_response(),
         }
     })
 }

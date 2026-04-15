@@ -1,420 +1,246 @@
 # API Reference
 
-Macros, contexts, config, errors, and CLI. Token-efficient lookup for implementation.
+This reference provides a comprehensive guide to Forge macros, context types, configuration options, and error variants.
 
 ## Macro Attributes
 
+Forge handlers are defined using Rust macros that generate necessary structs and registration logic.
+
 ### `#[forge::query]`
+Defines a read-only operation. The macro generates a `{PascalCase}Query` struct and implements the `ForgeQuery` trait. All private queries must explicitly filter results by the current user or owner unless the `unscoped` attribute is used.
 
-Generated struct: `{PascalCase}Query`. Trait: `ForgeQuery`.
-
-| Attribute | Type | Default | Notes |
-|---|---|---|---|
-| `public` | flag | false | Skip auth |
-| `consistent` | flag | false | Force read from primary, bypass replicas |
-| `require_role("x")` | string | — | Returns 403 if missing |
-| `cache = "30s"` | duration | — | TTL-based, per-identity cache. Key = hash(fn + args + auth_scope) |
-| `timeout = 30` | u64 | — | Seconds (bare integer, not quoted). For HTTP-capable handlers, an explicit timeout also becomes the default outbound HTTP timeout for `ctx.http()` |
-| `rate_limit(requests=100, per="1m", key="user")` | group | — | Keys: `user`, `ip`, `tenant`, `user_action`, `global` |
-| `log = "info"` | string | — | Must be quoted string, not bare flag |
-| `unscoped` | flag | false | Skip compile-time user_id/owner_id scope enforcement |
-| `tables = ["t1","t2"]` | array | auto | Override auto-extracted SQL table deps |
-
-Signature: `async fn name(ctx: &QueryContext, ...) -> Result<T>`. SQL tables and columns auto-extracted at compile time for reactive invalidation. Private queries must filter by `user_id` or `owner_id` in SQL unless `unscoped`.
+| Attribute | Description and Rationale |
+|---|---|
+| `public` | Disables authentication requirements for the query. |
+| `consistent` | Forces the query to read from the primary database to ensure data consistency after a recent write. |
+| `require_role("x")` | Returns a 403 Forbidden error if the user lacks the specified role. |
+| `cache = "30s"` | Enables a per-identity cache with the specified TTL to reduce database load. |
+| `timeout = 30` | Sets the maximum execution time in seconds. This also sets the default timeout for `ctx.http()`. |
+| `rate_limit(...)` | Configures rate limiting based on `requests`, `per` duration, and a specified `key` (e.g., user, IP, or global). |
+| `log = "info"` | Sets the log level for handler execution. |
+| `unscoped` | Skips mandatory scope enforcement checks at compile time. |
+| `tables = [...]` | Manually specifies table dependencies to trigger reactive cache invalidation. |
 
 ### `#[forge::mutation]`
+Defines a data-modifying operation. The macro generates a `{PascalCase}Mutation` struct and implements the `ForgeMutation` trait.
 
-Generated struct: `{PascalCase}Mutation`. Trait: `ForgeMutation`.
-
-| Attribute | Type | Default |
-|---|---|---|
-| `public` | flag | false |
-| `require_role("x")` | string | — |
-| `transactional` | flag | false |
-| `timeout = 30` | u64 | — |
-| `max_size = "200mb"` | string | — |
-| `rate_limit(...)` | group | — |
-| `log = "info"` | string | — |
-| `unscoped` | flag | false |
-
-Signature: `async fn name(ctx: &MutationContext, ...) -> Result<T>`. Compile-time check: if body contains `dispatch_job` or `start_workflow` without `transactional`, hard error.
-
-If `timeout` is omitted, outbound HTTP requests from `ctx.http()` remain unlimited by default.
+| Attribute | Description and Rationale |
+|---|---|
+| `public` | Allows unauthenticated access to the mutation. |
+| `require_role("x")` | Restricts access to users with the specified role. |
+| `transactional` | Wraps the entire operation in a PostgreSQL transaction. This is required if you use `dispatch_job()` or `start_workflow()`. |
+| `timeout = 30` | Sets the handler timeout in seconds. |
+| `max_size = "200mb"` | Defines the maximum allowable request body size for this mutation. |
+| `rate_limit(...)` | Configures rate limiting for the mutation. |
+| `unscoped` | Disables compile-time scope validation. |
 
 ### `#[forge::job]`
+Defines an asynchronous background task. These tasks are durable and automatically retried upon failure.
 
-Generated struct: `{PascalCase}Job`. Trait: `ForgeJob`.
-
-| Attribute | Type | Default |
-|---|---|---|
-| `name = "custom"` | string | fn_name |
-| `timeout = "30m"` | duration | `"1h"` |
-| `priority = "normal"` | enum | `"normal"` |
-| `max_attempts = 3` | u32 | 3 |
-| `backoff = "exponential"` | enum | `"exponential"` |
-| `max_backoff = "5m"` | duration | `"5m"` |
-| `retry(max_attempts=N, backoff="...", max_backoff="...")` | group | — |
-| `worker_capability = "gpu"` | string | — |
-| `idempotent` / `idempotent(key="input.id")` | flag | false |
-| `ttl = "24h"` | duration | — |
-| `compensate = "handler_fn"` | string | — |
-| `public` / `require_role(...)` | — | — |
-
-Priority values: `background`(0), `low`(25), `normal`(50), `high`(75), `critical`(100). Backoff: `fixed`, `linear`, `exponential`. Signature: `async fn name(ctx: &JobContext, args: T) -> Result<R>`.
-When explicitly set, `timeout` also becomes the default outbound HTTP timeout for `ctx.http()`.
+| Attribute | Description and Rationale |
+|---|---|
+| `name = "x"` | Overrides the default job name. |
+| `timeout = "1h"` | Sets the maximum execution duration. **Default: `"1h"`**. |
+| `priority = "normal"` | Priority level. Values: `background`(0), `low`(25), `normal`(50), `high`(75), `critical`(100). **Default: `"normal"`**. |
+| `retry(max_attempts = 3, backoff = "exponential")` | Retry config. `backoff` accepts `"exponential"`, `"linear"`, or `"fixed"`. **Defaults: `max_attempts = 3`, `backoff = "exponential"`**. |
+| `worker_capability` | Specifies a capability string required by the worker node to execute this job. |
+| `idempotent` | Prevents duplicate job executions. Use `key = "input.id"` to specify the uniqueness key. |
+| `ttl = "24h"` | Defines how long the job record persists in the database after completion. |
+| `compensate = "fn"` | Specifies a cleanup function to run if the job ultimately fails after all retries. |
 
 ### `#[forge::cron("0 9 * * *")]`
+Defines a task that runs on a recurring schedule. Execution is guaranteed to happen exactly once across the cluster.
 
-Generated struct: `{PascalCase}Cron`. First quoted string = schedule.
-
-| Attribute | Type | Default |
-|---|---|---|
-| `timezone = "UTC"` | string | `"UTC"` |
-| `group = "default"` | string | `"default"` |
-| `timeout = "1h"` | duration | `"1h"` |
-| `catch_up` | flag | false |
-| `catch_up_limit = 10` | u32 | 10 |
-
-Signature: `async fn name(ctx: &CronContext) -> Result<()>`. No input args.
-When explicitly set, `timeout` also becomes the default outbound HTTP timeout for `ctx.http()`.
+| Attribute | Description and Rationale |
+|---|---|
+| `timezone = "UTC"` | Sets the schedule's timezone. |
+| `group = "default"` | Groups crons for concurrency management. |
+| `timeout = "1h"` | Sets the maximum allowed execution time. |
+| `catch_up` | Executes missed intervals if the system was offline. **Default limit: 10 catch-up executions**. |
 
 ### `#[forge::workflow]`
+Defines a durable, multi-step business process. Workflows are versioned to ensure that in-flight runs can complete even if the code changes.
 
-Generated struct: `{PascalCase}Workflow`.
+| Attribute | Description and Rationale |
+|---|---|
+| `name = "x"` | Provides a logical ID shared across different versions of the workflow. |
+| `version = "..."` | A unique version string. Changes to steps require a version bump. |
+| `active` | Marks this version as the one responsible for handling new workflow runs. |
+| `deprecated` | Marks the version as inactive; it will only finish existing runs. |
+| `timeout = "24h"` | Sets the maximum time a workflow run is allowed to execute. |
 
-| Attribute | Type | Default | Notes |
-|---|---|---|---|
-| `name = "x"` | string | fn_name | Logical workflow identity. Two versions share the same name. |
-| `version = "2026-05"` | string | — | Freeform string. Paired with `name` to form the unique definition key. |
-| `active` | flag | true | This version handles new runs. At most one active version per name. |
-| `deprecated` | flag | false | Keeps executing in-flight runs but rejects new ones. Cannot combine with `active`. |
-| `timeout = "24h"` | duration | `"24h"` | |
-| `public` / `require_role(...)` | — | — | |
+### `#[forge::webhook]`
+Defines an HTTP endpoint for receiving events from external services. The handler is registered at `POST /webhooks/{path}`.
 
-Default is `active` when neither `active` nor `deprecated` is specified. Specifying both is a compile error.
+| Attribute | Description and Rationale |
+|---|---|
+| `path = "/webhooks/stripe"` | The URL path this webhook listens on. Must start with `/`. |
+| `signature = WebhookSignature::...` | Configures signature verification. Omitting this attribute causes the handler to reject all requests unless `allow_unsigned` is set. |
+| `allow_unsigned` | Accept requests with no signature. Only use this during local development or for sources that cannot sign requests. |
+| `idempotency = "header:X-Id"` | Extracts a deduplication key from the given header. Use `"body:$.id"` to extract from the request body via JSONPath. |
+| `timeout = "30s"` | Sets the handler timeout. Also applies to `ctx.http()` calls within the handler. |
 
-A workflow **signature** is derived automatically from step keys, wait keys, event names, timeout, and type shapes. The runtime persists definitions to `forge_workflow_definitions` on startup and stamps each run with `workflow_version` and `workflow_signature`. If a handler's signature differs from what was persisted under the same name+version, the node refuses to start.
+#### Signature Constructors
 
-Versioned example:
-```rust
-#[forge::workflow(name = "user_onboarding", version = "2026-05", active)]
-pub async fn user_onboarding_v2(ctx: &WorkflowContext, input: OnboardingInput) -> Result<()> {
-    // current version — all new runs land here
-    ctx.step("verify_email", || async { verify(input.email).await }).run().await?;
-    ctx.step("provision", || async { provision(input.user_id).await }).run().await?;
-    Ok(())
-}
+Use `WebhookSignature` (from `forge::prelude::*`) to configure signature verification. Each constructor sets the algorithm, the header to read the signature from, and the environment variable holding the secret.
 
-#[forge::workflow(name = "user_onboarding", version = "2026-03", deprecated)]
-pub async fn user_onboarding_v1(ctx: &WorkflowContext, input: OnboardingInputV1) -> Result<()> {
-    // old version — only finishes in-flight runs, no new dispatches
-    ctx.step("send_welcome", || async { welcome(input.user_id).await }).run().await?;
-    Ok(())
-}
-```
-
-Compile-time: detects `tokio::sleep` > 100s and errors (must use `ctx.sleep()`). Signature: `async fn name(ctx: &WorkflowContext, input: T) -> Result<R>`.
-When explicitly set, `timeout` also becomes the default outbound HTTP timeout for `ctx.http()`.
-
-### `#[forge::daemon]`
-
-Generated struct: `{PascalCase}Daemon`.
-
-| Attribute | Type | Default |
+| Constructor | Algorithm | Notes |
 |---|---|---|
-| `leader_elected = true` | bool | `true` |
-| `restart_on_panic = true` | bool | `true` |
-| `timeout = "30s"` | duration | — |
-| `restart_delay = "5s"` | duration | `"5s"` |
-| `startup_delay = "0s"` | duration | `"0s"` |
-| `max_restarts = 10` | u32 | unlimited |
+| `WebhookSignature::hmac_sha256("Header", "ENV")` | HMAC-SHA256, hex-encoded | GitHub, most generic providers |
+| `WebhookSignature::hmac_sha1("Header", "ENV")` | HMAC-SHA1, hex-encoded | Legacy GitHub |
+| `WebhookSignature::hmac_sha512("Header", "ENV")` | HMAC-SHA512, hex-encoded | Uncommon |
+| `WebhookSignature::standard_webhooks("ENV")` | HMAC-SHA256, base64, `{id}\n{ts}\n{body}` | Polar, Svix, Clerk — header always `webhook-signature` |
+| `WebhookSignature::stripe_webhooks("ENV")` | HMAC-SHA256, hex, `{ts}.{body}`, 5-min replay guard | Stripe — header always `Stripe-Signature` |
+| `WebhookSignature::shopify_webhooks("ENV")` | HMAC-SHA256, base64-encoded | Shopify — header always `X-Shopify-Hmac-Sha256` |
+| `WebhookSignature::ed25519("Header", "ENV")` | Ed25519 asymmetric verification | For services that publish a public key instead of a shared secret |
 
-Signature: `async fn name(ctx: &DaemonContext) -> Result<()>`.
-`timeout` on daemons sets the default outbound HTTP timeout for `ctx.http()`.
-
-### `#[forge::webhook(path = "/webhooks/stripe")]`
-
-Generated struct: `{PascalCase}Webhook`. `path` is required. For server-to-server event delivery (Stripe, GitHub), not browser redirects (OAuth callbacks).
-
-| Attribute | Type | Default |
-|---|---|---|
-| `path = "/webhooks/stripe"` | string | REQUIRED |
-| `signature = WebhookSignature::hmac_sha256("Header", "ENV")` | — | — |
-| `allow_unsigned` | flag | false |
-| `idempotency = "header:X-Id"` or `"body:$.id"` | string | — |
-| `timeout = "30s"` | duration | `"30s"` |
-
-Algorithms: `hmac_sha256`, `hmac_sha1`, `hmac_sha512`. Path `/webhooks/stripe` mounts at `/_api/webhooks/stripe`. `timeout` also sets default for `ctx.http()`. OAuth callbacks are not webhooks (see patterns.md).
-
-### `#[forge::model]`
-
-Place BEFORE `#[derive(...)]` — the macro strips derive attrs and re-emits the struct. Table name: pluralized snake_case of struct name. Primary key always `"id"`. Override with `#[table(name = "custom_name")]` when auto-pluralization is wrong.
-
-### `#[forge::forge_enum]`
-
-Derives: `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq`, `Hash`, `Serialize`, `Deserialize` with `#[serde(rename_all = "snake_case")]`. Generates: `Display`, `FromStr`, `sqlx::Type`/`Encode`/`Decode`. Variants stored as snake_case strings in PG; PG type name = snake_case of the enum name.
+For `ed25519`, the `ENV` variable holds a **base64-encoded Ed25519 public key** (32 bytes), not a shared secret.
 
 ```rust
-#[forge::forge_enum]
-pub enum TaskStatus {
-    Pending,
-    InProgress,
-    Done,
-}
-// PG type: task_status, values: 'pending', 'in_progress', 'done'
+// Polar / Standard Webhooks
+#[forge::webhook(
+    path = "/webhooks/polar",
+    signature = WebhookSignature::standard_webhooks("POLAR_WEBHOOK_SECRET"),
+    idempotency = "header:webhook-id"
+)]
+pub async fn polar_webhook(ctx: &WebhookContext, payload: Value) -> Result<WebhookResult> { ... }
+
+// Stripe
+#[forge::webhook(
+    path = "/webhooks/stripe",
+    signature = WebhookSignature::stripe_webhooks("STRIPE_WEBHOOK_SECRET"),
+    idempotency = "header:stripe-request-id"
+)]
+pub async fn stripe_webhook(ctx: &WebhookContext, payload: Value) -> Result<WebhookResult> { ... }
+
+// Shopify
+#[forge::webhook(
+    path = "/webhooks/shopify",
+    signature = WebhookSignature::shopify_webhooks("SHOPIFY_WEBHOOK_SECRET"),
+    idempotency = "body:$.id"
+)]
+pub async fn shopify_webhook(ctx: &WebhookContext, payload: Value) -> Result<WebhookResult> { ... }
+
+// Ed25519 (e.g., a service that publishes a public key)
+#[forge::webhook(
+    path = "/webhooks/custom",
+    signature = WebhookSignature::ed25519("X-Webhook-Signature", "WEBHOOK_PUBLIC_KEY")
+)]
+pub async fn custom_webhook(ctx: &WebhookContext, payload: Value) -> Result<WebhookResult> { ... }
 ```
 
-### `#[forge::mcp_tool]`
+## Environment Variables
 
-Generated struct: `{PascalCase}McpTool` (strips `_mcp_tool` / `_tool` suffix from fn name first).
+Use context methods instead of `std::env::var()` — they are mockable in tests and fail fast at startup with a clear error.
 
-| Attribute | Type | Default |
-|---|---|---|
-| `name`, `title`, `description` | string | — |
-| `public` / `require_role(...)` | — | — |
-| `timeout = 30` | u64 | — |
-| `rate_limit(...)` | group | — |
-| `read_only`, `destructive`, `idempotent`, `open_world` | flag | — |
+| Method | Behavior |
+|---|---|
+| `ctx.env_require("KEY")` | Returns the value or a `ForgeError::Config` if missing. Use for required secrets. |
+| `ctx.env_or("KEY", "default")` | Returns the value or a fallback string. Use for optional config with a sensible default. |
 
-No HTTP client available on McpToolContext. Parameters with `#[schemars(...)]` and `#[serde(...)]` attributes are preserved on the generated Args struct for JSON Schema generation. Use `#[schemars(description = "...")]` for parameter descriptions visible to MCP clients. MCP tools are authenticated by default; only add `public` when unauthenticated access is intentional, and use `require_role("...")` for role-gated tools.
+## HTTP Client
 
-## Duration Formats
+`ctx.http()` returns a circuit-breaker-backed `reqwest` client. The default timeout matches the handler's configured `timeout`. Always use this instead of constructing your own client so circuit breaking and tracing work correctly.
 
-All duration strings: `500ms`, `30s`, `5m`, `2h`, `7d`, or bare number (= seconds). Note: `query`/`mutation`/`mcp_tool` timeout uses bare integer u64 seconds, not quoted duration.
-
-## Context Capability Matrix
-
-| Feature | Query | Mutation | Job | Cron | Workflow | Daemon | Webhook | MCP |
-|---|---|---|---|---|---|---|---|---|
-| `db()` ForgeDb | yes | — | yes | yes | yes | yes | yes | yes |
-| `conn()` ForgeConn | — | yes | yes | yes | yes | yes | yes | yes |
-| `http()` | — | yes | yes | yes | yes | yes | yes | — |
-| `raw_http()` | — | yes | yes | yes | yes | yes | yes | — |
-| `auth` field | yes | yes | yes | yes | yes | — | — | yes |
-| `request` metadata | yes | yes | — | — | — | — | — | yes |
-| `dispatch_job` | — | yes | — | — | — | yes | yes | yes |
-| `start_workflow` | — | yes | — | — | — | yes | — | yes |
-| `cancel_job` | — | yes | — | — | — | — | yes | — |
-| `issue_token` | — | yes | — | — | — | — | — | — |
-| `issue_token_pair` | — | yes | — | — | — | — | — | — |
-| `rotate_refresh_token` | — | yes | — | — | — | — | — | — |
-| `revoke_refresh_token` | — | yes | — | — | — | — | — | — |
-| `revoke_all_refresh_tokens` | — | yes | — | — | — | — | — | — |
-| `step()`/`parallel()` | — | — | — | — | yes | — | — | — |
-| `sleep()`/`wait_for_event()` | — | — | — | — | yes | — | — | — |
-| `heartbeat()` | — | — | yes | — | — | yes | — | — |
-| `progress()` | — | — | yes | — | — | — | — | — |
-| `save()`/`saved()` | — | — | yes | — | — | — | — | — |
-| `shutdown_signal()` | — | — | — | — | — | yes | — | — |
-| `header()` | — | — | — | — | — | — | yes | — |
-| `EnvAccess` | yes | yes | yes | yes | yes | yes | yes | yes |
-
-### Key Context Notes
-
-- `MutationContext` uses `conn()` for transactional access, not `db()`. `ctx.conn().await?` returns `ForgeConn<'_>`. Must bind to `let mut conn` before passing to sqlx: `sqlx::query_as!(T, "...", args).fetch_one(&mut conn)`. Passing `ctx.conn().await?` directly fails because sqlx needs `&mut ForgeConn`, not owned `ForgeConn`. Always use compile-time checked macros (`query!`, `query_as!`), never runtime forms.
-- `QueryContext.db()` returns `ForgeDb` for pool-level access (works with query methods directly, no `&mut` needed).
-- Production `ctx.http()` is circuit-breaker-backed by default. Use `raw_http()` only when you intentionally need bare `reqwest`.
-- An explicit handler `timeout` also becomes the default outbound HTTP timeout for `ctx.http()`. If omitted, outbound requests stay unlimited unless the request sets its own timeout.
-- Job async methods: `heartbeat()`, `save()`, `saved()`, `set_saved()`, `is_cancel_requested()`, `check_cancelled()` are all async.
-- `WorkflowContext.elapsed()` returns `chrono::Duration`, not `std::time::Duration`.
-- `StepRunner.run()` returns `Result<Option<T>>`. `Some(T)` on success, `None` if step was optional and failed.
-- `StepRunner.retry(count, delay)`: count = retries, so total attempts = count + 1.
-- `issue_token_pair(user_id, roles)` works for any auth flow (password, social OAuth, magic link). Exchange provider code server-side, upsert user, then issue Forge JWT. See patterns.md "Social Login".
-
-### DbConn Abstraction
-
-Write shared helpers using `DbConn<'_>` to work across all context types:
 ```rust
-pub async fn get_item(db: DbConn<'_>, id: Uuid) -> Result<Item> { ... }
-```
-- All contexts provide `db_conn()` → `DbConn` for shared helpers
-- `MutationContext.db()` also returns `DbConn` (transaction-aware)
-- `db()` on other contexts returns `ForgeDb` (pool wrapper with tracing, implements `sqlx::Executor`)
-- See `references/patterns.md` for the full pattern
-
-### EnvAccess (all contexts)
-
-```
-env(key) -> Option<String>
-env_or(key, default) -> String
-env_require(key) -> Result<String>
-env_parse::<T>(key) -> Result<T>
-env_parse_or::<T>(key, default) -> Result<T>  // errors if set but unparseable
-env_contains(key) -> bool
+let resp: MyResponse = ctx.http()
+    .post("https://api.example.com/action")
+    .json(&payload)
+    .send().await
+    .map_err(|e| ForgeError::Internal(e.to_string()))?
+    .json().await
+    .map_err(|e| ForgeError::Deserialization(e.to_string()))?;
 ```
 
-## ForgeError Variants
+## `forge.toml` Key Configuration
 
-| Variant | HTTP | Code |
-|---|---|---|
-| `NotFound(String)` | 404 | `NOT_FOUND` |
-| `Unauthorized(String)` | 401 | `UNAUTHORIZED` |
-| `Forbidden(String)` | 403 | `FORBIDDEN` |
-| `Validation(String)` | 400 | `VALIDATION_ERROR` |
-| `InvalidArgument(String)` | 400 | `INVALID_ARGUMENT` |
-| `Timeout(String)` | 504 | `TIMEOUT` |
-| `RateLimitExceeded { retry_after, limit, remaining }` | 429 | `RATE_LIMITED` |
-| `Database(String)` | 500 | `INTERNAL_ERROR` |
-| `Internal(String)` | 500 | `INTERNAL_ERROR` |
-| `Sql(sqlx::Error)` | 500 | `INTERNAL_ERROR` |
-| `JobCancelled(String)` | 409 | `JOB_CANCELLED` |
-
-## forge.toml Quick Reference
+These are the options most likely to cause silent runtime failures when missing. See the full reference at `docs/docs/ship/configuration.mdx`.
 
 ```toml
-[project]
-name = "my-app"            # telemetry service name
+[auth]
+# REQUIRED if issue_token_pair() is used. Missing these causes a panic at startup.
+access_token_ttl = "15m"
+refresh_token_ttl = "7d"
+jwt_secret = "${JWT_SECRET}"
 
 [database]
-url = "${DATABASE_URL}"    # required, non-empty
-pool_size = 50
-min_pool_size = 5
-pool_timeout_secs = 30
-statement_timeout_secs = 30
-test_before_acquire = true
-replica_urls = []
-read_from_replica = false
-
-[database.pools.jobs]      # optional isolated pools: default, jobs, analytics, observability
-size = 10
-
-[gateway]
-port = 9081
-sse_max_sessions = 10000
-request_timeout_secs = 30
-cors_origins = ["http://localhost:9080", "http://127.0.0.1:9080"]
-quiet_routes = ["/_api/health", "/_api/ready"]
-max_body_size = "20mb"    # global upload size limit, per-mutation max_size overrides
-
-[function]
-timeout_secs = 30
-
-[auth]
-jwt_algorithm = "HS256"    # HS256/384/512, RS256/384/512
-jwt_secret = "${JWT_SECRET}"
-# OR for JWKS: jwks_url = "https://...", jwt_issuer = "...", jwt_audience = "..."
-access_token_ttl = "1h"
-refresh_token_ttl = "30d"
+url = "${DATABASE_URL}"
+max_connections = 20          # default pool size
 
 [worker]
-max_concurrent_jobs = 50
-poll_interval_ms = 100
-
-[cluster]
-discovery = "postgres"     # postgres, dns, kubernetes, static
-heartbeat_interval_secs = 5
-dead_threshold_secs = 15
-
-[node]
-roles = ["gateway", "function", "worker", "scheduler"]
-worker_capabilities = ["general"]
-
-[mcp]
-enabled = false
-path = "/mcp"
+concurrency = 10              # parallel job slots per node
 
 [observability]
-enabled = false
+# Optional. Enables OTLP trace/metric export.
 otlp_endpoint = "http://localhost:4318"
 
 [signals]
-enabled = true              # default: true
-auto_capture = true         # auto-track RPC calls
-diagnostics = true          # capture frontend errors
-session_timeout_mins = 30
-retention_days = 90
-anonymize_ip = false        # when true, store hashed visitor ID instead of raw IP
-batch_size = 100            # events per DB flush
-flush_interval_ms = 5000    # max ms between flushes
-excluded_functions = []     # function names to skip (exact match)
-bot_detection = true        # tag bot traffic via UA patterns
-```
-
-Env var substitution: `${VAR}`, `${VAR-default}`, `${VAR:-default}`. Names: `[A-Z_][A-Z0-9_]*`.
-
-Substitution happens before TOML parsing, so the result must be valid TOML syntax:
-```toml
-# booleans: no quotes (substitution produces bare true/false)
-enabled = ${FORGE_OTEL_ENABLED-false}
-
-# strings: use quotes
-otlp_endpoint = "${OTEL_EXPORTER_OTLP_ENDPOINT-http://localhost:4318}"
-
-# WRONG: quoting a boolean produces a string, not a boolean
-enabled = "${FORGE_OTEL_ENABLED-false}"
+enabled = true                # default; set false to disable analytics
+anonymize_ip = false
 ```
 
 ### Pool Routing
 
-- `default`: queries, mutations, reactor, rate limiter, cluster coordination
-- `jobs`: job workers, cron runners, daemon processes, workflow executors
-- `analytics`: available via `db.analytics_pool()` for user code
-- `observability`: internal metrics collection (pool utilization, slow query tracking)
+Forge uses isolated connection pools to prevent jobs and analytics from starving web requests.
 
-Unconfigured pools fall back to primary.
+| Pool | Used by |
+|---|---|
+| `default` | Queries, mutations, crons, webhooks |
+| `jobs` | Job worker polling and execution |
+| `observability` | OTLP metric writes |
+| `analytics` | Signals / `forge_signals_events` writes |
 
-## CLI Commands
+Each pool can be sized independently under `[database.pools.jobs]`, etc.
+
+## Duration Formats
+Time durations can be expressed as `500ms`, `30s`, `5m`, `2h`, `7d`, or a bare number representing seconds. Note that `query`, `mutation`, and `mcp_tool` timeout attributes specifically require a bare `u64` integer representing seconds.
+
+## Context Capability Matrix
+
+Each handler type receives a specific context object providing access to framework services.
+
+| Feature | Query | Mut | Job | Cron | WF | Dmn | Web | MCP |
+|---|---|---|---|---|---|---|---|---|
+| `db()` (Read access) | yes | — | yes | yes | yes | yes | yes | yes |
+| `conn()` (Write access) | — | yes | yes | yes | yes | yes | yes | yes |
+| `http()` (Client) | — | yes | yes | yes | yes | yes | yes | — |
+| `auth` (Session info) | yes | yes | yes | yes | yes | — | — | yes |
+| `dispatch_job` | — | yes | — | — | — | yes | yes | yes |
+| `issue_token_pair` | — | yes | — | — | — | — | — | — |
+| `step()` / `sleep()` | — | — | — | — | yes | — | — | — |
+| `heartbeat()` / `save()` | — | — | yes | — | — | yes | — | — |
+| `EnvAccess` | yes | yes | yes | yes | yes | yes | yes | yes |
+
+### Context Usage Notes
+- **Database Access**: In mutations, use `let mut conn = ctx.conn().await?` to obtain a transactional connection. Pass `&mut conn` to SQL macros to ensure your queries are part of the transaction.
+- **Environment Variables**: Use the `EnvAccess` methods (e.g., `ctx.env_require()`) for all configuration to ensure your code is mockable in tests.
+- **HTTP Client**: Use `ctx.http()` for circuit-breaker-backed requests. The default timeout for these requests matches the handler's defined timeout.
+
+## ForgeError Variants
+
+Forge uses structured error variants to ensure consistent error handling across the stack and proper HTTP status code mapping.
+
+| Variant | HTTP Code | Internal Code | Rationale |
+|---|---|---|---|
+| `NotFound` | 404 | `NOT_FOUND` | Resource does not exist. |
+| `Unauthorized` | 401 | `UNAUTHORIZED` | Authentication is missing or invalid. |
+| `Forbidden` | 403 | `FORBIDDEN` | User lacks permission for the operation. |
+| `Validation` | 400 | `VALIDATION_ERROR` | Request data is malformed or invalid. |
+| `Timeout` | 504 | `TIMEOUT` | Operation exceeded its allotted time. |
+| `RateLimitExceeded` | 429 | `RATE_LIMITED` | Too many requests from the same identity. |
+| `Internal` | 500 | `INTERNAL_ERROR` | Unhandled server-side error. |
+
+## CLI Command Reference
 
 | Command | Purpose |
 |---|---|
-| `forge new <name> --template <id>` | Scaffold project |
-| `docker compose up --build` / `docker compose down -v` | Docker Compose dev environment |
-| `forge generate` | Generate frontend bindings from backend |
-| `forge test` | Build binary, start PG container, run backend + Playwright tests. Set `FORGE_TEST_URL` to skip build/start and test against a running server. |
-| `forge check` | Validate config, structure, linting, bindings |
-| `forge migrate up` / `down [N]` / `status` / `prepare` | Database migrations |
+| `forge new <name>` | Scaffolds a new project from a template. |
+| `forge generate` | Synchronizes backend changes with frontend bindings and types. |
+| `forge check` | Runs linting, formatting, and validates SQL and bindings. |
+| `forge migrate <up|down>`| Manages database migrations. |
+| `forge test` | Executes full-stack E2E tests using Playwright. |
 
-Templates: `with-svelte/minimal`, `with-svelte/demo`, `with-svelte/realtime-todo-list`, `with-dioxus/minimal`, `with-dioxus/demo`, `with-dioxus/realtime-todo-list`.
-
-## Project Structure
-
-### Safe Edit Zones
-
-- `src/functions/*`, `src/schema/*`, `src/utils/*`
-- `frontend/src/routes/*`
-- `frontend/src/lib/*` excluding generated Forge paths
-
-### Generated (never edit)
-
-- `frontend/src/lib/forge/*` (SvelteKit)
-- `frontend/src/forge/*` (Dioxus)
-
-### Migration Cleanup
-
-When creating real migrations, check `migrations/` for scaffolded files from `forge new`:
-- `with-*/minimal` templates create `0001_initial.sql.example` (commented placeholder). Delete it.
-- `with-*/demo` templates create `0001_initial.sql` (real migration with tables). Delete it and drop those tables if already run.
-
-Do not use `CREATE TABLE IF NOT EXISTS` in migrations. It silently skips creation if a conflicting table from the scaffold already exists.
-
-### Common `forge check` Issues
-
-- **`#[forge::model]` info warning**: Informational, not an error. Standard derives work fine without the macro.
-- **Clippy flakiness on first run**: Stale incremental cache. Run `cargo clean` and retry if persistent.
-
-## Migration Format
-
-Files: `migrations/NNNN_description.sql`. Markers: `-- @up` (required), `-- @down` (optional). System migrations run first, then user migrations alphabetically. Advisory lock `0x464F524745` prevents concurrent runs. Dollar-quoting (`$$`) works for PL/pgSQL.
-
-## Endpoints
-
-| Path | Purpose |
-|---|---|
-| `/_api/rpc/batch` | Batch multiple RPC calls in one request (POST) |
-| `/_api/rpc/{function}` | RPC (POST) |
-| `/_api/rpc/{function}/upload` | Multipart upload (POST) |
-| `/_api/events?token=...` | SSE connection (GET) |
-| `/_api/subscribe` | Register subscription (POST) |
-| `/_api/unsubscribe` | Remove subscription (POST) |
-| `/_api/subscribe-job` | Track job (POST) |
-| `/_api/subscribe-workflow` | Track workflow (POST) |
-| `/_api/health` | Liveness (GET, 200) |
-| `/_api/ready` | Readiness (GET, 200/503) |
-| `/_api/webhooks/{path}` | Webhook handlers |
-| `/_api/mcp` | MCP endpoint (if enabled) |
-| `/_api/signal/event` | Signal: batch custom events (POST, max 50) |
-| `/_api/signal/view` | Signal: page view with UTM (POST) |
-| `/_api/signal/user` | Signal: identify user (POST) |
-| `/_api/signal/report` | Signal: diagnostic error reports (POST, max 50) |
-
-Signal endpoints return `{ "ok": true, "session_id": "UUID" }`. Headers: `x-session-id` (session continuity), `x-forge-platform` (device: `web`, `desktop-macos`, `ios`, `android`, etc.), `x-correlation-id` (links to RPC). Endpoint batch limit (50) is separate from server-side `batch_size` (100) which controls DB flush size.
+## Project File Standards
+- **Source Code**: Editable logic resides in `src/functions/`, `src/schema/`, and `src/utils/`.
+- **Generated Code**: **MANDATE:** Never edit generated files. See [Pitfalls](./pitfalls.md#1-generated-code).
+- **Migrations**: Create new SQL files in `migrations/`. Always include `-- @up` and `-- @down` markers. Do not use `IF NOT EXISTS` clauses; migrations should be deterministic.

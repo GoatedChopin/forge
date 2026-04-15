@@ -18,8 +18,8 @@ chrono = { version = "0.4", features = ["serde"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "chrono", "uuid", "macros"] }
 tracing = "0.1"
 dotenvy = "0.15"
-reqwest = { version = "0.12", features = ["json"] }
-tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 bcrypt = "0.16"
 schemars = "0.8"

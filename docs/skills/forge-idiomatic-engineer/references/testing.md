@@ -1,344 +1,74 @@
 # Testing Reference
 
-Writing integration tests that prove your app survives failure. Focus on what breaks, not just what works.
+Effective testing focuses on identifying failure modes like expired tokens, deleted entities, and race conditions. Always prioritize testing failure cases over happy paths; if you only have time to implement one test, make it the one that verifies the system's error-handling logic.
 
-## Philosophy
+## Backend Integration Testing
 
-Happy path tests prove nothing. Real bugs hide in edge cases: expired tokens, deleted data, race conditions, network failures. Every test should answer: "Does this fail gracefully when the world is hostile?"
+Use the specific `TestContext` builders to simulate various application states and identities without running the entire application.
 
-**Test the failures first.** If you only have time for one test, make it the failure case.
+| Scenario | Testing Strategy |
+|---|---|
+| **Authentication Boundary** | Use `TestQueryContext::minimal()` to verify that unauthenticated requests are rejected with 401 Unauthorized. |
+| **Role Enforcement** | Build a context with a "User" role to verify that 403 Forbidden is returned for administrative endpoints. |
+| **Missing Resource Handling** | Call your handler with a random UUID to verify that 404 Not Found is returned with proper context. |
+| **Concurrency and Data Integrity** | Create an entity, delete it directly in the database, and then attempt to update it via a mutation to verify that 404 is returned correctly. |
+| **Ownership Enforcements** | Create an entity as User A and attempt to view it as User B to ensure that the data is not leaked and returns 404. |
+| **Job Idempotency** | Dispatch the same job twice with identical input and verify that the resulting state in the database reflects only a single processing operation. |
 
----
-
-## Backend Tests
-
-### Auth Boundary Tests
-
-```rust
-#[tokio::test]
-async fn rejects_missing_auth() {
-    let ctx = TestQueryContext::minimal();
-    let result = get_user_profile(&ctx).await;
-    assert_err_variant!(result, ForgeError::Unauthorized(_));
-}
-
-#[tokio::test]
-async fn rejects_wrong_role() {
-    let ctx = TestQueryContext::builder()
-        .as_user(Uuid::new_v4())
-        .with_role("user")
-        .build();
-    let result = admin_dashboard(&ctx).await;
-    assert_err_variant!(result, ForgeError::Forbidden(_));
-}
-```
-
-### Missing Data Tests
+### Backend Implementation Pattern
 
 ```rust
-#[tokio::test]
-async fn get_item_returns_not_found() {
-    let db = IsolatedTestDb::setup("missing_item", ...).await.unwrap();
-    let ctx = TestQueryContext::builder()
-        .as_user(Uuid::new_v4())
-        .with_pool(db.pool().clone())
-        .build();
-    
-    let result = get_item(&ctx, Uuid::new_v4()).await;
-    assert_err_variant!(result, ForgeError::NotFound(_));
-}
+// Use the builder to configure the test context exactly as needed.
+let ctx = TestQueryContext::builder()
+    .as_user(id)
+    .with_role("admin")
+    .build();
 
-#[tokio::test]
-async fn update_fails_if_deleted_concurrently() {
-    let db = IsolatedTestDb::setup("concurrent_delete", ...).await.unwrap();
-    let ctx = TestMutationContext::builder()
-        .as_user(Uuid::new_v4())
-        .with_pool(db.pool().clone())
-        .build();
-    
-    let item = create_item(&ctx, CreateItemInput::new("Test")).await.unwrap();
-    
-    // Another user deletes it
-    sqlx::query!("DELETE FROM items WHERE id = $1", item.id)
-        .execute(db.pool()).await.unwrap();
-    
-    let result = update_item(&ctx, UpdateItemInput::new(item.id).title("New")).await;
-    assert_err_variant!(result, ForgeError::NotFound(_));
-}
+let result = my_handler(&ctx).await;
+assert_err_variant!(result, ForgeError::NotFound(_));
+
+// For database-dependent tests, use IsolatedTestDb to ensure each test case starts fresh.
+let db = IsolatedTestDb::setup("test_name", ...).await.unwrap();
+let ctx = TestMutationContext::builder()
+    .with_pool(db.pool().clone())
+    .build();
 ```
 
-### Ownership Tests
+## Frontend E2E Testing (Playwright)
 
-```rust
-#[tokio::test]
-async fn cannot_view_other_users_items() {
-    let db = IsolatedTestDb::setup("ownership", ...).await.unwrap();
-    
-    // User A creates item
-    let ctx_a = TestMutationContext::builder()
-        .as_user(Uuid::new_v4())
-        .with_pool(db.pool().clone())
-        .build();
-    let item = create_item(&ctx_a, CreateItemInput::new("A's item")).await.unwrap();
-    
-    // User B tries to view
-    let ctx_b = TestQueryContext::builder()
-        .as_user(Uuid::new_v4())
-        .with_pool(db.pool().clone())
-        .build();
-    let result = get_item(&ctx_b, item.id).await;
-    
-    assert_err_variant!(result, ForgeError::NotFound(_));
-}
-```
+Forge frontends should be tested using real browser interactions. Do not call RPC handlers directly in your frontend tests.
 
-### Job Tests
+| Scenario | Testing Strategy |
+|---|---|
+| **Session Expiry Recovery** | Clear `localStorage` and reload the page to verify that the user is correctly redirected to the login page. |
+| **Real-Time Data Sync** | View an item list, perform a deletion in a separate tab, and verify that the list in the current tab updates automatically via SSE. |
+| **Submission Throttling** | Rapidly click a "Save" button multiple times to verify that only one creation event is recorded on the backend. |
+| **Loading and Disabled States** | Verify that action buttons are disabled while `mutation.loading` is true to prevent duplicate submissions. |
+| **Offline Performance** | Simulate a network disconnection using Playwright's `setOffline(true)` to verify that an offline indicator is displayed. |
+| **SSE Reconnection** | Forcefully abort the `_api/events` connection and verify that the client automatically re-establishes the stream and updates its state. |
 
-```rust
-#[tokio::test]
-async fn job_handles_missing_target() {
-    let db = IsolatedTestDb::setup("job_missing", ...).await.unwrap();
-    let ctx = TestJobContext::builder("process_item")
-        .with_pool(db.pool().clone())
-        .build();
-    
-    // Job should succeed (no-op), not fail
-    let result = process_item(&ctx, Uuid::new_v4()).await;
-    assert_ok!(result);
-}
-
-#[tokio::test]
-async fn job_is_idempotent() {
-    let db = IsolatedTestDb::setup("idempotent", ...).await.unwrap();
-    let ctx = TestJobContext::builder("send_email")
-        .with_pool(db.pool().clone())
-        .build();
-    
-    let input = SendEmailInput::new("test@example.com");
-    
-    // Run twice, should only send once
-    assert_ok!(send_email(&ctx, input.clone()).await);
-    assert_ok!(send_email(&ctx, input).await);
-    
-    let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM sent_emails")
-        .fetch_one(db.pool()).await.unwrap().unwrap_or(0);
-    assert_eq!(count, 1);
-}
-```
-
----
-
-## Frontend Tests (Playwright)
-
-All frontend tests use real UI interactions. Never call RPC directly in tests.
-
-### Fixtures
+### Frontend Implementation Pattern
 
 ```typescript
-// tests/fixtures.ts
-import { test as base, expect } from '@playwright/test';
-
-export const test = base.extend({
-  authedPage: async ({ page }, use) => {
-    await page.goto('/register');
-    await page.getByLabel('Email').fill(`test-${Date.now()}@example.com`);
-    await page.getByLabel('Password').fill('testpass123');
-    await page.getByRole('button', { name: 'Register' }).click();
-    await page.waitForURL('/dashboard');
-    await use(page);
-  },
-});
-
-export async function waitForSSE(page: Page) {
-  await page.waitForResponse(r => r.url().includes('/_api/subscribe'));
-}
-
-export const TIMEOUT = process.env.CI ? 15000 : 5000;
-```
-
-### Auth Failure Tests
-
-```typescript
-test('redirects to login when session expires', async ({ authedPage: page }) => {
-  await page.goto('/dashboard');
-  await waitForSSE(page);
-  
-  // Clear auth
-  await page.evaluate(() => localStorage.clear());
-  await page.reload();
-  
-  await expect(page).toHaveURL(/\/login/);
-});
-
-test('shows message when account deleted', async ({ authedPage: page }) => {
-  await page.goto('/settings');
-  await waitForSSE(page);
-  
-  // Delete own account
-  await page.getByRole('button', { name: 'Delete Account' }).click();
-  await page.getByRole('button', { name: 'Confirm' }).click();
-  
-  // Should redirect with explanation
-  await expect(page).toHaveURL(/\/login|\/goodbye/);
-});
-```
-
-### Data Race Tests
-
-```typescript
-test('handles item deleted while viewing', async ({ authedPage: page }) => {
-  // Create item via UI
+// Utilize the authedPage fixture to ensure the test starts with a valid session.
+test('real-time data synchronization', async ({ authedPage: page }) => {
   await page.goto('/items');
-  await page.getByRole('button', { name: 'New Item' }).click();
-  await page.getByLabel('Title').fill('To Delete');
-  await page.getByRole('button', { name: 'Save' }).click();
-  
-  // Click into detail view
-  await page.getByText('To Delete').click();
-  await expect(page.getByRole('heading')).toContainText('To Delete');
-  
-  // Open second tab, delete the item
-  const page2 = await page.context().newPage();
-  await page2.goto('/items');
-  await page2.getByText('To Delete').click();
-  await page2.getByRole('button', { name: 'Delete' }).click();
-  await page2.getByRole('button', { name: 'Confirm' }).click();
-  await page2.close();
-  
-  // First tab should handle deletion gracefully
-  await expect(page.locator('[data-deleted]')).toBeVisible({ timeout: TIMEOUT });
-  // Or redirects away
-});
+  await waitForSSE(page); // Wait for the SSE stream to be established.
 
-test('list updates when item deleted elsewhere', async ({ authedPage: page }) => {
-  // Create two items
-  await page.goto('/items');
-  for (const title of ['Item 1', 'Item 2']) {
-    await page.getByRole('button', { name: 'New Item' }).click();
-    await page.getByLabel('Title').fill(title);
-    await page.getByRole('button', { name: 'Save' }).click();
-  }
-  
-  await expect(page.getByTestId('item')).toHaveCount(2);
-  
-  // Delete one in another tab
-  const page2 = await page.context().newPage();
-  await page2.goto('/items');
-  await page2.getByText('Item 1').click();
-  await page2.getByRole('button', { name: 'Delete' }).click();
-  await page2.getByRole('button', { name: 'Confirm' }).click();
-  await page2.close();
-  
-  // SSE updates first tab
-  await expect(page.getByTestId('item')).toHaveCount(1, { timeout: TIMEOUT });
+  // Simulate external data change and verify UI updates.
+  await expect(page.getByTestId('item-count')).toHaveText('1', { timeout: 15000 });
 });
 ```
 
-### Double Submit Tests
+## Testing Checklist
 
-```typescript
-test('prevents double form submission', async ({ authedPage: page }) => {
-  await page.goto('/items/new');
-  await page.getByLabel('Title').fill('Single Item');
-  
-  const submit = page.getByRole('button', { name: 'Save' });
-  
-  // Double click
-  await Promise.all([submit.click(), submit.click()]);
-  
-  // Wait for navigation
-  await page.waitForURL(/\/items\//);
-  
-  // Go to list, verify only one created
-  await page.goto('/items');
-  const items = page.getByText('Single Item');
-  await expect(items).toHaveCount(1);
-});
+Before submitting your changes, ensure that you have verified the following:
 
-test('button disabled during submission', async ({ authedPage: page }) => {
-  await page.goto('/items/new');
-  await page.getByLabel('Title').fill('Test');
-  
-  const submit = page.getByRole('button', { name: 'Save' });
-  await submit.click();
-  
-  await expect(submit).toBeDisabled();
-});
-```
-
-### Network Failure Tests
-
-```typescript
-test('shows offline state', async ({ authedPage: page }) => {
-  await page.goto('/dashboard');
-  await waitForSSE(page);
-  
-  await page.context().setOffline(true);
-  await page.waitForTimeout(1000);
-  
-  await expect(page.getByTestId('offline-indicator')).toBeVisible();
-});
-
-test('mutation fails gracefully when offline', async ({ authedPage: page }) => {
-  await page.goto('/items');
-  await waitForSSE(page);
-  
-  await page.context().setOffline(true);
-  
-  await page.getByRole('button', { name: 'New Item' }).click();
-  await page.getByLabel('Title').fill('Offline Item');
-  await page.getByRole('button', { name: 'Save' }).click();
-  
-  await expect(page.getByText(/network|offline|connection/i)).toBeVisible();
-});
-```
-
-### SSE Reconnection Tests
-
-```typescript
-test('data stays fresh after reconnect', async ({ authedPage: page }) => {
-  await page.goto('/items');
-  await waitForSSE(page);
-  
-  // Create initial item
-  await page.getByRole('button', { name: 'New Item' }).click();
-  await page.getByLabel('Title').fill('Before');
-  await page.getByRole('button', { name: 'Save' }).click();
-  await expect(page.getByTestId('item')).toHaveCount(1);
-  
-  // Block SSE briefly
-  await page.route('**/_api/events*', route => route.abort());
-  await page.waitForTimeout(2000);
-  await page.unroute('**/_api/events*');
-  
-  // Create item in another tab during "disconnect"
-  const page2 = await page.context().newPage();
-  await page2.goto('/items');
-  await page2.getByRole('button', { name: 'New Item' }).click();
-  await page2.getByLabel('Title').fill('During');
-  await page2.getByRole('button', { name: 'Save' }).click();
-  await page2.close();
-  
-  // First tab should catch up
-  await expect(page.getByTestId('item')).toHaveCount(2, { timeout: TIMEOUT });
-});
-```
-
----
-
-## Checklist
-
-**Backend:**
-- [ ] Missing auth returns 401
-- [ ] Wrong role returns 403
-- [ ] Missing entity returns 404
-- [ ] User can only access own data
-- [ ] Job handles missing target
-- [ ] Idempotent operations are idempotent
-
-**Frontend:**
-- [ ] Handles auth expiry
-- [ ] Handles deleted data gracefully
-- [ ] No double submit
-- [ ] Handles offline
-- [ ] SSE reconnection works
+- [ ] **Authentication**: Are 401 Unauthorized errors returned for missing credentials?
+- [ ] **Authorization**: Are 403 Forbidden errors returned when a user lacks the necessary roles?
+- [ ] **Data Integrity**: Does ownership enforcement prevent unauthorized users from seeing private data?
+- [ ] **Error Clarity**: **MANDATE:** Return 404 Not Found for missing entities. See [Resilience Patterns](./resilience.md#2-database-and-data-integrity).
+- [ ] **Background Tasks**: Are jobs idempotent and do they gracefully handle missing target entities?
+- [ ] **User Experience**: Does the UI provide loading indicators and prevent duplicate submissions?
+- [ ] **Reactivity**: Do live subscriptions stay synchronized after simulated network reconnections?
+- [ ] **Failure Feedback**: Are user-facing error messages clear and actionable?
