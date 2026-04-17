@@ -89,6 +89,7 @@ impl ForgeConfig {
         self.auth.validate()?;
         self.mcp.validate()?;
         self.gateway.max_body_size_bytes()?;
+        self.gateway.tls.validate()?;
 
         // Cross-field: OAuth requires jwt_secret for signing tokens
         if self.mcp.oauth && self.auth.jwt_secret.is_none() {
@@ -243,6 +244,10 @@ pub struct GatewayConfig {
     /// Maximum request body size (e.g. "100mb", "1gb"). Defaults to "20mb".
     #[serde(default = "default_max_body_size")]
     pub max_body_size: String,
+
+    /// TLS configuration for the gateway listener.
+    #[serde(default)]
+    pub tls: TlsConfig,
 }
 
 impl Default for GatewayConfig {
@@ -257,6 +262,7 @@ impl Default for GatewayConfig {
             cors_origins: default_cors_origins(),
             quiet_routes: default_quiet_routes(),
             max_body_size: default_max_body_size(),
+            tls: TlsConfig::default(),
         }
     }
 }
@@ -271,6 +277,112 @@ impl GatewayConfig {
             ))
         })
     }
+}
+
+/// TLS configuration for the gateway listener.
+///
+/// Two modes are supported, inferred from which fields are set:
+///
+/// - **Self-signed**: `enabled = true` with no `cert_path`/`key_path`. The runtime
+///   generates an ephemeral self-signed certificate at startup. Intended for
+///   zero-trust deployments behind a load balancer that terminates public TLS.
+/// - **File-based**: `enabled = true` with both `cert_path` and `key_path` set.
+///   The runtime loads the PEM-encoded certificate chain and private key from
+///   disk at startup.
+///
+/// Setting only one of `cert_path`/`key_path` is a configuration error.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TlsConfig {
+    /// Enable TLS on the gateway listener.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Path to a PEM-encoded certificate chain file. Omit for self-signed mode.
+    #[serde(default)]
+    pub cert_path: Option<String>,
+
+    /// Path to a PEM-encoded private key file. Omit for self-signed mode.
+    #[serde(default)]
+    pub key_path: Option<String>,
+
+    /// Subject Alternative Names (SANs) for the self-signed certificate.
+    /// Defaults to `["localhost"]`. Ignored when `cert_path` and `key_path`
+    /// are set.
+    #[serde(default = "default_tls_hostnames")]
+    pub hostnames: Vec<String>,
+}
+
+impl Default for TlsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            cert_path: None,
+            key_path: None,
+            hostnames: default_tls_hostnames(),
+        }
+    }
+}
+
+impl TlsConfig {
+    /// Validate the TLS configuration.
+    ///
+    /// When `enabled` is `false`, no other fields are inspected. When `enabled`
+    /// is `true`, either both `cert_path` and `key_path` must be non-empty
+    /// (file-based mode) or both must be absent (self-signed mode). Mixing
+    /// the two, or supplying empty strings, is rejected.
+    pub fn validate(&self) -> crate::Result<()> {
+        if !self.enabled {
+            return Ok(());
+        }
+
+        if let Some(cert) = self.cert_path.as_deref()
+            && cert.trim().is_empty()
+        {
+            return Err(crate::ForgeError::Config(
+                "gateway.tls.cert_path must be non-empty when set".into(),
+            ));
+        }
+        if let Some(key) = self.key_path.as_deref()
+            && key.trim().is_empty()
+        {
+            return Err(crate::ForgeError::Config(
+                "gateway.tls.key_path must be non-empty when set".into(),
+            ));
+        }
+
+        match (self.cert_path.as_deref(), self.key_path.as_deref()) {
+            (Some(_), Some(_)) => Ok(()),
+            (None, None) => {
+                if self.hostnames.is_empty() {
+                    return Err(crate::ForgeError::Config(
+                        "gateway.tls.hostnames must contain at least one entry when \
+                         using self-signed mode"
+                            .into(),
+                    ));
+                }
+                if self.hostnames.iter().any(|h| h.trim().is_empty()) {
+                    return Err(crate::ForgeError::Config(
+                        "gateway.tls.hostnames entries must be non-empty".into(),
+                    ));
+                }
+                Ok(())
+            }
+            (Some(_), None) => Err(crate::ForgeError::Config(
+                "gateway.tls.cert_path is set but gateway.tls.key_path is missing. \
+                 Set both for file-based TLS, or neither for a self-signed certificate."
+                    .into(),
+            )),
+            (None, Some(_)) => Err(crate::ForgeError::Config(
+                "gateway.tls.key_path is set but gateway.tls.cert_path is missing. \
+                 Set both for file-based TLS, or neither for a self-signed certificate."
+                    .into(),
+            )),
+        }
+    }
+}
+
+fn default_tls_hostnames() -> Vec<String> {
+    vec!["localhost".to_string()]
 }
 
 fn default_http_port() -> u16 {
@@ -1168,5 +1280,186 @@ mod tests {
                 "Wrong error for {reserved}: {err_msg}"
             );
         }
+    }
+
+    #[test]
+    fn test_tls_disabled_default() {
+        let config = ForgeConfig::default_with_database_url("postgres://localhost/test");
+        assert!(!config.gateway.tls.enabled);
+        assert!(config.gateway.tls.cert_path.is_none());
+        assert!(config.gateway.tls.key_path.is_none());
+        assert_eq!(config.gateway.tls.hostnames, vec!["localhost".to_string()]);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_tls_disabled_ignores_other_fields() {
+        let toml = r#"
+            [database]
+            url = "postgres://localhost/test"
+
+            [gateway.tls]
+            enabled = false
+            cert_path = ""
+        "#;
+
+        assert!(ForgeConfig::parse_toml(toml).is_ok());
+    }
+
+    #[test]
+    fn test_tls_self_signed_default_hostnames() {
+        let toml = r#"
+            [database]
+            url = "postgres://localhost/test"
+
+            [gateway.tls]
+            enabled = true
+        "#;
+
+        let config = ForgeConfig::parse_toml(toml).unwrap();
+        assert!(config.gateway.tls.enabled);
+        assert_eq!(config.gateway.tls.hostnames, vec!["localhost".to_string()]);
+    }
+
+    #[test]
+    fn test_tls_self_signed_custom_hostnames() {
+        let toml = r#"
+            [database]
+            url = "postgres://localhost/test"
+
+            [gateway.tls]
+            enabled = true
+            hostnames = ["app.internal", "localhost"]
+        "#;
+
+        let config = ForgeConfig::parse_toml(toml).unwrap();
+        assert_eq!(
+            config.gateway.tls.hostnames,
+            vec!["app.internal".to_string(), "localhost".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_tls_file_based_valid() {
+        let toml = r#"
+            [database]
+            url = "postgres://localhost/test"
+
+            [gateway.tls]
+            enabled = true
+            cert_path = "/etc/forge/cert.pem"
+            key_path = "/etc/forge/key.pem"
+        "#;
+
+        let config = ForgeConfig::parse_toml(toml).unwrap();
+        assert_eq!(
+            config.gateway.tls.cert_path.as_deref(),
+            Some("/etc/forge/cert.pem")
+        );
+        assert_eq!(
+            config.gateway.tls.key_path.as_deref(),
+            Some("/etc/forge/key.pem")
+        );
+    }
+
+    #[test]
+    fn test_tls_only_cert_path_fails() {
+        let toml = r#"
+            [database]
+            url = "postgres://localhost/test"
+
+            [gateway.tls]
+            enabled = true
+            cert_path = "/etc/forge/cert.pem"
+        "#;
+
+        let result = ForgeConfig::parse_toml(toml);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("key_path is missing"),
+            "Unexpected error: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn test_tls_only_key_path_fails() {
+        let toml = r#"
+            [database]
+            url = "postgres://localhost/test"
+
+            [gateway.tls]
+            enabled = true
+            key_path = "/etc/forge/key.pem"
+        "#;
+
+        let result = ForgeConfig::parse_toml(toml);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("cert_path is missing"),
+            "Unexpected error: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn test_tls_empty_cert_path_fails() {
+        let toml = r#"
+            [database]
+            url = "postgres://localhost/test"
+
+            [gateway.tls]
+            enabled = true
+            cert_path = ""
+            key_path = "/etc/forge/key.pem"
+        "#;
+
+        let result = ForgeConfig::parse_toml(toml);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("cert_path must be non-empty"),
+            "Unexpected error: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn test_tls_empty_hostnames_fails() {
+        let toml = r#"
+            [database]
+            url = "postgres://localhost/test"
+
+            [gateway.tls]
+            enabled = true
+            hostnames = []
+        "#;
+
+        let result = ForgeConfig::parse_toml(toml);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("hostnames must contain at least one entry"),
+            "Unexpected error: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn test_tls_empty_hostname_entry_fails() {
+        let toml = r#"
+            [database]
+            url = "postgres://localhost/test"
+
+            [gateway.tls]
+            enabled = true
+            hostnames = ["localhost", ""]
+        "#;
+
+        let result = ForgeConfig::parse_toml(toml);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("hostnames entries must be non-empty"),
+            "Unexpected error: {err_msg}"
+        );
     }
 }

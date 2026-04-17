@@ -37,7 +37,9 @@ use forge_runtime::cron::{CronRegistry, CronRunner, CronRunnerConfig};
 use forge_runtime::daemon::{DaemonRegistry, DaemonRunner};
 use forge_runtime::db::Database;
 use forge_runtime::function::FunctionRegistry;
-use forge_runtime::gateway::{AuthConfig, GatewayConfig as RuntimeGatewayConfig, GatewayServer};
+use forge_runtime::gateway::{
+    AuthConfig, GatewayConfig as RuntimeGatewayConfig, GatewayServer, TlsListenConfig, bind_tls,
+};
 use forge_runtime::jobs::{JobDispatcher, JobQueue, JobRegistry, Worker, WorkerConfig};
 use forge_runtime::mcp::McpToolRegistry;
 use forge_runtime::webhook::{WebhookRegistry, WebhookState, webhook_handler};
@@ -540,6 +542,30 @@ impl Forge {
 
         // Start HTTP gateway if gateway role
         if roles.contains(&NodeRole::Gateway) {
+            let tls_cfg = &self.config.gateway.tls;
+            let tls = if tls_cfg.enabled {
+                Some(
+                    match (tls_cfg.cert_path.as_deref(), tls_cfg.key_path.as_deref()) {
+                        (Some(cert), Some(key)) => TlsListenConfig::FromFiles {
+                            cert_path: cert.to_string(),
+                            key_path: key.to_string(),
+                        },
+                        (None, None) => TlsListenConfig::SelfSigned {
+                            hostnames: tls_cfg.hostnames.clone(),
+                        },
+                        _ => {
+                            return Err(ForgeError::Config(
+                                "gateway.tls requires both cert_path and key_path, or \
+                                 neither (validated by ForgeConfig::validate)"
+                                    .into(),
+                            ));
+                        }
+                    },
+                )
+            } else {
+                None
+            };
+
             let gateway_config = RuntimeGatewayConfig {
                 port: self.config.gateway.port,
                 max_connections: self.config.gateway.max_connections,
@@ -558,6 +584,7 @@ impl Forge {
                     refresh_token_days: self.config.auth.refresh_token_ttl_days(),
                 },
                 project_name: self.config.project.name.clone(),
+                tls,
             };
 
             // Build gateway server (pass Database wrapper for read replica routing)
@@ -758,13 +785,27 @@ impl Forge {
             }
 
             let addr = gateway.addr();
+            let tls = gateway.tls().cloned();
 
             handles.push(tokio::spawn(async move {
                 tracing::debug!(addr = %addr, "Gateway server binding");
-                let listener = tokio::net::TcpListener::bind(addr)
-                    .await
-                    .expect("Failed to bind");
-                if let Err(e) = axum::serve(listener, router).await {
+                let result = match tls {
+                    Some(cfg) => match bind_tls(addr, &cfg).await {
+                        Ok(listener) => axum::serve(listener, router).await,
+                        Err(e) => {
+                            tracing::error!(error = %e, "Failed to bind TLS listener");
+                            return;
+                        }
+                    },
+                    None => {
+                        tracing::info!(addr = %addr, "Gateway listening (HTTP)");
+                        let listener = tokio::net::TcpListener::bind(addr)
+                            .await
+                            .expect("Failed to bind");
+                        axum::serve(listener, router).await
+                    }
+                };
+                if let Err(e) = result {
                     tracing::error!("Gateway server error: {}", e);
                 }
             }));

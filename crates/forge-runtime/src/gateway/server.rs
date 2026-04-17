@@ -34,6 +34,7 @@ use super::sse::{
     SseState, sse_handler, sse_job_subscribe_handler, sse_subscribe_handler,
     sse_unsubscribe_handler, sse_workflow_subscribe_handler,
 };
+use super::tls::{self, TlsListenConfig};
 use super::tracing::{REQUEST_ID_HEADER, SPAN_ID_HEADER, TRACE_ID_HEADER, TracingState};
 use crate::db::Database;
 use crate::function::FunctionRegistry;
@@ -73,6 +74,8 @@ pub struct GatewayConfig {
     pub project_name: String,
     /// Maximum body size in bytes for uploads. Defaults to 20 MB.
     pub max_body_size_bytes: usize,
+    /// Optional TLS configuration. When `None`, the gateway serves plain HTTP.
+    pub tls: Option<TlsListenConfig>,
 }
 
 impl Default for GatewayConfig {
@@ -90,6 +93,7 @@ impl Default for GatewayConfig {
             token_ttl: forge_core::AuthTokenTtl::default(),
             project_name: "forge-app".to_string(),
             max_body_size_bytes: DEFAULT_MAX_MULTIPART_BODY_SIZE,
+            tls: None,
         }
     }
 }
@@ -195,6 +199,11 @@ impl GatewayServer {
     /// Get a reference to the reactor.
     pub fn reactor(&self) -> Arc<Reactor> {
         self.reactor.clone()
+    }
+
+    /// Get the TLS configuration, if any.
+    pub fn tls(&self) -> Option<&TlsListenConfig> {
+        self.config.tls.as_ref()
     }
 
     /// Build an OAuth router (bypasses auth middleware). Returns None if OAuth is disabled.
@@ -463,19 +472,23 @@ impl GatewayServer {
     /// Run the server (blocking).
     pub async fn run(self) -> Result<(), std::io::Error> {
         let addr = self.addr();
-        let router = self.router();
+        let tls = self.config.tls.clone();
+        let service = self.router().into_make_service();
 
-        // Start the reactor for real-time updates
         self.reactor
             .start()
             .await
             .map_err(|e| std::io::Error::other(format!("Failed to start reactor: {}", e)))?;
         tracing::info!("Reactor started for real-time updates");
 
-        tracing::info!("Gateway server listening on {}", addr);
-
-        let listener = tokio::net::TcpListener::bind(addr).await?;
-        axum::serve(listener, router.into_make_service()).await
+        match tls {
+            Some(cfg) => axum::serve(tls::bind(addr, &cfg).await?, service).await,
+            None => {
+                tracing::info!(addr = %addr, "Gateway listening (HTTP)");
+                let listener = tokio::net::TcpListener::bind(addr).await?;
+                axum::serve(listener, service).await
+            }
+        }
     }
 }
 

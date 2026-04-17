@@ -8,6 +8,7 @@ mod response;
 mod rpc;
 mod server;
 mod sse;
+mod tls;
 mod tracing;
 
 pub use auth::{AuthConfig, AuthMiddleware, HmacTokenIssuer, build_auth_context_from_claims};
@@ -23,6 +24,7 @@ pub use sse::{
     SseConfig, SsePayload, SseQuery, SseState, sse_handler, sse_job_subscribe_handler,
     sse_subscribe_handler, sse_unsubscribe_handler, sse_workflow_subscribe_handler,
 };
+pub use tls::{TlsListenConfig, TlsListener, bind as bind_tls, load_rustls_config};
 pub use tracing::TracingMiddleware;
 
 pub(crate) fn extract_client_ip(headers: &axum::http::HeaderMap) -> Option<String> {

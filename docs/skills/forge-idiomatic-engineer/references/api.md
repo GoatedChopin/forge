@@ -177,6 +177,22 @@ otlp_endpoint = "http://localhost:4318"
 [signals]
 enabled = true                # default; set false to disable analytics
 anonymize_ip = false
+
+# TLS on the gateway. Off by default — use a load balancer for public TLS.
+# Enable [gateway.tls] when you need encrypted traffic between the LB and app
+# (zero-trust / ALB backend HTTPS) or direct HTTPS on the app.
+
+# Self-signed mode (ephemeral cert per startup; for behind-LB use):
+[gateway.tls]
+enabled = true
+hostnames = ["app.internal", "localhost"]
+
+# File-based mode (real cert on disk; rotation requires restart):
+[gateway.tls]
+enabled = true
+cert_path = "${GATEWAY_TLS_CERT_PATH}"
+key_path = "${GATEWAY_TLS_KEY_PATH}"
+# Setting only one of cert_path/key_path is a validation error.
 ```
 
 ### Pool Routing

@@ -27,6 +27,11 @@ pub struct Item { ... }
 - **Use `ctx.env_*()` instead of `std::env::var()`**: See [API Reference](./api.md#environment-variables).
 - **Avoid duplicating configuration logic**: Copying logic such as `app_url()` across handlers creates maintenance debt. Extract shared helpers into a utility module and pass them as parameters where necessary.
 - **Use `ctx.http()` for external requests**: See [API Reference](./api.md#http-client).
+- **TLS cert/key must be set together**: `[gateway.tls]` rejects configs that set only `cert_path` or only `key_path`. Set both for file-based mode, or neither for self-signed. Startup fails fast with a clear config error.
+- **TLS cert/key files must be readable and valid PEM**: Startup fails fast if paths are missing, unreadable, or malformed. The error message includes the offending path. Fix at deploy time, not at first request.
+- **Health checks must switch to HTTPS when TLS is enabled**: Load balancer / Kubernetes probes targeting `/_api/ready` will fail with TLS handshake errors if they're still configured for HTTP. Update target group protocol (ALB) or probe `scheme: HTTPS` (k8s) when flipping `[gateway.tls] enabled = true`.
+- **Do not use self-signed mode for public-facing deployments**: Self-signed is for zero-trust-behind-LB use. Browsers and API clients will not trust the certificate. For public TLS, terminate at a load balancer / CDN, or use file-based mode with a real CA-issued certificate.
+- **Certificate rotation requires restart**: File-based TLS does not hot-reload. Rolling deployment is the intended rotation mechanism.
 
 ## 3. Macros & Registration
 

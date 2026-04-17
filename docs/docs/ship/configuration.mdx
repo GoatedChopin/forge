@@ -145,6 +145,42 @@ Without pool isolation configured, everything shares the primary pool. With it c
 
 The per-mutation `max_size` attribute overrides the global `max_body_size` for that specific mutation. Other fixed limits: 20 upload fields per request, 32 concurrent in-flight uploads.
 
+#### [gateway.tls]
+
+Optional TLS termination on the gateway listener. Off by default. Use this when you need encrypted traffic between a load balancer and the app (zero-trust networks, ALB backend HTTPS, compliance requirements) or for internal services without a fronting proxy.
+
+| Option      | Type     | Default         | Description                                                                              |
+| ----------- | -------- | --------------- | ---------------------------------------------------------------------------------------- |
+| `enabled`   | bool     | `false`         | Enable TLS on the gateway listener                                                       |
+| `cert_path` | string   | -               | Path to a PEM-encoded certificate chain file. Omit for self-signed mode                  |
+| `key_path`  | string   | -               | Path to a PEM-encoded private key file. Omit for self-signed mode                        |
+| `hostnames` | string[] | `["localhost"]` | Subject Alternative Names for the self-signed certificate. Ignored when cert/key are set |
+
+Two modes are supported, inferred from the config:
+
+**Self-signed mode** — generate an ephemeral certificate at startup. No files to provision, no rotation to manage. Ideal for zero-trust deployments behind a load balancer that terminates public TLS (the load balancer does not validate the backend cert chain).
+
+```toml
+[gateway.tls]
+enabled = true
+hostnames = ["app.internal", "localhost"]
+```
+
+**File-based mode** — load a real certificate and key from disk. Use this for production with a certificate from a CA (cert-manager, ACM Private CA, mounted secrets, etc.).
+
+```toml
+[gateway.tls]
+enabled = true
+cert_path = "${GATEWAY_TLS_CERT_PATH}"
+key_path = "${GATEWAY_TLS_KEY_PATH}"
+```
+
+Setting only one of `cert_path`/`key_path` is a configuration error — `forge check` and startup both reject it.
+
+:::caution
+Forge's gateway TLS is for internal / backend-of-load-balancer use. It has no HSTS, OCSP stapling, ACME, or hot-reload. For public-facing edge TLS, terminate at a load balancer, CDN, or reverse proxy. Certificate rotation in file-based mode requires a process restart.
+:::
+
 ### [function]
 
 Controls query and mutation execution limits.
