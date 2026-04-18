@@ -76,7 +76,14 @@ sqlx::query_as!(User, "...", id).fetch_one(&mut conn).await
 - **Use anonymous clients for token refresh**: Including expired tokens in headers during a refresh call will cause the request to be rejected.
 - **Reserve `Forbidden` for permission violations**: Do not use `Forbidden` errors for business logic (e.g., "account needs upgrade"), as this triggers the global `onAuthError` handler and logs the user out.
 
-## 8. Resilience and Hygiene
+## 8. Custom Routes and Uploads
+
+- **Custom routes live under `/_api`**: `ForgeBuilder::custom_routes(|pool| ...)` merges into the gateway router. A declared `/export/csv` resolves to `/_api/export/csv`. Document the full path to clients — writing the raw declaration is a common off-by-prefix bug.
+- **Never `.unwrap()` `AuthContext`**: The auth middleware still forwards unauthenticated requests to your handler. `auth.user_id().unwrap()` panics and hits the workspace `clippy::unwrap_used` deny. Use `match auth.user_id()` with an early 401 return.
+- **Don't re-implement auth in custom handlers**: Middleware already parses the JWT and injects `Extension<AuthContext>`. Do not reach for headers or parse tokens yourself.
+- **Per-file upload cap is independent of total body**: `gateway.max_body_size` caps the full multipart body, but individual files are capped by `gateway.max_file_size` (defaults to `"10mb"`). A mutation that legitimately accepts a big file must declare `max_size = "…"`; that value becomes both the total and per-file limit for that endpoint.
+
+## 9. Resilience and Hygiene
 
 - **Consistently check for ID existence**: See [Resilience Patterns](./resilience.md#2-database-and-data-integrity).
 - **Include context in error messages**: Always include relevant IDs and context in your error messages to make debugging easier for both developers and users.

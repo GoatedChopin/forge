@@ -167,6 +167,10 @@ jwt_secret = "${JWT_SECRET}"
 url = "${DATABASE_URL}"
 max_connections = 20          # default pool size
 
+[gateway]
+max_body_size = "20mb"        # total multipart body cap (default)
+max_file_size = "10mb"        # per-file cap when mutation has no max_size (default)
+
 [worker]
 concurrency = 10              # parallel job slots per node
 
@@ -178,6 +182,28 @@ otlp_endpoint = "http://localhost:4318"
 enabled = true                # default; set false to disable analytics
 anonymize_ip = false
 ```
+
+### Upload Size Limits
+
+`gateway.max_body_size` caps the total HTTP body. `gateway.max_file_size` caps any single file when the target mutation does not declare its own `max_size`. When a mutation sets `max_size = "200mb"`, that value becomes both the total and per-file limit for that endpoint (explicit opt-in). Validation requires `max_file_size <= max_body_size`.
+
+## Custom Axum Routes
+
+`ForgeBuilder::custom_routes(|pool| Router)` registers additional HTTP routes that inherit the gateway's middleware stack. The factory runs once during `run()` after the pool is connected.
+
+```rust
+builder.custom_routes(|pool| {
+    Router::new()
+        .route("/export/csv", get(csv_export))
+        .with_state(Arc::new(pool))
+})
+```
+
+- Factory receives `sqlx::PgPool`. Ignore it with `|_|` if not needed.
+- Returned router is merged into the gateway's `/_api` namespace, so `/export/csv` is reachable at `/_api/export/csv`.
+- Full middleware applies automatically: JWT auth, CORS, tracing, concurrency limits, request timeouts.
+- Handlers read `Extension<AuthContext>` to access the authenticated user. Unauthenticated requests still arrive with an unauthenticated context — check `auth.user_id()` if login is required.
+- Avoid paths that conflict with built-ins: `/health`, `/ready`, `/rpc`, `/rpc/*`, `/events`, `/subscribe`, `/unsubscribe`, `/subscribe-job`, `/subscribe-workflow`, `/signal/*`, `/webhooks/*`, `/mcp`, `/oauth/*`. Conflicts panic at startup.
 
 ### Pool Routing
 
