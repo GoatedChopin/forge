@@ -133,17 +133,19 @@ Without pool isolation configured, everything shares the primary pool. With it c
 | `cors_origins`         | string[] | `[]`                              | Allowed CORS origins (use `["*"]` for any)     |
 | `quiet_routes`         | string[] | `[]`                              | Routes excluded from traces, metrics, and logs |
 | `sse_max_sessions`     | usize    | `10000`                           | Maximum concurrent SSE sessions                |
-| `max_body_size`        | string   | `"20mb"`                          | Global upload size limit. Supports `b`, `kb`, `mb`, `gb` suffixes. Per-mutation `max_size` overrides this. |
+| `max_body_size`        | string   | `"20mb"`                          | Total multipart body cap. Supports `b`, `kb`, `mb`, `gb` suffixes. Per-mutation `max_size` overrides this. |
+| `max_file_size`        | string   | `"10mb"`                          | Per-file cap applied when a mutation does not declare its own `max_size`. Must be ≤ `max_body_size`. |
 
 #### Request Body Limits
 
-| Payload        | Default | Configurable                                              |
-| -------------- | ------- | --------------------------------------------------------- |
-| JSON body      | 1 MiB   | Not configurable                                          |
-| Multipart total| 20 MiB  | `gateway.max_body_size` in forge.toml                     |
-| Per mutation   | -       | `#[forge::mutation(max_size = "200mb")]` per handler      |
+| Payload         | Default | Configurable                                              |
+| --------------- | ------- | --------------------------------------------------------- |
+| JSON body       | 1 MiB   | Not configurable                                          |
+| Multipart total | 20 MiB  | `gateway.max_body_size` in forge.toml                     |
+| Per file        | 10 MiB  | `gateway.max_file_size` in forge.toml                     |
+| Per mutation    | -       | `#[forge::mutation(max_size = "200mb")]` per handler      |
 
-The per-mutation `max_size` attribute overrides the global `max_body_size` for that specific mutation. Other fixed limits: 20 upload fields per request, 32 concurrent in-flight uploads.
+When a mutation declares `max_size`, that value becomes both the total and per-file limit for that endpoint — treat it as an explicit opt-in for large single files. Without an override, the total falls back to `max_body_size` and any single file is capped by `max_file_size`. Other fixed limits: 20 upload fields per request, 32 concurrent in-flight uploads.
 
 ### [function]
 

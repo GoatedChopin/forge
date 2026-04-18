@@ -109,6 +109,29 @@ Always exchange OAuth codes on the server to prevent exposing provider secrets o
 - **Read-Only vs Destructive**: Annotate tools with their intended behavior to help AI models select the correct tool.
 - **Authorization**: MCP tools require authentication by default. Use `require_role` to restrict access to specific agents.
 
+### Custom Axum Routes
+Reach for `ForgeBuilder::custom_routes` when a handler cannot fit the RPC/query/mutation shape (streaming responses, non-JSON content types, file downloads that aren't `Upload`). Everything else should stay in a `#[forge::query]` or `#[forge::mutation]` so it gets codegen bindings for free.
+
+```rust
+Forge::builder()
+    .config(config)
+    .custom_routes(|pool| {
+        Router::new()
+            .route("/export/csv", get(csv_export))
+            .with_state(Arc::new(pool))
+    })
+    .auto_register()
+    .build()?
+    .run()
+    .await
+```
+
+- The factory receives Forge's managed `PgPool`. Use `|_|` if you don't need it.
+- Route paths mount under `/_api`. A route declared as `/export/csv` is served at `/_api/export/csv`.
+- JWT auth, CORS, tracing, concurrency limits, and timeouts apply automatically — do not re-implement them.
+- Read the authenticated user with `Extension<AuthContext>`. Unauthenticated requests still reach the handler, so guard with `match auth.user_id()` (never `.unwrap()`).
+- Do not collide with built-in paths under `/_api`: `/health`, `/ready`, `/rpc`, `/rpc/*`, `/events`, `/subscribe*`, `/signal/*`, `/webhooks/*`, `/mcp`, `/oauth/*`.
+
 ## 4. Testing
 
 All tests use `#[tokio::test]`. Unit tests live inline in `#[cfg(test)] mod tests {}`. DB integration tests are gated behind the `testcontainers` feature flag.

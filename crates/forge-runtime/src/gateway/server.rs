@@ -42,6 +42,7 @@ use crate::realtime::{Reactor, ReactorConfig};
 
 const DEFAULT_MAX_JSON_BODY_SIZE: usize = 1024 * 1024;
 const DEFAULT_MAX_MULTIPART_BODY_SIZE: usize = 20 * 1024 * 1024;
+const DEFAULT_MAX_FILE_SIZE: usize = 10 * 1024 * 1024;
 const MAX_MULTIPART_CONCURRENCY: usize = 32;
 /// Fallback for visitor ID hashing when no JWT secret is configured (dev only).
 const DEFAULT_SIGNAL_SECRET: &str = "forge-default-signal-secret";
@@ -73,6 +74,9 @@ pub struct GatewayConfig {
     pub project_name: String,
     /// Maximum body size in bytes for uploads. Defaults to 20 MB.
     pub max_body_size_bytes: usize,
+    /// Default per-file cap in bytes for multipart uploads. Applies when
+    /// a mutation does not declare its own `max_size`. Defaults to 10 MB.
+    pub max_file_size_bytes: usize,
 }
 
 impl Default for GatewayConfig {
@@ -90,6 +94,7 @@ impl Default for GatewayConfig {
             token_ttl: forge_core::AuthTokenTtl::default(),
             project_name: "forge-app".to_string(),
             max_body_size_bytes: DEFAULT_MAX_MULTIPART_BODY_SIZE,
+            max_file_size_bytes: DEFAULT_MAX_FILE_SIZE,
         }
     }
 }
@@ -361,6 +366,7 @@ impl GatewayServer {
         let layer_limit = self.config.max_body_size_bytes.max(max_per_mutation);
         let mp_config = MultipartConfig {
             max_body_size_bytes: self.config.max_body_size_bytes,
+            max_file_size_bytes: self.config.max_file_size_bytes,
         };
         let multipart_router = Router::new()
             .route("/rpc/{function}/upload", post(rpc_multipart_handler))

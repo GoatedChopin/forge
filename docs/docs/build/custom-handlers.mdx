@@ -1,16 +1,16 @@
 # Custom Handlers
 
-Add raw axum routes when you need full control over HTTP handling while still receiving Forge's middleware stack.
+Add raw axum routes when you need full control over HTTP handling while still inheriting Forge's middleware stack.
 
 ## The Code
 
-The recommended pattern uses `custom_routes_with`, which gives your routes access to Forge's managed `PgPool` and the full middleware stack (auth, CORS, tracing, concurrency limits, timeouts):
+`custom_routes` takes a factory closure. Forge calls it once during `run()` and hands you the managed `PgPool`, so you can build a `Router` that talks to the database. The returned router is merged inside the gateway's `/_api` namespace, which means it automatically picks up auth, CORS, tracing, concurrency limits, and timeouts.
 
 ```rust
 use std::sync::Arc;
 use forge::prelude::*;
 use forge::prelude::axum::{
-    Router, Json,
+    Router,
     Extension,
     extract::{Query, State},
     http::StatusCode,
@@ -23,12 +23,11 @@ async fn csv_export(
     Extension(auth): Extension<AuthContext>,
     Query(params): Query<ExportParams>,
 ) -> impl IntoResponse {
-    if !auth.is_authenticated() {
-        return (StatusCode::UNAUTHORIZED, "Authentication required").into_response();
-    }
-    // auth.user_id() is available — the middleware already parsed the JWT
-    let user_id = auth.user_id().unwrap();
-    // ... query the pool, stream CSV, etc.
+    let user_id = match auth.user_id() {
+        Some(id) => id,
+        None => return (StatusCode::UNAUTHORIZED, "Authentication required").into_response(),
+    };
+    // ... query `pool`, stream CSV for `user_id`, etc.
     (StatusCode::OK, "ok").into_response()
 }
 
@@ -38,7 +37,7 @@ async fn main() -> Result<()> {
 
     Forge::builder()
         .config(config)
-        .custom_routes_with(|pool| {
+        .custom_routes(|pool| {
             Router::new()
                 .route("/export/csv", get(csv_export))
                 .with_state(Arc::new(pool))
@@ -49,15 +48,14 @@ async fn main() -> Result<()> {
 }
 ```
 
-If your routes don't need the database pool, use `custom_routes` instead:
+Route paths are relative to `/_api`. The `GET /export/csv` handler above is reachable at `GET /_api/export/csv`.
+
+If your handlers don't need the pool, ignore the argument:
 
 ```rust
-let custom = Router::new()
-    .route("/healthz", get(health_check));
-
 Forge::builder()
     .config(config)
-    .custom_routes(custom)
+    .custom_routes(|_| Router::new().route("/healthz", get(|| async { "ok" })))
     .build()?
     .run()
     .await
@@ -65,9 +63,7 @@ Forge::builder()
 
 ## What Happens
 
-Custom routes are merged inside the gateway's `/_api` router and receive the full middleware stack automatically: auth, CORS, tracing, concurrency limits, and timeouts. Your handlers can extract `Extension<AuthContext>` to access the authenticated user without any manual JWT parsing.
-
-The `custom_routes_with(|pool| ...)` variant accepts a factory closure that receives Forge's managed `PgPool` once the database connection is established during `run()`. This is the intended way to give custom handlers database access, since the pool isn't available at builder time.
+The factory runs after the pool is connected and before the gateway starts. Forge merges your router into the gateway's main router, then wraps the combined router with the middleware stack, so custom handlers get the same auth, tracing, and rate limiting as built-in endpoints. Use `Extension<AuthContext>` to read the authenticated user without parsing JWTs by hand.
 
 ## When to Use
 
@@ -76,34 +72,24 @@ The `custom_routes_with(|pool| ...)` variant accepts a factory closure that rece
 | Standard queries and mutations | `#[forge::query]`, `#[forge::mutation]` |
 | Webhook endpoints with signatures | `#[forge::webhook]` |
 | AI tool exposure | `#[forge::mcp_tool]` |
-| Streaming responses, file downloads, custom content types | `custom_routes_with()` |
-| Third-party integrations needing exact HTTP semantics | `custom_routes()` |
+| Streaming responses, file downloads, custom content types | `custom_routes` |
+| Third-party integrations needing exact HTTP semantics | `custom_routes` |
 
 ## Route Conflicts
 
-Custom routes share the `/_api` namespace with built-in Forge endpoints. Avoid paths that conflict with `/health`, `/ready`, `/rpc/*`, `/webhooks/*`, `/events`, or `/mcp/*`. Conflicting paths cause a runtime panic.
+Custom routes share the `/_api` namespace with built-in Forge endpoints. Registering a path that already belongs to Forge panics at startup. Avoid:
 
-## Database Access
-
-Use `custom_routes_with` to receive the pool as a closure argument, then pass it to your router via axum's `State`:
-
-```rust
-Forge::builder()
-    .custom_routes_with(|pool| {
-        Router::new()
-            .route("/export/csv", get(csv_export))
-            .with_state(Arc::new(pool))
-    })
-    .build()?
-    .run()
-    .await
-```
-
-Your handler extracts it with `State(pool): State<Arc<sqlx::PgPool>>`.
+- `/health`, `/ready`
+- `/rpc`, `/rpc/batch`, `/rpc/{function}`, `/rpc/{function}/upload`
+- `/events`, `/subscribe`, `/unsubscribe`, `/subscribe-job`, `/subscribe-workflow`
+- `/signal/event`, `/signal/view`, `/signal/user`, `/signal/report`
+- `/webhooks/*`
+- `/mcp` (if MCP is enabled)
+- `/oauth/authorize`, `/oauth/token`, `/oauth/register` (if MCP OAuth is enabled)
 
 ## Authentication
 
-The auth middleware runs before your handler. Extract the authenticated user with:
+The auth middleware runs before your handler. Unauthenticated requests still reach the handler with an unauthenticated `AuthContext`, so check before trusting it:
 
 ```rust
 async fn my_handler(
@@ -113,9 +99,7 @@ async fn my_handler(
         Some(id) => id,
         None => return (StatusCode::UNAUTHORIZED, "Not authenticated").into_response(),
     };
-    // user_id is available for authorization checks
+    // user_id available for authorization checks
     (StatusCode::OK, "ok").into_response()
 }
 ```
-
-Unauthenticated requests still reach your handler (with an unauthenticated `AuthContext`), so check `auth.is_authenticated()` or `auth.user_id()` if the endpoint requires login.

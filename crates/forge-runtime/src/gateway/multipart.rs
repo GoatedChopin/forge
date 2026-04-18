@@ -17,9 +17,31 @@ const MAX_JSON_FIELD_SIZE: usize = 1024 * 1024;
 const JSON_FIELD_NAME: &str = "_json";
 
 /// Configurable limits for multipart uploads, injected via Axum extension.
+///
+/// `max_body_size_bytes` caps the total request body when a mutation does
+/// not declare its own `max_size`. `max_file_size_bytes` caps any single
+/// file under the same conditions; per-mutation `max_size` overrides both
+/// (it is treated as an explicit opt-in for large single files).
 #[derive(Debug, Clone)]
 pub struct MultipartConfig {
     pub max_body_size_bytes: usize,
+    pub max_file_size_bytes: usize,
+}
+
+/// Resolve the effective (total, per-file) upload limits for a request.
+///
+/// When a mutation declares `max_size`, the value acts as an explicit
+/// opt-in: it caps both the total body and any single file. Without an
+/// override, the total falls back to `max_body_size_bytes` and any single
+/// file is capped by `max_file_size_bytes` (clamped to the total).
+fn resolve_upload_limits(per_mutation: Option<usize>, config: &MultipartConfig) -> (usize, usize) {
+    match per_mutation {
+        Some(limit) => (limit, limit),
+        None => (
+            config.max_body_size_bytes,
+            config.max_file_size_bytes.min(config.max_body_size_bytes),
+        ),
+    }
 }
 
 /// Create a multipart error response.
@@ -62,12 +84,10 @@ pub async fn rpc_multipart_handler(
         );
     }
 
-    // Per-function limit takes priority, then global config.
-    let max_total = handler
+    let per_mutation = handler
         .function_info(&function)
-        .and_then(|info| info.max_upload_size_bytes)
-        .unwrap_or(mp_config.max_body_size_bytes);
-    let max_file = max_total;
+        .and_then(|info| info.max_upload_size_bytes);
+    let (max_total, max_file) = resolve_upload_limits(per_mutation, &mp_config);
 
     let mut json_args: Option<serde_json::Value> = None;
     let mut uploads: HashMap<String, Upload> = HashMap::new();
@@ -308,11 +328,53 @@ pub async fn rpc_multipart_handler(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    fn config(body: usize, file: usize) -> MultipartConfig {
+        MultipartConfig {
+            max_body_size_bytes: body,
+            max_file_size_bytes: file,
+        }
+    }
 
     #[test]
     fn test_json_field_name_constant() {
         assert_eq!(JSON_FIELD_NAME, "_json");
     }
+
+    #[test]
+    fn per_mutation_limit_overrides_both_total_and_file() {
+        let cfg = config(20 * MB, 10 * MB);
+        let (total, file) = resolve_upload_limits(Some(200 * MB), &cfg);
+        assert_eq!(total, 200 * MB);
+        assert_eq!(file, 200 * MB);
+    }
+
+    #[test]
+    fn without_override_uses_global_body_and_file_limits() {
+        let cfg = config(50 * MB, 10 * MB);
+        let (total, file) = resolve_upload_limits(None, &cfg);
+        assert_eq!(total, 50 * MB);
+        assert_eq!(file, 10 * MB);
+    }
+
+    #[test]
+    fn file_limit_clamped_to_body_limit() {
+        let cfg = config(5 * MB, 50 * MB);
+        let (total, file) = resolve_upload_limits(None, &cfg);
+        assert_eq!(total, 5 * MB);
+        assert_eq!(file, 5 * MB);
+    }
+
+    #[test]
+    fn zero_per_mutation_is_still_respected() {
+        let cfg = config(20 * MB, 10 * MB);
+        let (total, file) = resolve_upload_limits(Some(0), &cfg);
+        assert_eq!(total, 0);
+        assert_eq!(file, 0);
+    }
+
+    const MB: usize = 1024 * 1024;
 }

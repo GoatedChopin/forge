@@ -88,7 +88,14 @@ impl ForgeConfig {
         self.database.validate()?;
         self.auth.validate()?;
         self.mcp.validate()?;
-        self.gateway.max_body_size_bytes()?;
+        let body_limit = self.gateway.max_body_size_bytes()?;
+        let file_limit = self.gateway.max_file_size_bytes()?;
+        if file_limit > body_limit {
+            return Err(ForgeError::Config(format!(
+                "gateway.max_file_size ({}) cannot exceed gateway.max_body_size ({})",
+                self.gateway.max_file_size, self.gateway.max_body_size
+            )));
+        }
 
         // Cross-field: OAuth requires jwt_secret for signing tokens
         if self.mcp.oauth && self.auth.jwt_secret.is_none() {
@@ -243,6 +250,13 @@ pub struct GatewayConfig {
     /// Maximum request body size (e.g. "100mb", "1gb"). Defaults to "20mb".
     #[serde(default = "default_max_body_size")]
     pub max_body_size: String,
+
+    /// Default per-file cap for multipart uploads (e.g. "10mb", "200mb").
+    /// Applies when a mutation does not declare its own `max_size`. Set to
+    /// the same value as `max_body_size` to disable the per-file guard.
+    /// Defaults to "10mb".
+    #[serde(default = "default_max_file_size")]
+    pub max_file_size: String,
 }
 
 impl Default for GatewayConfig {
@@ -257,6 +271,7 @@ impl Default for GatewayConfig {
             cors_origins: default_cors_origins(),
             quiet_routes: default_quiet_routes(),
             max_body_size: default_max_body_size(),
+            max_file_size: default_max_file_size(),
         }
     }
 }
@@ -268,6 +283,16 @@ impl GatewayConfig {
             crate::ForgeError::Config(format!(
                 "invalid gateway.max_body_size '{}'. Expected a size like '20mb', '1gb', or '1048576'",
                 self.max_body_size
+            ))
+        })
+    }
+
+    /// Parse `max_file_size` into bytes.
+    pub fn max_file_size_bytes(&self) -> crate::Result<usize> {
+        crate::util::parse_size(&self.max_file_size).ok_or_else(|| {
+            crate::ForgeError::Config(format!(
+                "invalid gateway.max_file_size '{}'. Expected a size like '10mb', '200mb', or '1048576'",
+                self.max_file_size
             ))
         })
     }
@@ -314,6 +339,10 @@ fn default_quiet_routes() -> Vec<String> {
 
 fn default_max_body_size() -> String {
     "20mb".to_string()
+}
+
+fn default_max_file_size() -> String {
+    "10mb".to_string()
 }
 
 /// Function execution configuration.
@@ -1144,6 +1173,48 @@ mod tests {
             ..Default::default()
         };
         assert!(gw.max_body_size_bytes().is_err());
+    }
+
+    #[test]
+    fn test_max_file_size_defaults() {
+        let gw = GatewayConfig::default();
+        assert_eq!(gw.max_file_size_bytes().unwrap(), 10 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_max_file_size_custom() {
+        let gw = GatewayConfig {
+            max_file_size: "200mb".into(),
+            max_body_size: "500mb".into(),
+            ..Default::default()
+        };
+        assert_eq!(gw.max_file_size_bytes().unwrap(), 200 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_max_file_size_invalid_errors() {
+        let gw = GatewayConfig {
+            max_file_size: "nope".into(),
+            ..Default::default()
+        };
+        assert!(gw.max_file_size_bytes().is_err());
+    }
+
+    #[test]
+    fn test_validate_rejects_file_larger_than_body() {
+        let toml = r#"
+            [database]
+            url = "postgres://localhost/test"
+
+            [gateway]
+            max_body_size = "10mb"
+            max_file_size = "20mb"
+        "#;
+        let err = ForgeConfig::parse_toml(toml).unwrap_err().to_string();
+        assert!(
+            err.contains("max_file_size"),
+            "Expected max_file_size error, got: {err}"
+        );
     }
 
     #[test]

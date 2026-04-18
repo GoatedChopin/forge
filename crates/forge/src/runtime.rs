@@ -107,9 +107,10 @@ pub struct Forge {
     extra_migrations: Vec<Migration>,
     /// Optional frontend handler for embedded SPA.
     frontend_handler: Option<FrontendHandler>,
-    /// Custom axum routes that receive the full gateway middleware stack.
-    custom_routes: Option<Router>,
-    /// Factory that produces custom routes after the pool is available.
+    /// Factory that produces custom axum routes once the pool is available.
+    /// The returned router is merged into the gateway's `/_api` router, so
+    /// the full middleware stack (auth, CORS, tracing, concurrency, timeouts)
+    /// applies automatically.
     custom_routes_factory: Option<Box<dyn FnOnce(sqlx::PgPool) -> Router + Send + Sync>>,
 }
 
@@ -555,6 +556,7 @@ impl Forge {
                 mcp: self.config.mcp.clone(),
                 quiet_routes: self.config.gateway.quiet_routes.clone(),
                 max_body_size_bytes: self.config.gateway.max_body_size_bytes()?,
+                max_file_size_bytes: self.config.gateway.max_file_size_bytes()?,
                 token_ttl: forge_core::AuthTokenTtl {
                     access_token_secs: self.config.auth.access_token_ttl_secs(),
                     refresh_token_days: self.config.auth.refresh_token_ttl_days(),
@@ -598,18 +600,8 @@ impl Forge {
                 tracing::info!("Signals enabled (analytics + diagnostics)");
             }
 
-            // Resolve custom routes (static + factory) and pass to the gateway
-            // so they sit inside the middleware stack.
-            let mut resolved_custom = self.custom_routes.take();
             if let Some(factory) = self.custom_routes_factory.take() {
-                let factory_router = factory(pool.clone());
-                resolved_custom = Some(match resolved_custom {
-                    Some(existing) => existing.merge(factory_router),
-                    None => factory_router,
-                });
-            }
-            if let Some(custom) = resolved_custom {
-                gateway = gateway.with_custom_routes(custom);
+                gateway = gateway.with_custom_routes(factory(pool.clone()));
                 tracing::debug!("Custom routes merged into gateway middleware stack");
             }
 
@@ -881,7 +873,6 @@ pub struct ForgeBuilder {
     migrations_dir: PathBuf,
     extra_migrations: Vec<Migration>,
     frontend_handler: Option<FrontendHandler>,
-    custom_routes: Option<Router>,
     custom_routes_factory: Option<Box<dyn FnOnce(sqlx::PgPool) -> Router + Send + Sync>>,
 }
 
@@ -900,7 +891,6 @@ impl ForgeBuilder {
             migrations_dir: PathBuf::from("migrations"),
             extra_migrations: Vec::new(),
             frontend_handler: None,
-            custom_routes: None,
             custom_routes_factory: None,
         }
     }
@@ -933,40 +923,38 @@ impl ForgeBuilder {
         self
     }
 
-    /// Add custom axum routes to the server.
+    /// Register custom axum routes built from Forge's managed `PgPool`.
     ///
-    /// Routes are merged inside the gateway's `/_api` router and receive
-    /// the full middleware stack (auth, CORS, tracing, concurrency limits,
-    /// timeouts) automatically. Avoid paths that conflict with built-in
-    /// routes like `/health`, `/rpc/*`, or `/webhooks/*`.
+    /// The factory runs once during `run()`, after the database pool is
+    /// connected. The returned router is merged into the gateway's `/_api`
+    /// namespace, so every route receives the full middleware stack: auth
+    /// (JWT), CORS, tracing, concurrency limits, and timeouts.
+    ///
+    /// Route paths are relative to `/_api`. Registering `/export/csv`
+    /// exposes `GET /_api/export/csv`. Avoid paths that collide with
+    /// built-ins under `/_api`: `/health`, `/ready`, `/rpc`, `/rpc/*`,
+    /// `/events`, `/subscribe`, `/unsubscribe`, `/subscribe-job`,
+    /// `/subscribe-workflow`, `/signal/*`, `/mcp`, and `/oauth/*`.
+    ///
+    /// If your handlers don't need the pool, ignore the argument:
     ///
     /// ```ignore
-    /// use axum::{Router, routing::get};
-    ///
-    /// let routes = Router::new()
-    ///     .route("/export/data", get(|| async { "ok" }));
-    ///
-    /// builder.custom_routes(routes);
+    /// builder.custom_routes(|_| Router::new().route("/healthz", get(|| async { "ok" })));
     /// ```
-    pub fn custom_routes(mut self, router: Router) -> Self {
-        self.custom_routes = Some(router);
-        self
-    }
-
-    /// Like [`custom_routes`](Self::custom_routes) but accepts a factory
-    /// that receives Forge's managed `PgPool` (resolved during `run()`).
+    ///
+    /// With pool access:
     ///
     /// ```ignore
     /// use axum::{Router, routing::get, extract::State};
     /// use std::sync::Arc;
     ///
-    /// builder.custom_routes_with(|pool| {
+    /// builder.custom_routes(|pool| {
     ///     Router::new()
-    ///         .route("/export/csv", get(my_handler))
+    ///         .route("/export/csv", get(export_handler))
     ///         .with_state(Arc::new(pool))
     /// });
     /// ```
-    pub fn custom_routes_with<F>(mut self, f: F) -> Self
+    pub fn custom_routes<F>(mut self, f: F) -> Self
     where
         F: FnOnce(sqlx::PgPool) -> Router + Send + Sync + 'static,
     {
@@ -1121,7 +1109,6 @@ impl ForgeBuilder {
             migrations_dir: self.migrations_dir,
             extra_migrations: self.extra_migrations,
             frontend_handler: self.frontend_handler,
-            custom_routes: self.custom_routes,
             custom_routes_factory: self.custom_routes_factory,
         })
     }
