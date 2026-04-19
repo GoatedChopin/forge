@@ -176,7 +176,8 @@ concurrency = 10              # parallel job slots per node
 
 [observability]
 # Optional. Enables OTLP trace/metric export.
-otlp_endpoint = "http://localhost:4318"
+otlp_endpoint = "${FORGE_OTEL_ENDPOINT-http://localhost:4318}"    # any ${VAR-default} interpolation works
+metrics_interval_secs = 15    # metrics export period
 
 [signals]
 enabled = true                # master switch; set false to disable analytics
@@ -189,6 +190,8 @@ batch_size = 100              # events per batch INSERT
 flush_interval_ms = 5000      # max milliseconds between flushes
 excluded_functions = []       # function names to skip from auto-capture
 bot_detection = true          # tag bot traffic via UA patterns
+# GeoIP: embedded DB-IP Country Lite resolves IPs to country codes automatically (zero config)
+geoip_db_path = ""            # optional: path to MaxMind GeoLite2-City.mmdb for city-level resolution
 ```
 
 ### Upload Size Limits

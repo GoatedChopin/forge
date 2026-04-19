@@ -351,16 +351,19 @@ Jobs requiring `worker_capability = "gpu"` only run on workers with that capabil
 
 OTLP-based telemetry for traces, metrics, and logs. Disabled by default. When enabled, Forge auto-instruments HTTP requests, function calls, job execution, and database queries without any application code changes.
 
-| Option           | Type   | Default                   | Description                          |
-| ---------------- | ------ | ------------------------- | ------------------------------------ |
-| `enabled`        | bool   | `false`                   | Enable OTLP telemetry export         |
-| `otlp_endpoint`  | string | `"http://localhost:4318"` | OTLP collector endpoint (HTTP)       |
-| `service_name`   | string | project name              | Service name in telemetry data       |
-| `enable_traces`  | bool   | `true`                    | Export distributed traces            |
-| `enable_metrics` | bool   | `true`                    | Export metrics                       |
-| `enable_logs`    | bool   | `true`                    | Export logs via OTLP                 |
-| `sampling_ratio` | f64    | `1.0`                     | Trace sampling ratio (0.0 to 1.0)    |
-| `log_level`      | string | `"info"`                  | Log level for the tracing subscriber |
+| Option                  | Type   | Default                   | Description                          |
+| ----------------------- | ------ | ------------------------- | ------------------------------------ |
+| `enabled`               | bool   | `false`                   | Enable OTLP telemetry export         |
+| `otlp_endpoint`         | string | `"http://localhost:4318"` | OTLP collector endpoint (HTTP)       |
+| `service_name`          | string | project name              | Service name in telemetry data       |
+| `enable_traces`         | bool   | `true`                    | Export distributed traces            |
+| `enable_metrics`        | bool   | `true`                    | Export metrics                       |
+| `enable_logs`           | bool   | `true`                    | Export logs via OTLP                 |
+| `sampling_ratio`        | f64    | `1.0`                     | Trace sampling ratio (0.0 to 1.0)    |
+| `metrics_interval_secs` | u64    | `15`                      | Metrics export interval in seconds   |
+| `log_level`             | string | `"info"`                  | Log level for the tracing subscriber |
+
+Forge never reads observability env vars directly. If you want to vary settings per environment, use the generic TOML interpolation: `otlp_endpoint = "${FORGE_OTEL_ENDPOINT-http://localhost:4318}"`. Nothing is magic about the `FORGE_OTEL_` prefix; any variable name works.
 
 ```toml
 [observability]

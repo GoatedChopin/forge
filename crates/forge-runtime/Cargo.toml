@@ -46,6 +46,8 @@ ed25519-dalek = "2"
 bcrypt = { workspace = true }
 base64 = "0.22"
 serde_urlencoded = "0.7"
+db_ip = { version = "0.3", default-features = false, features = ["ipv4", "ipv6", "include-country-code-lite"] }
+maxminddb = "0.24"
 
 [features]
 testcontainers = ["forge-core/testcontainers"]

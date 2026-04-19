@@ -62,6 +62,15 @@ excluded_functions = []     # function names to skip (exact match)
 bot_detection = true        # tag bot traffic via UA patterns
 ```
 
+Forge ships with an embedded [DB-IP](https://db-ip.com) Country Lite database for IP-to-country resolution. Every signal event is automatically enriched with an ISO 3166-1 alpha-2 country code in the `country` column. No configuration or external files needed.
+
+For city-level resolution, point `geoip_db_path` at a MaxMind GeoLite2-City MMDB file (free with a [MaxMind account](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data)). This populates the `city` column alongside `country`. A bad path fails startup — if you explicitly ask for city-level data, Forge doesn't silently downgrade.
+
+```toml
+[signals]
+geoip_db_path = "/etc/forge/GeoLite2-City.mmdb"
+```
+
 To disable signals entirely:
 
 ```toml

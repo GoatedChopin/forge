@@ -12,7 +12,7 @@ services:
       - DATABASE_URL=postgres://postgres:forge@db:5432/forge_svelte_demo_template
       - SQLX_OFFLINE=true
       - FORGE_OTEL_ENABLED=true
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel:4318
+      - FORGE_OTEL_ENDPOINT=http://otel:4318
     command: cargo watch --poll -x "run --no-default-features"
     volumes:
       - ../../..:/workspace

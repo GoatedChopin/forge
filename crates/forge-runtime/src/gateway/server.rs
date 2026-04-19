@@ -137,6 +137,7 @@ pub struct GatewayServer {
     token_ttl: forge_core::AuthTokenTtl,
     signals_collector: Option<crate::signals::SignalsCollector>,
     signals_anonymize_ip: bool,
+    signals_geoip: Option<crate::signals::geoip::GeoIpResolver>,
     custom_routes: Option<Router>,
 }
 
@@ -163,6 +164,7 @@ impl GatewayServer {
             token_ttl,
             signals_collector: None,
             signals_anonymize_ip: false,
+            signals_geoip: None,
             custom_routes: None,
         }
     }
@@ -201,6 +203,12 @@ impl GatewayServer {
     /// When true, raw client IPs are not stored in event records.
     pub fn with_signals_anonymize_ip(mut self, anonymize: bool) -> Self {
         self.signals_anonymize_ip = anonymize;
+        self
+    }
+
+    /// Set the GeoIP resolver for country code lookups from client IPs.
+    pub fn with_signals_geoip(mut self, resolver: crate::signals::geoip::GeoIpResolver) -> Self {
+        self.signals_geoip = Some(resolver);
         self
     }
 
@@ -427,6 +435,7 @@ impl GatewayServer {
                         DEFAULT_SIGNAL_SECRET.to_string()
                     }),
                 anonymize_ip: self.signals_anonymize_ip,
+                geoip: self.signals_geoip.clone(),
             });
             signals_router = Router::new()
                 .route(

@@ -78,6 +78,8 @@ pub struct SignalEvent {
 
     // Client context
     pub client_ip: Option<String>,
+    pub country: Option<String>,
+    pub city: Option<String>,
     pub user_agent: Option<String>,
 
     // Device classification (parsed from user_agent + platform header)
@@ -125,6 +127,8 @@ impl SignalEvent {
             error_stack: None,
             error_context: None,
             client_ip: None,
+            country: None,
+            city: None,
             user_agent: None,
             device_type: None,
             browser: None,
@@ -165,6 +169,8 @@ impl SignalEvent {
             error_stack: None,
             error_context: None,
             client_ip,
+            country: None,
+            city: None,
             user_agent,
             device_type: None,
             browser: None,
@@ -210,6 +216,8 @@ impl SignalEvent {
             error_stack: None,
             error_context: None,
             client_ip,
+            country: None,
+            city: None,
             user_agent,
             device_type: None,
             browser: None,

@@ -9,6 +9,7 @@ pub mod collector;
 pub mod device;
 pub mod emit;
 pub mod endpoints;
+pub mod geoip;
 pub mod partition;
 pub mod session;
 pub mod views;

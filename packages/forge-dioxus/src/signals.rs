@@ -293,6 +293,9 @@ impl ForgeSignals {
         drop(inner);
         if should_flush {
             let this = self.clone();
+            #[cfg(target_arch = "wasm32")]
+            wasm_bindgen_futures::spawn_local(async move { this.flush().await; });
+            #[cfg(not(target_arch = "wasm32"))]
             spawn(async move { this.flush().await; });
         }
     }
@@ -608,6 +611,7 @@ pub fn use_signals() -> ForgeSignals {
 pub(crate) fn setup_auto_capture(signals: ForgeSignals) {
     use wasm_bindgen::closure::Closure;
     use wasm_bindgen::JsCast;
+    use wasm_bindgen_futures::spawn_local;
 
     if !signals.is_enabled() { return; }
 
@@ -616,7 +620,7 @@ pub(crate) fn setup_auto_capture(signals: ForgeSignals) {
     // Periodic flush timer
     {
         let signals = signals.clone();
-        spawn(async move {
+        spawn_local(async move {
             loop {
                 gloo_timers::future::sleep(std::time::Duration::from_millis(u64::from(flush_interval))).await;
                 if signals.is_destroyed() { break; }
@@ -628,7 +632,7 @@ pub(crate) fn setup_auto_capture(signals: ForgeSignals) {
     // Deferred auto-capture setup to avoid competing with SSE for DB pool connections
     {
         let signals = signals.clone();
-        spawn(async move {
+        spawn_local(async move {
             gloo_timers::future::sleep(std::time::Duration::from_millis(AUTO_CAPTURE_DELAY_MS)).await;
             if signals.is_destroyed() { return; }
 
@@ -641,7 +645,7 @@ pub(crate) fn setup_auto_capture(signals: ForgeSignals) {
             if signals.auto_page_views() {
                 let path = window.location().pathname().unwrap_or_else(|_| "/".to_string());
                 let signals_page = signals.clone();
-                spawn(async move { signals_page.page(&path).await; });
+                spawn_local(async move { signals_page.page(&path).await; });
 
                 // Listen for navigation events (pushState, replaceState, popstate)
                 {
@@ -651,7 +655,7 @@ pub(crate) fn setup_auto_capture(signals: ForgeSignals) {
                             .and_then(|w| w.location().pathname().ok())
                             .unwrap_or_else(|| "/".to_string());
                         let signals = signals.clone();
-                        spawn(async move { signals.page(&path).await; });
+                        spawn_local(async move { signals.page(&path).await; });
                     });
                     let _ = window.add_event_listener_with_callback(
                         "forge-pushstate",
@@ -699,7 +703,7 @@ pub(crate) fn setup_auto_capture(signals: ForgeSignals) {
                         let msg = e.message();
                         if msg.is_empty() { return; }
                         let signals = signals.clone();
-                        spawn(async move { signals.capture_error(&msg, json!({})).await; });
+                        spawn_local(async move { signals.capture_error(&msg, json!({})).await; });
                     });
                     let _ = window.add_event_listener_with_callback(
                         "error",
@@ -716,7 +720,7 @@ pub(crate) fn setup_auto_capture(signals: ForgeSignals) {
                             let reason = e.reason();
                             let msg = reason.as_string().unwrap_or_else(|| "Unhandled promise rejection".to_string());
                             let signals = signals.clone();
-                            spawn(async move { signals.capture_error(&msg, json!({})).await; });
+                            spawn_local(async move { signals.capture_error(&msg, json!({})).await; });
                         },
                     );
                     let _ = window.add_event_listener_with_callback(
@@ -765,7 +769,7 @@ pub(crate) fn setup_auto_capture(signals: ForgeSignals) {
                 let online = Closure::<dyn Fn()>::new(move || {
                     online_signals.track("network.online", json!({}));
                     let online_signals2 = online_signals.clone();
-                    spawn(async move { online_signals2.flush().await; });
+                    spawn_local(async move { online_signals2.flush().await; });
                 });
                 let _ = window.add_event_listener_with_callback(
                     "online",

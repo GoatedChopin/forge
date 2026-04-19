@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ForgeProvider } from "@forge-rs/svelte";
+  import { ForgeProvider, getForgeSignals } from "@forge-rs/svelte";
   import { PUBLIC_API_URL } from "$env/static/public";
   import { getToken, auth } from "$lib/forge/auth.svelte";
   import { onMount } from "svelte";
@@ -9,9 +9,19 @@
   }
 
   let { children }: Props = $props();
+  let lastIdentifiedUserId: string | null = null;
 
   onMount(() => {
     auth.startRefreshLoop(PUBLIC_API_URL);
+    window.forgeSignals = getForgeSignals();
+  });
+
+  $effect(() => {
+    const user = auth.user;
+    if (user && user.id !== lastIdentifiedUserId) {
+      lastIdentifiedUserId = user.id;
+      getForgeSignals().identify(user.id, { email: user.email, name: user.name });
+    }
   });
 </script>
 

@@ -50,6 +50,7 @@ pub struct TelemetryConfig {
     pub enable_metrics: bool,
     pub enable_logs: bool,
     pub sampling_ratio: f64,
+    pub metrics_interval_secs: u64,
 }
 
 impl Default for TelemetryConfig {
@@ -63,6 +64,7 @@ impl Default for TelemetryConfig {
             enable_metrics: true,
             enable_logs: true,
             sampling_ratio: 1.0,
+            metrics_interval_secs: 15,
         }
     }
 }
@@ -96,6 +98,7 @@ impl TelemetryConfig {
             enable_metrics: otlp_enabled && obs.enable_metrics,
             enable_logs: otlp_enabled && obs.enable_logs,
             sampling_ratio: obs.sampling_ratio,
+            metrics_interval_secs: obs.metrics_interval_secs,
         }
     }
 
@@ -185,7 +188,9 @@ fn init_meter(config: &TelemetryConfig) -> Result<SdkMeterProvider, TelemetryErr
         .build()
         .map_err(|e| TelemetryError::MeterInit(e.to_string()))?;
 
-    let reader = PeriodicReader::builder(exporter, opentelemetry_sdk::runtime::Tokio).build();
+    let reader = PeriodicReader::builder(exporter, opentelemetry_sdk::runtime::Tokio)
+        .with_interval(std::time::Duration::from_secs(config.metrics_interval_secs))
+        .build();
 
     let provider = MeterProviderBuilder::default()
         .with_reader(reader)

@@ -149,6 +149,8 @@ pub fn emit_web_vital(
         error_stack: None,
         error_context: None,
         client_ip,
+        country: None,
+        city: None,
         user_agent,
         device_type,
         browser,

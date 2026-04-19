@@ -137,10 +137,11 @@ mod tests {
     fn test_generate_reactive_mutation() {
         let registry = SchemaRegistry::new();
 
-        let mut func =
-            FunctionDef::mutation("create_user", RustType::Custom("User".into()));
-        func.args
-            .push(forge_core::schema::FunctionArg::new("name", RustType::String));
+        let mut func = FunctionDef::mutation("create_user", RustType::Custom("User".into()));
+        func.args.push(forge_core::schema::FunctionArg::new(
+            "name",
+            RustType::String,
+        ));
         registry.register_function(func);
 
         let bindings = BindingSet::from_registry(&registry);

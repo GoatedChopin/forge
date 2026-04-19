@@ -56,6 +56,8 @@ pub struct SignalsState {
     pub server_secret: String,
     /// When true, strip raw client IP from stored events (GDPR-compliant).
     pub anonymize_ip: bool,
+    /// Optional GeoIP resolver for country code lookups from client IP.
+    pub geoip: Option<super::geoip::GeoIpResolver>,
 }
 
 /// POST /signal/event -- batch custom events.
@@ -78,7 +80,13 @@ pub async fn event_handler(
         });
     }
 
-    let ctx = extract_request_ctx(&headers, &auth, &state.server_secret, state.anonymize_ip);
+    let ctx = extract_request_ctx(
+        &headers,
+        &auth,
+        &state.server_secret,
+        state.anonymize_ip,
+        state.geoip.as_ref(),
+    );
     let session_id =
         resolve_session_id(batch.context.as_ref().and_then(|c| c.session_id.as_deref()));
     let page_url = batch.context.as_ref().and_then(|c| c.page_url.clone());
@@ -121,6 +129,8 @@ pub async fn event_handler(
             error_stack: None,
             error_context: None,
             client_ip: ctx.client_ip.clone(),
+            country: ctx.country.clone(),
+            city: ctx.city.clone(),
             user_agent: ctx.user_agent.clone(),
             device_type: ctx.device_type.clone(),
             browser: ctx.browser.clone(),
@@ -151,7 +161,13 @@ pub async fn view_handler(
             session_id: None,
         });
     }
-    let ctx = extract_request_ctx(&headers, &auth, &state.server_secret, state.anonymize_ip);
+    let ctx = extract_request_ctx(
+        &headers,
+        &auth,
+        &state.server_secret,
+        state.anonymize_ip,
+        state.geoip.as_ref(),
+    );
     let session_id_header = extract_header(&headers, "x-session-id");
     let session_id = resolve_session_id(session_id_header.as_deref());
 
@@ -207,6 +223,8 @@ pub async fn view_handler(
         error_stack: None,
         error_context: None,
         client_ip: ctx.client_ip,
+        country: ctx.country,
+        city: ctx.city,
         user_agent: ctx.user_agent,
         device_type: ctx.device_type,
         browser: ctx.browser,
@@ -267,7 +285,13 @@ pub async fn user_handler(
     )
     .await;
 
-    let ctx = extract_request_ctx(&headers, &auth, &state.server_secret, state.anonymize_ip);
+    let ctx = extract_request_ctx(
+        &headers,
+        &auth,
+        &state.server_secret,
+        state.anonymize_ip,
+        state.geoip.as_ref(),
+    );
 
     let signal = SignalEvent {
         event_type: SignalEventType::Identify,
@@ -288,6 +312,8 @@ pub async fn user_handler(
         error_stack: None,
         error_context: None,
         client_ip: ctx.client_ip,
+        country: ctx.country,
+        city: ctx.city,
         user_agent: ctx.user_agent,
         device_type: ctx.device_type,
         browser: ctx.browser,
@@ -323,7 +349,13 @@ pub async fn report_handler(
         });
     }
 
-    let ctx = extract_request_ctx(&headers, &auth, &state.server_secret, state.anonymize_ip);
+    let ctx = extract_request_ctx(
+        &headers,
+        &auth,
+        &state.server_secret,
+        state.anonymize_ip,
+        state.geoip.as_ref(),
+    );
     let session_id_header = extract_header(&headers, "x-session-id");
     let session_id = resolve_session_id(session_id_header.as_deref());
 
@@ -367,6 +399,8 @@ pub async fn report_handler(
             error_stack: err.stack,
             error_context: err.context,
             client_ip: ctx.client_ip.clone(),
+            country: ctx.country.clone(),
+            city: ctx.city.clone(),
             user_agent: ctx.user_agent.clone(),
             device_type: ctx.device_type.clone(),
             browser: ctx.browser.clone(),
@@ -408,7 +442,13 @@ pub async fn vital_handler(
         });
     }
 
-    let ctx = extract_request_ctx(&headers, &auth, &state.server_secret, state.anonymize_ip);
+    let ctx = extract_request_ctx(
+        &headers,
+        &auth,
+        &state.server_secret,
+        state.anonymize_ip,
+        state.geoip.as_ref(),
+    );
     let session_id =
         resolve_session_id(batch.context.as_ref().and_then(|c| c.session_id.as_deref()));
     let page_url = batch.context.as_ref().and_then(|c| c.page_url.clone());
@@ -473,6 +513,8 @@ pub async fn vital_handler(
             error_stack: None,
             error_context: None,
             client_ip: ctx.client_ip.clone(),
+            country: ctx.country.clone(),
+            city: ctx.city.clone(),
             user_agent: ctx.user_agent.clone(),
             device_type: ctx.device_type.clone(),
             browser: ctx.browser.clone(),
@@ -494,6 +536,8 @@ pub async fn vital_handler(
 struct RequestCtx {
     user_agent: Option<String>,
     client_ip: Option<String>,
+    country: Option<String>,
+    city: Option<String>,
     is_bot: bool,
     visitor_id: String,
     user_id: Option<Uuid>,
@@ -508,6 +552,7 @@ fn extract_request_ctx(
     auth: &Option<axum::Extension<AuthContext>>,
     server_secret: &str,
     anonymize_ip: bool,
+    geoip: Option<&super::geoip::GeoIpResolver>,
 ) -> RequestCtx {
     let user_agent = extract_header(headers, "user-agent");
     let platform_header = extract_header(headers, "x-forge-platform");
@@ -522,12 +567,17 @@ fn extract_request_ctx(
     let user_id = auth.as_ref().and_then(|a| a.user_id());
     let tenant_id = auth.as_ref().and_then(|a| a.tenant_id());
     let device_info = device::parse_lowered(platform_header.as_deref(), &ua_lower);
-    // When anonymize_ip is enabled, drop the raw IP from stored events.
-    // The hashed visitor_id is still computed from the IP above for analytics.
+    let geo = geoip
+        .zip(raw_ip.as_deref())
+        .map(|(g, ip)| g.lookup(ip))
+        .unwrap_or_default();
+    // anonymize_ip drops the raw IP after visitor_id + geo are derived; GDPR-friendly default.
     let client_ip = if anonymize_ip { None } else { raw_ip };
     RequestCtx {
         user_agent,
         client_ip,
+        country: geo.country,
+        city: geo.city,
         is_bot,
         visitor_id,
         user_id,

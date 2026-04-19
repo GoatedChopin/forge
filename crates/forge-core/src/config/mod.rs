@@ -629,6 +629,10 @@ pub struct ObservabilityConfig {
     #[serde(default = "default_sampling_ratio")]
     pub sampling_ratio: f64,
 
+    /// Metrics export interval in seconds. OTLP collectors typically prefer 15s-60s.
+    #[serde(default = "default_metrics_interval_secs")]
+    pub metrics_interval_secs: u64,
+
     /// Log level for the tracing subscriber (e.g., "debug", "info", "warn").
     #[serde(default = "default_log_level")]
     pub log_level: String,
@@ -644,6 +648,7 @@ impl Default for ObservabilityConfig {
             enable_metrics: true,
             enable_logs: true,
             sampling_ratio: default_sampling_ratio(),
+            metrics_interval_secs: default_metrics_interval_secs(),
             log_level: default_log_level(),
         }
     }
@@ -652,24 +657,6 @@ impl Default for ObservabilityConfig {
 impl ObservabilityConfig {
     pub fn otlp_active(&self) -> bool {
         self.enabled && (self.enable_traces || self.enable_metrics || self.enable_logs)
-    }
-
-    /// Apply FORGE_OTEL_* environment variable overrides.
-    ///
-    /// Supported variables:
-    /// - `FORGE_OTEL_TRACES` - "true"/"false" to enable/disable traces
-    /// - `FORGE_OTEL_METRICS` - "true"/"false" to enable/disable metrics
-    /// - `FORGE_OTEL_LOGS` - "true"/"false" to enable/disable logs
-    pub fn apply_env_overrides(&mut self) {
-        if let Ok(val) = std::env::var("FORGE_OTEL_TRACES") {
-            self.enable_traces = val.eq_ignore_ascii_case("true") || val == "1";
-        }
-        if let Ok(val) = std::env::var("FORGE_OTEL_METRICS") {
-            self.enable_metrics = val.eq_ignore_ascii_case("true") || val == "1";
-        }
-        if let Ok(val) = std::env::var("FORGE_OTEL_LOGS") {
-            self.enable_logs = val.eq_ignore_ascii_case("true") || val == "1";
-        }
     }
 }
 
@@ -683,6 +670,10 @@ pub(crate) fn default_true() -> bool {
 
 fn default_sampling_ratio() -> f64 {
     1.0
+}
+
+fn default_metrics_interval_secs() -> u64 {
+    15
 }
 
 fn default_log_level() -> String {

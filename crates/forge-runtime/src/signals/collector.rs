@@ -164,6 +164,8 @@ async fn flush_batch(pool: &PgPool, buffer: &mut Vec<SignalEvent>) {
     let mut error_stacks: Vec<Option<String>> = Vec::with_capacity(count);
     let mut error_contexts: Vec<Option<serde_json::Value>> = Vec::with_capacity(count);
     let mut client_ips: Vec<Option<String>> = Vec::with_capacity(count);
+    let mut countries: Vec<Option<String>> = Vec::with_capacity(count);
+    let mut cities: Vec<Option<String>> = Vec::with_capacity(count);
     let mut user_agents: Vec<Option<String>> = Vec::with_capacity(count);
     let mut device_types: Vec<Option<String>> = Vec::with_capacity(count);
     let mut browsers: Vec<Option<String>> = Vec::with_capacity(count);
@@ -196,6 +198,8 @@ async fn flush_batch(pool: &PgPool, buffer: &mut Vec<SignalEvent>) {
         error_stacks.push(event.error_stack);
         error_contexts.push(event.error_context);
         client_ips.push(event.client_ip);
+        countries.push(event.country);
+        cities.push(event.city);
         user_agents.push(event.user_agent);
         device_types.push(event.device_type);
         browsers.push(event.browser);
@@ -220,7 +224,7 @@ async fn flush_batch(pool: &PgPool, buffer: &mut Vec<SignalEvent>) {
             properties, page_url, referrer,
             function_name, function_kind, duration_ms, status,
             error_message, error_stack, error_context,
-            client_ip, user_agent,
+            client_ip, country, city, user_agent,
             device_type, browser, os,
             utm_source, utm_medium, utm_campaign, utm_term, utm_content,
             is_bot, timestamp
@@ -231,10 +235,10 @@ async fn flush_batch(pool: &PgPool, buffer: &mut Vec<SignalEvent>) {
             $9::jsonb[], $10::text[], $11::text[],
             $12::varchar[], $13::varchar[], $14::int[], $15::varchar[],
             $16::text[], $17::text[], $18::jsonb[],
-            $19::text[], $20::text[],
-            $21::varchar[], $22::varchar[], $23::varchar[],
-            $24::varchar[], $25::varchar[], $26::varchar[], $27::varchar[], $28::varchar[],
-            $29::bool[], $30::timestamptz[]
+            $19::text[], $20::varchar[], $21::varchar[], $22::text[],
+            $23::varchar[], $24::varchar[], $25::varchar[],
+            $26::varchar[], $27::varchar[], $28::varchar[], $29::varchar[], $30::varchar[],
+            $31::bool[], $32::timestamptz[]
         )",
     )
     .bind(&ids)
@@ -256,6 +260,8 @@ async fn flush_batch(pool: &PgPool, buffer: &mut Vec<SignalEvent>) {
     .bind(&error_stacks)
     .bind(&error_contexts)
     .bind(&client_ips)
+    .bind(&countries)
+    .bind(&cities)
     .bind(&user_agents)
     .bind(&device_types)
     .bind(&browsers)

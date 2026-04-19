@@ -20,9 +20,9 @@ cors_origins = ["http://localhost:9080", "http://127.0.0.1:9080"]
 
 [observability]
 enabled = ${FORGE_OTEL_ENABLED-false}        # docker-compose sets FORGE_OTEL_ENABLED=true
-otlp_endpoint = "http://localhost:4318"
+otlp_endpoint = "${FORGE_OTEL_ENDPOINT-http://localhost:4318}"
 # log_level = "info"                         # debug, info, warn, error
-# enable_traces = true                       # per-signal override
+# enable_traces = true                       # per-signal toggle
 # enable_metrics = true
 # enable_logs = true
 # sampling_ratio = 1.0                      # trace sampling (0.0-1.0), lower = less storage

@@ -2,12 +2,14 @@ mod components;
 mod forge;
 mod layout;
 mod pages;
+mod signals_bridge;
 
 use dioxus::prelude::*;
 
 use forge::ForgeAuthProvider;
 use layout::AppLayout;
 use pages::{DemoPage, NotFound};
+use signals_bridge::SignalsBridge;
 
 const API_URL: &str = match option_env!("FORGE_API_URL") {
     Some(url) => url,
@@ -34,6 +36,9 @@ fn App() -> Element {
     rsx! {
         document::Title { "Forge Demo" }
         document::Stylesheet { href: asset!("/public/style.css") }
-        ForgeAuthProvider { url: API_URL.to_string(), app_name: "forge-demo".to_string(), Router::<Route> {} }
+        ForgeAuthProvider { url: API_URL.to_string(), app_name: "forge-demo".to_string(),
+            SignalsBridge {}
+            Router::<Route> {}
+        }
     }
 }

@@ -262,27 +262,31 @@ impl Forge {
 
     /// Run the FORGE server.
     pub async fn run(mut self) -> Result<()> {
-        // Apply FORGE_OTEL_* environment variable overrides before initializing
-        self.config.observability.apply_env_overrides();
-
         // Users shouldn't need tracing_subscriber boilerplate to see logs
         let telemetry_config = forge_runtime::TelemetryConfig::from_observability_config(
             &self.config.observability,
             &self.config.project.name,
             &self.config.project.version,
         );
-        match forge_runtime::init_telemetry(
+        let telemetry_result = forge_runtime::init_telemetry(
             &telemetry_config,
             &self.config.project.name,
             &self.config.observability.log_level,
-        ) {
-            Ok(true) => {}
-            Ok(false) => {
-                // Subscriber already exists, user set one up manually
+        );
+        match &telemetry_result {
+            Ok(true) | Ok(false) => {
+                tracing::debug!(
+                    endpoint = %telemetry_config.otlp_endpoint,
+                    traces = telemetry_config.enable_traces,
+                    metrics = telemetry_config.enable_metrics,
+                    logs = telemetry_config.enable_logs,
+                    sampling = telemetry_config.sampling_ratio,
+                    "Telemetry initialized"
+                );
             }
-            Err(e) => {
-                eprintln!("forge: failed to initialize telemetry: {e}");
-            }
+            // init_telemetry failed before a subscriber could be installed, so
+            // tracing macros would be silently dropped. eprintln! is the fallback.
+            Err(e) => eprintln!("forge: failed to initialize telemetry: {e}"),
         }
 
         tracing::debug!("Connecting to database");
@@ -587,9 +591,22 @@ impl Forge {
                     self.config.signals.batch_size,
                     std::time::Duration::from_millis(self.config.signals.flush_interval_ms),
                 );
+                // Explicit MMDB path means the operator wants city-level data.
+                // Fail fast rather than silently downgrading to the embedded DB.
+                let geoip = match &self.config.signals.geoip_db_path {
+                    Some(path) => {
+                        let resolver = forge_runtime::signals::geoip::GeoIpResolver::from_mmdb(
+                            std::path::Path::new(path),
+                        )?;
+                        tracing::info!(path, "GeoIP: MaxMind MMDB loaded (city-level)");
+                        resolver
+                    }
+                    None => forge_runtime::signals::geoip::GeoIpResolver::new(),
+                };
                 gateway = gateway
                     .with_signals_collector(collector)
-                    .with_signals_anonymize_ip(self.config.signals.anonymize_ip);
+                    .with_signals_anonymize_ip(self.config.signals.anonymize_ip)
+                    .with_signals_geoip(geoip);
 
                 // Spawn session reaper
                 forge_runtime::signals::session::spawn_session_reaper(

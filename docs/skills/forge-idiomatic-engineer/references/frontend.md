@@ -56,13 +56,96 @@ All subscription stores and hooks return a consistent state object to help you m
 
 ## Signals (Analytics and Diagnostics)
 
-Signals are automatically initialized by the `ForgeProvider` to provide observability without manual instrumentation.
+Signals are automatically initialized by `ForgeProvider`. No manual setup needed for basic analytics.
 
-- **Auto-capture**: Forge automatically tracks SPA page views, frontend errors, Web Vitals (LCP, CLS, INP, FCP, TTFB, navigation timing, long tasks), online/offline transitions, and correlation IDs for RPC calls.
-- **Manual Tracking**: Use `track()`, `identify()`, `captureError()`, and `vital()` to record custom events, user traits, or performance metrics.
-- **Privacy Compliance**: Forge uses daily-rotating hashed visitor IDs and does not set tracking cookies. Set `anonymize_ip = true` to drop raw IPs. The SDK honors browser `DNT: 1` and `Sec-GPC: 1` out of the box (`respectDnt: true`) and the server short-circuits signal ingestion when those headers arrive. Crash reports (`/signal/report`) still land so production errors from DNT users don't disappear.
-- **Event Batching**: Signals are batched (up to 20 events), persisted to `localStorage` so they survive reloads, and flushed on an interval, on `visibilitychange` / `pagehide`, or when the network returns online.
-- **Client Config**: `SignalsConfig` on the provider: `enabled`, `autoPageViews`, `autoCaptureErrors`, `autoWebVitals`, `autoNetworkEvents`, `respectDnt`, `persistQueue`, `flushInterval`, `maxBatchSize`.
+### What's auto-captured
+
+Page views (SPA navigation), frontend errors (window.onerror, unhandledrejection), Web Vitals (LCP, CLS, INP, FCP, TTFB, navigation timing, long tasks), online/offline transitions, and correlation IDs linking frontend events to backend RPC calls.
+
+### Manual instrumentation (Svelte)
+
+Access the signals instance via `getForgeSignals()` from any component inside `ForgeProvider`:
+
+```svelte
+<script>
+  import { getForgeSignals } from '@forge-rs/svelte';
+
+  const signals = getForgeSignals();
+
+  // Track custom events
+  signals.track('button_click', { target: 'upgrade-plan', variant: 'A' });
+
+  // Identify authenticated users (call on login/signup)
+  await signals.identify(user.id, { name: user.name, plan: 'pro' });
+
+  // Add breadcrumbs for error context (attached to the next captured error)
+  signals.breadcrumb('Opened settings modal', { tab: 'billing' });
+
+  // Report errors manually (auto-capture handles most cases)
+  signals.captureError(new Error('Payment failed'), { orderId: '123' });
+
+  // Manual page view (only needed if autoPageViews is disabled)
+  await signals.page({ section: 'onboarding' });
+
+  // Manual Web Vital (only needed if autoWebVitals is disabled)
+  signals.vital('custom-metric', 42, { rating: 'good' });
+</script>
+```
+
+### Manual instrumentation (Dioxus)
+
+```rust
+use forge_dioxus::use_signals;
+
+let signals = use_signals();
+
+// Track custom events
+signals.track("button_click", json!({"target": "upgrade-plan"}));
+
+// Identify authenticated users
+signals.identify("user-id", json!({"name": "Alice", "plan": "pro"})).await;
+
+// Breadcrumbs for error context
+signals.breadcrumb("Opened settings", Some(json!({"tab": "billing"})));
+
+// Report errors
+signals.capture_error("Payment failed", json!({"order_id": "123"})).await;
+
+// Manual page view
+signals.page("/settings").await;
+```
+
+### Correlation IDs
+
+Every RPC call automatically includes an `x-correlation-id` header linking the frontend event to the backend execution trace. Use `signals.nextCorrelationId()` (Svelte) or `signals.next_correlation_id()` (Dioxus) if you need to generate one manually for non-RPC requests.
+
+### Privacy
+
+Daily-rotating hashed visitor IDs, no cookies. Set `anonymize_ip = true` in `[signals]` config to drop raw IPs. The SDK honors `DNT: 1` and `Sec-GPC: 1` (`respectDnt: true` by default) and the server short-circuits signal ingestion when those headers arrive. Crash reports still land so production errors from DNT users don't disappear.
+
+### GeoIP
+
+Country resolution is automatic. Forge ships an embedded DB-IP Country Lite database that resolves client IPs to ISO 3166-1 alpha-2 country codes stored in the `country` column of `forge_signals_events`. No configuration needed. For city-level resolution, set `geoip_db_path` in `[signals]` to a MaxMind GeoLite2-City MMDB file.
+
+### Client config
+
+Pass `SignalsConfig` to the provider to customize behavior:
+
+| Option | Default | Description |
+|---|---|---|
+| `enabled` | `true` | Master switch for all signal collection |
+| `autoPageViews` | `true` | Track SPA navigation automatically |
+| `autoCaptureErrors` | `true` | Capture unhandled errors and rejections |
+| `autoWebVitals` | `true` | Collect Core Web Vitals and performance timing |
+| `autoNetworkEvents` | `true` | Track online/offline transitions |
+| `respectDnt` | `true` | Honor DNT and GPC browser signals |
+| `persistQueue` | `true` | Persist event queue to localStorage (Svelte only) |
+| `flushInterval` | `5000` | Milliseconds between batch flushes |
+| `maxBatchSize` | `20` | Max events per batch |
+
+### Event batching
+
+Events are queued in memory, persisted to `localStorage` (Svelte) so they survive page reloads, and flushed on an interval, on `visibilitychange`/`pagehide`, or when the network returns online. Dioxus WASM uses `sendBeacon` for flush-on-unload.
 
 ## Forbidden Practices
 
