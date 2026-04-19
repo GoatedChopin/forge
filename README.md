@@ -1,12 +1,8 @@
 # FORGE
 
-**Stop Assembling. Start Building.**
+**The full-stack Rust framework that compiles your backend into one binary, powered by PostgreSQL.**
 
-You didn't sign up to be a distributed systems engineer. You signed up to build products.
-
-Yet here you are, wiring up Redis for caching, Kafka for events, BullMQ for jobs, a separate cron daemon, and praying they all stay in sync. Your `docker-compose.yml` has more services than your app has features.
-
-FORGE compiles your entire backend into **one binary**: API, jobs, crons, workflows, real-time subscriptions. The only dependency? PostgreSQL. That's it.
+Queries, mutations, background jobs, cron, durable workflows, real-time subscriptions, webhooks, and MCP tools — all written as plain Rust functions, all served from a single process, all backed by the database you already know.
 
 ```bash
 curl -fsSL https://tryforge.dev/install.sh | sh  # or: cargo install forgex
@@ -18,35 +14,23 @@ docker compose up --build
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-tryforge.dev-blue)](https://tryforge.dev/docs)
 
----
-
-## The Problem
-
-Modern backend development is infrastructure theater:
-
-```
-Your Typical Stack                    What You Actually Need
-───────────────────                   ────────────────────────
-API Server (Express/FastAPI)          Handle HTTP requests
-Redis                                 Remember things temporarily
-Kafka/RabbitMQ                        Process things later
-BullMQ/Celery                         Run background jobs
-Cron daemon                           Do things on schedule
-WebSocket server                      Push updates to clients
-Prometheus + Grafana                  Know what's happening
-```
-
-Seven systems. Seven failure points. Seven things to deploy, monitor, and debug at 3 AM.
-
-PostgreSQL already does all of this. [SKIP LOCKED](https://www.inferable.ai/blog/posts/postgres-skip-locked) for job queues. [LISTEN/NOTIFY](https://neon.com/guides/pub-sub-listen-notify) for pub/sub. Advisory locks for coordination. You just need a runtime that actually uses them.
-
 ![Real-time sync between iOS and web](docs/static/demo/web-ios-sync.gif)
 
-One mutation. Both clients update instantly. No manual cache busting, no fetch wrappers, no Redux.
+One mutation. Both clients update instantly. No manual cache busting, no fetch wrappers, no pub/sub to configure.
 
 ---
 
-## How It Works
+## What You Get
+
+- **One binary, one database.** Gateway, workers, scheduler, and daemons run in the same process. PostgreSQL is the only moving part.
+- **Type safety from SQL to UI.** `sqlx` checks your queries at compile time. `#[forge::model]` generates the matching TypeScript or Rust types for your frontend.
+- **Real-time by default.** Compile-time SQL parsing extracts table dependencies. PostgreSQL `LISTEN/NOTIFY` invalidates affected subscriptions. SSE pushes diffs to clients.
+- **Durable by design.** Jobs and workflow state live in PostgreSQL. They survive restarts, deployments, and crashes.
+- **Frontends as first-class targets.** SvelteKit and Dioxus today, more to come. Same Rust source of truth generates bindings for whichever you pick.
+
+---
+
+## Write a Function, Get an API
 
 ### Queries and Mutations
 
@@ -72,9 +56,7 @@ pub async fn create_user(ctx: &MutationContext, input: CreateUser) -> Result<Use
 }
 ```
 
-These become typed RPC endpoints automatically. Forge generates framework bindings from the same Rust source of truth. Today that means TypeScript bindings for SvelteKit and Rust bindings plus hooks for Dioxus. No routing files, no fetch wrappers, no manual type definitions.
-
-Transactional mutations buffer `dispatch_job` calls and insert them atomically when the transaction commits. If the mutation fails, the job never exists.
+These become typed RPC endpoints automatically. The same Rust source generates frontend bindings — TypeScript for SvelteKit, Rust plus hooks for Dioxus — so your client is always in sync. Transactional mutations buffer `dispatch_job` calls and insert them atomically when the transaction commits. If the mutation fails, the job never exists.
 
 ### Background Jobs
 
@@ -91,7 +73,7 @@ pub async fn send_welcome_email(ctx: &JobContext, input: EmailInput) -> Result<(
 }
 ```
 
-Persisted in PostgreSQL. Survive restarts. Retry with backoff. Report progress in real-time. No Redis. No separate worker process.
+Persisted in PostgreSQL, claimed with `SKIP LOCKED`, bounded by a worker semaphore. Survive restarts. Retry with backoff. Report progress in real-time to any client that wants to watch.
 
 ### Cron
 
@@ -107,17 +89,12 @@ pub async fn daily_digest(ctx: &CronContext) -> Result<()> {
 }
 ```
 
-Timezone support. Catch-up for missed runs. Leader-elected so it runs exactly once across all instances.
+Cron expressions validated at compile time. Timezone-aware. Leader-elected so it runs exactly once across all instances, with catch-up for missed runs.
 
 ### Durable Workflows
 
 ```rust
-#[forge::workflow(
-    name = "free_trial",
-    version = "2026-03",
-    active,
-    timeout = "60d",
-)]
+#[forge::workflow(name = "free_trial", version = "2026-03", active, timeout = "60d")]
 pub async fn free_trial_flow(ctx: &WorkflowContext, user: User) -> Result<()> {
     ctx.step("start_trial")
         .run(|| activate_trial(&user))
@@ -130,7 +107,6 @@ pub async fn free_trial_flow(ctx: &WorkflowContext, user: User) -> Result<()> {
 
     ctx.step("trial_ending").run(|| send_email(&user, "3 days left!")).await?;
 
-    // Wait for user action or timeout after 3 days
     let decision: Value = ctx
         .wait_for_event("plan_selected", Some(Duration::from_days(3)))
         .await?;
@@ -140,11 +116,10 @@ pub async fn free_trial_flow(ctx: &WorkflowContext, user: User) -> Result<()> {
         .await?;
 
     Ok(())
-    // If any step fails, previous steps compensate in reverse order
 }
 ```
 
-Workflows are versioned and signature-guarded. New runs pin to the active version. In-flight runs resume only if the exact version and signature match. If you change a workflow's steps, bump the version and mark the old one `deprecated` to drain. Sleep for 45 days, deploy new code, restart servers, scale up. The workflow picks up exactly where it left off. Compensation runs automatically if later steps fail. No separate orchestration cluster.
+Workflows are versioned and signature-guarded. New runs pin to the active version; in-flight runs resume only on exact version and signature match. Sleep for 45 days, deploy new code, restart servers, scale up — the workflow picks up exactly where it left off. Compensation runs automatically in reverse order if a later step fails.
 
 ### Real-Time Subscriptions
 
@@ -160,25 +135,7 @@ Workflows are versioned and signature-guarded. New runs pin to the active versio
 {/each}
 ```
 
-Compile-time SQL parsing extracts table dependencies (including JOINs and subqueries). PostgreSQL triggers fire NOTIFY on changes. FORGE re-runs affected queries. SSE pushes diffs to clients. No manual cache invalidation. No pub/sub wiring.
-
-### Frontend Bindings
-
-Frontend support is no longer hard-wired to Svelte. The CLI now treats frontend targets as framework specs, so codegen, scaffolding, formatting, and runtime package wiring all hang off the selected target.
-
-Current first-class targets:
-
-- `sveltekit` -> generated TypeScript bindings in `frontend/src/lib/forge` backed by `@forge-rs/svelte`
-- `dioxus` -> generated Rust bindings in `frontend/src/forge` backed by `forge-dioxus`
-
-Forge ships template ids for both SvelteKit and Dioxus examples:
-
-```bash
-forge new my-app --template with-dioxus/demo
-forge generate --target dioxus
-```
-
-The frontend target architecture is designed so more framework bindings can be added without reworking the CLI around another pile of match statements.
+Compile-time SQL parsing extracts table dependencies (including JOINs and subqueries). PostgreSQL triggers fire `NOTIFY` on changes. Forge re-runs affected queries, hashes the results, and pushes diffs to subscribed clients over SSE. No cache to invalidate, no channels to wire up.
 
 ### Webhooks
 
@@ -194,16 +151,12 @@ pub async fn stripe(ctx: &WebhookContext, payload: Value) -> Result<WebhookResul
 }
 ```
 
-Signature validation, idempotency tracking, and job dispatch. One handler.
+Signature validation, idempotency tracking, and job dispatch in a single handler.
 
 ### MCP Tools
 
 ```rust
-#[forge::mcp_tool(
-    name = "tickets.list",
-    title = "List Support Tickets",
-    read_only,
-)]
+#[forge::mcp_tool(name = "tickets.list", title = "List Support Tickets", read_only)]
 pub async fn list_tickets(ctx: &McpToolContext) -> Result<Vec<Ticket>> {
     sqlx::query_as("SELECT * FROM tickets")
         .fetch_all(ctx.db())
@@ -212,7 +165,7 @@ pub async fn list_tickets(ctx: &McpToolContext) -> Result<Vec<Ticket>> {
 }
 ```
 
-Expose any function as an MCP tool. Same auth, rate limiting, and validation as your API. AI agents get first-class access without a separate integration layer.
+Expose any function as an MCP tool with the same auth, rate limiting, and validation as your API. AI agents get first-class access alongside your human users.
 
 ---
 
@@ -228,11 +181,7 @@ pub struct User {
 }
 
 #[forge::model]
-pub enum UserRole {
-    Admin,
-    Member,
-    Guest,
-}
+pub enum UserRole { Admin, Member, Guest }
 ```
 
 ```typescript
@@ -250,90 +199,74 @@ import { api } from "$lib/forge";
 const user = await api.get_user({ id: "..." }); // Fully typed
 ```
 
-If your Rust code compiles, your frontend types are correct.
+If your Rust code compiles, your frontend types are correct and your SQL is valid.
 
-### SQLx Compile-Time Checking
+`forge migrate prepare` runs pending migrations and then refreshes the `.sqlx/` offline cache so CI can build without a live database. `forge check` verifies that the cache is up to date.
 
-FORGE leans on `sqlx` macros for query validation at compile time.
+---
 
-- New projects include `sqlx.toml` with offline mode enabled.
-- `forge migrate prepare` runs pending migrations and then executes `cargo sqlx prepare --workspace`.
-- `forge check` verifies that `.sqlx/` exists and is not older than your migrations.
+## Built for Real Workloads
 
-That gives you typed frontend bindings and compile-time-checked SQL from the same Rust source.
+Forge ships an adaptive capacity benchmark that ramps concurrent users until the system breaks. Every user holds a live SSE subscription while continuously making RPC calls; 30% of traffic is writes that trigger the full reactivity pipeline.
+
+On a 12-core laptop with PostgreSQL 18 in Docker and two Forge instances:
+
+- **12,535 req/s** peak throughput with p90 under 50ms
+- **2,250 concurrent SSE users** with zero errors, each maintaining a live subscription plus 10 req/s
+- **30% writes**, each propagated through `NOTIFY` → invalidation → re-execution → SSE fan-out
+
+Scaling to ~10,000 concurrent SSE users on dedicated infrastructure (4× Forge + primary + 2 replicas) projects to roughly $1,200/month on AWS on-demand pricing. Full methodology, tuning knobs, and a reproducible benchmark are in [`benchmarks/app/`](benchmarks/app) and [the performance docs](https://tryforge.dev/docs/scale/performance).
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────┐
-│                    forge run                     │
-├─────────────┬─────────────┬─────────────┤
-│   Gateway   │   Workers   │  Scheduler  │
-│ (HTTP/SSE)  │   (Jobs)    │   (Cron)    │
-└──────┬──────┴──────┬──────┴──────┬──────┘
+┌──────────────────────────────────────────┐
+│                forge run                 │
+├─────────────┬─────────────┬──────────────┤
+│   Gateway   │   Workers   │  Scheduler   │
+│ (HTTP/SSE)  │   (Jobs)    │    (Cron)    │
+└──────┬──────┴──────┬──────┴──────┬───────┘
        │             │             │
-       └─────────────┴──────┬──────┘
-                            │
-                     ┌──────▼──────┐
-                     │ PostgreSQL  │
-                     └─────────────┘
+       └─────────────┼─────────────┘
+                     │
+              ┌──────▼──────┐
+              │ PostgreSQL  │
+              └─────────────┘
 ```
 
 One process, multiple subsystems:
 
-- **Gateway**: HTTP/SSE server built on [Axum](https://github.com/tokio-rs/axum)
-- **Workers**: Pull jobs from PostgreSQL using `SKIP LOCKED`
-- **Scheduler**: Leader-elected cron runner via advisory locks
-- **Daemons**: Long-running singleton processes with leader election
+- **Gateway** — HTTP and SSE server built on [Axum](https://github.com/tokio-rs/axum)
+- **Workers** — Pull jobs from PostgreSQL using `FOR UPDATE SKIP LOCKED`
+- **Scheduler** — Leader-elected cron runner via advisory locks
+- **Daemons** — Long-running singleton processes with leader election
 
-Scale horizontally by running more instances. They coordinate through PostgreSQL. No service mesh, no gossip protocol, no Redis cluster.
+Scale horizontally by running more instances. They coordinate through PostgreSQL: `SKIP LOCKED` for queues, `LISTEN/NOTIFY` for fan-out, advisory locks for leadership. No service mesh, no gossip protocol, no extra cluster to operate.
 
 ```
 forge              → Public API, Forge::builder(), prelude, CLI
 ├── forge-runtime  → Gateway, function router, job worker, workflow executor, cron scheduler
-│   ├── forge-core → Types, traits, error types, contexts, schema definitions
-│   └── forge-macros → #[query], #[mutation], #[job], #[workflow], #[cron]
+│   ├── forge-core → Types, traits, errors, contexts, schema definitions
+│   └── forge-macros → #[query], #[mutation], #[job], #[workflow], #[cron], ...
 └── forge-codegen  → Framework binding generators (SvelteKit, Dioxus)
 ```
 
 ---
 
-## Why Not Just Use...
-
-|                       |   FORGE    |  Supabase  |    Firebase     | PocketBase |
-| --------------------- | :--------: | :--------: | :-------------: | :--------: |
-| **Background Jobs**   |  Built-in  |  External  | Cloud Functions |     -      |
-| **Durable Workflows** |  Built-in  |     -      |        -        |     -      |
-| **Cron Scheduling**   |  Built-in  |  External  | Cloud Scheduler |     -      |
-| **Query Caching**     |  Built-in  |     -      |        -        |     -      |
-| **Rate Limiting**     |  Built-in  |     -      |        -        |     -      |
-| **Real-time**         |  Built-in  |  Built-in  |    Built-in     |     -      |
-| **Webhooks**          |  Built-in  |     -      | Cloud Functions |     -      |
-| **MCP Tools**         |  Built-in  |     -      |        -        |     -      |
-| **Full Type Safety**  | Rust to TS |  Partial   |        -        |     -      |
-| **Self-Hosted**       | One binary |  Complex   |        -        | One binary |
-| **Vendor Lock-in**    |    None    |    Low     |      High       |    None    |
-| **Database**          | PostgreSQL | PostgreSQL |    Firestore    |   SQLite   |
-
-**vs. Temporal/Inngest**: FORGE workflows run in-process with no separate orchestration service. Versioning and signature guards are built in, so deploys are safe without a separate workflow cluster. If you need child workflows or cross-service signals, use Temporal. If you need durable multi-step processes without the ops overhead, FORGE handles it.
-
-**vs. Node.js + BullMQ + the rest**: FORGE trades ecosystem breadth for operational simplicity. Fewer npm packages, fewer 3 AM pages about Redis running out of memory.
-
----
-
 ## CLI
 
-Development is started with `docker compose up --build`, which starts PostgreSQL, a cargo-watch backend, and the selected frontend target. `forge new` now requires a checked-in template id such as `with-svelte/minimal`, `with-svelte/demo`, or `with-dioxus/realtime-todo-list`. `forge generate --target dioxus` still forces Dioxus binding generation when detection is not enough.
+Development runs through `docker compose up --build`, which starts PostgreSQL, a cargo-watch backend, and the selected frontend. `forge new` takes an explicit template id such as `with-svelte/minimal`, `with-svelte/demo`, or `with-dioxus/realtime-todo-list`.
 
 ```bash
-forge generate                   # generate frontend/runtime bindings from backend code
+forge generate                   # generate frontend bindings from backend code
+forge generate --target dioxus   # force a specific target when detection isn't enough
 forge check                      # validate config, migrations, project health
 forge migrate status             # check which migrations have run
 forge migrate up                 # apply pending migrations
 forge migrate down               # rollback the last migration
-forge migrate prepare            # refresh the .sqlx offline cache for sqlx macros
+forge migrate prepare            # refresh the .sqlx offline cache
 ```
 
 ### Deploy
@@ -343,140 +276,89 @@ cargo build --release
 ./target/release/my-app
 ```
 
-One binary. Embeds the frontend build and the entire runtime. Point it at PostgreSQL and it runs. [Read the docs](https://tryforge.dev/docs) for more.
+One binary, embedding the frontend build and the entire runtime. Point it at PostgreSQL and it runs. See [the deployment guide](https://tryforge.dev/docs/ship/deploy) for Docker, Kubernetes, graceful shutdown, and rolling updates.
 
 ---
 
 ## Debugging
 
-Everything runs through PostgreSQL. That means everything is queryable.
+Everything runs through PostgreSQL, which means everything is queryable.
 
 ### Health Endpoints
 
 ```
-GET /health    → { "status": "healthy", "version": "0.4.1" }
-GET /ready     → { "ready": true, "database": true, "reactor": true, "workflows": true }
+GET /_api/health    → { "status": "healthy", "version": "0.4.1" }
+GET /_api/ready     → { "ready": true, "database": true, "reactor": true, "workflows": true }
 ```
 
-### Inspect Jobs
+### Inspect Jobs and Workflows
 
 ```sql
 -- pending jobs
-SELECT id, job_type, status, attempts, max_attempts, scheduled_at
+SELECT id, job_type, status, attempts, scheduled_at
 FROM forge_jobs WHERE status = 'pending' ORDER BY scheduled_at;
 
--- failed jobs with error messages
-SELECT id, job_type, last_error, attempts, failed_at
-FROM forge_jobs WHERE status IN ('failed', 'dead_letter') ORDER BY failed_at DESC;
-
--- running jobs with progress
-SELECT id, job_type, progress_percent, progress_message, worker_id
-FROM forge_jobs WHERE status = 'running';
-```
-
-### Inspect Workflows
-
-```sql
--- active workflows
+-- in-flight workflows
 SELECT id, workflow_name, workflow_version, status, current_step, started_at
 FROM forge_workflow_runs WHERE status IN ('created', 'running');
 
 -- blocked workflows (version/signature mismatches after a deploy)
-SELECT id, workflow_name, workflow_version, status, blocking_reason
+SELECT id, workflow_name, blocking_reason
 FROM forge_workflow_runs WHERE status LIKE 'blocked_%';
-
--- step-by-step details for a specific run
-SELECT step_name, status, error, started_at, completed_at
-FROM forge_workflow_steps WHERE workflow_run_id = $1 ORDER BY started_at;
 ```
-
-### Inspect Cron Runs
-
-```sql
-SELECT cron_name, scheduled_time, status, error
-FROM forge_cron_runs ORDER BY scheduled_time DESC LIMIT 20;
-```
-
-### Logging
-
-Configure in `forge.toml`:
-
-```toml
-[observability]
-log_level = "debug"   # debug, info, warn, error
-```
-
-Or override with environment variables:
-
-```bash
-RUST_LOG=debug docker compose up --build                     # everything
-RUST_LOG=warn,my_app=debug docker compose up --build         # your code only
-```
-
-Queries slower than 500ms are logged as warnings automatically. Distributed tracing is built in via OpenTelemetry (OTLP over HTTP).
-
-### Realtime Subscriptions
-
-If subscriptions aren't updating after mutations:
-
-1. Make sure the SSE connection is established before mutating (check the network tab for `/events`)
-2. Verify reactivity is enabled for the table: `SELECT forge_enable_reactivity('table_name');`
-3. Don't manually call `refetch()` after mutations. The SSE pipeline handles invalidation automatically.
 
 ### System Tables
 
-All FORGE state lives in PostgreSQL. The full set of system tables:
+| Table                        | What it tracks                      |
+| ---------------------------- | ----------------------------------- |
+| `forge_jobs`                 | Job queue, status, errors, progress |
+| `forge_cron_runs`            | Cron execution history              |
+| `forge_workflow_definitions` | Registered workflow versions        |
+| `forge_workflow_runs`        | Workflow instances and state        |
+| `forge_workflow_steps`       | Individual step results             |
+| `forge_nodes`                | Cluster node registry               |
+| `forge_leaders`              | Leader election state               |
+| `forge_daemons`              | Long-running process status         |
+| `forge_sessions`             | Active SSE connections              |
+| `forge_subscriptions`        | Live query subscriptions            |
+| `forge_rate_limits`          | Token bucket state                  |
+| `forge_webhook_events`       | Webhook idempotency tracking        |
 
-| Table                  | What it tracks                      |
-| ---------------------- | ----------------------------------- |
-| `forge_jobs`           | Job queue, status, errors, progress |
-| `forge_cron_runs`      | Cron execution history              |
-| `forge_workflow_definitions` | Registered workflow versions   |
-| `forge_workflow_runs`  | Workflow instances and state        |
-| `forge_workflow_steps` | Individual step results             |
-| `forge_nodes`          | Cluster node registry               |
-| `forge_leaders`        | Leader election state               |
-| `forge_daemons`        | Long-running process status         |
-| `forge_sessions`       | Active SSE connections              |
-| `forge_subscriptions`  | Live query subscriptions            |
-| `forge_rate_limits`    | Token bucket state                  |
-| `forge_webhook_events` | Webhook idempotency tracking        |
+Distributed tracing is built in via OpenTelemetry (OTLP over HTTP). Queries slower than 500ms are logged as warnings automatically. Signals — built-in product analytics — correlate every frontend event to the backend RPC call that caused it via a shared `x-correlation-id`.
 
 ---
 
-## Who's This For
+## Who It's For
 
-FORGE is opinionated. It's for:
+Forge is opinionated. It's a great fit if you're:
 
-- **Solo developers and small teams** building SaaS products who don't want to manage infrastructure
-- **Teams who value correctness**: errors caught at compile time, not at 3 AM
-- **Anyone tired of gluing together** seven services for basic backend functionality
+- A **solo developer or small team** shipping a SaaS product and want to spend your time on the product
+- A team that **values correctness** and wants errors at compile time rather than 3 AM
+- Someone who prefers **boring, well-understood infrastructure** (a database, a binary) over a distributed system you have to operate
 
-Not the right fit if:
+Less of a fit if you:
 
-- You have a dedicated platform team that wants fine-grained control over each component
-- You're building for millions of concurrent users (FORGE targets ~100k MAU comfortably)
-- You need deep integration with cloud-native services (Lambda, DynamoDB, Pub/Sub)
+- Need to integrate deeply with cloud-native primitives like Lambda, DynamoDB, or Pub/Sub
+- Are building for millions of concurrent connections out of the gate (Forge targets tens of thousands of concurrent SSE users per cluster)
+- Have a platform team that wants fine-grained control over each component in isolation
 
 ---
 
 ## AI Agents
 
-If you're using an AI coding agent to build with FORGE, install the [`forge-idiomatic-engineer`](docs/skills/forge-idiomatic-engineer) skill for Forge-aware code generation:
+Building with an AI coding agent? Install the [`forge-idiomatic-engineer`](docs/skills/forge-idiomatic-engineer) skill for Forge-aware code generation:
 
 ```bash
 bunx skills add https://github.com/isala404/forge/tree/main/docs/skills/forge-idiomatic-engineer
 ```
 
-This is installed automatically when you run `forge new`.
+It's installed automatically when you run `forge new`.
 
 ---
 
 ## Project Maturity
 
-FORGE is pre-1.0. Breaking changes happen between releases. Good for side projects, internal tools, and kicking the tires. Not production yet.
-
-Breaking changes are documented in [CHANGELOG.md](CHANGELOG.md). Pin your version if you need stability. Once the core API settles, we cut 1.0 and commit to semver.
+Forge is pre-1.0. Breaking changes happen between releases and are documented in [CHANGELOG.md](CHANGELOG.md) — pin your version if you need stability. Great for side projects, internal tools, and early-stage products. Once the core API settles, we cut 1.0 and commit to semver.
 
 [Contributions welcome](CONTRIBUTING.md).
 
