@@ -1,6 +1,8 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -15,6 +17,8 @@ use crate::types::{
 };
 
 type TokenProvider = Rc<dyn Fn() -> Option<String>>;
+type RefreshTokenProvider =
+    Rc<dyn Fn() -> Pin<Box<dyn Future<Output = Option<String>>>>>;
 type AuthErrorHandler = Rc<dyn Fn(ForgeError)>;
 type MutationErrorHandler = Rc<dyn Fn(ForgeClientError)>;
 type EventSender = futures_channel::mpsc::UnboundedSender<SseDispatch>;
@@ -60,6 +64,7 @@ const MAX_RECONNECT_ATTEMPTS: u32 = 10;
 pub struct ForgeClientConfig {
     pub url: String,
     pub get_token: Option<TokenProvider>,
+    pub refresh_token: Option<RefreshTokenProvider>,
     pub on_auth_error: Option<AuthErrorHandler>,
     pub on_mutation_error: Option<MutationErrorHandler>,
     pub(crate) connection_state: Option<Signal<ConnectionState>>,
@@ -70,6 +75,7 @@ impl ForgeClientConfig {
         Self {
             url: url.into(),
             get_token: None,
+            refresh_token: None,
             on_auth_error: None,
             on_mutation_error: None,
             connection_state: None,
@@ -78,6 +84,19 @@ impl ForgeClientConfig {
 
     pub fn with_token_provider(mut self, provider: impl Fn() -> Option<String> + 'static) -> Self {
         self.get_token = Some(Rc::new(provider));
+        self
+    }
+
+    /// Register an async callback invoked when an RPC call returns UNAUTHORIZED.
+    /// The callback should refresh the access token and return the new one. If
+    /// it returns `Some`, the original call is retried once with the new token.
+    /// If it returns `None`, the call fails normally.
+    pub fn with_refresh_token_provider<F, Fut>(mut self, provider: F) -> Self
+    where
+        F: Fn() -> Fut + 'static,
+        Fut: Future<Output = Option<String>> + 'static,
+    {
+        self.refresh_token = Some(Rc::new(move || Box::pin(provider())));
         self
     }
 
@@ -112,6 +131,7 @@ pub struct ForgeClient {
 struct ForgeClientInner {
     url: String,
     get_token: Option<TokenProvider>,
+    refresh_token: Option<RefreshTokenProvider>,
     on_auth_error: Option<AuthErrorHandler>,
     on_mutation_error: Option<MutationErrorHandler>,
     connection_state: Option<Signal<ConnectionState>>,
@@ -125,6 +145,7 @@ impl ForgeClient {
             inner: Rc::new(ForgeClientInner {
                 url: config.url.trim_end_matches('/').to_string(),
                 get_token: config.get_token,
+                refresh_token: config.refresh_token,
                 on_auth_error: config.on_auth_error,
                 on_mutation_error: config.on_mutation_error,
                 connection_state: config.connection_state,
@@ -168,14 +189,25 @@ impl ForgeClient {
     {
         let body = serde_json::json!({ "args": args });
         let correlation_id = self.correlation_id();
-        let envelope = platform::request_json(
-            self,
-            &format!("{}/_api/rpc/{}", self.inner.url, function_name),
-            body,
-            correlation_id.as_deref(),
-        )
-        .await?;
+        let url = format!("{}/_api/rpc/{}", self.inner.url, function_name);
+
+        let envelope =
+            platform::request_json(self, &url, body.clone(), correlation_id.as_deref()).await?;
+
+        if envelope_is_unauthorized(&envelope) && self.try_refresh().await {
+            let retried =
+                platform::request_json(self, &url, body, correlation_id.as_deref()).await?;
+            return self.decode_envelope(retried);
+        }
+
         self.decode_envelope(envelope)
+    }
+
+    async fn try_refresh(&self) -> bool {
+        let Some(provider) = self.inner.refresh_token.clone() else {
+            return false;
+        };
+        provider().await.is_some()
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -659,6 +691,14 @@ impl ForgeClient {
         let id = NEXT_SUBSCRIPTION_ID.fetch_add(1, Ordering::Relaxed);
         format!("{prefix}-{id}")
     }
+}
+
+fn envelope_is_unauthorized(envelope: &RpcEnvelopeRaw) -> bool {
+    !envelope.success
+        && envelope
+            .error
+            .as_ref()
+            .is_some_and(|e| e.code == "UNAUTHORIZED")
 }
 
 async fn sleep(duration: Duration) {

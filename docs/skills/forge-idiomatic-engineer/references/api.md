@@ -1,13 +1,11 @@
 # API Reference
 
-This reference provides a comprehensive guide to Forge macros, context types, configuration options, and error variants.
+Macros, contexts, config, errors, CLI.
 
 ## Macro Attributes
 
-Forge handlers are defined using Rust macros that generate necessary structs and registration logic.
-
 ### `#[forge::query]`
-Defines a read-only operation. The macro generates a `{PascalCase}Query` struct and implements the `ForgeQuery` trait. All private queries must explicitly filter results by the current user or owner unless the `unscoped` attribute is used.
+Read-only operation. Generates `{PascalCase}Query` + `ForgeQuery` impl. Private queries must filter by the principal unless `unscoped` is set.
 
 | Attribute | Description and Rationale |
 |---|---|
@@ -22,7 +20,7 @@ Defines a read-only operation. The macro generates a `{PascalCase}Query` struct 
 | `tables = [...]` | Manually specifies table dependencies to trigger reactive cache invalidation. |
 
 ### `#[forge::mutation]`
-Defines a data-modifying operation. The macro generates a `{PascalCase}Mutation` struct and implements the `ForgeMutation` trait.
+Data-modifying operation. Generates `{PascalCase}Mutation` + `ForgeMutation` impl.
 
 | Attribute | Description and Rationale |
 |---|---|
@@ -35,7 +33,7 @@ Defines a data-modifying operation. The macro generates a `{PascalCase}Mutation`
 | `unscoped` | Disables compile-time scope validation. |
 
 ### `#[forge::job]`
-Defines an asynchronous background task. These tasks are durable and automatically retried upon failure.
+Durable background task with automatic retry. Dispatched via `ctx.dispatch_job()` from a `transactional` mutation.
 
 | Attribute | Description and Rationale |
 |---|---|
@@ -44,12 +42,12 @@ Defines an asynchronous background task. These tasks are durable and automatical
 | `priority = "normal"` | Priority level. Values: `background`(0), `low`(25), `normal`(50), `high`(75), `critical`(100). **Default: `"normal"`**. |
 | `retry(max_attempts = 3, backoff = "exponential")` | Retry config. `backoff` accepts `"exponential"`, `"linear"`, or `"fixed"`. **Defaults: `max_attempts = 3`, `backoff = "exponential"`**. |
 | `worker_capability` | Specifies a capability string required by the worker node to execute this job. |
-| `idempotent` | Prevents duplicate job executions. Use `key = "input.id"` to specify the uniqueness key. |
+| `idempotent` | Marks the job as idempotency-aware. Pair with `key = "args.field_name"` to name a uniqueness key (a path into the args struct). Bare `idempotent` without a `key` marks intent but does not deduplicate — call `dispatcher.dispatch_idempotent::<J>(key, args)` from the runtime dispatcher when you need actual dedup. |
 | `ttl = "24h"` | Defines how long the job record persists in the database after completion. |
 | `compensate = "fn"` | Specifies a cleanup function to run if the job ultimately fails after all retries. |
 
 ### `#[forge::cron("0 9 * * *")]`
-Defines a task that runs on a recurring schedule. Execution is guaranteed to happen exactly once across the cluster.
+Exactly-once scheduled task (cluster-wide via advisory lock + UNIQUE constraint).
 
 | Attribute | Description and Rationale |
 |---|---|
@@ -59,7 +57,7 @@ Defines a task that runs on a recurring schedule. Execution is guaranteed to hap
 | `catch_up` | Executes missed intervals if the system was offline. **Default limit: 10 catch-up executions**. |
 
 ### `#[forge::workflow]`
-Defines a durable, multi-step business process. Workflows are versioned to ensure that in-flight runs can complete even if the code changes.
+Durable, multi-step process. Versioned so in-flight runs complete even when code changes. Step results cached by name; renaming a step breaks resume.
 
 | Attribute | Description and Rationale |
 |---|---|
@@ -70,7 +68,7 @@ Defines a durable, multi-step business process. Workflows are versioned to ensur
 | `timeout = "24h"` | Sets the maximum time a workflow run is allowed to execute. |
 
 ### `#[forge::webhook]`
-Defines an HTTP endpoint for receiving events from external services. The handler is registered at `POST /webhooks/{path}`.
+`POST /webhooks/{path}` endpoint for external events. The macro deserialises the body into your parameter type — declare a typed struct, not `serde_json::Value`.
 
 | Attribute | Description and Rationale |
 |---|---|
@@ -82,7 +80,7 @@ Defines an HTTP endpoint for receiving events from external services. The handle
 
 #### Signature Constructors
 
-Use `WebhookSignature` (from `forge::prelude::*`) to configure signature verification. Each constructor sets the algorithm, the header to read the signature from, and the environment variable holding the secret.
+`WebhookSignature` (in `forge::prelude::*`). Each constructor sets algorithm + header + env var holding the secret.
 
 | Constructor | Algorithm | Notes |
 |---|---|---|
@@ -131,16 +129,18 @@ pub async fn custom_webhook(ctx: &WebhookContext, payload: Value) -> Result<Webh
 
 ## Environment Variables
 
-Use context methods instead of `std::env::var()` — they are mockable in tests and fail fast at startup with a clear error.
+Use the context, not `std::env::var()` (mockable in tests, fails fast on boot).
 
 | Method | Behavior |
 |---|---|
-| `ctx.env_require("KEY")` | Returns the value or a `ForgeError::Config` if missing. Use for required secrets. |
-| `ctx.env_or("KEY", "default")` | Returns the value or a fallback string. Use for optional config with a sensible default. |
+| `ctx.env_require("KEY")` | Value or `ForgeError::Config`. Required secrets. |
+| `ctx.env_or("KEY", "default")` | Value or fallback string. Optional config. |
 
 ## HTTP Client
 
-`ctx.http()` returns a circuit-breaker-backed `reqwest` client. The default timeout matches the handler's configured `timeout`. Always use this instead of constructing your own client so circuit breaking and tracing work correctly.
+`ctx.http()` — circuit-breaker-wrapped `reqwest`, default timeout matches the handler's `timeout`. Use this for RPC-style calls so breaker + tracing work.
+
+`ctx.raw_http()` — bare `reqwest::Client`. Reach for it when you need streaming (`.bytes_stream()`), custom redirect policies, or other features the wrapper hides.
 
 ```rust
 let resp: MyResponse = ctx.http()
@@ -154,32 +154,40 @@ let resp: MyResponse = ctx.http()
 
 ## `forge.toml` Key Configuration
 
-These are the options most likely to cause silent runtime failures when missing. See the full reference at `docs/docs/ship/configuration.mdx`.
+`forge check` validates the full schema. Most-tuned keys below — everything else defaults sensibly.
 
 ```toml
 [auth]
-# REQUIRED if issue_token_pair() is used. Missing these causes a panic at startup.
-access_token_ttl = "15m"
-refresh_token_ttl = "7d"
+# jwt_secret is required for issue_token_pair(). TTLs default to 1h / 30d if omitted.
 jwt_secret = "${JWT_SECRET}"
+access_token_ttl = "15m"         # optional, default "1h"
+refresh_token_ttl = "7d"         # optional, default "30d"
 
 [database]
 url = "${DATABASE_URL}"
-max_connections = 20          # default pool size
+pool_size = 50                   # default 50
+min_pool_size = 0                # default 0
 
 [gateway]
 max_body_size = "20mb"        # total multipart body cap (default)
 max_file_size = "10mb"        # per-file cap when mutation has no max_size (default)
 
 [worker]
-concurrency = 10              # parallel job slots per node
+max_concurrent_jobs = 50         # default 50; parallel job slots per node
+poll_interval_ms = 100           # default 100
+job_timeout_secs = 3600          # default 1h
+
+[gateway]
+port = 9081                      # HTTP port, default 9081
+max_body_size = "20mb"           # default; applies to all requests incl. uploads
+max_connections = 4096           # max concurrent HTTP connections
 
 [observability]
-# Optional. Enables OTLP trace/metric export.
+enabled = false                  # default off
 otlp_endpoint = "http://localhost:4318"
 
 [signals]
-enabled = true                # default; set false to disable analytics
+enabled = true                   # default; set false to disable analytics
 anonymize_ip = false
 ```
 
@@ -207,7 +215,7 @@ builder.custom_routes(|pool| {
 
 ### Pool Routing
 
-Forge uses isolated connection pools to prevent jobs and analytics from starving web requests.
+Isolated pools so jobs and analytics never starve web traffic.
 
 | Pool | Used by |
 |---|---|
@@ -216,57 +224,105 @@ Forge uses isolated connection pools to prevent jobs and analytics from starving
 | `observability` | OTLP metric writes |
 | `analytics` | Signals / `forge_signals_events` writes |
 
-Each pool can be sized independently under `[database.pools.jobs]`, etc.
+Size each pool under `[database.pools.<name>]` (e.g. `[database.pools.jobs]`). Omitted sections fall back to the default pool size.
 
 ## Duration Formats
-Time durations can be expressed as `500ms`, `30s`, `5m`, `2h`, `7d`, or a bare number representing seconds. Note that `query`, `mutation`, and `mcp_tool` timeout attributes specifically require a bare `u64` integer representing seconds.
+Most time attributes accept `500ms`, `30s`, `5m`, `2h`, `7d`, or a bare number (seconds). **Exception**: `timeout` on `query`, `mutation`, and `mcp_tool` is a bare `u64` (seconds) only — `"30s"` fails to parse.
 
 ## Context Capability Matrix
 
-Each handler type receives a specific context object providing access to framework services.
+Each handler type receives a typed context providing framework services.
 
 | Feature | Query | Mut | Job | Cron | WF | Dmn | Web | MCP |
 |---|---|---|---|---|---|---|---|---|
-| `db()` (Read access) | yes | — | yes | yes | yes | yes | yes | yes |
-| `conn()` (Write access) | — | yes | yes | yes | yes | yes | yes | yes |
-| `http()` (Client) | — | yes | yes | yes | yes | yes | yes | — |
+| `db()` | yes | yes | yes | yes | yes | yes | yes | yes |
+| `db_conn()` | yes | yes | yes | yes | yes | yes | yes | yes |
+| `conn()` (txn-aware) | — | yes | yes | yes | yes | yes | yes | yes |
+| `http()` / `raw_http()` | — | yes | yes | yes | yes | yes | yes | — |
 | `auth` (Session info) | yes | yes | yes | yes | yes | — | — | yes |
 | `dispatch_job` | — | yes | — | — | — | yes | yes | yes |
+| `start_workflow` | — | yes | — | — | — | yes | yes | yes |
 | `issue_token_pair` | — | yes | — | — | — | — | — | — |
-| `step()` / `sleep()` | — | — | — | — | yes | — | — | — |
-| `heartbeat()` / `save()` | — | — | yes | — | — | yes | — | — |
-| `EnvAccess` | yes | yes | yes | yes | yes | yes | yes | yes |
+| `step()` / `sleep()` / `wait_for_event()` | — | — | — | — | yes | — | — | — |
+| `heartbeat()` / `save()` / `progress()` | — | — | yes | — | — | yes* | — | — |
+| `check_cancelled()` | — | — | yes | — | — | — | — | — |
+| `shutdown_signal()` | — | — | — | — | — | yes | — | — |
+| `is_late()` | — | — | — | yes | — | — | — | — |
+| `EnvAccess` (`env_require` / `env_or`) | yes | yes | yes | yes | yes | yes | yes | yes |
 
-### Context Usage Notes
-- **Database Access**: In mutations, use `let mut conn = ctx.conn().await?` to obtain a transactional connection. Pass `&mut conn` to SQL macros to ensure your queries are part of the transaction.
-- **Environment Variables**: Use the `EnvAccess` methods (e.g., `ctx.env_require()`) for all configuration to ensure your code is mockable in tests.
-- **HTTP Client**: Use `ctx.http()` for circuit-breaker-backed requests. The default timeout for these requests matches the handler's defined timeout.
+\* Daemons have `heartbeat()` but not `progress()` / `save()`.
+
+### Database Access — Three Shapes
+
+Picking the wrong handle is the most common mistake.
+
+| Call | Returns | Use for | sqlx calling convention |
+|---|---|---|---|
+| `ctx.db()` | `ForgeDb` (queries) / `DbConn<'_>` (mutations) | Reads or non-transactional writes (queries, jobs, crons, daemons, webhooks) | `query.fetch_*(ctx.db())` — `ForgeDb` implements `sqlx::Executor` |
+| `ctx.conn().await?` | `ForgeConn<'_>` | Transactional reads and writes in mutations | `query.fetch_*(&mut conn)` — bind to `let mut conn = ...` first |
+| `ctx.db_conn()` | `DbConn<'_>` | Shared helpers that must work in both query and mutation contexts | `db.fetch_*(query)` — **inverted**: call `.fetch_*` on the `DbConn`, passing the query as the argument |
+
+```rust
+// Query: ForgeDb + standard sqlx convention
+#[forge::query]
+pub async fn get_user(ctx: &QueryContext, id: Uuid) -> Result<Option<User>> {
+    sqlx::query_as!(User, "SELECT * FROM users WHERE id = $1", id)
+        .fetch_optional(ctx.db())
+        .await
+        .map_err(Into::into)
+}
+
+// Mutation: ForgeConn inside a transaction
+#[forge::mutation(transactional)]
+pub async fn create_user(ctx: &MutationContext, email: String) -> Result<User> {
+    let mut conn = ctx.conn().await?;
+    sqlx::query_as!(User, "INSERT INTO users (email) VALUES ($1) RETURNING *", email)
+        .fetch_one(&mut conn)
+        .await
+        .map_err(Into::into)
+}
+
+// Shared helper: DbConn with inverted convention
+pub async fn find_user(db: DbConn<'_>, id: Uuid) -> Result<Option<User>> {
+    db.fetch_optional(
+        sqlx::query_as!(User, "SELECT * FROM users WHERE id = $1", id)
+    ).await.map_err(Into::into)
+}
+// Called as: find_user(ctx.db_conn(), id).await
+```
+
+### Extra Context Notes
+- `sqlx::Error` auto-converts to `ForgeError::Sql` via `?`; explicit `.map_err(Into::into)` is idiomatic but optional.
+- Use `ctx.user_id()?` in private handlers to pull the principal UUID.
+- `ctx.auth.require_role("admin")` short-circuits with 403.
+- Workflow dispatch buffers into an outbox and flushes after transaction commit.
 
 ## ForgeError Variants
 
-Forge uses structured error variants to ensure consistent error handling across the stack and proper HTTP status code mapping.
+Use variant → HTTP + internal code. Frontend branches on the internal code; never on `message` (locale/wording drift).
 
-| Variant | HTTP Code | Internal Code | Rationale |
+| Variant | HTTP | Code | Use for |
 |---|---|---|---|
-| `NotFound` | 404 | `NOT_FOUND` | Resource does not exist. |
-| `Unauthorized` | 401 | `UNAUTHORIZED` | Authentication is missing or invalid. |
-| `Forbidden` | 403 | `FORBIDDEN` | User lacks permission for the operation. |
-| `Validation` | 400 | `VALIDATION_ERROR` | Request data is malformed or invalid. |
-| `Timeout` | 504 | `TIMEOUT` | Operation exceeded its allotted time. |
-| `RateLimitExceeded` | 429 | `RATE_LIMITED` | Too many requests from the same identity. |
-| `Internal` | 500 | `INTERNAL_ERROR` | Unhandled server-side error. |
+| `NotFound` | 404 | `NOT_FOUND` | Missing resource. |
+| `Unauthorized` | 401 | `UNAUTHORIZED` | Missing/invalid auth. |
+| `Forbidden` | 403 | `FORBIDDEN` | Lacks permission. Reserved for permissions — do **not** use for billing/plan state (triggers frontend logout). |
+| `Validation` | 400 | `VALIDATION_ERROR` | Malformed input. |
+| `InvalidArgument` | 400 | `INVALID_ARGUMENT` | Business-rule rejection (use for "upgrade required" etc.). |
+| `Timeout` | 504 | `TIMEOUT` | Exceeded handler timeout. |
+| `RateLimitExceeded` | 429 | `RATE_LIMITED` | Throttled. `details.retry_after_secs` populated. |
+| `Internal` | 500 | `INTERNAL_ERROR` | Unhandled server error. |
 
 ## CLI Command Reference
 
 | Command | Purpose |
 |---|---|
-| `forge new <name>` | Scaffolds a new project from a template. |
-| `forge generate` | Synchronizes backend changes with frontend bindings and types. |
-| `forge check` | Runs linting, formatting, and validates SQL and bindings. |
-| `forge migrate <up|down>`| Manages database migrations. |
-| `forge test` | Executes full-stack E2E tests using Playwright. |
+| `forge new <name>` | Scaffold a project from a template. Pins `[package] version = "1.0.0"` so it doesn't inherit the framework's workspace version. |
+| `forge generate` | Sync backend to frontend bindings. Detects target via `svelte.config.js` or `Dioxus.toml`. |
+| `forge check` | fmt + clippy + sqlx cache + schema + **system-table-write rule** + bindings. |
+| `forge migrate <up\|down\|status\|prepare>` | Manage DB migrations. Advisory-locked for cluster safety. |
+| `forge test` | cargo test → docker compose → Playwright. |
 
 ## Project File Standards
-- **Source Code**: Editable logic resides in `src/functions/`, `src/schema/`, and `src/utils/`.
-- **Generated Code**: **MANDATE:** Never edit generated files. See [Pitfalls](./pitfalls.md#1-generated-code).
-- **Migrations**: Create new SQL files in `migrations/`. Always include `-- @up` and `-- @down` markers. Do not use `IF NOT EXISTS` clauses; migrations should be deterministic.
+- Editable code: `src/functions/`, `src/schema/`, `src/utils/`.
+- Generated code: `frontend/src/lib/forge/` (Svelte) or `frontend/src/forge/` (Dioxus). **Never edit.** See [Pitfalls](./pitfalls.md#1-generated-code).
+- Migrations: SQL files in `migrations/` with `-- @up` / `-- @down` markers. No `IF NOT EXISTS` — migrations must be deterministic.

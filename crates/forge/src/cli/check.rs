@@ -94,6 +94,9 @@ impl CheckCommand {
         result.section("Schema");
         self.check_schema(&mut result)?;
 
+        result.section("System Tables");
+        self.check_system_table_writes(&mut result)?;
+
         result.section("SQLx Cache");
         self.check_sqlx_cache(&mut result)?;
 
@@ -505,6 +508,35 @@ impl CheckCommand {
                 ),
                 "Add #[forge::model] or #[derive(Serialize, Deserialize, sqlx::FromRow)] to model structs",
             );
+        }
+
+        Ok(())
+    }
+
+    fn check_system_table_writes(&self, result: &mut CheckResult) -> Result<()> {
+        let src_dir = Path::new("src");
+        if !src_dir.exists() {
+            return Ok(());
+        }
+
+        let mut offenses = Vec::new();
+        scan_system_table_writes(src_dir, &mut offenses)?;
+
+        if offenses.is_empty() {
+            result.pass("No direct writes to forge_* system tables");
+        } else {
+            for (path, table) in offenses.iter().take(5) {
+                result.fail(
+                    &format!("Direct write to {} in {}", table, path.display()),
+                    &format!(
+                        "Use ctx.dispatch_job()/ctx.start_workflow()/ctx.issue_token_pair() instead of writing to {} directly",
+                        table
+                    ),
+                );
+            }
+            if offenses.len() > 5 {
+                result.info(&format!("... and {} more", offenses.len() - 5));
+            }
         }
 
         Ok(())
@@ -1098,6 +1130,53 @@ fn generated_bindings_are_prettier_ignored(
     Ok(false)
 }
 
+const RESERVED_SYSTEM_TABLES: &[&str] = &[
+    "forge_jobs",
+    "forge_workflow_runs",
+    "forge_workflow_definitions",
+    "forge_cron_runs",
+    "forge_migrations",
+    "forge_sessions",
+    "forge_refresh_tokens",
+    "forge_signals_events",
+];
+
+fn scan_system_table_writes(
+    dir: &Path,
+    out: &mut Vec<(std::path::PathBuf, &'static str)>,
+) -> Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+
+        if file_type.is_dir() {
+            scan_system_table_writes(&path, out)?;
+            continue;
+        }
+
+        if !file_type.is_file() || path.extension().is_none_or(|ext| ext != "rs") {
+            continue;
+        }
+
+        let content = std::fs::read_to_string(&path)?;
+        let lower = content.to_ascii_lowercase();
+
+        for table in RESERVED_SYSTEM_TABLES {
+            let needles = [
+                format!("insert into {table}"),
+                format!("update {table}"),
+                format!("delete from {table}"),
+            ];
+            if needles.iter().any(|n| lower.contains(n.as_str())) {
+                out.push((path.clone(), *table));
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn collect_rs_files(entries: std::fs::ReadDir, out: &mut Vec<std::path::PathBuf>) {
     for entry in entries.flatten() {
         let path = entry.path();
@@ -1175,5 +1254,38 @@ mod tests {
             inspect_sqlx_cache(&sqlx_dir).unwrap(),
             SqlxCacheCheck::Ready(1)
         );
+    }
+
+    #[test]
+    fn test_detect_manual_forge_jobs_insert() {
+        let dir = tempfile::tempdir().unwrap();
+        let src_dir = dir.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::write(
+            src_dir.join("bad.rs"),
+            r#"fn demo() { sqlx::query!("INSERT INTO forge_jobs (id) VALUES ($1)"); }"#,
+        )
+        .unwrap();
+
+        let mut out = Vec::new();
+        scan_system_table_writes(&src_dir, &mut out).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].1, "forge_jobs");
+    }
+
+    #[test]
+    fn test_allow_user_tables() {
+        let dir = tempfile::tempdir().unwrap();
+        let src_dir = dir.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::write(
+            src_dir.join("ok.rs"),
+            r#"fn demo() { sqlx::query!("INSERT INTO todos (id) VALUES ($1)"); }"#,
+        )
+        .unwrap();
+
+        let mut out = Vec::new();
+        scan_system_table_writes(&src_dir, &mut out).unwrap();
+        assert!(out.is_empty());
     }
 }

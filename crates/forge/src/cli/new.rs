@@ -683,7 +683,40 @@ fn apply_template_replacements(
         rewritten = rewritten.replace(&replacement.from, &target);
     }
 
+    if is_cargo_manifest(&relative_path) {
+        rewritten = pin_package_version(&rewritten);
+    }
+
     rewritten
+}
+
+fn is_cargo_manifest(relative_path: &str) -> bool {
+    relative_path == "Cargo.toml" || relative_path.ends_with("/Cargo.toml")
+}
+
+/// Rewrite the `[package]` version line to `1.0.0`.
+/// Scaffolded projects start their own version history; the template's version
+/// tracks the forge release and isn't meaningful for the user's project.
+fn pin_package_version(content: &str) -> String {
+    let mut result = String::with_capacity(content.len());
+    let mut in_package = false;
+    let mut pinned = false;
+
+    for line in content.split_inclusive('\n') {
+        if !pinned {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with('[') {
+                in_package = trimmed.starts_with("[package]");
+            } else if in_package && trimmed.starts_with("version") {
+                result.push_str("version = \"1.0.0\"\n");
+                pinned = true;
+                continue;
+            }
+        }
+        result.push_str(line);
+    }
+
+    result
 }
 
 fn invalid_template_error(template_id: &str) -> anyhow::Error {
@@ -832,6 +865,42 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_scaffolded_cargo_toml_pins_version_to_one() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("my-app");
+        fs::create_dir_all(&path).unwrap();
+
+        let template = load_template_definition("with-svelte/minimal").unwrap();
+        create_project_from_template(&path, "my-app", &template).unwrap();
+
+        let cargo_toml = fs::read_to_string(path.join("Cargo.toml")).unwrap();
+        let forge_version = env!("CARGO_PKG_VERSION");
+
+        assert!(cargo_toml.contains("version = \"1.0.0\""));
+        assert!(
+            cargo_toml.contains(&format!("version = \"{forge_version}\"")),
+            "forge dependency should keep forge_version, only [package] version is pinned"
+        );
+    }
+
+    #[test]
+    fn test_pin_package_version_only_touches_first_version() {
+        let input = "[package]\nname = \"x\"\nversion = \"9.9.9\"\nedition = \"2024\"\n\n[dependencies]\nfoo = { version = \"1.2.3\" }\n";
+        let output = pin_package_version(input);
+        assert!(output.contains("version = \"1.0.0\""));
+        assert!(output.contains("foo = { version = \"1.2.3\" }"));
+        assert!(!output.contains("version = \"9.9.9\""));
+    }
+
+    #[test]
+    fn test_pin_package_version_leaves_non_package_tables_alone() {
+        let input = "[workspace.package]\nversion = \"9.9.9\"\n";
+        let output = pin_package_version(input);
+        assert!(output.contains("version = \"9.9.9\""));
+        assert!(!output.contains("1.0.0"));
     }
 
     #[test]

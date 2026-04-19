@@ -1,11 +1,11 @@
 use dioxus::prelude::*;
 
+use crate::API_URL;
 use crate::components::{
-    AuthCard, CacheCard, ExportCard, IssCard, McpCard, TradesCard, UsersSection,
-    VerificationCard, WebhookCard,
+    AuthCard, CacheCard, ExportCard, IssCard, McpCard, TradesCard, UsersSection, VerificationCard,
+    WebhookCard,
 };
 use crate::forge::User;
-use crate::API_URL;
 
 #[component]
 pub fn DemoPage() -> Element {

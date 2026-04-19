@@ -7,13 +7,32 @@ import {
   getUserStore$,
   getUsersStore$,
   getWebhookEventsStore$,
+  confirmVerification,
+  createUser,
+  deleteUser,
+  login,
+  refreshToken,
+  register,
+  updateUser,
 } from "./api";
-import { toReactive, type ReactiveQuery } from "./runes.svelte";
+import {
+  toReactive,
+  type ReactiveQuery,
+  toReactiveMutation,
+  type ReactiveMutation,
+} from "./runes.svelte";
 import type {
+  AuthResponse,
+  ConfirmVerificationInput,
   DemoStats,
   IssLocation,
+  LoginInput,
+  RefreshInput,
+  RegisterInput,
+  TokenPair,
   Trade,
   User,
+  UserRole,
   WebhookEvent,
 } from "./types";
 export const getDemoStats$ = (): ReactiveQuery<DemoStats> =>
@@ -28,3 +47,28 @@ export const getUsers$ = (): ReactiveQuery<User[]> =>
   toReactive(getUsersStore$());
 export const getWebhookEvents$ = (): ReactiveQuery<WebhookEvent[]> =>
   toReactive(getWebhookEventsStore$());
+export const confirmVerification$ = (): ReactiveMutation<
+  ConfirmVerificationInput,
+  boolean
+> => toReactiveMutation(confirmVerification);
+export const createUser$ = (): ReactiveMutation<
+  { email: string; name: string; role: UserRole | null },
+  User
+> => toReactiveMutation(createUser);
+export const deleteUser$ = (): ReactiveMutation<{ id: string }, boolean> =>
+  toReactiveMutation(deleteUser);
+export const login$ = (): ReactiveMutation<LoginInput, AuthResponse> =>
+  toReactiveMutation(login);
+export const refreshToken$ = (): ReactiveMutation<RefreshInput, TokenPair> =>
+  toReactiveMutation(refreshToken);
+export const register$ = (): ReactiveMutation<RegisterInput, AuthResponse> =>
+  toReactiveMutation(register);
+export const updateUser$ = (): ReactiveMutation<
+  {
+    id: string;
+    email: string | null;
+    name: string | null;
+    role: UserRole | null;
+  },
+  User
+> => toReactiveMutation(updateUser);
