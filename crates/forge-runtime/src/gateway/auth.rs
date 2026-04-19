@@ -393,6 +393,39 @@ pub enum AuthError {
     TokenExpired,
 }
 
+/// Pull client IP + user-agent from a request for auth-failure signal emission.
+fn extract_auth_diag(req: &Request<Body>) -> (Option<String>, Option<String>) {
+    let ip = crate::gateway::extract_client_ip(req.headers());
+    let ua = crate::gateway::extract_header(req.headers(), "user-agent");
+    (ip, ua)
+}
+
+/// Emit a diagnostic signal event for an authentication failure. Used by
+/// dashboards to monitor attack patterns and by operators to debug client
+/// token issues.
+fn emit_auth_failure(
+    reason: &str,
+    detail: &str,
+    path: &str,
+    client_ip: Option<String>,
+    user_agent: Option<String>,
+) {
+    let is_bot = crate::signals::bot::is_bot(user_agent.as_deref());
+    crate::signals::emit_diagnostic(
+        "auth.failed",
+        serde_json::json!({
+            "reason": reason,
+            "detail": detail,
+            "path": path,
+        }),
+        client_ip,
+        user_agent,
+        None,
+        None,
+        is_bot,
+    );
+}
+
 /// Extract token from request headers.
 pub fn extract_token(req: &Request<Body>) -> Result<Option<String>, AuthError> {
     let Some(header_value) = req.headers().get(axum::http::header::AUTHORIZATION) else {
@@ -463,7 +496,9 @@ pub async fn auth_middleware(
     let token = match extract_token(&req) {
         Ok(token) => token,
         Err(e) => {
+            let (ip, ua) = extract_auth_diag(&req);
             tracing::warn!(error = %e, "Invalid authorization header");
+            emit_auth_failure("invalid_header", &e.to_string(), req.uri().path(), ip, ua);
             return (
                 StatusCode::UNAUTHORIZED,
                 Json(serde_json::json!({
@@ -482,7 +517,15 @@ pub async fn auth_middleware(
     let auth_context = match extract_auth_context_async(token, &middleware).await {
         Ok(auth_context) => auth_context,
         Err(e) => {
+            let (ip, ua) = extract_auth_diag(&req);
+            let reason = match &e {
+                AuthError::TokenExpired => "token_expired",
+                AuthError::InvalidToken(_) => "invalid_token",
+                AuthError::MissingHeader => "missing_token",
+                AuthError::InvalidHeader => "invalid_header",
+            };
             tracing::warn!(error = %e, "Token validation failed");
+            emit_auth_failure(reason, &e.to_string(), req.uri().path(), ip, ua);
             return (
                 StatusCode::UNAUTHORIZED,
                 Json(serde_json::json!({

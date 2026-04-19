@@ -8,10 +8,18 @@ export interface SignalsConfig {
   autoPageViews?: boolean;
   /** Auto-capture frontend errors (default: true) */
   autoCaptureErrors?: boolean;
+  /** Auto-capture Web Vitals (LCP, CLS, INP, FCP, TTFB, navigation) (default: true) */
+  autoWebVitals?: boolean;
+  /** Auto-capture online/offline transitions (default: true) */
+  autoNetworkEvents?: boolean;
   /** Flush interval in ms (default: 5000) */
   flushInterval?: number;
   /** Max events per batch (default: 20) */
   maxBatchSize?: number;
+  /** Respect DNT / Sec-GPC headers and disable on opt-out (default: true) */
+  respectDnt?: boolean;
+  /** Persist the outbound queue to localStorage so events survive reloads (default: true) */
+  persistQueue?: boolean;
 }
 
 interface SignalEvent {
@@ -27,10 +35,22 @@ interface Breadcrumb {
   timestamp: string;
 }
 
+interface WebVital {
+  name: string;
+  value: number;
+  rating?: string;
+  attribution?: Record<string, unknown>;
+  correlation_id?: string;
+  page_url?: string;
+  timestamp?: string;
+}
+
 const DEFAULT_FLUSH_INTERVAL = 5000;
 const DEFAULT_MAX_BATCH = 20;
 const MAX_BREADCRUMBS = 20;
 const MAX_QUEUE_SIZE = 1000;
+const MAX_VITAL_BATCH = 20;
+const PERSIST_KEY = "forge_signals_queue_v1";
 
 /** Generate a short unique ID for correlation (nanoid-style) */
 function generateId(): string {
@@ -43,8 +63,24 @@ function generateId(): string {
   return id;
 }
 
+/** Detect if the user/browser has opted out of tracking. */
+function hasOptedOut(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const nav = navigator as Navigator & {
+    doNotTrack?: string;
+    globalPrivacyControl?: boolean;
+    msDoNotTrack?: string;
+  };
+  const win = typeof window !== "undefined"
+    ? (window as Window & { doNotTrack?: string })
+    : undefined;
+  const dnt = nav.doNotTrack ?? win?.doNotTrack ?? nav.msDoNotTrack;
+  return dnt === "1" || dnt === "yes" || nav.globalPrivacyControl === true;
+}
+
 export class ForgeSignals {
   private queue: SignalEvent[] = [];
+  private vitalQueue: WebVital[] = [];
   private breadcrumbs: Breadcrumb[] = [];
   private sessionId: string | null = null;
   private lastCorrelationId: string | null = null;
@@ -64,13 +100,22 @@ export class ForgeSignals {
       enabled: config?.enabled ?? true,
       autoPageViews: config?.autoPageViews ?? true,
       autoCaptureErrors: config?.autoCaptureErrors ?? true,
+      autoWebVitals: config?.autoWebVitals ?? true,
+      autoNetworkEvents: config?.autoNetworkEvents ?? true,
       flushInterval: config?.flushInterval ?? DEFAULT_FLUSH_INTERVAL,
       maxBatchSize: config?.maxBatchSize ?? DEFAULT_MAX_BATCH,
+      respectDnt: config?.respectDnt ?? true,
+      persistQueue: config?.persistQueue ?? true,
     };
 
     if (!this.config.enabled) return;
+    if (this.config.respectDnt && hasOptedOut()) {
+      this.config.enabled = false;
+      return;
+    }
 
     this.utmParams = this.extractUtm();
+    this.restoreQueue();
     this.startFlushTimer();
     // Defer auto-capture setup to avoid competing with the SSE connection
     // for DB pool connections on cold start.
@@ -78,6 +123,12 @@ export class ForgeSignals {
       if (!this.destroyed) this.setupAutoCapture();
     }, 2000);
     this.setupUnloadFlush();
+    if (this.config.autoWebVitals) {
+      this.setupWebVitals();
+    }
+    if (this.config.autoNetworkEvents) {
+      this.setupNetworkEvents();
+    }
   }
 
   /** Track a custom event. */
@@ -173,17 +224,35 @@ export class ForgeSignals {
     return this.sessionId;
   }
 
+  /** Send a single Web Vitals measurement. Batched and flushed with track events. */
+  vital(name: string, value: number, extra?: { rating?: string; attribution?: Record<string, unknown> }): void {
+    if (!this.config.enabled) return;
+    this.vitalQueue.push({
+      name,
+      value,
+      rating: extra?.rating,
+      attribution: extra?.attribution,
+      correlation_id: this.lastCorrelationId ?? undefined,
+      page_url: typeof location !== "undefined" ? location.href : undefined,
+      timestamp: new Date().toISOString(),
+    });
+    if (this.vitalQueue.length >= MAX_VITAL_BATCH) {
+      this.flushVitals();
+    }
+  }
+
   /** Clean up timers and event listeners. */
   destroy(): void {
     this.destroyed = true;
     if (this.flushTimer) clearInterval(this.flushTimer);
     this.flushBeacon();
+    this.flushVitalsBeacon();
     this.teardownAutoCapture();
   }
 
   // -- Internal --
 
-  private signalFetchOptions(): { headers: Record<string, string>; credentials: RequestCredentials } {
+  private signalFetchOptions(): { headers: Record<string, string>; credentials: RequestCredentials; keepalive: boolean } {
     return {
       headers: {
         "Content-Type": "application/json",
@@ -191,6 +260,10 @@ export class ForgeSignals {
         ...(this.sessionId ? { "x-session-id": this.sessionId } : {}),
       },
       credentials: "include",
+      // keepalive lets pending requests survive pagehide / tab close up to the
+      // browser's budget (typically 64KB) so events emitted during shutdown
+      // still reach the server.
+      keepalive: true,
     };
   }
 
@@ -202,6 +275,8 @@ export class ForgeSignals {
     }
     if (this.queue.length >= this.config.maxBatchSize) {
       this.flush();
+    } else {
+      this.persistQueue();
     }
   }
 
@@ -220,15 +295,18 @@ export class ForgeSignals {
           },
         }),
       });
+      if (!response.ok) throw new Error(`status ${response.status}`);
       const result = await response.json();
       if (result.session_id && !this.sessionId) {
         this.sessionId = result.session_id;
       }
+      this.persistQueue();
     } catch {
       this.queue.unshift(...events);
       if (this.queue.length > MAX_QUEUE_SIZE) {
         this.queue.length = MAX_QUEUE_SIZE;
       }
+      this.persistQueue();
     }
   }
 
@@ -243,9 +321,63 @@ export class ForgeSignals {
       },
     });
     try {
-      navigator.sendBeacon(`${this.client.getUrl()}/_api/signal/event`, body);
+      const sent = typeof navigator !== "undefined" && navigator.sendBeacon
+        ? navigator.sendBeacon(`${this.client.getUrl()}/_api/signal/event`, body)
+        : false;
+      if (!sent) {
+        // Fall back to keepalive fetch if beacon isn't available / over quota
+        fetch(`${this.client.getUrl()}/_api/signal/event`, {
+          method: "POST",
+          ...this.signalFetchOptions(),
+          body,
+        }).catch(() => {});
+      }
+      this.persistQueue();
     } catch {
       // Last resort, just drop
+    }
+  }
+
+  private async flushVitals(): Promise<void> {
+    if (this.vitalQueue.length === 0) return;
+    const vitals = this.vitalQueue.splice(0, MAX_VITAL_BATCH);
+    try {
+      await fetch(`${this.client.getUrl()}/_api/signal/vital`, {
+        method: "POST",
+        ...this.signalFetchOptions(),
+        body: JSON.stringify({
+          vitals,
+          context: {
+            page_url: typeof location !== "undefined" ? location.href : undefined,
+            session_id: this.sessionId,
+          },
+        }),
+      });
+    } catch {
+      // Requeue on failure; drop oldest if over limit.
+      this.vitalQueue.unshift(...vitals);
+      if (this.vitalQueue.length > MAX_QUEUE_SIZE) {
+        this.vitalQueue.length = MAX_QUEUE_SIZE;
+      }
+    }
+  }
+
+  private flushVitalsBeacon(): void {
+    if (this.vitalQueue.length === 0) return;
+    const vitals = this.vitalQueue.splice(0);
+    const body = JSON.stringify({
+      vitals,
+      context: {
+        page_url: typeof location !== "undefined" ? location.href : undefined,
+        session_id: this.sessionId,
+      },
+    });
+    try {
+      if (typeof navigator !== "undefined" && navigator.sendBeacon) {
+        navigator.sendBeacon(`${this.client.getUrl()}/_api/signal/vital`, body);
+      }
+    } catch {
+      // drop
     }
   }
 
@@ -263,7 +395,9 @@ export class ForgeSignals {
 
   private startFlushTimer(): void {
     this.flushTimer = setInterval(() => {
-      if (!this.destroyed) this.flush();
+      if (this.destroyed) return;
+      this.flush();
+      this.flushVitals();
     }, this.config.flushInterval);
   }
 
@@ -340,10 +474,142 @@ export class ForgeSignals {
   private setupUnloadFlush(): void {
     if (typeof document === "undefined") return;
 
+    // visibilitychange fires when tab hides; most reliable unload signal on
+    // modern browsers. pagehide fires on actual navigation away. Safari
+    // sometimes fires only one; bind both so we never miss a flush.
     this.addEventListener(document, "visibilitychange", () => {
       if (document.visibilityState === "hidden") {
         this.flushBeacon();
+        this.flushVitalsBeacon();
       }
+    });
+    if (typeof window !== "undefined") {
+      this.addEventListener(window, "pagehide", () => {
+        this.flushBeacon();
+        this.flushVitalsBeacon();
+      });
+    }
+  }
+
+  private setupWebVitals(): void {
+    if (typeof window === "undefined" || typeof PerformanceObserver === "undefined") return;
+
+    // Best-effort Web Vitals via PerformanceObserver. Uses the browser's
+    // standard entry types so we don't pull in an external library. Values
+    // match the Core Web Vitals spec: LCP in ms, CLS unitless, INP in ms,
+    // FCP in ms, TTFB in ms from Navigation Timing.
+    const observe = (type: string, cb: (entry: PerformanceEntry) => void) => {
+      try {
+        const observer = new PerformanceObserver((list) => {
+          for (const entry of list.getEntries()) cb(entry);
+        });
+        observer.observe({ type, buffered: true } as PerformanceObserverInit);
+      } catch {
+        // entry type unsupported in this browser
+      }
+    };
+
+    // LCP — last largest-contentful-paint entry wins
+    let lcpValue = 0;
+    observe("largest-contentful-paint", (entry) => {
+      const e = entry as PerformanceEntry & { renderTime?: number; loadTime?: number };
+      lcpValue = e.renderTime ?? e.loadTime ?? entry.startTime;
+    });
+
+    // CLS — sum session-window layout shifts
+    let clsValue = 0;
+    observe("layout-shift", (entry) => {
+      const e = entry as PerformanceEntry & { value: number; hadRecentInput: boolean };
+      if (!e.hadRecentInput) clsValue += e.value;
+    });
+
+    // INP / FID — report interaction latency per event
+    observe("event", (entry) => {
+      const e = entry as PerformanceEntry & { interactionId?: number; duration: number };
+      if (e.interactionId && e.duration > 40) {
+        this.vital("inp", e.duration, {
+          rating: e.duration < 200 ? "good" : e.duration < 500 ? "needs-improvement" : "poor",
+          attribution: { name: entry.name },
+        });
+      }
+    });
+
+    // FCP
+    observe("paint", (entry) => {
+      if (entry.name === "first-contentful-paint") {
+        this.vital("fcp", entry.startTime, {
+          rating: entry.startTime < 1800 ? "good" : entry.startTime < 3000 ? "needs-improvement" : "poor",
+        });
+      }
+    });
+
+    // Long tasks — surface jank sources
+    observe("longtask", (entry) => {
+      this.vital("long_task", entry.duration, {
+        attribution: { name: entry.name, startTime: entry.startTime },
+      });
+    });
+
+    // Navigation Timing — TTFB + full page timings on load
+    const onLoad = () => {
+      try {
+        const nav = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+        if (nav) {
+          const ttfb = nav.responseStart;
+          if (ttfb > 0) {
+            this.vital("ttfb", ttfb, {
+              rating: ttfb < 800 ? "good" : ttfb < 1800 ? "needs-improvement" : "poor",
+            });
+          }
+          this.vital("navigation", nav.loadEventEnd - nav.startTime, {
+            attribution: {
+              dom_content_loaded: nav.domContentLoadedEventEnd - nav.startTime,
+              dom_interactive: nav.domInteractive - nav.startTime,
+              transfer_size: nav.transferSize,
+              type: nav.type,
+            },
+          });
+        }
+      } catch {
+        // ignore
+      }
+      // Flush terminal CLS/LCP on visibility change (below). Nothing to do here.
+    };
+    if (document.readyState === "complete") {
+      onLoad();
+    } else {
+      this.addEventListener(window, "load", onLoad as EventListener);
+    }
+
+    // Report final LCP + CLS when the page hides (user leaves / tab switch).
+    this.addEventListener(document, "visibilitychange", () => {
+      if (document.visibilityState === "hidden") {
+        if (lcpValue > 0) {
+          this.vital("lcp", lcpValue, {
+            rating: lcpValue < 2500 ? "good" : lcpValue < 4000 ? "needs-improvement" : "poor",
+          });
+          lcpValue = 0;
+        }
+        if (clsValue > 0) {
+          this.vital("cls", clsValue, {
+            rating: clsValue < 0.1 ? "good" : clsValue < 0.25 ? "needs-improvement" : "poor",
+          });
+          clsValue = 0;
+        }
+      }
+    });
+  }
+
+  private setupNetworkEvents(): void {
+    if (typeof window === "undefined") return;
+    this.addEventListener(window, "online", () => {
+      this.track("network.online");
+      // A recovered connection is the ideal time to drain the offline queue.
+      this.flush();
+      this.flushVitals();
+    });
+    this.addEventListener(window, "offline", () => {
+      this.track("network.offline");
     });
   }
 
@@ -356,5 +622,34 @@ export class ForgeSignals {
       if (value) utm[key] = value;
     }
     return Object.keys(utm).length > 0 ? utm : null;
+  }
+
+  /** Restore any events stashed in localStorage from a prior page session. */
+  private restoreQueue(): void {
+    if (!this.config.persistQueue || typeof localStorage === "undefined") return;
+    try {
+      const raw = localStorage.getItem(PERSIST_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        this.queue.push(...parsed.slice(0, MAX_QUEUE_SIZE));
+      }
+    } catch {
+      // ignore corrupt storage
+    }
+  }
+
+  /** Persist the pending queue so events survive a reload. */
+  private persistQueue(): void {
+    if (!this.config.persistQueue || typeof localStorage === "undefined") return;
+    try {
+      if (this.queue.length === 0) {
+        localStorage.removeItem(PERSIST_KEY);
+      } else {
+        localStorage.setItem(PERSIST_KEY, JSON.stringify(this.queue));
+      }
+    } catch {
+      // Quota exceeded or storage unavailable (private mode). Silent.
+    }
   }
 }

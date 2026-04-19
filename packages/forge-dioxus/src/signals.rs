@@ -99,6 +99,12 @@ pub struct SignalsConfig {
     pub auto_page_views: bool,
     /// Auto-capture frontend errors (default: true).
     pub auto_capture_errors: bool,
+    /// Auto-capture Web Vitals (WASM only: FCP, LCP, TTFB, long tasks) (default: true).
+    pub auto_web_vitals: bool,
+    /// Auto-capture online/offline transitions (default: true).
+    pub auto_network_events: bool,
+    /// Respect DNT / Sec-GPC and disable on opt-out (default: true).
+    pub respect_dnt: bool,
     /// Flush interval in ms (default: 5000).
     pub flush_interval: u32,
     /// Max events per batch (default: 20).
@@ -111,10 +117,39 @@ impl Default for SignalsConfig {
             enabled: true,
             auto_page_views: true,
             auto_capture_errors: true,
+            auto_web_vitals: true,
+            auto_network_events: true,
+            respect_dnt: true,
             flush_interval: DEFAULT_FLUSH_INTERVAL_MS,
             max_batch_size: DEFAULT_MAX_BATCH,
         }
     }
+}
+
+/// Check Do-Not-Track / Sec-GPC on the current browser (WASM only).
+#[cfg(target_arch = "wasm32")]
+fn has_opted_out() -> bool {
+    if let Some(win) = web_sys::window() {
+        let nav = win.navigator();
+        if let Ok(val) = js_sys::Reflect::get(&nav, &"doNotTrack".into())
+            && let Some(s) = val.as_string()
+        {
+            if s == "1" || s == "yes" {
+                return true;
+            }
+        }
+        if let Ok(val) = js_sys::Reflect::get(&nav, &"globalPrivacyControl".into())
+            && val.as_bool() == Some(true)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn has_opted_out() -> bool {
+    false
 }
 
 #[derive(Clone, Serialize)]
@@ -191,7 +226,12 @@ pub struct ForgeSignals {
 
 impl ForgeSignals {
     /// Create a new signals instance tied to a ForgeClient.
-    pub fn new(client: ForgeClient, config: SignalsConfig) -> Self {
+    pub fn new(client: ForgeClient, mut config: SignalsConfig) -> Self {
+        // Honor DNT / Sec-GPC up front so the rest of the module can just
+        // check `config.enabled` once.
+        if config.enabled && config.respect_dnt && has_opted_out() {
+            config.enabled = false;
+        }
         let utm_params = if config.enabled { extract_utm() } else { None };
         Self {
             inner: Rc::new(RefCell::new(SignalsInner {
@@ -205,6 +245,33 @@ impl ForgeSignals {
                 destroyed: false,
             })),
         }
+    }
+
+    /// Send a Web Vitals-style measurement. Batches with track events.
+    pub fn vital(&self, name: &str, value: f64, rating: Option<&str>) {
+        let mut props = serde_json::Map::new();
+        props.insert(
+            "value".to_string(),
+            serde_json::Number::from_f64(value)
+                .map(Value::Number)
+                .unwrap_or(Value::Null),
+        );
+        if let Some(r) = rating {
+            props.insert("rating".to_string(), Value::String(r.to_string()));
+        }
+        self.track(&format!("webvital.{name}"), Value::Object(props));
+    }
+
+    #[must_use]
+    pub fn auto_web_vitals(&self) -> bool {
+        let inner = self.inner.borrow();
+        inner.config.enabled && inner.config.auto_web_vitals
+    }
+
+    #[must_use]
+    pub fn auto_network_events(&self) -> bool {
+        let inner = self.inner.borrow();
+        inner.config.enabled && inner.config.auto_network_events
     }
 
     /// Track a custom event.
@@ -660,7 +727,9 @@ pub(crate) fn setup_auto_capture(signals: ForgeSignals) {
                 }
             }
 
-            // Flush via beacon when page goes hidden (tab close, navigate away)
+            // Flush via beacon when page goes hidden (tab close, navigate away).
+            // Bind both visibilitychange and pagehide; Safari sometimes fires only
+            // one, and we never want to miss a flush.
             {
                 let signals = signals.clone();
                 let closure = Closure::<dyn Fn()>::new(move || {
@@ -677,6 +746,161 @@ pub(crate) fn setup_auto_capture(signals: ForgeSignals) {
                     );
                 }
                 closure.forget();
+            }
+            {
+                let signals = signals.clone();
+                let closure = Closure::<dyn Fn()>::new(move || {
+                    flush_beacon(&signals);
+                });
+                let _ = window.add_event_listener_with_callback(
+                    "pagehide",
+                    closure.as_ref().unchecked_ref(),
+                );
+                closure.forget();
+            }
+
+            // Network status events
+            if signals.auto_network_events() {
+                let online_signals = signals.clone();
+                let online = Closure::<dyn Fn()>::new(move || {
+                    online_signals.track("network.online", json!({}));
+                    let online_signals2 = online_signals.clone();
+                    spawn(async move { online_signals2.flush().await; });
+                });
+                let _ = window.add_event_listener_with_callback(
+                    "online",
+                    online.as_ref().unchecked_ref(),
+                );
+                online.forget();
+
+                let offline_signals = signals.clone();
+                let offline = Closure::<dyn Fn()>::new(move || {
+                    offline_signals.track("network.offline", json!({}));
+                });
+                let _ = window.add_event_listener_with_callback(
+                    "offline",
+                    offline.as_ref().unchecked_ref(),
+                );
+                offline.forget();
+            }
+
+            // Web Vitals via PerformanceObserver. Uses best-effort entry types
+            // so we don't hard-depend on any bindings that the caller might not
+            // have enabled in web-sys features.
+            if signals.auto_web_vitals() {
+                let js = r#"
+                    (function(baseUrl, getSessionId) {
+                        try {
+                            function send(name, value, rating, attribution) {
+                                try {
+                                    const body = JSON.stringify({
+                                        vitals: [{
+                                            name: name,
+                                            value: value,
+                                            rating: rating || null,
+                                            attribution: attribution || {},
+                                            page_url: location.href,
+                                            timestamp: new Date().toISOString(),
+                                        }],
+                                        context: {
+                                            page_url: location.href,
+                                            session_id: getSessionId() || null,
+                                        }
+                                    });
+                                    const url = baseUrl + '/_api/signal/vital';
+                                    const headers = { 'Content-Type': 'application/json', 'x-forge-platform': 'web' };
+                                    if (navigator.sendBeacon) {
+                                        navigator.sendBeacon(url, body);
+                                    } else {
+                                        fetch(url, { method: 'POST', headers: headers, body: body, keepalive: true });
+                                    }
+                                } catch (_) {}
+                            }
+                            function obs(type, cb) {
+                                try {
+                                    new PerformanceObserver(function(list) {
+                                        list.getEntries().forEach(cb);
+                                    }).observe({ type: type, buffered: true });
+                                } catch (_) {}
+                            }
+                            var lcp = 0;
+                            obs('largest-contentful-paint', function(e) { lcp = e.renderTime || e.loadTime || e.startTime; });
+                            var cls = 0;
+                            obs('layout-shift', function(e) { if (!e.hadRecentInput) cls += e.value; });
+                            obs('paint', function(e) {
+                                if (e.name === 'first-contentful-paint') {
+                                    var r = e.startTime < 1800 ? 'good' : e.startTime < 3000 ? 'needs-improvement' : 'poor';
+                                    send('fcp', e.startTime, r);
+                                }
+                            });
+                            obs('event', function(e) {
+                                if (e.interactionId && e.duration > 40) {
+                                    var r = e.duration < 200 ? 'good' : e.duration < 500 ? 'needs-improvement' : 'poor';
+                                    send('inp', e.duration, r, { name: e.name });
+                                }
+                            });
+                            obs('longtask', function(e) {
+                                send('long_task', e.duration, null, { name: e.name, startTime: e.startTime });
+                            });
+                            function onLoad() {
+                                try {
+                                    var nav = performance.getEntriesByType('navigation')[0];
+                                    if (nav) {
+                                        if (nav.responseStart > 0) {
+                                            var r = nav.responseStart < 800 ? 'good' : nav.responseStart < 1800 ? 'needs-improvement' : 'poor';
+                                            send('ttfb', nav.responseStart, r);
+                                        }
+                                        send('navigation', nav.loadEventEnd - nav.startTime, null, {
+                                            dom_content_loaded: nav.domContentLoadedEventEnd - nav.startTime,
+                                            dom_interactive: nav.domInteractive - nav.startTime,
+                                            transfer_size: nav.transferSize,
+                                            type: nav.type,
+                                        });
+                                    }
+                                } catch (_) {}
+                            }
+                            if (document.readyState === 'complete') onLoad();
+                            else window.addEventListener('load', onLoad);
+                            document.addEventListener('visibilitychange', function() {
+                                if (document.visibilityState === 'hidden') {
+                                    if (lcp > 0) {
+                                        var r = lcp < 2500 ? 'good' : lcp < 4000 ? 'needs-improvement' : 'poor';
+                                        send('lcp', lcp, r);
+                                        lcp = 0;
+                                    }
+                                    if (cls > 0) {
+                                        var r = cls < 0.1 ? 'good' : cls < 0.25 ? 'needs-improvement' : 'poor';
+                                        send('cls', cls, r);
+                                        cls = 0;
+                                    }
+                                }
+                            });
+                        } catch (_) {}
+                    })
+                "#;
+                let base_url = {
+                    let inner = signals.inner.borrow();
+                    inner.client.get_url().to_string()
+                };
+                let get_session = {
+                    let signals = signals.clone();
+                    Closure::<dyn Fn() -> wasm_bindgen::JsValue>::new(move || {
+                        match signals.get_session_id() {
+                            Some(sid) => wasm_bindgen::JsValue::from_str(&sid),
+                            None => wasm_bindgen::JsValue::NULL,
+                        }
+                    })
+                };
+                if let Ok(factory) = js_sys::eval(js)
+                    && let Ok(function) = factory.dyn_into::<js_sys::Function>()
+                {
+                    let _ = function.call2(
+                        &wasm_bindgen::JsValue::NULL,
+                        &wasm_bindgen::JsValue::from_str(&base_url),
+                        get_session.as_ref().unchecked_ref(),
+                    );
+                }
+                get_session.forget();
             }
         });
     }

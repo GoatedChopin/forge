@@ -388,20 +388,36 @@ impl CronRunner {
             let duration_ms = start_time.elapsed().as_millis() as u64;
             Span::current().record("cron.duration_ms", duration_ms);
 
+            let signal_duration_ms = duration_ms.min(i32::MAX as u64) as i32;
             match result {
                 Ok(Ok(())) => {
                     Span::current().record("cron.status", "completed");
                     tracing::debug!(cron.duration_ms = duration_ms, "Cron executed");
                     self.mark_completed(run_id, info.name).await;
+                    crate::signals::emit_server_execution(
+                        info.name,
+                        "cron",
+                        signal_duration_ms,
+                        true,
+                        None,
+                    );
                 }
                 Ok(Err(e)) => {
                     Span::current().record("cron.status", "failed");
+                    let err_str = e.to_string();
                     tracing::error!(
                         cron.duration_ms = duration_ms,
                         error = %e,
                         "Cron failed"
                     );
-                    self.mark_failed(run_id, info.name, &e.to_string()).await;
+                    self.mark_failed(run_id, info.name, &err_str).await;
+                    crate::signals::emit_server_execution(
+                        info.name,
+                        "cron",
+                        signal_duration_ms,
+                        false,
+                        Some(err_str),
+                    );
                 }
                 Err(_) => {
                     Span::current().record("cron.status", "timeout");
@@ -412,6 +428,13 @@ impl CronRunner {
                     );
                     self.mark_failed(run_id, info.name, "Execution timed out")
                         .await;
+                    crate::signals::emit_server_execution(
+                        info.name,
+                        "cron",
+                        signal_duration_ms,
+                        false,
+                        Some("Execution timed out".to_string()),
+                    );
                 }
             }
         }

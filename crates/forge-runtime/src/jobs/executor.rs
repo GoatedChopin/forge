@@ -130,7 +130,9 @@ impl JobExecutor {
 
         // Execute with timeout
         let job_timeout = entry.info.timeout;
+        let exec_start = std::time::Instant::now();
         let result = timeout(job_timeout, self.run_handler(&entry, &ctx, &job.input)).await;
+        let exec_duration_ms = exec_start.elapsed().as_millis() as i32;
 
         let _ = heartbeat_stop_tx.send(true);
         let _ = heartbeat_task.await;
@@ -143,6 +145,13 @@ impl JobExecutor {
                 if let Err(e) = self.queue.complete(job.id, output.clone(), ttl).await {
                     tracing::debug!(job_id = %job.id, error = %e, "Failed to mark job as complete");
                 }
+                crate::signals::emit_server_execution(
+                    &job.job_type,
+                    "job",
+                    exec_duration_ms,
+                    true,
+                    None,
+                );
                 ExecutionResult::Completed { output }
             }
             Ok(Err(e)) => {
@@ -167,6 +176,13 @@ impl JobExecutor {
                     {
                         tracing::error!(job_id = %job.id, error = %e, "Job compensation failed");
                     }
+                    crate::signals::emit_server_execution(
+                        &job.job_type,
+                        "job",
+                        exec_duration_ms,
+                        false,
+                        Some(format!("cancelled: {}", reason)),
+                    );
                     return ExecutionResult::Cancelled { reason };
                 }
                 let should_retry = job.attempts < job.max_attempts;
@@ -184,6 +200,14 @@ impl JobExecutor {
                 if let Err(e) = self.queue.fail(job.id, &error_msg, chrono_delay, ttl).await {
                     tracing::error!(job_id = %job.id, error = %e, "Failed to record job failure");
                 }
+
+                crate::signals::emit_server_execution(
+                    &job.job_type,
+                    "job",
+                    exec_duration_ms,
+                    false,
+                    Some(error_msg.clone()),
+                );
 
                 ExecutionResult::Failed {
                     error: error_msg,
@@ -204,6 +228,14 @@ impl JobExecutor {
                 if let Err(e) = self.queue.fail(job.id, &error_msg, retry_delay, ttl).await {
                     tracing::error!(job_id = %job.id, error = %e, "Failed to record job timeout");
                 }
+
+                crate::signals::emit_server_execution(
+                    &job.job_type,
+                    "job",
+                    exec_duration_ms,
+                    false,
+                    Some(error_msg),
+                );
 
                 ExecutionResult::TimedOut {
                     retryable: should_retry,

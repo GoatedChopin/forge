@@ -1,64 +1,71 @@
 # Frontend Playbook
 
-Cross-framework frontend rules. For SvelteKit or Dioxus specifics, see `frontend/svelte.md` / `frontend/dioxus.md`.
+This reference outlines the core principles and architectural patterns for building frontends with Forge. For framework-specific implementation details, refer to the SvelteKit (`svelte.md`) and Dioxus (`dioxus.md`) guides.
 
-## Core Rules
-- Backend is the source of truth — always define data contracts in Rust first.
-- Run `forge generate` after every backend change. Never edit generated files.
+## Core Development Rules
+
+- **The backend is the source of truth**: Always define your data contracts on the backend first. This ensures that your frontend types are derived from a single, consistent source.
+- **Strict development workflow**: **MANDATE:** Always run `forge generate` after backend changes. Never edit generated files. See [Pitfalls](./pitfalls.md#1-generated-code).
 
 ## Reactivity Model
-- The backend query is the unit of reactivity. Subscribing registers the query with the server.
-- On DB change → server re-executes, hashes the result, pushes via SSE only when the hash differs.
-- No manual refetching, WebSockets, or cache invalidation. The Reactor handles it.
+
+Forge uses a server-driven reactivity model to keep the frontend in sync with the database.
+
+- **Query-based subscriptions**: The backend query is the fundamental unit of reactivity. When you subscribe to a query, the server monitors relevant database changes.
+- **Server-driven updates**: When the database changes, the server re-executes the query, hashes the result, and pushes updates to the client via Server-Sent Events (SSE) only if the data has actually changed.
+- **No manual refetching**: You do not need to implement manual refetching, WebSockets, or complex cache invalidation logic. The framework handles data synchronization automatically.
 
 ## Subscription State Shape
 
-All subscription stores/hooks expose the same shape:
+All subscription stores and hooks return a consistent state object to help you manage the UI lifecycle.
 
 ```typescript
 {
-  loading: boolean,          // true until first packet
-  data: T | null,            // current query result
-  error: ForgeError | null,  // { code, message, details? }
-  stale: boolean             // true while reconnecting
+  loading: boolean,      // True until the first data packet is received.
+  data: T | null,        // The current result of the query.
+  error: Error | null,   // Contains the last error encountered during the subscription.
+  stale: boolean         // True if the client is currently disconnected and attempting to reconnect.
 }
 ```
 
-`ForgeError` is `{ code: string; message: string; details?: Record<string, unknown> }`. Branch on `error.code` (e.g. `"NOT_FOUND"`, `"UNAUTHORIZED"`, `"RATE_LIMITED"`), never on `error.message`. See [API Reference](./api.md#forgeerror-variants).
-
-### Specialised statuses
-- **Jobs / workflows**: add `jobId`, `status`, `progress`, `output`.
-- **Terminal errors**: `blocked_version`, `signature_mismatch` indicate operational mismatch — surface as critical.
+### Specialized Statuses
+- **Jobs and Workflows**: These states include additional fields such as `jobId`, `status`, `progress`, and `output`.
+- **Terminal Errors**: Statuses like `blocked_version` or `signature_mismatch` indicate an operational error (e.g., a version mismatch between frontend and backend). These should be displayed as critical system errors.
 
 ## Authentication and Session Management
-- Set `access_token_ttl` and `refresh_token_ttl` in `forge.toml`.
-- Issue tokens via `ctx.issue_token_pair()` on the backend. See [Patterns](./patterns.md#2-authentication-and-authorization).
-- The SSE connection must reconnect whenever the principal changes. The generated auth helpers (`auth.setAuth` in Svelte, `ForgeAuthProvider` in Dioxus) do this — don't hand-roll token storage.
-- Persist tokens in `localStorage` (wrap in try/catch — private-mode browsers block it) and run a refresh loop.
-- **Refresh calls must be anonymous**: the built-in `refresh_token` provider handles this. Passing an expired token on a refresh call gets rejected.
 
-## Error Handling
-- Programmatic branching → `error.code`. Display text → `error.message`.
-- Rate limits → read `details.retry_after_secs` for a cooldown timer.
-- SSE reconnection is automatic with exponential backoff. Never write your own retry loop for subscriptions.
-- Route mutation errors to a global `onMutationError` handler (Svelte) or `on_mutation_error` (Dioxus). Don't rely on per-call try/catch unless you need local UX.
+- **Configuration**: Set your `access_token_ttl` and `refresh_token_ttl` in `forge.toml` to control session duration.
+- **Token Issuance**: Use `ctx.issue_token_pair()` on the backend to generate JWTs. See [Patterns Reference](./patterns.md#2-authentication-and-authorization).
+- **Session Continuity**: The client must reconnect its SSE stream whenever the authentication principal changes (e.g., after a login or logout). Mismatching a session with a new user will cause errors.
+
+- **Persistence**: Store tokens and user information in `localStorage` and implement a periodic refresh loop to maintain the session.
+
+## Error Handling Logic
+
+- **Structured Errors**: Forge returns errors in a `{ code, message, details? }` format.
+- **Control Flow**: Use the error `code` (e.g., `NOT_FOUND`, `RATE_LIMITED`) for programmatic logic and the `message` for user-facing display.
+- **Automatic Cooldowns**: Use `details.retry_after_secs` to implement UI-level cooldown timers for rate-limited operations.
+- **Managed Retries**: The client library automatically handles SSE reconnection with exponential backoff. Do not implement custom retry loops for subscriptions.
 
 ## File Uploads
-- Mutations with `Upload`, `Vec<Upload>`, or `Option<Upload>` params auto-switch to `multipart/form-data`. The generated client sends `File` / `Blob` correctly.
-- Defaults: 20 MB body, 1 MB per JSON field, 255-char field names.
-- For files much larger than 20 MB, generate presigned S3/GCS URLs server-side and upload directly from the browser. See [Recipes](./recipes.md#5-file-upload-to-s3-compatible-storage) for the server side.
 
-## Signals (analytics + diagnostics)
-`ForgeProvider` initialises the tracker automatically.
+- **Multipart Support**: Mutations using `Upload` types automatically switch to `multipart/form-data`.
+- **Supported Types**: You can use `Upload`, `Vec<Upload>`, or `Option<Upload>` in your mutation parameters.
+- **Default Constraints**: The maximum body size is 20MB by default, but individual JSON fields are limited to 1MB. Field names must be under 255 characters.
+- **Large Files**: For files significantly larger than 20MB, use the backend to generate presigned S3/GCS URLs and upload directly from the browser.
 
-- Auto-captures SPA page views, frontend errors, and the `x-correlation-id` header linking RPC calls.
-- Manual: `track(event, props)`, `identify(userId, traits)`, `captureError(err, context)`.
-- Privacy: daily-rotating hashed visitor ID, no cookies. Set `anonymize_ip = true` in `forge.toml` to hash IPs.
-- Batched up to 20 events, flushed on idle or `visibilitychange`.
+## Signals (Analytics and Diagnostics)
 
-## Forbidden
+Signals are automatically initialized by the `ForgeProvider` to provide observability without manual instrumentation.
 
-- Manual `refetch()` loops on live subscriptions — traffic, flicker, stale data.
-- Client-side-only authorisation — always re-check on the backend.
-- Skipping `forge generate` after backend changes — guarantees runtime type mismatches.
-- Hand-rolling auth storage around the generated helper — breaks SSE reconnection on login/logout.
+- **Auto-capture**: Forge automatically tracks SPA page views, frontend errors, Web Vitals (LCP, CLS, INP, FCP, TTFB, navigation timing, long tasks), online/offline transitions, and correlation IDs for RPC calls.
+- **Manual Tracking**: Use `track()`, `identify()`, `captureError()`, and `vital()` to record custom events, user traits, or performance metrics.
+- **Privacy Compliance**: Forge uses daily-rotating hashed visitor IDs and does not set tracking cookies. Set `anonymize_ip = true` to drop raw IPs. The SDK honors browser `DNT: 1` and `Sec-GPC: 1` out of the box (`respectDnt: true`) and the server short-circuits signal ingestion when those headers arrive. Crash reports (`/signal/report`) still land so production errors from DNT users don't disappear.
+- **Event Batching**: Signals are batched (up to 20 events), persisted to `localStorage` so they survive reloads, and flushed on an interval, on `visibilitychange` / `pagehide`, or when the network returns online.
+- **Client Config**: `SignalsConfig` on the provider: `enabled`, `autoPageViews`, `autoCaptureErrors`, `autoWebVitals`, `autoNetworkEvents`, `respectDnt`, `persistQueue`, `flushInterval`, `maxBatchSize`.
+
+## Forbidden Practices
+
+- **Manual refetch loops**: These cause unnecessary server load and UI flickering; use live subscriptions instead.
+- **Client-side only auth**: Never rely on frontend permission checks; always validate authorization on the backend.
+- **Skipping generation**: Failing to run `forge generate` after backend changes will lead to runtime type mismatches.

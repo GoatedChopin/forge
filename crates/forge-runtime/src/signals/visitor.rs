@@ -7,7 +7,7 @@
 //! GDPR-safe: one-way hash, not reversible, not linkable across days.
 
 use sha2::{Digest, Sha256};
-use std::sync::Mutex;
+use std::sync::RwLock;
 
 /// Cached daily salt to avoid recomputing on every request.
 struct DailySalt {
@@ -15,7 +15,10 @@ struct DailySalt {
     salt: String,
 }
 
-static CACHED_SALT: Mutex<Option<DailySalt>> = Mutex::new(None);
+/// RwLock (not Mutex) so concurrent readers don't contend on the hot path.
+/// Poisoned locks are recovered via `.unwrap_or_else(|e| e.into_inner())`
+/// so a panic in one handler doesn't take down visitor-id generation.
+static CACHED_SALT: RwLock<Option<DailySalt>> = RwLock::new(None);
 
 /// Generate a visitor ID from client IP and User-Agent.
 ///
@@ -46,24 +49,35 @@ pub fn generate_visitor_id(
 }
 
 /// Get or compute the daily salt from the server secret + current date.
+///
+/// Fast path: read lock, clone cached salt. Slow path: upgrade to write lock,
+/// recompute, store. Poisoned locks are recovered so visitor-ID generation
+/// survives a panic in any handler holding the lock.
 fn get_daily_salt(server_secret: &str) -> String {
     let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
 
-    if let Ok(guard) = CACHED_SALT.lock()
-        && let Some(cached) = guard.as_ref()
-        && cached.date == today
     {
-        return cached.salt.clone();
+        let guard = CACHED_SALT.read().unwrap_or_else(|e| e.into_inner());
+        if let Some(cached) = guard.as_ref()
+            && cached.date == today
+        {
+            return cached.salt.clone();
+        }
     }
 
     let salt = compute_salt(server_secret, &today);
 
-    if let Ok(mut guard) = CACHED_SALT.lock() {
-        *guard = Some(DailySalt {
-            date: today,
-            salt: salt.clone(),
-        });
+    let mut guard = CACHED_SALT.write().unwrap_or_else(|e| e.into_inner());
+    // Another thread may have populated it between our read and write.
+    if let Some(cached) = guard.as_ref()
+        && cached.date == today
+    {
+        return cached.salt.clone();
     }
+    *guard = Some(DailySalt {
+        date: today,
+        salt: salt.clone(),
+    });
 
     salt
 }

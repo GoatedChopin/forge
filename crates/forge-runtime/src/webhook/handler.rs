@@ -243,12 +243,21 @@ pub async fn webhook_handler(
     }
 
     // Execute handler with timeout
+    let exec_start = std::time::Instant::now();
     let result = tokio::time::timeout(info.timeout, (entry.handler)(&ctx, payload)).await;
+    let exec_duration_ms = exec_start.elapsed().as_millis().min(i32::MAX as u128) as i32;
 
     match result {
         Ok(Ok(webhook_result)) => {
             let status =
                 StatusCode::from_u16(webhook_result.status_code()).unwrap_or(StatusCode::OK);
+            crate::signals::emit_server_execution(
+                info.name,
+                "webhook",
+                exec_duration_ms,
+                status.is_success(),
+                None,
+            );
             (status, Json(webhook_result.body()))
         }
         Ok(Err(e)) => {
@@ -262,7 +271,15 @@ pub async fn webhook_handler(
                     "Failed to release idempotency key after handler error"
                 );
             }
+            let err_str = e.to_string();
             error!(webhook = info.name, error = %e, "Webhook handler error");
+            crate::signals::emit_server_execution(
+                info.name,
+                "webhook",
+                exec_duration_ms,
+                false,
+                Some(err_str),
+            );
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "Internal server error", "request_id": request_id})),
@@ -283,6 +300,13 @@ pub async fn webhook_handler(
                 webhook = info.name,
                 timeout = ?info.timeout,
                 "Webhook handler timed out"
+            );
+            crate::signals::emit_server_execution(
+                info.name,
+                "webhook",
+                exec_duration_ms,
+                false,
+                Some(format!("Webhook timed out after {:?}", info.timeout)),
             );
             (
                 StatusCode::GATEWAY_TIMEOUT,

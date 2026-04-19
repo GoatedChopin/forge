@@ -5,6 +5,11 @@
 //! - POST /signal/view   -- page views
 //! - POST /signal/user   -- identify (link session to user)
 //! - POST /signal/report -- diagnostic error reports
+//! - POST /signal/vital  -- Web Vitals / performance metrics
+//!
+//! Every endpoint except `/signal/report` short-circuits when the request
+//! carries `DNT: 1` or `Sec-GPC: 1`. Error reports still land so production
+//! crashes from opted-out browsers remain visible.
 
 use std::sync::Arc;
 
@@ -15,7 +20,7 @@ use axum::response::IntoResponse;
 use forge_core::AuthContext;
 use forge_core::signals::{
     DiagnosticReport, IdentifyPayload, PageViewPayload, SignalEvent, SignalEventBatch,
-    SignalEventType, SignalResponse, UtmParams,
+    SignalEventType, SignalResponse, UtmParams, WebVitalBatch,
 };
 use serde_json::Value;
 use sqlx::PgPool;
@@ -30,6 +35,18 @@ use super::visitor;
 
 /// Maximum events per batch request.
 const MAX_BATCH_SIZE: usize = 50;
+
+/// Check the client's Do-Not-Track header. We honor DNT: 1 by short-circuiting
+/// signal ingestion — the browser has explicitly opted out of tracking.
+/// Sec-GPC (Global Privacy Control) is also respected.
+fn dnt_opted_out(headers: &HeaderMap) -> bool {
+    let dnt = extract_header(headers, "dnt");
+    if dnt.as_deref() == Some("1") {
+        return true;
+    }
+    let gpc = extract_header(headers, "sec-gpc");
+    gpc.as_deref() == Some("1")
+}
 
 /// Shared state for signal endpoints.
 #[derive(Clone)]
@@ -48,6 +65,12 @@ pub async fn event_handler(
     headers: HeaderMap,
     Json(batch): Json<SignalEventBatch>,
 ) -> impl IntoResponse {
+    if dnt_opted_out(&headers) {
+        return Json(SignalResponse {
+            ok: true,
+            session_id: None,
+        });
+    }
     if batch.events.len() > MAX_BATCH_SIZE {
         return Json(SignalResponse {
             ok: false,
@@ -122,6 +145,12 @@ pub async fn view_handler(
     headers: HeaderMap,
     Json(payload): Json<PageViewPayload>,
 ) -> impl IntoResponse {
+    if dnt_opted_out(&headers) {
+        return Json(SignalResponse {
+            ok: true,
+            session_id: None,
+        });
+    }
     let ctx = extract_request_ctx(&headers, &auth, &state.server_secret, state.anonymize_ip);
     let session_id_header = extract_header(&headers, "x-session-id");
     let session_id = resolve_session_id(session_id_header.as_deref());
@@ -201,6 +230,12 @@ pub async fn user_handler(
     headers: HeaderMap,
     Json(payload): Json<IdentifyPayload>,
 ) -> impl IntoResponse {
+    if dnt_opted_out(&headers) {
+        return Json(SignalResponse {
+            ok: true,
+            session_id: None,
+        });
+    }
     let user_id = Uuid::parse_str(&payload.user_id).ok().or_else(|| {
         warn!(raw_id = %payload.user_id, "identify called with non-UUID user_id, ignoring");
         None
@@ -270,6 +305,11 @@ pub async fn user_handler(
 }
 
 /// POST /signal/report -- diagnostic error reports.
+///
+/// Error reports are never dropped on DNT: users explicitly opted out of
+/// *tracking*, not of crash reporting. Without this exception, production
+/// crashes from DNT-enabled browsers would be invisible. Reports carry no
+/// persistent identifier by default.
 pub async fn report_handler(
     State(state): State<Arc<SignalsState>>,
     auth: Option<axum::Extension<AuthContext>>,
@@ -334,6 +374,112 @@ pub async fn report_handler(
             utm: None,
             is_bot: ctx.is_bot,
             timestamp: chrono::Utc::now(),
+        };
+        state.collector.try_send(signal);
+    }
+
+    Json(SignalResponse {
+        ok: true,
+        session_id,
+    })
+}
+
+/// POST /signal/vital -- Web Vitals + browser performance metrics.
+///
+/// Accepts a batch of named measurements (lcp, cls, inp, fcp, ttfb,
+/// navigation, long_task, resource, etc.). Each is stored as a `web_vital`
+/// event so dashboards can slice by metric name and aggregate p75/p95.
+pub async fn vital_handler(
+    State(state): State<Arc<SignalsState>>,
+    auth: Option<axum::Extension<AuthContext>>,
+    headers: HeaderMap,
+    Json(batch): Json<WebVitalBatch>,
+) -> impl IntoResponse {
+    if dnt_opted_out(&headers) {
+        return Json(SignalResponse {
+            ok: true,
+            session_id: None,
+        });
+    }
+    if batch.vitals.len() > MAX_BATCH_SIZE {
+        return Json(SignalResponse {
+            ok: false,
+            session_id: None,
+        });
+    }
+
+    let ctx = extract_request_ctx(&headers, &auth, &state.server_secret, state.anonymize_ip);
+    let session_id =
+        resolve_session_id(batch.context.as_ref().and_then(|c| c.session_id.as_deref()));
+    let page_url = batch.context.as_ref().and_then(|c| c.page_url.clone());
+
+    let session_id = session::upsert_session(
+        &state.pool,
+        session_id,
+        &ctx.visitor_id,
+        ctx.user_id,
+        ctx.tenant_id,
+        page_url.as_deref(),
+        batch.context.as_ref().and_then(|c| c.referrer.as_deref()),
+        ctx.user_agent.as_deref(),
+        ctx.client_ip.as_deref(),
+        ctx.is_bot,
+        "web_vital",
+        ctx.device_type.as_deref(),
+        ctx.browser.as_deref(),
+        ctx.os.as_deref(),
+    )
+    .await;
+
+    for vital in batch.vitals {
+        // Duration for timing vitals is encoded into duration_ms; for unitless
+        // metrics like CLS we keep the raw value in properties.
+        let duration_ms =
+            if vital.value.is_finite() && vital.value >= 0.0 && vital.value <= i32::MAX as f64 {
+                Some(vital.value.round() as i32)
+            } else {
+                None
+            };
+        let mut props = serde_json::Map::new();
+        props.insert(
+            "value".to_string(),
+            serde_json::Number::from_f64(vital.value)
+                .map(serde_json::Value::Number)
+                .unwrap_or(serde_json::Value::Null),
+        );
+        if let Some(r) = vital.rating.clone() {
+            props.insert("rating".to_string(), serde_json::Value::String(r));
+        }
+        if !vital.attribution.is_null() {
+            props.insert("attribution".to_string(), vital.attribution);
+        }
+
+        let signal = SignalEvent {
+            event_type: SignalEventType::WebVital,
+            event_name: Some(vital.name),
+            correlation_id: vital.correlation_id,
+            session_id,
+            visitor_id: Some(ctx.visitor_id.clone()),
+            user_id: ctx.user_id,
+            tenant_id: ctx.tenant_id,
+            properties: serde_json::Value::Object(props),
+            page_url: vital.page_url.or_else(|| page_url.clone()),
+            referrer: None,
+            function_name: None,
+            function_kind: None,
+            duration_ms,
+            status: vital.rating,
+            error_message: None,
+            error_stack: None,
+            error_context: None,
+            client_ip: ctx.client_ip.clone(),
+            user_agent: ctx.user_agent.clone(),
+            device_type: ctx.device_type.clone(),
+            browser: ctx.browser.clone(),
+            os: ctx.os.clone(),
+            utm: None,
+            is_bot: ctx.is_bot,
+            timestamp: vital.timestamp.unwrap_or_else(chrono::Utc::now),
         };
         state.collector.try_send(signal);
     }

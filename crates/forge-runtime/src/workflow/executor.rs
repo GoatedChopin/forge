@@ -139,7 +139,9 @@ impl WorkflowExecutor {
 
         // Execute workflow with timeout
         let handler = entry.handler.clone();
+        let exec_start = std::time::Instant::now();
         let result = tokio::time::timeout(entry.info.timeout, handler(&ctx, input)).await;
+        let exec_duration_ms = exec_start.elapsed().as_millis().min(i32::MAX as u128) as i32;
 
         // Capture compensation state after execution
         let compensation_state = CompensationState {
@@ -156,6 +158,13 @@ impl WorkflowExecutor {
                 // Mark as completed, clean up compensation state
                 self.complete_workflow(run_id, output.clone()).await?;
                 self.compensation_state.write().await.remove(&run_id);
+                crate::signals::emit_server_execution(
+                    entry.info.name,
+                    "workflow",
+                    exec_duration_ms,
+                    true,
+                    None,
+                );
                 Ok(WorkflowResult::Completed(output))
             }
             Ok(Err(e)) => {
@@ -168,14 +177,27 @@ impl WorkflowExecutor {
                     });
                 }
                 // Mark as failed - compensation can be triggered via cancel
-                self.fail_workflow(run_id, &e.to_string()).await?;
-                Ok(WorkflowResult::Failed {
-                    error: e.to_string(),
-                })
+                let err_str = e.to_string();
+                self.fail_workflow(run_id, &err_str).await?;
+                crate::signals::emit_server_execution(
+                    entry.info.name,
+                    "workflow",
+                    exec_duration_ms,
+                    false,
+                    Some(err_str.clone()),
+                );
+                Ok(WorkflowResult::Failed { error: err_str })
             }
             Err(_) => {
                 // Timeout
                 self.fail_workflow(run_id, "Workflow timed out").await?;
+                crate::signals::emit_server_execution(
+                    entry.info.name,
+                    "workflow",
+                    exec_duration_ms,
+                    false,
+                    Some("Workflow timed out".to_string()),
+                );
                 Ok(WorkflowResult::Failed {
                     error: "Workflow timed out".to_string(),
                 })
@@ -232,7 +254,9 @@ impl WorkflowExecutor {
 
         // Execute workflow with timeout
         let handler = entry.handler.clone();
+        let exec_start = std::time::Instant::now();
         let result = tokio::time::timeout(entry.info.timeout, handler(&ctx, input)).await;
+        let exec_duration_ms = exec_start.elapsed().as_millis().min(i32::MAX as u128) as i32;
 
         // Capture compensation state after execution
         let compensation_state = CompensationState {
@@ -249,6 +273,13 @@ impl WorkflowExecutor {
                 // Mark as completed, clean up compensation state
                 self.complete_workflow(run_id, output.clone()).await?;
                 self.compensation_state.write().await.remove(&run_id);
+                crate::signals::emit_server_execution(
+                    entry.info.name,
+                    "workflow_resume",
+                    exec_duration_ms,
+                    true,
+                    None,
+                );
                 Ok(WorkflowResult::Completed(output))
             }
             Ok(Err(e)) => {
@@ -261,14 +292,27 @@ impl WorkflowExecutor {
                     });
                 }
                 // Mark as failed - compensation can be triggered via cancel
-                self.fail_workflow(run_id, &e.to_string()).await?;
-                Ok(WorkflowResult::Failed {
-                    error: e.to_string(),
-                })
+                let err_str = e.to_string();
+                self.fail_workflow(run_id, &err_str).await?;
+                crate::signals::emit_server_execution(
+                    entry.info.name,
+                    "workflow_resume",
+                    exec_duration_ms,
+                    false,
+                    Some(err_str.clone()),
+                );
+                Ok(WorkflowResult::Failed { error: err_str })
             }
             Err(_) => {
                 // Timeout
                 self.fail_workflow(run_id, "Workflow timed out").await?;
+                crate::signals::emit_server_execution(
+                    entry.info.name,
+                    "workflow_resume",
+                    exec_duration_ms,
+                    false,
+                    Some("Workflow timed out".to_string()),
+                );
                 Ok(WorkflowResult::Failed {
                     error: "Workflow timed out".to_string(),
                 })

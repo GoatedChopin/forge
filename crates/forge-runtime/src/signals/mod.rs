@@ -7,6 +7,7 @@
 pub mod bot;
 pub mod collector;
 pub mod device;
+pub mod emit;
 pub mod endpoints;
 pub mod partition;
 pub mod session;
@@ -14,6 +15,9 @@ pub mod views;
 pub mod visitor;
 
 pub use collector::SignalsCollector;
+pub use emit::{
+    emit_diagnostic, emit_raw, emit_server_execution, emit_web_vital, install as install_global,
+};
 
 #[cfg(all(test, feature = "testcontainers"))]
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]

@@ -26,6 +26,10 @@ pub enum SignalEventType {
     Error,
     /// Diagnostic breadcrumb for error reproduction.
     Breadcrumb,
+    /// Web Vitals performance metric (LCP, CLS, INP, FCP, TTFB, etc.).
+    WebVital,
+    /// Background execution (job, cron, workflow step, webhook, daemon tick).
+    ServerExecution,
 }
 
 impl std::fmt::Display for SignalEventType {
@@ -39,6 +43,8 @@ impl std::fmt::Display for SignalEventType {
             Self::SessionEnd => write!(f, "session_end"),
             Self::Error => write!(f, "error"),
             Self::Breadcrumb => write!(f, "breadcrumb"),
+            Self::WebVital => write!(f, "web_vital"),
+            Self::ServerExecution => write!(f, "server_execution"),
         }
     }
 }
@@ -89,6 +95,86 @@ pub struct SignalEvent {
 }
 
 impl SignalEvent {
+    /// Create a server-initiated execution event (job, cron, workflow step,
+    /// webhook, daemon tick). These runs have no client_ip/user_agent/visitor,
+    /// only a function kind + name + outcome.
+    pub fn server_execution(
+        name: &str,
+        kind: &str,
+        duration_ms: i32,
+        success: bool,
+        error_message: Option<String>,
+    ) -> Self {
+        let n = name.to_string();
+        Self {
+            event_type: SignalEventType::ServerExecution,
+            event_name: Some(n.clone()),
+            correlation_id: None,
+            session_id: None,
+            visitor_id: None,
+            user_id: None,
+            tenant_id: None,
+            properties: serde_json::Value::Object(serde_json::Map::new()),
+            page_url: None,
+            referrer: None,
+            function_name: Some(n),
+            function_kind: Some(kind.to_string()),
+            duration_ms: Some(duration_ms),
+            status: Some(if success { "success" } else { "error" }.to_string()),
+            error_message,
+            error_stack: None,
+            error_context: None,
+            client_ip: None,
+            user_agent: None,
+            device_type: None,
+            browser: None,
+            os: None,
+            utm: None,
+            is_bot: false,
+            timestamp: chrono::Utc::now(),
+        }
+    }
+
+    /// Create a diagnostic/audit event (auth failure, rate limit hit, etc.)
+    /// with context from the request.
+    pub fn diagnostic(
+        event_name: &str,
+        properties: serde_json::Value,
+        client_ip: Option<String>,
+        user_agent: Option<String>,
+        visitor_id: Option<String>,
+        user_id: Option<Uuid>,
+        is_bot: bool,
+    ) -> Self {
+        Self {
+            event_type: SignalEventType::Track,
+            event_name: Some(event_name.to_string()),
+            correlation_id: None,
+            session_id: None,
+            visitor_id,
+            user_id,
+            tenant_id: None,
+            properties,
+            page_url: None,
+            referrer: None,
+            function_name: None,
+            function_kind: None,
+            duration_ms: None,
+            status: None,
+            error_message: None,
+            error_stack: None,
+            error_context: None,
+            client_ip,
+            user_agent,
+            device_type: None,
+            browser: None,
+            os: None,
+            utm: None,
+            is_bot,
+            timestamp: chrono::Utc::now(),
+        }
+    }
+
     /// Create an RPC call event from function execution metadata.
     #[allow(clippy::too_many_arguments)]
     pub fn rpc_call(
@@ -218,6 +304,35 @@ pub struct ClientContext {
     pub session_id: Option<String>,
 }
 
+/// Batch of Web Vitals / navigation metrics from a client tracker.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebVitalBatch {
+    pub vitals: Vec<WebVitalEntry>,
+    pub context: Option<ClientContext>,
+}
+
+/// A single Web Vitals sample (LCP, CLS, INP, FCP, TTFB, navigation, etc.).
+///
+/// `name` is the metric name (e.g. "lcp", "cls", "inp", "fcp", "ttfb",
+/// "navigation", "long_task"). `value` is the numeric measurement (ms for
+/// timings, unitless for CLS, etc.). Optional fields carry diagnostic
+/// detail (rating, navigation type, attribution).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebVitalEntry {
+    pub name: String,
+    pub value: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rating: Option<String>,
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub attribution: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<chrono::DateTime<chrono::Utc>>,
+}
+
 /// Response from signal ingestion endpoints.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignalResponse {
@@ -241,6 +356,11 @@ mod tests {
         assert_eq!(SignalEventType::SessionEnd.to_string(), "session_end");
         assert_eq!(SignalEventType::Error.to_string(), "error");
         assert_eq!(SignalEventType::Breadcrumb.to_string(), "breadcrumb");
+        assert_eq!(SignalEventType::WebVital.to_string(), "web_vital");
+        assert_eq!(
+            SignalEventType::ServerExecution.to_string(),
+            "server_execution"
+        );
     }
 
     #[tokio::test]
@@ -254,6 +374,8 @@ mod tests {
             SignalEventType::SessionEnd,
             SignalEventType::Error,
             SignalEventType::Breadcrumb,
+            SignalEventType::WebVital,
+            SignalEventType::ServerExecution,
         ];
 
         for variant in variants {

@@ -115,6 +115,23 @@ impl RateLimiter {
     ) -> Result<RateLimitResult> {
         let result = self.check(bucket_key, config).await?;
         if !result.allowed {
+            crate::signals::emit_diagnostic(
+                "rate_limit.exceeded",
+                serde_json::json!({
+                    "bucket": bucket_key,
+                    "limit": config.requests,
+                    "remaining": result.remaining,
+                    "retry_after_ms": result
+                        .retry_after
+                        .unwrap_or(Duration::from_secs(1))
+                        .as_millis() as u64,
+                }),
+                None,
+                None,
+                None,
+                None,
+                false,
+            );
             return Err(ForgeError::RateLimitExceeded {
                 retry_after: result.retry_after.unwrap_or(Duration::from_secs(1)),
                 limit: config.requests,

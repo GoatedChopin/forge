@@ -187,7 +187,12 @@ impl GatewayServer {
 
     /// Set the signals collector for auto-capturing RPC events and
     /// registering client signal ingestion endpoints.
+    ///
+    /// Also installs the collector into the process-wide emit module so
+    /// background executions (jobs, crons, workflows, daemons, webhooks,
+    /// auth failures) can emit signals without threading through plumbing.
     pub fn with_signals_collector(mut self, collector: crate::signals::SignalsCollector) -> Self {
+        crate::signals::install_global(Some(collector.clone()));
         self.signals_collector = Some(collector);
         self
     }
@@ -439,6 +444,10 @@ impl GatewayServer {
                 .route(
                     "/signal/report",
                     post(crate::signals::endpoints::report_handler),
+                )
+                .route(
+                    "/signal/vital",
+                    post(crate::signals::endpoints::vital_handler),
                 )
                 .with_state(signals_state);
         }

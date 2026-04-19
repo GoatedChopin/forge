@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use forge_core::signals::SignalEvent;
 use sqlx::PgPool;
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc, oneshot};
 use tracing::{debug, error, warn};
 
 /// Channel capacity before events start getting dropped.
@@ -18,27 +18,67 @@ const CHANNEL_CAPACITY: usize = 10_000;
 /// Buffered signal event collector.
 ///
 /// Clone-friendly (shares the mpsc sender). Send events from any async
-/// context via [`try_send`] which never blocks the caller.
+/// context via [`SignalsCollector::try_send`] which never blocks the caller.
+///
+/// Call [`SignalsCollector::shutdown`] on graceful exit to flush any buffered
+/// events before the process terminates.
 #[derive(Clone)]
 pub struct SignalsCollector {
     tx: mpsc::Sender<SignalEvent>,
+    shutdown_tx: Arc<Mutex<Option<oneshot::Sender<oneshot::Sender<()>>>>>,
 }
 
 impl SignalsCollector {
     /// Create a new collector and spawn the background flush task.
     ///
-    /// Returns the collector handle. The flush task runs until the last
-    /// sender is dropped (i.e., all collector clones are gone).
+    /// Returns the collector handle. The flush task runs until [`shutdown`] is
+    /// called or all senders are dropped.
     pub fn spawn(pool: Arc<PgPool>, batch_size: usize, flush_interval: Duration) -> Self {
         let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
-        tokio::spawn(flush_loop(rx, pool, batch_size, flush_interval));
-        Self { tx }
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        tokio::spawn(flush_loop(
+            rx,
+            pool,
+            batch_size,
+            flush_interval,
+            shutdown_rx,
+        ));
+        Self {
+            tx,
+            shutdown_tx: Arc::new(Mutex::new(Some(shutdown_tx))),
+        }
     }
 
     /// Send an event without blocking. Drops the event if the channel is full.
     pub fn try_send(&self, event: SignalEvent) {
-        if let Err(mpsc::error::TrySendError::Full(_)) = self.tx.try_send(event) {
-            warn!("signals collector channel full, dropping event");
+        match self.tx.try_send(event) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                warn!("signals collector channel full, dropping event");
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                debug!("signals collector closed, dropping event");
+            }
+        }
+    }
+
+    /// Flush buffered events and wait for the background task to drain.
+    ///
+    /// Safe to call multiple times (subsequent calls are no-ops). Times out
+    /// after 5 seconds if the flush task doesn't respond, to avoid blocking
+    /// shutdown indefinitely.
+    pub async fn shutdown(&self) {
+        let Some(shutdown_tx) = self.shutdown_tx.lock().await.take() else {
+            return;
+        };
+        let (ack_tx, ack_rx) = oneshot::channel();
+        if shutdown_tx.send(ack_tx).is_err() {
+            return;
+        }
+        match tokio::time::timeout(Duration::from_secs(5), ack_rx).await {
+            Ok(Ok(())) => debug!("signals collector flushed on shutdown"),
+            Ok(Err(_)) => debug!("signals collector shutdown channel closed"),
+            Err(_) => warn!("signals collector shutdown timed out after 5s"),
         }
     }
 }
@@ -49,6 +89,7 @@ async fn flush_loop(
     pool: Arc<PgPool>,
     batch_size: usize,
     flush_interval: Duration,
+    mut shutdown_rx: oneshot::Receiver<oneshot::Sender<()>>,
 ) {
     let mut buffer: Vec<SignalEvent> = Vec::with_capacity(batch_size);
     let mut interval = tokio::time::interval(flush_interval);
@@ -56,6 +97,21 @@ async fn flush_loop(
 
     loop {
         tokio::select! {
+            biased;
+            ack = &mut shutdown_rx => {
+                // Drain anything still in the channel, flush, then ack
+                while let Ok(event) = rx.try_recv() {
+                    buffer.push(event);
+                }
+                if !buffer.is_empty() {
+                    flush_batch(&pool, &mut buffer).await;
+                }
+                debug!("signals collector shutting down (graceful)");
+                if let Ok(tx) = ack {
+                    let _ = tx.send(());
+                }
+                return;
+            }
             event = rx.recv() => {
                 match event {
                     Some(e) => {
@@ -65,11 +121,11 @@ async fn flush_loop(
                         }
                     }
                     None => {
-                        // Channel closed, flush remaining and exit
+                        // All senders dropped, flush remaining and exit
                         if !buffer.is_empty() {
                             flush_batch(&pool, &mut buffer).await;
                         }
-                        debug!("signals collector shutting down");
+                        debug!("signals collector shutting down (senders dropped)");
                         return;
                     }
                 }
