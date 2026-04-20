@@ -5,84 +5,76 @@ description: "Forge-focused engineering workflow for Rust applications with gene
 
 # Forge Idiomatic Engineer
 
-## Forge Framework Overview
+Full-stack Rust framework. Single binary, PostgreSQL-backed. Axum + Tokio + SQLx. Macros generate runtime wiring and frontend bindings; each handler must be registered in `src/main.rs` (macros alone do not wire it in).
 
-Forge is a full-stack Rust framework designed to run as a single binary backed by a PostgreSQL database. A single application binary handles the API, background jobs, cron tasks, and durable workflows. The framework is heavily macro-driven; you annotate Rust functions with specific macros to generate runtime wiring, frontend bindings, and type-safe clients.
+## Handler Types
 
-### Core Abstractions
-
-Forge uses specialized macros to define different types of application logic. Each handler must be registered in `src/main.rs` to be reachable at runtime.
-
-| Concept | Purpose | Macro | Registration Method |
+| Concept | Macro | Struct suffix | Registration |
 |---|---|---|---|
-| Query | Read-only data operations | `#[forge::query]` | `.register_query::<FnNameQuery>()` |
-| Mutation | Data modification operations | `#[forge::mutation]` | `.register_mutation::<FnNameMutation>()` |
-| Job | Asynchronous background tasks | `#[forge::job]` | `.register_job::<FnNameJob>()` |
-| Cron | Scheduled recurring tasks | `#[forge::cron]` | `.register_cron::<FnNameCron>()` |
-| Workflow | Durable, multi-step processes | `#[forge::workflow]` | `.register_workflow::<FnNameWorkflow>()` |
-| Daemon | Long-running background processes | `#[forge::daemon]` | `.register_daemon::<FnNameDaemon>()` |
-| Webhook | Handling external HTTP events | `#[forge::webhook]` | `.register_webhook::<FnNameWebhook>()` |
-| MCP Tool | Tools for AI agent integration | `#[forge::mcp_tool]` | `.register_mcp_tool::<FnNameMcpTool>()` |
+| Read-only query | `#[forge::query]` | `Query` | `.register_query::<FnNameQuery>()` |
+| Data mutation | `#[forge::mutation]` | `Mutation` | `.register_mutation::<FnNameMutation>()` |
+| Background job | `#[forge::job]` | `Job` | `.register_job::<FnNameJob>()` |
+| Scheduled task | `#[forge::cron]` | `Cron` | `.register_cron::<FnNameCron>()` |
+| Durable workflow | `#[forge::workflow]` | `Workflow` | `.register_workflow::<FnNameWorkflow>()` |
+| Long-running process | `#[forge::daemon]` | `Daemon` | `.register_daemon::<FnNameDaemon>()` |
+| External HTTP event | `#[forge::webhook]` | `Webhook` | `.register_webhook::<FnNameWebhook>()` |
+| AI agent tool | `#[forge::mcp_tool]` | `McpTool` | `.register_mcp_tool::<FnNameMcpTool>()` |
 
-### Fundamental Rules
-- **Naming Conventions**: Use `PascalCase` for the function name and append the appropriate type suffix (e.g., `GetUserQuery`).
-- **Handler Visibility**: Define handlers as `pub async fn`. Forge generates corresponding structs in the `functions::StructName` namespace.
-- **Avoid Redundant Suffixes**: Do not include the type in the function name (e.g., use `heartbeat`, not `heartbeat_daemon`), as the macro automatically appends the correct suffix.
-- **Explicit Registration**: You must register all handlers in `src/main.rs`. Macros alone define the interface but do not wire them into the application.
+Or use `.auto_register()` to pick up all handlers via `inventory`.
 
-## Development Workflow
+### Naming Rules
+- `pub async fn` handlers only — private functions fail codegen.
+- `snake_case` fn names → macro generates `PascalCase` + type suffix. Do **not** include the type in the fn name (`heartbeat`, not `heartbeat_daemon`, or you get `HeartbeatDaemonDaemon`).
+- `#[forge::model]` must be the **first** attribute on a struct.
 
-### 1. Research and Orientation
-Begin by reading `references/pitfalls.md` and `references/resilience.md` to understand common failure modes and architectural requirements. Examine `forge.toml` and `Cargo.toml` to understand the project configuration, and check `src/main.rs` to see existing registered handlers. Identify the frontend framework by checking for `frontend/package.json` (SvelteKit) or `frontend/Cargo.toml` (Dioxus).
+## Workflow
 
-### 2. Architectural Decisions
-- **Authentication**: Select an authentication pattern (Social OAuth, Password + HS256, or RS256) from `references/patterns.md` before implementation to avoid costly refactors.
-- **Database Schema**: Use the `user_identities` table for social logins to support multiple providers per user.
-- **Environment Access**: Use `ctx.env_require()` or `ctx.env_or()` instead of `std::env::var()`. See [API Reference](./references/api.md#environment-variables).
-- **HTTP Clients**: Use `ctx.http()` for outbound requests. See [API Reference](./references/api.md#http-client).
-- **SQL Safety**: Always use `sqlx::query!()` bang-macros. See [Pitfalls](./references/pitfalls.md#4-database--transactions).
-- **Job Dispatch**: Always call `dispatch_job()` within a `transactional` mutation. See [Patterns](./references/patterns.md#background-job-implementation).
-- **Code Organization**: Extract shared logic into utility modules immediately to prevent duplication and maintenance debt.
+1. **Orient**: Read `references/pitfalls.md` and `references/resilience.md`. Check `forge.toml`, `Cargo.toml`, `src/main.rs`. Detect frontend via `frontend/package.json` (Svelte) or `frontend/Cargo.toml` (Dioxus).
+2. **Backend first**: Write the handler + a failure-path unit test before touching the frontend.
+3. **`forge generate`** after every backend change. Never edit generated files.
+4. **`forge check`** after every change — formatting, clippy, sqlx cache, schema, system-table rule, bindings. Fix failures immediately.
+5. **`forge test`** for Playwright E2E on UI changes.
+6. **Blockers**: stop and report occupied ports, unreachable DBs, or missing tools. Never force-kill or apply unofficial workarounds.
 
-### 3. Implementation and Verification
-1. **Backend First**: Define the backend contract and add unit tests before touching the frontend.
-2. **Generate Bindings**: **MANDATE:** Run `forge generate` after every backend change. Never edit generated files. See [Pitfalls](./references/pitfalls.md#1-generated-code).
-3. **Continuous Validation**: Run `forge check` after every backend change to validate formatting, Clippy lints, and SQLx metadata. Fix failures immediately to prevent error accumulation.
-4. **Testing**: Use `forge test` to run Playwright E2E tests for any UI changes.
-
-### 4. Handling Blockers
-If you encounter occupied ports, unreachable databases, or missing system tools, stop and report the issue. Do not attempt to force-kill processes or implement unofficial workarounds that might destabilize the environment.
+### Architectural Defaults (choose upfront)
+- **Auth**: Social OAuth, password + HS256, or RS256 — pick before coding (see `patterns.md`). Social logins must link via the `user_identities` table.
+- **Env**: `ctx.env_require()` / `ctx.env_or()`, never `std::env::var()`.
+- **HTTP**: `ctx.http()` for RPC, `ctx.raw_http()` when you need `bytes_stream()` or custom redirect policy.
+- **SQL**: `sqlx::query!()` / `query_as!()` bang-macros only. Run `forge migrate prepare` after schema changes.
+- **Jobs/workflows**: dispatch only inside `#[forge::mutation(transactional)]`.
+- **Shared logic**: extract to `src/utils/` the moment two handlers need it.
 
 ## Reference Selection Guide
 
-| Task | Required Reference |
+| Task | Reference |
 |---|---|
-| New feature or handler implementation | `references/resilience.md` (MANDATORY) |
-| Macros, context, errors, and configuration | `references/api.md` |
-| Jobs, workflows, auth, testing, and deployment | `references/patterns.md` |
-| General frontend principles | `references/frontend.md` |
-| SvelteKit specific development | `references/frontend/svelte.md` |
-| Dioxus specific development | `references/frontend/dioxus.md` |
-| Writing and running tests | `references/testing.md` |
+| Any new handler (mandatory read) | `references/resilience.md` |
+| Macros, context, errors, configuration, CLI | `references/api.md` |
+| Backend patterns: jobs, workflows, auth, webhooks | `references/patterns.md` |
+| Copy-paste recipes (user fetch, plan gating, email, S3, payments, AI) | `references/recipes.md` |
+| Frontend principles (reactivity, subscriptions, errors, uploads) | `references/frontend.md` |
+| SvelteKit specifics (runes, stores, auth helper) | `references/frontend/svelte.md` |
+| Dioxus specifics (hooks, signals, auth keying) | `references/frontend/dioxus.md` |
+| Writing tests (backend builders + Playwright scenarios) | `references/testing.md` |
 | Debugging build or runtime errors | `references/pitfalls.md` |
 
-## Key Engineering Principles
+## Engineering Principles
 
-- **Design for Failure**: Assume that authentication will drop, entities will be deleted by other users, and networks will fail. See [Resilience Patterns](./references/resilience.md).
-- **Compile-time Integrity**: Use `sqlx::query!()` for all database interactions. Run `forge migrate prepare` after any schema change to update the offline SQL cache.
-- **Zero Dead Code**: Delete unused functions, structs, and imports immediately. If you replace a pattern, remove the old implementation entirely.
-- **Surgical Changes**: Focus on thin vertical slices. Implement the smallest possible functional change to keep PRs reviewable and reduce regression risk.
-- **Boundary Validation**: Validate all inputs at the handler entry point. Use `ForgeError` to return structured errors instead of panicking. Never use `unwrap()` or `expect()`.
-- **User Scoping**: Always filter private queries by `user_id` or `owner_id`. Use `ctx.user_id()` to retrieve the current principal. The framework rejects unscoped queries unless the `#[query(unscoped)]` attribute is explicitly applied.
-- **Transactional Jobs**: Only call `dispatch_job` or `start_workflow` inside mutations marked as `transactional`. See [Patterns](./references/patterns.md#background-job-implementation).
-- **Schema Migrations**: Use `-- @up` and `-- @down` markers in migration files. Enable reactivity for specific tables using `SELECT forge_enable_reactivity('table_name')`.
-- **Handle "Not Found"**: **MANDATE:** Use `fetch_optional` followed by `ok_or_else(|| ForgeError::NotFound(...))`. See [Resilience Patterns](./references/resilience.md#2-database-and-data-integrity).
+- **Design for failure**: auth drops, entities vanish, networks fail. See `resilience.md`.
+- **Zero dead code**: delete unused code and replaced patterns entirely. Workspace lints deny `dead_code`, `unwrap_used`, `panic`, `indexing_slicing`, `unsafe_code`.
+- **Surgical diffs**: thin vertical slice per PR.
+- **Boundary validation**: validate at handler entry, return `ForgeError` variants (never `unwrap`/`expect`/`panic!`).
+- **Scope enforcement**: private queries must filter by `user_id` / `owner_id`. `ctx.user_id()` for the principal. Opt out with `#[query(unscoped)]` only for shared/admin data.
+- **Transactional dispatch**: `dispatch_job` and `start_workflow` belong inside `#[mutation(transactional)]`. The macro errors at compile time otherwise.
+- **System tables are off-limits**: never `INSERT/UPDATE/DELETE` on `forge_*` tables. Use `dispatch_job`, `start_workflow`, `record_signal`. `forge check` flags raw writes.
+- **Migrations**: `-- @up` / `-- @down` markers. Enable reactivity with `SELECT forge_enable_reactivity('table_name');`. No `IF NOT EXISTS`.
+- **Not-found handling**: `fetch_optional().await?.ok_or_else(|| ForgeError::NotFound(format!(...)))`.
 
 ## Output Contract
 
-When completing a task, provide the following:
-- **Implementation Summary**: List of changes, failure modes handled, and tests added (including failure paths).
-- **Verification Results**: Commands executed, any blockers encountered, and the final `forge check` result.
-- **Review Findings**: Architectural observations, potential resilience gaps, and a summary of assumptions made.
+On completion, report:
+- **Changes**: files touched, failure modes handled, tests added (include failure paths).
+- **Verification**: commands run, blockers, final `forge check` result.
+- **Review**: resilience gaps, assumptions.
 
-Verify all implementations against `references/resilience.md` before completion. Every handler must account for revoked auth, deleted entities, concurrent modifications, and network interruptions.
+Every handler must survive revoked auth, deleted entities, concurrent modification, and network drops.

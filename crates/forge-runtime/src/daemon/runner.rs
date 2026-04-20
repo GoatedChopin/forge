@@ -404,15 +404,31 @@ async fn run_daemon_loop(
                     if let Err(e) = update_daemon_status(&pool, &name, DaemonStatus::Stopped).await {
                         tracing::debug!(daemon = %name, error = %e, "Status update failed");
                     }
+                    crate::signals::emit_server_execution(&name, "daemon", 0, true, None);
                     break;
                 }
                 Ok(Err(e)) => {
-                    let recorded = record_daemon_error(&pool, &name, &e.to_string()).await.is_ok();
+                    let err_str = e.to_string();
+                    let recorded = record_daemon_error(&pool, &name, &err_str).await.is_ok();
                     tracing::error!(error = %e, recorded, "Daemon failed");
+                    crate::signals::emit_server_execution(
+                        &name,
+                        "daemon",
+                        0,
+                        false,
+                        Some(err_str),
+                    );
                 }
                 Err(_) => {
                     let recorded = record_daemon_error(&pool, &name, "Daemon panicked").await.is_ok();
                     tracing::error!(recorded, "Daemon panicked");
+                    crate::signals::emit_server_execution(
+                        &name,
+                        "daemon",
+                        0,
+                        false,
+                        Some("Daemon panicked".to_string()),
+                    );
                 }
             }
 

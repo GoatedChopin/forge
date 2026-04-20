@@ -533,8 +533,9 @@ CREATE TABLE IF NOT EXISTS forge_signals_events (
     utm_term        VARCHAR(255),
     utm_content     VARCHAR(255),
 
-    -- Geo (ISO 3166-1 alpha-2, derived from IP)
+    -- Geo (derived from IP)
     country         VARCHAR(8),
+    city            VARCHAR(128),
 
     -- Classification
     is_bot          BOOLEAN NOT NULL DEFAULT FALSE,
@@ -637,6 +638,7 @@ CREATE TABLE IF NOT EXISTS forge_signals_sessions (
 
     -- Geo
     country             VARCHAR(8),
+    city                VARCHAR(128),
 
     -- Classification
     is_bot              BOOLEAN NOT NULL DEFAULT FALSE,

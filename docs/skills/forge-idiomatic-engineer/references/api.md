@@ -167,16 +167,31 @@ jwt_secret = "${JWT_SECRET}"
 url = "${DATABASE_URL}"
 max_connections = 20          # default pool size
 
+[gateway]
+max_body_size = "20mb"        # total multipart body cap (default)
+max_file_size = "10mb"        # per-file cap when mutation has no max_size (default)
+
 [worker]
 concurrency = 10              # parallel job slots per node
 
 [observability]
 # Optional. Enables OTLP trace/metric export.
-otlp_endpoint = "http://localhost:4318"
+otlp_endpoint = "${FORGE_OTEL_ENDPOINT-http://localhost:4318}"    # any ${VAR-default} interpolation works
+metrics_interval_secs = 15    # metrics export period
 
 [signals]
-enabled = true                # default; set false to disable analytics
-anonymize_ip = false
+enabled = true                # master switch; set false to disable analytics
+auto_capture = true           # auto-emit rpc_call events for RPC and server_execution events for jobs/crons/workflows/webhooks/daemons
+diagnostics = true            # accept frontend error reports at /_api/signal/report
+session_timeout_mins = 30     # inactivity window before a session closes
+retention_days = 90           # drop monthly partitions older than this
+anonymize_ip = false          # drop raw client IPs from stored events (visitor_id stays hashed)
+batch_size = 100              # events per batch INSERT
+flush_interval_ms = 5000      # max milliseconds between flushes
+excluded_functions = []       # function names to skip from auto-capture
+bot_detection = true          # tag bot traffic via UA patterns
+# GeoIP: embedded DB-IP Country Lite resolves IPs to country codes automatically (zero config)
+geoip_db_path = ""            # optional: path to MaxMind GeoLite2-City.mmdb for city-level resolution
 
 # TLS on the gateway. Off by default — use a load balancer for public TLS.
 # Enable [gateway.tls] when you need encrypted traffic between the LB and app
@@ -195,6 +210,35 @@ key_path = "${GATEWAY_TLS_KEY_PATH}"
 # Setting only one of cert_path/key_path is a validation error.
 ```
 
+### Upload Size Limits
+
+`gateway.max_body_size` caps the total HTTP body. `gateway.max_file_size` caps any single file when the target mutation does not declare its own `max_size`. When a mutation sets `max_size = "200mb"`, that value becomes both the total and per-file limit for that endpoint (explicit opt-in). Validation requires `max_file_size <= max_body_size`.
+
+### Signal Endpoints
+
+The server short-circuits `/_api/signal/view`, `/_api/signal/event`, `/_api/signal/user`, and `/_api/signal/vital` when the request carries `DNT: 1` or `Sec-GPC: 1`. Crash reports still land so production errors from DNT users don't disappear.
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/_api/signal/event` | POST | Batch custom events (max 50 per request) |
+| `/_api/signal/view` | POST | Page view with referrer and UTM params |
+| `/_api/signal/user` | POST | Identify user and store traits |
+| `/_api/signal/report` | POST | Frontend error reports with breadcrumbs |
+| `/_api/signal/vital` | POST | Web Vitals / performance metrics (max 50 per request) |
+
+### Auto-captured Event Types
+
+| `event_type` | Emitted by |
+|---|---|
+| `page_view` | Client auto-track on SPA navigation |
+| `rpc_call` | Server: every function executor invocation (query/mutation) |
+| `server_execution` | Server: job worker, cron scheduler, workflow executor, webhook handler, daemon runner |
+| `track` | Custom `track()` calls, plus server diagnostics: `auth.failed`, `rate_limit.exceeded`, `network.offline`, `network.online` |
+| `identify` | Client `identify()` call |
+| `web_vital` | Client auto-capture (LCP, CLS, INP, FCP, TTFB, navigation, long_task) + manual `vital()` |
+| `error` | Client `captureError()` + auto-capture of `window.onerror` / `unhandledrejection` |
+| `breadcrumb` | Client `breadcrumb()` call |
+
 ### Pool Routing
 
 Forge uses isolated connection pools to prevent jobs and analytics from starving web requests.
@@ -207,6 +251,24 @@ Forge uses isolated connection pools to prevent jobs and analytics from starving
 | `analytics` | Signals / `forge_signals_events` writes |
 
 Each pool can be sized independently under `[database.pools.jobs]`, etc.
+
+## Custom Axum Routes
+
+`ForgeBuilder::custom_routes(|pool| Router)` registers additional HTTP routes that inherit the gateway's middleware stack. The factory runs once during `run()` after the pool is connected.
+
+```rust
+builder.custom_routes(|pool| {
+    Router::new()
+        .route("/export/csv", get(csv_export))
+        .with_state(Arc::new(pool))
+})
+```
+
+- Factory receives `sqlx::PgPool`. Ignore it with `|_|` if not needed.
+- Returned router is merged into the gateway's `/_api` namespace, so `/export/csv` is reachable at `/_api/export/csv`.
+- Full middleware applies automatically: JWT auth, CORS, tracing, concurrency limits, request timeouts.
+- Handlers read `Extension<AuthContext>` to access the authenticated user. Unauthenticated requests still arrive with an unauthenticated context — check `auth.user_id()` if login is required.
+- Avoid paths that conflict with built-ins: `/health`, `/ready`, `/rpc`, `/rpc/*`, `/events`, `/subscribe`, `/unsubscribe`, `/subscribe-job`, `/subscribe-workflow`, `/signal/*`, `/webhooks/*`, `/mcp`, `/oauth/*`. Conflicts panic at startup.
 
 ## Duration Formats
 Time durations can be expressed as `500ms`, `30s`, `5m`, `2h`, `7d`, or a bare number representing seconds. Note that `query`, `mutation`, and `mcp_tool` timeout attributes specifically require a bare `u64` integer representing seconds.

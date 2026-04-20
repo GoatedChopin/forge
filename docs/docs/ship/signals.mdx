@@ -32,9 +32,9 @@ signals.capture_error("Something broke", json!({"component": "Cart"})).await;
 
 Forge captures analytics at two levels that get correlated automatically.
 
-**Server-side auto-capture**: The function executor records every RPC call with its name, kind (query/mutation), duration, success/failure status, and the caller's identity. This happens inside the framework, so your handler code stays clean.
+**Server-side auto-capture**: The function executor records every RPC call with its name, kind (query/mutation), duration, success/failure status, and the caller's identity. Jobs, crons, workflows, webhooks, and daemon runs emit `server_execution` events with the same shape. Auth failures and rate-limit rejections emit `track` events (`auth.failed`, `rate_limit.exceeded`) so dashboards surface attack patterns. All of this happens inside the framework, so your handler code stays clean.
 
-**Client-side tracking**: The `ForgeSignals` class (Svelte) or `use_signals()` hook (Dioxus) runs in the browser and captures page views on SPA navigation, frontend errors (window.onerror, unhandled rejections), and any custom events you send with `track()`. Events are batched locally and flushed to the server periodically or when the batch fills up.
+**Client-side tracking**: The `ForgeSignals` class (Svelte) or `use_signals()` hook (Dioxus) runs in the browser and captures page views on SPA navigation, frontend errors (window.onerror, unhandled rejections), Web Vitals (LCP, CLS, INP, FCP, TTFB, navigation timing, long tasks), network online/offline transitions, and any custom events you send with `track()`. Events are batched locally, persisted to `localStorage` so they survive page reloads, and flushed to the server periodically, when the batch fills up, on `visibilitychange`/`pagehide`, or when the network returns after being offline.
 
 **Correlation**: Every client-initiated RPC call includes an `x-correlation-id` header. This ID links the frontend event (user clicked a button) to the backend execution (the mutation that ran). Error reports include the last correlation ID and a trail of breadcrumbs for reproduction.
 
@@ -60,6 +60,15 @@ batch_size = 100            # events per database flush
 flush_interval_ms = 5000    # max milliseconds between flushes
 excluded_functions = []     # function names to skip (exact match)
 bot_detection = true        # tag bot traffic via UA patterns
+```
+
+Forge ships with an embedded [DB-IP](https://db-ip.com) Country Lite database for IP-to-country resolution. Every signal event is automatically enriched with an ISO 3166-1 alpha-2 country code in the `country` column. No configuration or external files needed.
+
+For city-level resolution, point `geoip_db_path` at a MaxMind GeoLite2-City MMDB file (free with a [MaxMind account](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data)). This populates the `city` column alongside `country`. A bad path fails startup — if you explicitly ask for city-level data, Forge doesn't silently downgrade.
+
+```toml
+[signals]
+geoip_db_path = "/etc/forge/GeoLite2-City.mmdb"
 ```
 
 To disable signals entirely:
@@ -104,6 +113,10 @@ ForgeProvider {
 | `enabled` | `true` | Master switch for client-side collection |
 | `autoPageViews` | `true` | Track navigation automatically |
 | `autoCaptureErrors` | `true` | Capture window errors and unhandled rejections |
+| `autoWebVitals` | `true` | Capture LCP, CLS, INP, FCP, TTFB, navigation timing, long tasks |
+| `autoNetworkEvents` | `true` | Emit `network.online` / `network.offline` events and drain the offline queue on reconnect |
+| `respectDnt` | `true` | Honor the `DNT: 1` and `Sec-GPC: 1` browser opt-outs (disables collection) |
+| `persistQueue` | `true` | Mirror the pending queue to `localStorage` so events survive reloads |
 | `flushInterval` | `5000` | Milliseconds between batch flushes |
 | `maxBatchSize` | `20` | Events queued before triggering an early flush |
 
@@ -149,6 +162,16 @@ Manually record a page view. Usually not needed since auto page views track SPA 
 await signals.page();
 ```
 
+### vital(name, value, extra?)
+
+Emit a single Web Vitals / performance measurement. Use `name` values like `lcp`, `cls`, `inp`, `fcp`, `ttfb`, `long_task`, `navigation`, or any custom metric. `value` is numeric (ms for timings, unitless for CLS). Optional `rating` (`"good" | "needs-improvement" | "poor"`) slots into the server's `status` column for quick filtering.
+
+```typescript
+signals.vital('hero_image_loaded', 412, { rating: 'good' });
+```
+
+The SDK calls this automatically for the standard Web Vitals when `autoWebVitals` is enabled.
+
 ### Beacon Flush
 
 When the user navigates away or closes the tab, pending events are flushed via the Beacon API (Svelte/WASM) or a synchronous request (desktop/mobile Dioxus). This prevents data loss on exit.
@@ -163,6 +186,7 @@ The server exposes four ingestion endpoints. These are added to `quiet_routes` i
 | `/_api/signal/view` | POST | Page view with referrer and UTM params |
 | `/_api/signal/user` | POST | Identify user and store traits |
 | `/_api/signal/report` | POST | Frontend error reports with breadcrumbs |
+| `/_api/signal/vital` | POST | Web Vitals / performance metrics (max 50 per request) |
 
 All endpoints return:
 
@@ -207,11 +231,12 @@ To enable in development, use the Forge OTEL-LGTM image in your `docker-compose.
 
 Signals are designed around GDPR compliance without cookie banners:
 
-- No cookies or localStorage used for tracking
-- Session IDs are in-memory only and server-managed
+- No cookies used for tracking; session IDs are in-memory only and server-managed
+- `localStorage` is used only to buffer unsent events so they survive reloads — never for identity
 - Visitor identity is a daily-rotating hash that resets at midnight UTC
 - With `anonymize_ip = true`, raw IP addresses are never stored
 - `identify()` is opt-in and only links sessions you explicitly associate
+- The server short-circuits `/signal/view`, `/signal/event`, `/signal/user`, and `/signal/vital` for requests carrying `DNT: 1` or `Sec-GPC: 1`. The client SDKs disable themselves when the browser has set those signals. Crash reports (`/signal/report`) still land so production errors from DNT users don't disappear, but they carry no persistent identifier
 - Bot traffic is tagged but not filtered, so you retain full data for debugging
 
 ## Troubleshooting

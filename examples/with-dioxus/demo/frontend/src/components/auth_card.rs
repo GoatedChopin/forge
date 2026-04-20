@@ -51,15 +51,18 @@ pub fn AuthCard() -> Element {
                         .call(RegisterInput::new(&email, &name, &password))
                         .await
                 } else {
-                    login_mut
-                        .call(LoginInput::new(&email, &password))
-                        .await
+                    login_mut.call(LoginInput::new(&email, &password)).await
                 };
 
                 match result {
                     Ok(res) => {
                         signals.track("auth_success", json!({"mode": is_register}));
-                        signals.identify(&res.user.id, json!({"name": &res.user.name, "email": &res.user.email})).await;
+                        signals
+                            .identify(
+                                &res.user.id,
+                                json!({"name": &res.user.name, "email": &res.user.email}),
+                            )
+                            .await;
                         let claims = parse_jwt_claims(&res.access_token);
                         token_claims.set(Some(claims));
                         // Wire auth into ForgeAuthProvider so the client
@@ -74,7 +77,10 @@ pub fn AuthCard() -> Element {
                         refresh_count.set(0);
                     }
                     Err(e) => {
-                        signals.track("auth_error", json!({"mode": is_register, "error": &e.message}));
+                        signals.track(
+                            "auth_error",
+                            json!({"mode": is_register, "error": &e.message}),
+                        );
                         auth_error.set(Some(e.message));
                     }
                 }
@@ -98,7 +104,10 @@ pub fn AuthCard() -> Element {
                             signals.track("token_refresh", json!({"count": refresh_count() + 1}));
                             let claims = parse_jwt_claims(&pair.access_token);
                             token_claims.set(Some(claims));
-                            auth.update_tokens(pair.access_token.clone(), pair.refresh_token.clone());
+                            auth.update_tokens(
+                                pair.access_token.clone(),
+                                pair.refresh_token.clone(),
+                            );
                             refresh_count.set(refresh_count() + 1);
                         }
                         Err(e) => {

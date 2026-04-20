@@ -4,6 +4,13 @@ import type { ForgeError, ConnectionState } from "./types.js";
 export interface ForgeClientConfig {
   url: string;
   getToken?: () => string | null | Promise<string | null>;
+  /**
+   * Optional callback invoked when an RPC call returns 401. Should refresh the
+   * access token (typically via a refresh token) and return the new token. If
+   * it returns a new token, the original call is retried once. If it returns
+   * null or throws, the call fails with UNAUTHORIZED and onAuthError is fired.
+   */
+  refreshToken?: () => Promise<string | null>;
   onAuthError?: (error: ForgeError) => void;
   onMutationError?: (error: ForgeClientError) => void;
   timeout?: number;
@@ -268,38 +275,13 @@ export class ForgeClient {
       this.reconnect();
     }
 
-    const hasFiles = this.containsFiles(args);
-    const correlationId = this.signals?.nextCorrelationId();
+    let response = await this.sendRpc(functionName, args, token);
 
-    let response: Response;
-
-    if (hasFiles) {
-      const formData = this.buildFormData(args);
-      const headers: Record<string, string> = { "x-forge-platform": "web" };
-      if (token) headers["Authorization"] = `Bearer ${token}`;
-      if (correlationId) headers["x-correlation-id"] = correlationId;
-      response = await fetch(`${this.config.url}/_api/rpc/${functionName}/upload`, {
-        method: "POST",
-        headers,
-        body: formData,
-        credentials: "include",
-      });
-    } else {
-      const normalizedArgs =
-        args && typeof args === "object" && Object.keys(args as object).length === 0
-          ? null
-          : args;
-
-      const headers: Record<string, string> = { "Content-Type": "application/json", "x-forge-platform": "web" };
-      if (token) headers["Authorization"] = `Bearer ${token}`;
-      if (correlationId) headers["x-correlation-id"] = correlationId;
-
-      response = await fetch(`${this.config.url}/_api/rpc/${functionName}`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ args: normalizedArgs }),
-        credentials: "include",
-      });
+    if (response.status === 401 && this.config.refreshToken) {
+      const refreshed = await this.tryRefresh();
+      if (refreshed) {
+        response = await this.sendRpc(functionName, args, refreshed);
+      }
     }
 
     if (response.status === 401 || response.status === 403) {
@@ -323,6 +305,65 @@ export class ForgeClient {
       throw new ForgeClientError(error.code, error.message);
     }
     return result.data as T;
+  }
+
+  private async sendRpc(
+    functionName: string,
+    args: unknown,
+    token: string | null,
+  ): Promise<Response> {
+    const hasFiles = this.containsFiles(args);
+    const correlationId = this.signals?.nextCorrelationId();
+
+    if (hasFiles) {
+      const formData = this.buildFormData(args);
+      const headers: Record<string, string> = { "x-forge-platform": "web" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      if (correlationId) headers["x-correlation-id"] = correlationId;
+      return fetch(`${this.config.url}/_api/rpc/${functionName}/upload`, {
+        method: "POST",
+        headers,
+        body: formData,
+        credentials: "include",
+      });
+    }
+
+    const normalizedArgs =
+      args && typeof args === "object" && Object.keys(args as object).length === 0
+        ? null
+        : args;
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "x-forge-platform": "web",
+    };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    if (correlationId) headers["x-correlation-id"] = correlationId;
+
+    return fetch(`${this.config.url}/_api/rpc/${functionName}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ args: normalizedArgs }),
+      credentials: "include",
+    });
+  }
+
+  private refreshInFlight: Promise<string | null> | null = null;
+
+  private async tryRefresh(): Promise<string | null> {
+    if (!this.config.refreshToken) return null;
+    // Coalesce concurrent callers: one refresh per burst of failures
+    if (this.refreshInFlight) return this.refreshInFlight;
+    this.refreshInFlight = (async () => {
+      try {
+        return await this.config.refreshToken!();
+      } catch {
+        return null;
+      } finally {
+        this.refreshInFlight = null;
+      }
+    })();
+    return this.refreshInFlight;
   }
 
   _subscribe(target: string, callback: (data: unknown) => void): () => void {

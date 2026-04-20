@@ -45,6 +45,7 @@ fn make_signals_state(pool: &PgPool) -> Arc<SignalsState> {
         pool: pool.clone(),
         server_secret: "test-secret".to_string(),
         anonymize_ip: false,
+        geoip: None,
     })
 }
 
@@ -461,6 +462,8 @@ fn make_test_event() -> SignalEvent {
         error_stack: None,
         error_context: None,
         client_ip: Some("1.2.3.4".to_string()),
+        country: None,
+        city: None,
         user_agent: Some("TestAgent/1.0".to_string()),
         device_type: Some("web".to_string()),
         browser: Some("Chrome".to_string()),

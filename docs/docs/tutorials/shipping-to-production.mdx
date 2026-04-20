@@ -106,7 +106,7 @@ poll_interval_ms = 100
 
 [observability]
 enabled = true
-otlp_endpoint = "${OTEL_ENDPOINT}"
+otlp_endpoint = "${FORGE_OTEL_ENDPOINT}"
 log_level = "info"
 sampling_ratio = 0.5
 ```
@@ -116,7 +116,7 @@ Set environment variables for secrets. Never put credentials in `forge.toml` dir
 ```bash
 export DATABASE_URL="postgres://user:pass@db.example.com:5432/myapp"
 export JWT_SECRET="$(openssl rand -base64 32)"
-export OTEL_ENDPOINT="http://otel-collector:4318"
+export FORGE_OTEL_ENDPOINT="http://otel-collector:4318"
 ```
 
 Unset variables without defaults remain as literal strings, making misconfiguration easy to detect.

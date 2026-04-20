@@ -55,6 +55,8 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }
 rustls-pemfile = "2"
 rcgen = { version = "0.13", default-features = false, features = ["pem", "ring"] }
+db_ip = { version = "0.3", default-features = false, features = ["ipv4", "ipv6", "include-country-code-lite"] }
+maxminddb = "0.24"
 
 [features]
 testcontainers = ["forge-core/testcontainers"]

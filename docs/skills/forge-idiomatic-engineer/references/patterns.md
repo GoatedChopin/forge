@@ -1,101 +1,105 @@
 # Patterns Reference
 
-This reference documents recommended architectural patterns for backend logic, authentication, system integrations, and testing.
+Backend, auth, integrations. Testing lives in [testing.md](./testing.md); copy-paste templates in [recipes.md](./recipes.md).
 
-## 1. Backend Design Patterns
+## 1. Backend Design
 
-### Using `DbConn` for Shared Logic
-Extract shared logic into utility functions that accept `DbConn<'_>` to allow your code to be used across queries, mutations, and tests without duplication.
+### Shared logic via `DbConn`
+Use `DbConn<'_>` when a helper must run in both queries (non-transactional) and mutations (transactional). It wraps either a pool handle or an active transaction, so the caller's scope is preserved.
+
+**Inverted calling convention**: `DbConn` is not a sqlx `Executor`. Call `.fetch_*` on the `DbConn`, passing the query as the argument. Only `query_as!` is wrapped — for `query!` / `query_scalar!` use `&mut *conn` directly.
 
 ```rust
 pub async fn list_active_items(db: DbConn<'_>) -> Result<Vec<Item>> {
-    db.fetch_all(sqlx::query_as!(Item, "SELECT * FROM items WHERE status = 'active'"))
-      .await
-      .map_err(Into::into)
+    db.fetch_all(
+        sqlx::query_as!(Item, "SELECT * FROM items WHERE status = 'active'")
+    ).await.map_err(Into::into)
 }
-// Access via ctx.db_conn() in Queries or ctx.db() in Mutations.
+// Call from either: list_active_items(ctx.db_conn()).await
 ```
 
-### Background Job Implementation
-Background jobs are durable, retryable tasks managed by the framework.
+If the helper only runs in one context, skip `DbConn` and take `ForgeDb` (from `ctx.db()`) or `&mut ForgeConn<'_>` (from `ctx.conn()`) — both are `sqlx::Executor`s.
+
+### Background jobs
 
 ```rust
 #[forge::job(priority = "high", retry(max_attempts = 5, backoff = "exponential"), timeout = "30m")]
 pub async fn process_video(ctx: &JobContext, args: Args) -> Result<Res> {
-    ctx.progress(0, "Initializing...")?; // Non-blocking status update
-    ctx.check_cancelled().await?; // Safe exit if the job was cancelled
-    ctx.heartbeat().await?; // Extend lease to prevent another worker from reclaiming
+    ctx.progress(0, "Initializing...")?;   // streams to subscribers
+    ctx.check_cancelled().await?;          // cooperative exit
+    ctx.heartbeat().await?;                // extends lease
     Ok(res)
 }
 ```
 
-- **Dispatch within Transactions**: Always use `ctx.dispatch_job` inside a `transactional` mutation to ensure the job is only queued if the database transaction commits successfully.
-- **Idempotency**: Use `idempotent(key = "...")` to prevent duplicate processing of the same entity.
-- **Lease Reclaim**: Jobs that fail to send a heartbeat within 5 minutes are automatically reclaimed by the framework.
+- Always dispatch from a `transactional` mutation. The macro errors otherwise.
+- `idempotent(key = "args.field")` prevents duplicate processing.
+- Lease reclaim after 5 min without a heartbeat.
+- Persist progress context via `ctx.save(&state)` / `ctx.saved::<State>()?` so restarts resume gracefully.
 
-### Scheduled Tasks (Crons)
-Forge crons use advisory locks to ensure they execute exactly once across the cluster.
+### Scheduled tasks
 
 ```rust
 #[forge::cron("0 */6 * * *", catch_up)]
 pub async fn sync_external_data(ctx: &CronContext) -> Result<()> {
-    if ctx.is_late() {
-        // Log or adjust logic if the task is behind schedule.
-    }
+    if ctx.is_late() { /* log or skip */ }
     Ok(())
 }
 ```
 
-### Durable Multi-Step Workflows
-Workflows are versioned to ensure long-running processes (lasting days or months) can complete even after application updates.
+Advisory-lock leader election + UNIQUE constraint on `(cron_name, scheduled_time)` = exactly-once across the cluster. `catch_up` replays up to 10 missed intervals.
+
+### Durable workflows
 
 ```rust
 #[forge::workflow(name = "onboarding", version = "2026-05", timeout = "30d")]
 pub async fn onboarding_wf(ctx: &WorkflowContext, user_id: Uuid) -> Result<()> {
-    let result = ctx.step("welcome_email", || async { send_email(user_id).await })
+    ctx.step("welcome_email", || async { send_email(user_id).await })
         .timeout(Duration::from_secs(30))
         .retry(3, Duration::from_secs(5))
         .compensate(|id| async move { rollback_action(id).await })
         .run().await?;
 
-    ctx.sleep(Duration::from_secs(24 * 60 * 60)).await?; // Survives system restarts
-    ctx.wait_for_event("profile_completed", Some(Duration::from_secs(3 * 24 * 60 * 60))).await?;
+    ctx.sleep(Duration::from_secs(86_400)).await?;                        // survives restarts
+    ctx.wait_for_event("profile_completed", Some(Duration::from_secs(3 * 86_400))).await?;
     Ok(())
 }
 ```
 
-- **Workflow Rules**: Step results are cached by name. Always bump the workflow version if you rename, reorder, or remove steps to avoid state corruption.
-- **Readiness Checks**: The `/_api/ready` endpoint will return 503 if existing workflow runs lack a matching version handler in the current binary.
+- Steps cached by **name** — renaming breaks resume.
+- Version bump required when step keys, wait keys, or data types change. Signature mismatch blocks runs and flips `/_api/ready` to 503.
+- `ctx.sleep()` / `ctx.wait_for_event()` survive restarts. Never use `tokio::sleep`.
 
 ## 2. Authentication and Authorization
 
-### Social Login (OAuth Bridge Pattern)
-Always exchange OAuth codes on the server to prevent exposing provider secrets or tokens to the browser.
+### Social login (OAuth bridge)
+Exchange codes on the server — never expose provider secrets to the browser.
 
-1. **Frontend**: Obtains a code from the provider (Google, GitHub, etc.) and sends it to a public mutation.
-2. **Backend**: Exchanges the code for provider tokens using `ctx.http().post()`.
-3. **Identity Mapping**: Fetch the provider's user info, find the matching record in `user_identities`, and link to a `user_id`.
-4. **Token Issuance**: Generate a Forge JWT using `ctx.issue_token_pair(user_id, roles)`. **IMPORTANT:** Always drop your database connection (`ctx.conn()`) before calling this to prevent pool exhaustion, as token issuance requires its own connection.
+1. Frontend obtains the code from the provider and POSTs to a public mutation.
+2. Backend swaps code for tokens via `ctx.http().post(...)`.
+3. Fetch user info, upsert into `user_identities`, link to a `user_id`.
+4. Drop `ctx.conn()` **before** calling `ctx.issue_token_pair(user_id, roles)` — token issuance needs its own connection and will block on pool exhaustion otherwise.
 
-| Provider | Token Exchange Endpoint | User Info Endpoint |
+| Provider | Token exchange | User info |
 |---|---|---|
 | Google | `oauth2.googleapis.com/token` | `googleapis.com/oauth2/v2/userinfo` |
 | GitHub | `github.com/login/oauth/access_token` | `api.github.com/user` |
 
-### Authorization Utilities
-- **Role Enforcement**: Use `ctx.auth.require_role("admin")` to immediately return a 403 Forbidden error if the principal lacks the necessary role.
-- **Principal Access**: Use `ctx.user_id()` as a shortcut for the current user's UUID.
-- **Scope Checks**: Build-time checks ensure all private queries filter by `user_id` or `owner_id` unless explicitly marked `unscoped`.
+### Authorisation utilities
+- `ctx.auth.require_role("admin")` — 403 if missing.
+- `ctx.user_id()?` — principal UUID.
+- Compile-time scope check fails the build when a private query doesn't filter by `user_id` / `owner_id` (opt out with `unscoped`).
 
 ## 3. Integrations
 
-### Webhook Handling
-- **Signature Verification**: Always configure a `signature` check for webhooks to verify the source. Choose the right constructor for your provider — see the full table in [API Reference](./api.md#forge::webhook). Never use `allow_unsigned` in production.
-- **Idempotency**: Configure `idempotency` to prevent double-processing on retries. Use `"header:webhook-id"` when the provider supplies a delivery ID header, otherwise use `"body:$.id"` to pull the event ID from the payload.
-- **Asynchronous Processing**: Immediately return `WebhookResult::Accepted` and dispatch a background job for any work that takes more than a few hundred milliseconds. Webhook senders have short timeout windows and will retry on slow responses.
-- **Race Conditions**: Payment webhooks and checkout confirmation can arrive in any order. Use `COALESCE($1, column)` in updates so a slow webhook doesn't overwrite data that a faster path already set correctly.
+### Webhooks
+- Always set a `signature` constructor. Never `allow_unsigned` in production. Full table: [API Reference](./api.md#forgewebhook).
+- Set `idempotency` — `"header:..."` for providers that send a delivery ID, `"body:$.id"` to extract from the payload.
+- Ack fast: return `WebhookResult::Accepted` and dispatch a job for any work over a few hundred ms. Webhook senders have short timeouts and retry on slow responses.
+- Decode into a typed struct, not `serde_json::Value` — the macro deserialises the parameter type automatically.
+- **Race condition**: webhooks and sync confirmation paths can arrive in any order. Use `COALESCE($1, column)` in updates so a slow webhook can't clobber data the faster path already set.
 
-#### Provider Quick-Reference
+#### Provider quick-reference
 
 | Provider | Constructor | Idempotency |
 |---|---|---|
@@ -103,103 +107,39 @@ Always exchange OAuth codes on the server to prevent exposing provider secrets o
 | Stripe | `stripe_webhooks("ENV")` | `"header:stripe-request-id"` |
 | Shopify | `shopify_webhooks("ENV")` | `"body:$.id"` |
 | GitHub | `hmac_sha256("X-Hub-Signature-256", "ENV")` | `"header:X-GitHub-Delivery"` |
-| Ed25519-based services | `ed25519("X-Signature", "PUBLIC_KEY_ENV")` | varies |
+| Ed25519-based | `ed25519("X-Signature", "PUBLIC_KEY_ENV")` | varies |
 
-### MCP (Model Context Protocol) Tools
-- **Read-Only vs Destructive**: Annotate tools with their intended behavior to help AI models select the correct tool.
-- **Authorization**: MCP tools require authentication by default. Use `require_role` to restrict access to specific agents.
+### MCP tools
+- Annotate read-only vs destructive so agents pick correctly.
+- Auth required by default; `require_role` restricts further.
 
-## 4. Testing
-
-All tests use `#[tokio::test]`. Unit tests live inline in `#[cfg(test)] mod tests {}`. DB integration tests are gated behind the `testcontainers` feature flag.
-
-### Context Builders
-
-Each handler type has a test context builder. All builders support `.with_pool(db)`, `.with_env("KEY", "value")`, and `.mock_http(mock)`.
+### Custom Axum Routes
+Reach for `ForgeBuilder::custom_routes` when a handler cannot fit the RPC/query/mutation shape (streaming responses, non-JSON content types, file downloads that aren't `Upload`). Everything else should stay in a `#[forge::query]` or `#[forge::mutation]` so it gets codegen bindings for free.
 
 ```rust
-// Query — read-only, auth-aware
-let ctx = TestQueryContext::builder()
-    .as_user(user_id)
-    .with_role("admin")
-    .with_pool(db.pool())
-    .build();
-
-// Mutation — transactional, can dispatch jobs/workflows
-let ctx = TestMutationContext::builder()
-    .as_user(user_id)
-    .with_pool(db.pool())
-    .mock_http(MockHttpClient::new().expect_post("https://api.example.com/send", json!({"ok": true})))
-    .build();
-
-// Job — progress, cancellation, heartbeat
-let ctx = TestJobContext::builder()
-    .with_pool(db.pool())
-    .build();
-
-// Cron — minimal, just pool + env
-let ctx = TestCronContext::builder().with_pool(db.pool()).build();
+Forge::builder()
+    .config(config)
+    .custom_routes(|pool| {
+        Router::new()
+            .route("/export/csv", get(csv_export))
+            .with_state(Arc::new(pool))
+    })
+    .auto_register()
+    .build()?
+    .run()
+    .await
 ```
 
-### Isolated Test Database
+- The factory receives Forge's managed `PgPool`. Use `|_|` if you don't need it.
+- Route paths mount under `/_api`. A route declared as `/export/csv` is served at `/_api/export/csv`.
+- JWT auth, CORS, tracing, concurrency limits, and timeouts apply automatically — do not re-implement them.
+- Read the authenticated user with `Extension<AuthContext>`. Unauthenticated requests still reach the handler, so guard with `match auth.user_id()` (never `.unwrap()`).
+- Do not collide with built-in paths under `/_api`: `/health`, `/ready`, `/rpc`, `/rpc/*`, `/events`, `/subscribe*`, `/signal/*`, `/webhooks/*`, `/mcp`, `/oauth/*`.
 
-`IsolatedTestDb` creates a fresh database, runs all migrations, and tears down on drop. Required for any test that touches the DB.
+## 4. Operations
 
-```rust
-#[cfg(feature = "testcontainers")]
-mod tests {
-    use forge::testing::IsolatedTestDb;
-    use std::path::Path;
-
-    #[tokio::test]
-    async fn test_creates_user() {
-        let db = IsolatedTestDb::setup("test_creates_user", "", Path::new("migrations")).await.unwrap();
-        let ctx = TestMutationContext::builder().with_pool(db.pool()).build();
-        let result = CreateUserMutation::execute(&ctx, Args { name: "Alice".into() }).await;
-        assert_ok!(result);
-    }
-}
-```
-
-### Assertion Macros
-
-| Macro | What it checks |
-|---|---|
-| `assert_ok!(result)` | Result is `Ok(_)` |
-| `assert_err!(result)` | Result is `Err(_)` |
-| `assert_err_variant!(result, ForgeError::NotFound(_))` | Result is a specific error variant |
-| `assert_job_dispatched!(ctx, "job_name")` | A job was queued during the mutation |
-| `assert_workflow_started!(ctx, "workflow_name")` | A workflow was started during the mutation |
-| `assert_http_called!(ctx, "POST", "https://...")` | An HTTP call was made via `ctx.http()` |
-
-### Testing HTTP Dependencies
-
-Use `.mock_http(pattern, handler)` on the context builder. `pattern` is a URL glob. Use `.mock_http_json(pattern, json_value)` as a shorthand when the response body is static.
-
-```rust
-let ctx = TestMutationContext::builder()
-    .mock_http_json("https://oauth2.googleapis.com/token", json!({ "access_token": "tok" }))
-    .mock_http_json("https://googleapis.com/oauth2/v2/userinfo", json!({ "id": "g123", "email": "a@b.com" }))
-    .build();
-```
-
-### Testing Error Paths
-
-Test failure modes explicitly — they are just as important as the happy path.
-
-```rust
-#[tokio::test]
-async fn returns_not_found_for_missing_item() {
-    let db = IsolatedTestDb::setup("test_not_found", "", Path::new("migrations")).await.unwrap();
-    let ctx = TestQueryContext::builder().as_user(Uuid::new_v4()).with_pool(db.pool()).build();
-    let result = GetItemQuery::execute(&ctx, Args { id: Uuid::new_v4() }).await;
-    assert_err_variant!(result, ForgeError::NotFound(_));
-}
-```
-
-## 5. Operational Readiness
-
-- **Isolated Test DB**: Use `IsolatedTestDb` in your test suite to ensure each test case runs against a clean, migrated database instance.
-- **Read Replicas**: Use `#[query(consistent)]` to force a read from the primary database when eventual consistency is unacceptable.
-- **Observability**: Enable OTLP exports in `forge.toml` to send traces and metrics to your telemetry collector.
-- **Signal Correlation**: Forge automatically propagates `x-correlation-id` headers across RPC calls to simplify debugging across distributed logs.
+- **Consistent reads**: `#[query(consistent)]` forces the primary when eventual consistency is unacceptable.
+- **Pool isolation**: queries use `default`; jobs use `jobs`; OTLP uses `observability`; signals use `analytics`. Size in `[database.pools.<name>]`.
+- **Observability**: enable OTLP in `forge.toml`; `x-correlation-id` propagates across RPC boundaries.
+- **Workflow safety**: startup validates active versions against persisted signatures; run the binary before shipping or `/_api/ready` reports unhealthy.
+- **System tables**: `forge_jobs`, `forge_workflow_runs`, `forge_signals_events`, etc. are framework-owned. Use `ctx.dispatch_job()`, `ctx.start_workflow()`, `ctx.record_signal()`. `forge check` fails the build on manual writes.

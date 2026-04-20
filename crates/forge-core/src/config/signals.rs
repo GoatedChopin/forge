@@ -56,6 +56,12 @@ pub struct SignalsConfig {
     /// Tag bot traffic via UA detection (visible in dashboard filter).
     #[serde(default = "default_true")]
     pub bot_detection: bool,
+
+    /// Optional path to a MaxMind MMDB file (e.g. GeoLite2-City.mmdb) for
+    /// city-level resolution. When omitted, the embedded DB-IP Country Lite
+    /// database provides country-level resolution with zero configuration.
+    #[serde(default)]
+    pub geoip_db_path: Option<String>,
 }
 
 impl Default for SignalsConfig {
@@ -71,6 +77,7 @@ impl Default for SignalsConfig {
             flush_interval_ms: default_flush_interval_ms(),
             excluded_functions: Vec::new(),
             bot_detection: true,
+            geoip_db_path: None,
         }
     }
 }
