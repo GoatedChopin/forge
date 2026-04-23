@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-04-23
+
+### Added
+
+- Web Vitals ingestion endpoint (`POST /_api/signal/vital`) for LCP, CLS, INP, FCP, TTFB, navigation timing, long tasks, and resource events (up to 50 entries per batch). New `SignalEventType::WebVital` and `SignalEventType::ServerExecution` variants.
+- Client SDKs (`@forge-rs/svelte` and `forge-dioxus`) auto-capture Web Vitals, `network.online`/`network.offline` transitions, and persist the pending event queue to `localStorage` so events survive reloads. New config flags: `autoWebVitals`, `autoNetworkEvents`, `respectDnt`, `persistQueue`. Manual `signals.vital(name, value, extra?)` API on both SDKs.
+- Auto-emitted `server_execution` signals for every job, cron, workflow step, webhook, and daemon tick, plus `auth.failed` and `rate_limit.exceeded` diagnostic signals from gateway middleware. New `forge_runtime::signals::{emit_server_execution, emit_web_vital, emit_diagnostic, emit_raw}` helpers for handlers that want to emit outside the RPC path.
+- GeoIP enrichment on every signal event. Embedded DB-IP Country Lite database ships by default (zero config, ISO country code in new `country` column). Optional `[signals] geoip_db_path = "..."` points at a MaxMind MMDB for city-level resolution (populates new `city` column).
+- Webhook signature support for Stripe (`#[webhook(stripe_webhooks("SECRET_ENV"))]` with 5-minute replay window), Shopify (`shopify_webhooks`, HMAC-SHA256 base64), Standard Webhooks (`standard_webhooks`, Polar/Svix/Clerk compatible with `whsec_` and `polar_whs_` prefix handling), and Ed25519 asymmetric signatures (`ed25519("header", "PUBKEY_ENV")`).
+- Reactive mutation helpers in generated Svelte bindings: mutations now return a `ReactiveMutation<Args, Result>` with `mutate`, `pending`, and `error` runes state.
+- `gateway.max_file_size` config option (default `"10mb"`) separate from `gateway.max_body_size` (default `"20mb"`) so per-file upload caps and full-body RPC caps can be tuned independently.
+- Dioxus `ForgeClientConfig` gains a `refresh_token` async provider for handling 401s, matching the Svelte client.
+- `forge check` now scans `src/` for direct INSERT/UPDATE/DELETE against `forge_*` system tables and fails with guidance to use `ctx.dispatch_job()`, `ctx.start_workflow()`, or `ctx.issue_token_pair()` instead.
+- New SRE Grafana dashboard (`forge-sre.json`) covering service health, jobs, workflows, reactor, crons, security, infra, errors, logs, and traces. Business dashboard expanded with geography, retention, funnel, and feature-adoption panels.
+
+### Changed
+
+- **BREAKING:** Custom routes registered via `custom_routes` now run through the gateway middleware stack (auth, CORS, tracing, concurrency limit, timeouts) and are merged under `/_api`. Handlers that assumed a bare axum router without Forge middleware need updating.
+- **BREAKING:** `forge_new` scaffolded projects now pin `[package] version` to `1.0.0` instead of inheriting the forge workspace version, so user projects start their own version history.
+- `/_api/signal/{event,view,user,vital}` short-circuit requests carrying `DNT: 1` or `Sec-GPC: 1`. `/_api/signal/report` still accepts reports (crash visibility from opted-out browsers) but drops persistent identifiers. Client SDKs disable themselves automatically when the browser sets DNT/GPC.
+- Client SDKs now flush on both `visibilitychange` and `pagehide` (Safari sometimes only fires one) and drain the offline queue on reconnect.
+- Generated `reactive.svelte.ts` wires subscription lifecycle to Svelte `$effect` so queries unsubscribe on component destruction without manual cleanup.
+- Dioxus bumped to 0.7.5; CI workflows install `dioxus-cli@0.7.5`.
+- CI split into a reusable `template-smoke.yml` workflow: PRs run a smoke subset (`with-svelte/demo` + `with-dioxus/demo`) plus a workspace integration job, main-branch pushes run the full 6-template matrix. New `/test-template` and `/squash-merge` chatops commands.
+
+### Fixed
+
+- Mutation transactions could panic on commit because a lingering `Arc<Transaction>` clone in the context prevented `try_unwrap` from succeeding. The context is now dropped before commit/rollback on both success and error paths.
+- RPC calls from tokens whose user was deleted now return 401 instead of executing against a phantom identity; non-public functions verify the user still exists before dispatching.
+- `start_workflow()` inside a transactional mutation now resolves the active version and signature at call time, so "no active version" errors surface immediately instead of after commit. `PendingWorkflow` carries `workflow_version` and `workflow_signature`; `forge_workflow_runs` inserts include both.
+- Startup now rejects configurations where `gateway.max_file_size > gateway.max_body_size` with a clear error instead of silently accepting an impossible combination.
+- OTLP endpoint configuration is reliable: `otlp_endpoint = "${FORGE_OTEL_ENDPOINT-http://localhost:4318}"` in forge.toml uses the generic env-var substitution instead of the previous bespoke override path.
+
 ## [0.8.4] - 2026-04-11
 
 ### Added
@@ -511,7 +544,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rust 2024 edition unsafe block compatibility
 - Release workflow cargo-edit installation
 
-[unreleased]: https://github.com/isala404/forge/compare/v0.8.4...HEAD
+[unreleased]: https://github.com/isala404/forge/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/isala404/forge/compare/v0.8.4...v0.9.0
 [0.8.4]: https://github.com/isala404/forge/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/isala404/forge/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/isala404/forge/compare/v0.7.4...v0.8.2

@@ -54,7 +54,8 @@ export const test = base.extend<ForgeFixtures>({
         } catch (err) {
           // Retry connection errors (backend restarting), not HTTP errors
           const isConnectionError =
-            err instanceof TypeError && (err as TypeError).message === "fetch failed";
+            err instanceof TypeError &&
+            (err as TypeError).message === "fetch failed";
           if (!isConnectionError || attempt === 3) throw err;
           await new Promise((r) => setTimeout(r, attempt * 1000));
         }
