@@ -549,29 +549,17 @@ impl Forge {
 
         // Start HTTP gateway if gateway role
         if roles.contains(&NodeRole::Gateway) {
+            // ForgeConfig::validate has already rejected the half-set case,
+            // so zipping the two options is sufficient here.
             let tls_cfg = &self.config.gateway.tls;
-            let tls = if tls_cfg.enabled {
-                Some(
-                    match (tls_cfg.cert_path.as_deref(), tls_cfg.key_path.as_deref()) {
-                        (Some(cert), Some(key)) => TlsListenConfig::FromFiles {
-                            cert_path: cert.to_string(),
-                            key_path: key.to_string(),
-                        },
-                        (None, None) => TlsListenConfig::SelfSigned {
-                            hostnames: tls_cfg.hostnames.clone(),
-                        },
-                        _ => {
-                            return Err(ForgeError::Config(
-                                "gateway.tls requires both cert_path and key_path, or \
-                                 neither (validated by ForgeConfig::validate)"
-                                    .into(),
-                            ));
-                        }
-                    },
-                )
-            } else {
-                None
-            };
+            let tls = tls_cfg
+                .cert_path
+                .as_ref()
+                .zip(tls_cfg.key_path.as_ref())
+                .map(|(cert, key)| TlsListenConfig {
+                    cert_path: cert.clone(),
+                    key_path: key.clone(),
+                });
 
             let gateway_config = RuntimeGatewayConfig {
                 port: self.config.gateway.port,
