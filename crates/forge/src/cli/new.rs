@@ -868,6 +868,45 @@ mod tests {
     }
 
     #[test]
+    fn test_all_templates_rewrite_env_example_postgres_db() {
+        for template_id in supported_template_ids() {
+            let dir = tempdir().unwrap();
+            let path = dir.path().join("my-app");
+            fs::create_dir_all(&path).unwrap();
+
+            let template = load_template_definition(template_id).unwrap();
+            create_project_from_template(&path, "my-app", &template).unwrap();
+
+            let env_example = fs::read_to_string(path.join(".env.example")).unwrap();
+            assert!(
+                env_example.contains("POSTGRES_DB=my_app"),
+                "{template_id}: .env.example POSTGRES_DB not rewritten to project_db_name\n{env_example}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_dioxus_templates_rewrite_frontend_manifest_name() {
+        for template_id in supported_template_ids() {
+            if !template_id.starts_with("with-dioxus/") {
+                continue;
+            }
+            let dir = tempdir().unwrap();
+            let path = dir.path().join("my-app");
+            fs::create_dir_all(&path).unwrap();
+
+            let template = load_template_definition(template_id).unwrap();
+            create_project_from_template(&path, "my-app", &template).unwrap();
+
+            let dioxus_toml = fs::read_to_string(path.join("frontend/Dioxus.toml")).unwrap();
+            assert!(
+                dioxus_toml.contains("name = \"my-app-frontend\""),
+                "{template_id}: frontend/Dioxus.toml name not rewritten to frontend_package_name\n{dioxus_toml}"
+            );
+        }
+    }
+
+    #[test]
     fn test_scaffolded_cargo_toml_pins_version_to_one() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("my-app");
