@@ -115,6 +115,7 @@ impl RateLimiter {
     ) -> Result<RateLimitResult> {
         let result = self.check(bucket_key, config).await?;
         if !result.allowed {
+            #[cfg(feature = "gateway")]
             crate::signals::emit_diagnostic(
                 "rate_limit.exceeded",
                 serde_json::json!({

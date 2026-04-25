@@ -111,10 +111,36 @@ unimplemented = "deny"
 unwrap_used = "deny"
 indexing_slicing = "deny"
 
+[profile.dev]
+# Smaller debug info keeps incremental builds and target/ size in check.
+# `line-tables-only` is enough for backtraces and panic locations.
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+incremental = true
+codegen-units = 256
+
+[profile.dev.package."*"]
+# Dependencies rarely need debug info for app development. Trims target/
+# substantially without affecting workspace iteration.
+debug = false
+
+[profile.test]
+debug = "line-tables-only"
+incremental = true
+codegen-units = 256
+
 [profile.release]
 lto = true
 codegen-units = 1
 strip = true
+
+# Ad-hoc release builds (smoke tests, local benchmarks) don't need full LTO.
+# Use with `cargo build --profile release-fast` to skip the LTO link stall.
+[profile.release-fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+strip = "debuginfo"
 
 [patch.crates-io]
 forgex = { path = "crates/forge" }

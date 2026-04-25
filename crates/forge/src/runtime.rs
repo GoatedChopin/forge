@@ -8,45 +8,65 @@
 //! - Workflow engine
 //! - Cluster coordination
 
+#[cfg(feature = "gateway")]
 use std::future::Future;
 use std::net::IpAddr;
 use std::path::PathBuf;
+#[cfg(feature = "gateway")]
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(feature = "gateway")]
 use axum::Router;
+#[cfg(feature = "gateway")]
 use axum::body::Body;
+#[cfg(feature = "gateway")]
 use axum::http::Request;
+#[cfg(feature = "gateway")]
 use axum::response::Response;
 use tokio::sync::broadcast;
 
-use forge_core::CircuitBreakerClient;
 use forge_core::cluster::{LeaderRole, NodeId, NodeInfo, NodeRole, NodeStatus};
 use forge_core::config::{ForgeConfig, NodeRole as ConfigNodeRole};
 use forge_core::error::{ForgeError, Result};
 use forge_core::function::{ForgeMutation, ForgeQuery};
-use forge_core::mcp::ForgeMcpTool;
 use forge_runtime::migrations::{Migration, MigrationRunner, load_migrations_from_dir};
 
 use forge_runtime::cluster::{
     GracefulShutdown, HeartbeatConfig, HeartbeatLoop, LeaderConfig, LeaderElection, NodeRegistry,
     ShutdownConfig,
 };
-use forge_runtime::cron::{CronRegistry, CronRunner, CronRunnerConfig};
-use forge_runtime::daemon::{DaemonRegistry, DaemonRunner};
 use forge_runtime::db::Database;
 use forge_runtime::function::FunctionRegistry;
+
+#[cfg(feature = "gateway")]
+use forge_core::mcp::ForgeMcpTool;
+#[cfg(feature = "cron")]
+use forge_runtime::cron::{CronRegistry, CronRunner, CronRunnerConfig};
+#[cfg(feature = "daemons")]
+use forge_runtime::daemon::{DaemonRegistry, DaemonRunner};
+// CircuitBreakerClient wraps reqwest; used by cron/daemon/workflow for
+// outbound HTTP. (Gateway uses its own reqwest path.)
+#[cfg(any(feature = "cron", feature = "daemons", feature = "workflows"))]
+use forge_core::CircuitBreakerClient;
+#[cfg(feature = "gateway")]
 use forge_runtime::gateway::{AuthConfig, GatewayConfig as RuntimeGatewayConfig, GatewayServer};
+#[cfg(feature = "jobs")]
 use forge_runtime::jobs::{JobDispatcher, JobQueue, JobRegistry, Worker, WorkerConfig};
+#[cfg(feature = "gateway")]
 use forge_runtime::mcp::McpToolRegistry;
+#[cfg(feature = "gateway")]
 use forge_runtime::webhook::{WebhookRegistry, WebhookState, webhook_handler};
+#[cfg(feature = "workflows")]
 use forge_runtime::workflow::{
     EventStore, WorkflowExecutor, WorkflowRegistry, WorkflowScheduler, WorkflowSchedulerConfig,
 };
+#[cfg(feature = "workflows")]
 use tokio_util::sync::CancellationToken;
 
 /// Type alias for frontend handler function.
+#[cfg(feature = "gateway")]
 pub type FrontendHandler = fn(Request<Body>) -> Pin<Box<dyn Future<Output = Response> + Send>>;
 
 /// Prelude module for common imports.
@@ -82,7 +102,9 @@ pub mod prelude {
     pub use forge_core::webhook::{ForgeWebhook, WebhookContext, WebhookResult, WebhookSignature};
     pub use forge_core::workflow::{ForgeWorkflow, WorkflowContext};
 
-    // Same axum version the runtime uses, avoids type mismatches in custom handlers
+    // Same axum version the runtime uses, avoids type mismatches in custom handlers.
+    // Only available when the `gateway` feature is enabled.
+    #[cfg(feature = "gateway")]
     pub use axum;
 
     pub use crate::{Forge, ForgeBuilder};
@@ -94,11 +116,17 @@ pub struct Forge {
     db: Option<Database>,
     node_id: NodeId,
     function_registry: FunctionRegistry,
+    #[cfg(feature = "gateway")]
     mcp_registry: McpToolRegistry,
+    #[cfg(feature = "jobs")]
     job_registry: JobRegistry,
+    #[cfg(feature = "cron")]
     cron_registry: Arc<CronRegistry>,
+    #[cfg(feature = "workflows")]
     workflow_registry: WorkflowRegistry,
+    #[cfg(feature = "daemons")]
     daemon_registry: Arc<DaemonRegistry>,
+    #[cfg(feature = "gateway")]
     webhook_registry: Arc<WebhookRegistry>,
     shutdown_tx: broadcast::Sender<()>,
     /// Path to user migrations directory (default: ./migrations).
@@ -106,11 +134,13 @@ pub struct Forge {
     /// Additional migrations provided programmatically.
     extra_migrations: Vec<Migration>,
     /// Optional frontend handler for embedded SPA.
+    #[cfg(feature = "gateway")]
     frontend_handler: Option<FrontendHandler>,
     /// Factory that produces custom axum routes once the pool is available.
     /// The returned router is merged into the gateway's `/_api` router, so
     /// the full middleware stack (auth, CORS, tracing, concurrency, timeouts)
     /// applies automatically.
+    #[cfg(feature = "gateway")]
     custom_routes_factory: Option<Box<dyn FnOnce(sqlx::PgPool) -> Router + Send + Sync>>,
 }
 
@@ -141,47 +171,56 @@ impl Forge {
     }
 
     /// Get the MCP tool registry mutably.
+    #[cfg(feature = "gateway")]
     pub fn mcp_registry_mut(&mut self) -> &mut McpToolRegistry {
         &mut self.mcp_registry
     }
 
     /// Register an MCP tool without manually accessing the registry.
+    #[cfg(feature = "gateway")]
     pub fn register_mcp_tool<T: ForgeMcpTool>(&mut self) -> &mut Self {
         self.mcp_registry.register::<T>();
         self
     }
 
     /// Get the job registry.
+    #[cfg(feature = "jobs")]
     pub fn job_registry(&self) -> &JobRegistry {
         &self.job_registry
     }
 
     /// Get the job registry mutably.
+    #[cfg(feature = "jobs")]
     pub fn job_registry_mut(&mut self) -> &mut JobRegistry {
         &mut self.job_registry
     }
 
     /// Get the cron registry.
+    #[cfg(feature = "cron")]
     pub fn cron_registry(&self) -> Arc<CronRegistry> {
         self.cron_registry.clone()
     }
 
     /// Get the workflow registry.
+    #[cfg(feature = "workflows")]
     pub fn workflow_registry(&self) -> &WorkflowRegistry {
         &self.workflow_registry
     }
 
     /// Get the workflow registry mutably.
+    #[cfg(feature = "workflows")]
     pub fn workflow_registry_mut(&mut self) -> &mut WorkflowRegistry {
         &mut self.workflow_registry
     }
 
     /// Get the daemon registry.
+    #[cfg(feature = "daemons")]
     pub fn daemon_registry(&self) -> Arc<DaemonRegistry> {
         self.daemon_registry.clone()
     }
 
     /// Get the webhook registry.
+    #[cfg(feature = "gateway")]
     pub fn webhook_registry(&self) -> Arc<WebhookRegistry> {
         self.webhook_registry.clone()
     }
@@ -189,6 +228,7 @@ impl Forge {
     /// Persist all registered workflow definitions to the database.
     /// Fails startup if a definition's signature conflicts with a previously
     /// registered one under the same name+version.
+    #[cfg(feature = "workflows")]
     async fn persist_workflow_definitions(&self, pool: &sqlx::PgPool) -> Result<()> {
         for info in self.workflow_registry.definitions() {
             let status = if info.is_active {
@@ -296,6 +336,13 @@ impl Forge {
             Database::from_config_with_service(&self.config.database, &self.config.project.name)
                 .await?;
         let pool = db.primary().clone();
+        // jobs_pool only used by background subsystems (worker, scheduler).
+        #[cfg(any(
+            feature = "jobs",
+            feature = "cron",
+            feature = "workflows",
+            feature = "daemons",
+        ))]
         let jobs_pool = db.jobs_pool().clone();
         let observability_pool = db.observability_pool().clone();
         if let Some(handle) = db.start_health_monitor() {
@@ -323,6 +370,7 @@ impl Forge {
         tracing::debug!("Migrations applied");
 
         // Persist workflow definitions and validate signatures
+        #[cfg(feature = "workflows")]
         if !self.workflow_registry.is_empty() {
             self.persist_workflow_definitions(&pool).await?;
         }
@@ -402,7 +450,9 @@ impl Forge {
             ShutdownConfig::default(),
         ));
 
-        // Create HTTP client with circuit breaker for actions and crons
+        // Create HTTP client with circuit breaker for actions and crons.
+        // Used by cron, daemons, and workflow executor for outbound HTTP.
+        #[cfg(any(feature = "cron", feature = "daemons", feature = "workflows"))]
         let http_client = CircuitBreakerClient::with_defaults(reqwest::Client::new());
 
         // Start background tasks based on roles
@@ -428,6 +478,7 @@ impl Forge {
         }
 
         // Start job worker if worker role
+        #[cfg(feature = "jobs")]
         if roles.contains(&NodeRole::Worker) {
             let job_queue = JobQueue::new(jobs_pool.clone());
             let worker_config = WorkerConfig {
@@ -455,6 +506,7 @@ impl Forge {
         }
 
         // Start cron runner if scheduler role and is leader
+        #[cfg(feature = "cron")]
         if roles.contains(&NodeRole::Scheduler) {
             let cron_registry = self.cron_registry.clone();
             let cron_pool = jobs_pool.clone();
@@ -481,7 +533,9 @@ impl Forge {
         }
 
         // Start workflow scheduler if scheduler role
+        #[cfg(feature = "workflows")]
         let workflow_shutdown_token = CancellationToken::new();
+        #[cfg(feature = "workflows")]
         if roles.contains(&NodeRole::Scheduler) {
             let scheduler_executor = Arc::new(WorkflowExecutor::new(
                 Arc::new(self.workflow_registry.clone()),
@@ -504,12 +558,17 @@ impl Forge {
             tracing::debug!("Workflow scheduler started");
         }
 
-        // Create job dispatcher and workflow executor for dispatch capabilities
-        let job_queue_for_dispatch = JobQueue::new(jobs_pool.clone());
-        let job_dispatcher = Arc::new(JobDispatcher::new(
-            job_queue_for_dispatch,
-            self.job_registry.clone(),
-        ));
+        // Create job dispatcher (used by daemon, gateway, webhook routes).
+        #[cfg(feature = "jobs")]
+        let job_dispatcher = {
+            let job_queue_for_dispatch = JobQueue::new(jobs_pool.clone());
+            Arc::new(JobDispatcher::new(
+                job_queue_for_dispatch,
+                self.job_registry.clone(),
+            ))
+        };
+        // Create workflow executor for dispatch (used by daemon and gateway).
+        #[cfg(feature = "workflows")]
         let workflow_executor = Arc::new(WorkflowExecutor::new(
             Arc::new(self.workflow_registry.clone()),
             jobs_pool.clone(),
@@ -517,6 +576,7 @@ impl Forge {
         ));
 
         // Start daemon runner if scheduler role (daemons run as singletons)
+        #[cfg(feature = "daemons")]
         if roles.contains(&NodeRole::Scheduler) && !self.daemon_registry.is_empty() {
             let daemon_registry = self.daemon_registry.clone();
             let daemon_pool = jobs_pool.clone();
@@ -529,9 +589,11 @@ impl Forge {
                 daemon_http,
                 node_id.as_uuid(),
                 daemon_shutdown_rx,
-            )
-            .with_job_dispatch(job_dispatcher.clone())
-            .with_workflow_dispatch(workflow_executor.clone());
+            );
+            #[cfg(feature = "jobs")]
+            let daemon_runner = daemon_runner.with_job_dispatch(job_dispatcher.clone());
+            #[cfg(feature = "workflows")]
+            let daemon_runner = daemon_runner.with_workflow_dispatch(workflow_executor.clone());
 
             handles.push(tokio::spawn(async move {
                 if let Err(e) = daemon_runner.run().await {
@@ -543,9 +605,11 @@ impl Forge {
         }
 
         // Reactor handle for shutdown
+        #[cfg(feature = "gateway")]
         let mut reactor_handle = None;
 
         // Start HTTP gateway if gateway role
+        #[cfg(feature = "gateway")]
         if roles.contains(&NodeRole::Gateway) {
             let gateway_config = RuntimeGatewayConfig {
                 port: self.config.gateway.port,
@@ -574,14 +638,16 @@ impl Forge {
                 .clone()
                 .ok_or_else(|| ForgeError::Internal("Database not initialized".into()))?;
 
-            let mut gateway = GatewayServer::new(
+            let gateway = GatewayServer::new(
                 gateway_config,
                 self.function_registry.clone(),
                 db_ref.clone(),
-            )
-            .with_job_dispatcher(job_dispatcher.clone())
-            .with_workflow_dispatcher(workflow_executor.clone())
-            .with_mcp_registry(self.mcp_registry.clone());
+            );
+            #[cfg(feature = "jobs")]
+            let gateway = gateway.with_job_dispatcher(job_dispatcher.clone());
+            #[cfg(feature = "workflows")]
+            let gateway = gateway.with_workflow_dispatcher(workflow_executor.clone());
+            let mut gateway = gateway.with_mcp_registry(self.mcp_registry.clone());
 
             // Wire signals (product analytics + diagnostics)
             if self.config.signals.enabled {
@@ -642,10 +708,10 @@ impl Forge {
                 use axum::routing::post;
                 use tower_http::cors::{Any, CorsLayer};
 
-                let webhook_state = Arc::new(
-                    WebhookState::new(self.webhook_registry.clone(), pool.clone())
-                        .with_job_dispatcher(job_dispatcher.clone()),
-                );
+                let webhook_state = WebhookState::new(self.webhook_registry.clone(), pool.clone());
+                #[cfg(feature = "jobs")]
+                let webhook_state = webhook_state.with_job_dispatcher(job_dispatcher.clone());
+                let webhook_state = Arc::new(webhook_state);
 
                 // Webhook routes need their own CORS layer since they're outside the API router.
                 // Reuse gateway CORS policy rather than forcing wildcard access.
@@ -790,15 +856,41 @@ impl Forge {
             }));
         }
 
+        // Use 0 as the count for any registry whose feature is disabled.
+        #[cfg(feature = "jobs")]
+        let jobs_count = self.job_registry.len();
+        #[cfg(not(feature = "jobs"))]
+        let jobs_count: usize = 0;
+        #[cfg(feature = "cron")]
+        let crons_count = self.cron_registry.len();
+        #[cfg(not(feature = "cron"))]
+        let crons_count: usize = 0;
+        #[cfg(feature = "workflows")]
+        let workflows_count = self.workflow_registry.len();
+        #[cfg(not(feature = "workflows"))]
+        let workflows_count: usize = 0;
+        #[cfg(feature = "daemons")]
+        let daemons_count = self.daemon_registry.len();
+        #[cfg(not(feature = "daemons"))]
+        let daemons_count: usize = 0;
+        #[cfg(feature = "gateway")]
+        let webhooks_count = self.webhook_registry.len();
+        #[cfg(not(feature = "gateway"))]
+        let webhooks_count: usize = 0;
+        #[cfg(feature = "gateway")]
+        let mcp_tools_count = self.mcp_registry.len();
+        #[cfg(not(feature = "gateway"))]
+        let mcp_tools_count: usize = 0;
+
         tracing::info!(
             queries = self.function_registry.queries().count(),
             mutations = self.function_registry.mutations().count(),
-            jobs = self.job_registry.len(),
-            crons = self.cron_registry.len(),
-            workflows = self.workflow_registry.len(),
-            daemons = self.daemon_registry.len(),
-            webhooks = self.webhook_registry.len(),
-            mcp_tools = self.mcp_registry.len(),
+            jobs = jobs_count,
+            crons = crons_count,
+            workflows = workflows_count,
+            daemons = daemons_count,
+            webhooks = webhooks_count,
+            mcp_tools = mcp_tools_count,
             "Functions registered"
         );
 
@@ -845,6 +937,7 @@ impl Forge {
         tracing::debug!("Graceful shutdown starting");
 
         // Stop workflow scheduler
+        #[cfg(feature = "workflows")]
         workflow_shutdown_token.cancel();
 
         if let Err(e) = shutdown.shutdown().await {
@@ -857,6 +950,7 @@ impl Forge {
         }
 
         // Stop reactor before closing database
+        #[cfg(feature = "gateway")]
         if let Some(ref reactor) = reactor_handle {
             reactor.stop();
         }
@@ -881,15 +975,23 @@ impl Forge {
 pub struct ForgeBuilder {
     config: Option<ForgeConfig>,
     function_registry: FunctionRegistry,
+    #[cfg(feature = "gateway")]
     mcp_registry: McpToolRegistry,
+    #[cfg(feature = "jobs")]
     job_registry: JobRegistry,
+    #[cfg(feature = "cron")]
     cron_registry: CronRegistry,
+    #[cfg(feature = "workflows")]
     workflow_registry: WorkflowRegistry,
+    #[cfg(feature = "daemons")]
     daemon_registry: DaemonRegistry,
+    #[cfg(feature = "gateway")]
     webhook_registry: WebhookRegistry,
     migrations_dir: PathBuf,
     extra_migrations: Vec<Migration>,
+    #[cfg(feature = "gateway")]
     frontend_handler: Option<FrontendHandler>,
+    #[cfg(feature = "gateway")]
     custom_routes_factory: Option<Box<dyn FnOnce(sqlx::PgPool) -> Router + Send + Sync>>,
 }
 
@@ -899,15 +1001,23 @@ impl ForgeBuilder {
         Self {
             config: None,
             function_registry: FunctionRegistry::new(),
+            #[cfg(feature = "gateway")]
             mcp_registry: McpToolRegistry::new(),
+            #[cfg(feature = "jobs")]
             job_registry: JobRegistry::new(),
+            #[cfg(feature = "cron")]
             cron_registry: CronRegistry::new(),
+            #[cfg(feature = "workflows")]
             workflow_registry: WorkflowRegistry::new(),
+            #[cfg(feature = "daemons")]
             daemon_registry: DaemonRegistry::new(),
+            #[cfg(feature = "gateway")]
             webhook_registry: WebhookRegistry::new(),
             migrations_dir: PathBuf::from("migrations"),
             extra_migrations: Vec::new(),
+            #[cfg(feature = "gateway")]
             frontend_handler: None,
+            #[cfg(feature = "gateway")]
             custom_routes_factory: None,
         }
     }
@@ -935,6 +1045,7 @@ impl ForgeBuilder {
     ///
     /// Use with the `embedded-frontend` feature to build a single binary
     /// that includes both backend and frontend.
+    #[cfg(feature = "gateway")]
     pub fn frontend_handler(mut self, handler: FrontendHandler) -> Self {
         self.frontend_handler = Some(handler);
         self
@@ -971,6 +1082,7 @@ impl ForgeBuilder {
     ///         .with_state(Arc::new(pool))
     /// });
     /// ```
+    #[cfg(feature = "gateway")]
     pub fn custom_routes<F>(mut self, f: F) -> Self
     where
         F: FnOnce(sqlx::PgPool) -> Router + Send + Sync + 'static,
@@ -988,11 +1100,17 @@ impl ForgeBuilder {
     pub fn auto_register(mut self) -> Self {
         crate::auto_register::auto_register_all(
             &mut self.function_registry,
+            #[cfg(feature = "jobs")]
             &mut self.job_registry,
+            #[cfg(feature = "cron")]
             &mut self.cron_registry,
+            #[cfg(feature = "workflows")]
             &mut self.workflow_registry,
+            #[cfg(feature = "daemons")]
             &mut self.daemon_registry,
+            #[cfg(feature = "gateway")]
             &mut self.webhook_registry,
+            #[cfg(feature = "gateway")]
             &mut self.mcp_registry,
         );
         self
@@ -1010,37 +1128,44 @@ impl ForgeBuilder {
     }
 
     /// Get mutable access to the job registry.
+    #[cfg(feature = "jobs")]
     pub fn job_registry_mut(&mut self) -> &mut JobRegistry {
         &mut self.job_registry
     }
 
     /// Get mutable access to the MCP tool registry.
+    #[cfg(feature = "gateway")]
     pub fn mcp_registry_mut(&mut self) -> &mut McpToolRegistry {
         &mut self.mcp_registry
     }
 
     /// Register an MCP tool without manually accessing the registry.
+    #[cfg(feature = "gateway")]
     pub fn register_mcp_tool<T: ForgeMcpTool>(mut self) -> Self {
         self.mcp_registry.register::<T>();
         self
     }
 
     /// Get mutable access to the cron registry.
+    #[cfg(feature = "cron")]
     pub fn cron_registry_mut(&mut self) -> &mut CronRegistry {
         &mut self.cron_registry
     }
 
     /// Get mutable access to the workflow registry.
+    #[cfg(feature = "workflows")]
     pub fn workflow_registry_mut(&mut self) -> &mut WorkflowRegistry {
         &mut self.workflow_registry
     }
 
     /// Get mutable access to the daemon registry.
+    #[cfg(feature = "daemons")]
     pub fn daemon_registry_mut(&mut self) -> &mut DaemonRegistry {
         &mut self.daemon_registry
     }
 
     /// Get mutable access to the webhook registry.
+    #[cfg(feature = "gateway")]
     pub fn webhook_registry_mut(&mut self) -> &mut WebhookRegistry {
         &mut self.webhook_registry
     }
@@ -1066,6 +1191,7 @@ impl ForgeBuilder {
     }
 
     /// Register a background job.
+    #[cfg(feature = "jobs")]
     pub fn register_job<J: forge_core::ForgeJob>(mut self) -> Self
     where
         J::Args: serde::de::DeserializeOwned + Send + 'static,
@@ -1076,12 +1202,14 @@ impl ForgeBuilder {
     }
 
     /// Register a cron handler.
+    #[cfg(feature = "cron")]
     pub fn register_cron<C: forge_core::ForgeCron>(mut self) -> Self {
         self.cron_registry.register::<C>();
         self
     }
 
     /// Register a workflow.
+    #[cfg(feature = "workflows")]
     pub fn register_workflow<W: forge_core::ForgeWorkflow>(mut self) -> Self
     where
         W::Input: serde::de::DeserializeOwned,
@@ -1092,12 +1220,14 @@ impl ForgeBuilder {
     }
 
     /// Register a daemon.
+    #[cfg(feature = "daemons")]
     pub fn register_daemon<D: forge_core::ForgeDaemon>(mut self) -> Self {
         self.daemon_registry.register::<D>();
         self
     }
 
     /// Register a webhook.
+    #[cfg(feature = "gateway")]
     pub fn register_webhook<W: forge_core::ForgeWebhook>(mut self) -> Self {
         self.webhook_registry.register::<W>();
         self
@@ -1116,16 +1246,24 @@ impl ForgeBuilder {
             db: None,
             node_id: NodeId::new(),
             function_registry: self.function_registry,
+            #[cfg(feature = "gateway")]
             mcp_registry: self.mcp_registry,
+            #[cfg(feature = "jobs")]
             job_registry: self.job_registry,
+            #[cfg(feature = "cron")]
             cron_registry: Arc::new(self.cron_registry),
+            #[cfg(feature = "workflows")]
             workflow_registry: self.workflow_registry,
+            #[cfg(feature = "daemons")]
             daemon_registry: Arc::new(self.daemon_registry),
+            #[cfg(feature = "gateway")]
             webhook_registry: Arc::new(self.webhook_registry),
             shutdown_tx,
             migrations_dir: self.migrations_dir,
             extra_migrations: self.extra_migrations,
+            #[cfg(feature = "gateway")]
             frontend_handler: self.frontend_handler,
+            #[cfg(feature = "gateway")]
             custom_routes_factory: self.custom_routes_factory,
         })
     }

@@ -1,8 +1,11 @@
 //! IP geolocation resolution.
 //!
-//! Ships with an embedded DB-IP Country Lite database for zero-config country
-//! resolution. Optionally accepts a MaxMind GeoLite2-City MMDB file for
+//! With the `geoip` feature: ships an embedded DB-IP Country Lite database for
+//! zero-config country resolution, plus optional MaxMind GeoLite2-City MMDB for
 //! city-level granularity.
+//!
+//! Without the `geoip` feature: provides a stub `GeoIpResolver` that returns
+//! empty results, so signals callers compile without conditional code paths.
 
 use forge_core::ForgeError;
 use std::net::IpAddr;
@@ -18,9 +21,15 @@ pub struct GeoInfo {
     pub city: Option<String>,
 }
 
+#[cfg(feature = "geoip")]
 enum Backend {
     Embedded(db_ip::DbIpDatabase<db_ip::CountryCode>),
     Mmdb(maxminddb::Reader<Vec<u8>>),
+}
+
+#[cfg(not(feature = "geoip"))]
+enum Backend {
+    Stub,
 }
 
 /// Thread-safe GeoIP resolver. Uses the embedded DB-IP database by default,
@@ -37,14 +46,26 @@ impl Default for GeoIpResolver {
 }
 
 impl GeoIpResolver {
-    /// Create a resolver backed by the embedded DB-IP Country Lite database.
+    /// Create a resolver backed by the embedded DB-IP Country Lite database
+    /// (or a no-op stub when the `geoip` feature is disabled).
     pub fn new() -> Self {
-        Self {
-            backend: Arc::new(Backend::Embedded(db_ip::include_country_code_database!())),
+        #[cfg(feature = "geoip")]
+        {
+            Self {
+                backend: Arc::new(Backend::Embedded(db_ip::include_country_code_database!())),
+            }
+        }
+        #[cfg(not(feature = "geoip"))]
+        {
+            Self {
+                backend: Arc::new(Backend::Stub),
+            }
         }
     }
 
     /// Create a resolver backed by a MaxMind MMDB file (GeoLite2-City or similar).
+    /// Only available with the `geoip` feature.
+    #[cfg(feature = "geoip")]
     pub fn from_mmdb(path: &Path) -> Result<Self, ForgeError> {
         let reader = maxminddb::Reader::open_readfile(path).map_err(|e| {
             ForgeError::Config(format!(
@@ -57,20 +78,31 @@ impl GeoIpResolver {
         })
     }
 
+    /// Stub for `from_mmdb` when the `geoip` feature is off — always errors so
+    /// operators discover the misconfiguration immediately at startup.
+    #[cfg(not(feature = "geoip"))]
+    pub fn from_mmdb(_path: &Path) -> Result<Self, ForgeError> {
+        Err(ForgeError::Config(
+            "geoip MMDB support requires the `geoip` feature on forge-runtime".into(),
+        ))
+    }
+
     /// Resolve an IP string to country and optionally city.
     pub fn lookup(&self, ip_str: &str) -> GeoInfo {
-        let ip: IpAddr = match ip_str.parse() {
+        let _ip: IpAddr = match ip_str.parse() {
             Ok(ip) => ip,
             Err(_) => return GeoInfo::default(),
         };
 
         match self.backend.as_ref() {
+            #[cfg(feature = "geoip")]
             Backend::Embedded(db) => GeoInfo {
-                country: db.get(&ip).map(|c| c.as_str().to_string()),
+                country: db.get(&_ip).map(|c| c.as_str().to_string()),
                 city: None,
             },
+            #[cfg(feature = "geoip")]
             Backend::Mmdb(reader) => {
-                let result: Result<maxminddb::geoip2::City, _> = reader.lookup(ip);
+                let result: Result<maxminddb::geoip2::City, _> = reader.lookup(_ip);
                 match result {
                     Ok(record) => GeoInfo {
                         country: record
@@ -86,6 +118,8 @@ impl GeoIpResolver {
                     Err(_) => GeoInfo::default(),
                 }
             }
+            #[cfg(not(feature = "geoip"))]
+            Backend::Stub => GeoInfo::default(),
         }
     }
 }

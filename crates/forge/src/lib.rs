@@ -2,6 +2,24 @@
 //!
 //! A batteries-included framework for building full-stack web applications
 //! with a Rust backend and generated SvelteKit or Dioxus frontends.
+//!
+//! ## Features
+//!
+//! Cargo features control which subsystems are compiled in. The default
+//! feature set is `full` — every subsystem enabled. To shrink your binary,
+//! disable defaults and opt into a preset:
+//!
+//! ```toml
+//! # Worker-only binary (no HTTP gateway)
+//! forge = { version = "0.9", default-features = false, features = ["worker"] }
+//!
+//! # API server (no background workers)
+//! forge = { version = "0.9", default-features = false, features = ["api"] }
+//! ```
+//!
+//! Available presets: `full`, `worker`, `api`, `minimal`.
+//! Available subsystems: `gateway`, `jobs`, `workflows`, `cron`, `daemons`,
+//! `geoip`, `otel`.
 
 mod auto_register;
 #[cfg(feature = "embedded-frontend")]
@@ -21,11 +39,21 @@ pub use forge_core::schemars;
 #[doc(hidden)]
 pub use inventory;
 
-// Re-export auto-registration types for macro-generated code
-#[doc(hidden)]
-pub use auto_register::{
-    AutoCron, AutoDaemon, AutoJob, AutoMcpTool, AutoMutation, AutoQuery, AutoWebhook, AutoWorkflow,
-};
+// Re-export auto-registration types for macro-generated code.
+// Each type is feature-gated; using e.g. `#[forge::job]` without the `jobs`
+// feature gives a compile error from the missing `forge::AutoJob` import.
+pub use auto_register::{AutoMutation, AutoQuery};
+
+#[cfg(feature = "cron")]
+pub use auto_register::AutoCron;
+#[cfg(feature = "daemons")]
+pub use auto_register::AutoDaemon;
+#[cfg(feature = "jobs")]
+pub use auto_register::AutoJob;
+#[cfg(feature = "workflows")]
+pub use auto_register::AutoWorkflow;
+#[cfg(feature = "gateway")]
+pub use auto_register::{AutoMcpTool, AutoWebhook};
 
 // Re-export embedded frontend handler
 #[cfg(feature = "embedded-frontend")]

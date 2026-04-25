@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Cargo feature flags for runtime subsystems.** Forge subsystems are now opt-in via Cargo features. `forge-runtime` exposes `gateway`, `jobs`, `workflows`, `cron`, `daemons`, `geoip`, `otel`. The public `forge` crate composes them into presets: `full` (default — everything, transparent for existing apps), `worker` (background subsystems, no HTTP), `api` (gateway + OTel only), `minimal` (gateway only). Use `default-features = false` to opt into a slim build:
+  ```toml
+  forge = { version = "0.9", default-features = false, features = ["worker"] }
+  ```
+- **`release-fast` build profile.** Release-quality optimization without LTO or single-codegen-unit. Ideal for local smoke tests and ad-hoc benchmarks. Use with `cargo build --profile release-fast`.
+- **`docs/scale/binary-size.mdx`** and an updated `api.md` skill reference cover features, presets, and build-profile/linker tuning.
+
+### Changed
+
+- **Dev profile slimmed.** `[profile.dev]` now uses `debug = "line-tables-only"`, `split-debuginfo = "unpacked"`, `codegen-units = 256`, and disables debug info on dependencies (`[profile.dev.package."*"] debug = false`). Cuts `target/` size and improves incremental rebuild latency.
+- **Observability is now a no-op stub when `otel` is disabled.** Call sites (`record_fn_execution`, `record_pool_metrics`, etc.) compile to nothing without the feature; `tracing-subscriber` still emits structured logs to stderr.
+- **GeoIP support is opt-in.** Disabling the `geoip` feature skips the build-time `db_ip` database download — unblocks builds in air-gapped environments and shaves several minutes off cold builds.
+
+### Notes
+
+- Existing apps see no behavior change: `default = ["full"]` activates every subsystem just like before.
+- Macro/feature mismatch (e.g. `#[forge::job]` without the `jobs` feature) produces a compile error at the generated `forge::AutoJob` reference, pointing users to enable the feature.
+- Approximate cold-build savings on the demo template: `worker` -55%/-65% (compile/target), `api` -25%/-30%, `minimal` -65%/-75%.
+
 ## [0.9.0] - 2026-04-23
 
 ### Added

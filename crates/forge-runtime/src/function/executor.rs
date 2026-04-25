@@ -9,6 +9,7 @@ use tracing::{Instrument, debug, error, info, trace, warn};
 use super::registry::FunctionRegistry;
 use super::router::{FunctionRouter, RouteResult};
 use crate::db::Database;
+#[cfg(feature = "gateway")]
 use crate::signals::SignalsCollector;
 
 /// Executes functions with timeout and error handling.
@@ -16,7 +17,9 @@ pub struct FunctionExecutor {
     router: FunctionRouter,
     registry: Arc<FunctionRegistry>,
     default_timeout: Duration,
+    #[cfg(feature = "gateway")]
     signals_collector: Option<SignalsCollector>,
+    #[cfg(feature = "gateway")]
     signals_server_secret: String,
 }
 
@@ -27,7 +30,9 @@ impl FunctionExecutor {
             router: FunctionRouter::new(Arc::clone(&registry), db),
             registry,
             default_timeout: Duration::from_secs(30),
+            #[cfg(feature = "gateway")]
             signals_collector: None,
+            #[cfg(feature = "gateway")]
             signals_server_secret: String::new(),
         }
     }
@@ -42,7 +47,9 @@ impl FunctionExecutor {
             router: FunctionRouter::new(Arc::clone(&registry), db),
             registry,
             default_timeout,
+            #[cfg(feature = "gateway")]
             signals_collector: None,
+            #[cfg(feature = "gateway")]
             signals_server_secret: String::new(),
         }
     }
@@ -79,12 +86,15 @@ impl FunctionExecutor {
             router,
             registry,
             default_timeout: Duration::from_secs(30),
+            #[cfg(feature = "gateway")]
             signals_collector: None,
+            #[cfg(feature = "gateway")]
             signals_server_secret: String::new(),
         }
     }
 
     /// Set the signals collector for auto-capturing RPC events.
+    #[cfg(feature = "gateway")]
     pub fn set_signals_collector(&mut self, collector: SignalsCollector, server_secret: String) {
         self.signals_collector = Some(collector);
         self.signals_server_secret = server_secret;
@@ -113,7 +123,8 @@ impl FunctionExecutor {
             .map(|k| k.to_string())
             .unwrap_or_else(|| "unknown".to_string());
 
-        // Capture signal metadata before auth/request are consumed
+        // Capture signal metadata before auth/request are consumed.
+        #[cfg(feature = "gateway")]
         let signal_ctx = self.signals_collector.as_ref().map(|_| SignalContext {
             user_id: auth.user_id(),
             tenant_id: auth.tenant_id(),
@@ -154,6 +165,7 @@ impl FunctionExecutor {
                     false,
                     duration.as_secs_f64(),
                 );
+                #[cfg(feature = "gateway")]
                 self.emit_signal(function_name, &kind, duration, false, &signal_ctx);
                 return Err(ForgeError::Timeout(format!(
                     "Function '{}' timed out after {:?}",
@@ -188,6 +200,7 @@ impl FunctionExecutor {
                     true,
                     duration.as_secs_f64(),
                 );
+                #[cfg(feature = "gateway")]
                 self.emit_signal(function_name, result_kind, duration, true, &signal_ctx);
 
                 Ok(ExecutionResult {
@@ -215,6 +228,7 @@ impl FunctionExecutor {
                     false,
                     duration.as_secs_f64(),
                 );
+                #[cfg(feature = "gateway")]
                 self.emit_signal(function_name, &kind, duration, false, &signal_ctx);
 
                 Err(e)
@@ -223,6 +237,7 @@ impl FunctionExecutor {
     }
 
     /// Emit a signal event for RPC auto-capture.
+    #[cfg(feature = "gateway")]
     fn emit_signal(
         &self,
         function_name: &str,
@@ -352,6 +367,7 @@ impl FunctionExecutor {
 }
 
 /// Captured metadata from auth/request for signal emission.
+#[cfg(feature = "gateway")]
 struct SignalContext {
     user_id: Option<uuid::Uuid>,
     tenant_id: Option<uuid::Uuid>,
