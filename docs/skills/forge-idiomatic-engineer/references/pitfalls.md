@@ -33,11 +33,21 @@ pub struct Item { ... }
 - Omit the args parameter entirely when a handler takes no input — no `Option<()>` or dummy structs.
 - Handlers require auth by default; opt out with `public`.
 - Register every handler in `src/main.rs` via `.register_*::<NameType>()` or `.auto_register()`. Macros alone don't wire them in.
+- Adding a new handler file under `src/functions/` requires `pub mod <name>;` in `src/functions/mod.rs`. The simplest path is `forge new <kind> <name>`, which writes the file and updates `mod.rs` (and `src/main.rs` if needed) for you. If you write the file by hand, remember the `pub mod` line — the macro generates the inventory entry, but the module must be reachable from the crate root.
 - Attribute values like `log = "info"` must be quoted strings.
+- **Method names that don't exist** — these compile-fail and waste a check cycle:
+  - `ctx.auth()` on `MutationContext`. Use `ctx.user_id()?` directly (or `ctx.auth_context()` for the underlying struct).
+  - `ForgeConn` imported as a path inside your handler. Don't name the type — `let mut conn = ctx.conn().await?` lets inference handle it.
+- `forge check`, `forge generate`, `forge migrate`, and `forge test` walk up to find `forge.toml`. You can run them from any subdirectory; the resolved project root is printed at the start.
 
 ## 4. Database & Transactions
 
-- Always use `sqlx::query!()` / `query_as!()` — never `sqlx::query()` / `query_as::<_,T>()`. Run `forge migrate prepare` after schema changes to refresh `.sqlx/`.
+- Always use `sqlx::query!()` / `query_as!()` — never `sqlx::query()` / `query_as::<_,T>()`.
+- **Offline cache discipline**:
+  - `forge check` auto-prepares the `.sqlx/` cache when sources are newer, so day-to-day you don't need to think about prepare ordering. Pass `--no-prepare` in CI where the cache should already be correct.
+  - For raw `cargo check` / `cargo build`, `SQLX_OFFLINE=true` is mandatory. Without it, sqlx validates every `query!()` against your live `DATABASE_URL`, including queries inside published `forge-runtime` files you cannot edit. Easiest fix: `eval "$(forge env)"` in your shell rc.
+  - `forge migrate prepare` hard-fails when `cargo-sqlx` is missing. Install with `cargo install sqlx-cli --no-default-features --features postgres`.
+  - A passing `cargo sqlx prepare` already implies a passing `SQLX_OFFLINE=true cargo check` for the same code — don't chain a redundant check call right after.
 - Cast enums explicitly in SELECT: `status as "status: ScanStatus"`. Use `"column?"` only to override nullability inference.
 - Dispatch jobs / workflows only inside `transactional` mutations. See [Patterns](./patterns.md#background-jobs).
 - **Pick the right handle** — details in [API Reference](./api.md#database-access--three-shapes):

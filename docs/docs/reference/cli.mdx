@@ -1,8 +1,14 @@
 # CLI Reference
 
+## Project Root Discovery
+
+`forge check`, `forge generate`, `forge migrate`, and `forge test` walk up from the current directory until they find a `forge.toml`, mirroring how `cargo` and `git` behave. You can run them from `frontend/`, `migrations/`, or any nested subdirectory and they will resolve the project root for you. The resolved root is printed once at the start of each command. If no `forge.toml` is found before hitting the filesystem root, the command exits with an error.
+
 ## forge new
 
-Create a new project.
+Two modes:
+
+### 1. Scaffold a new project
 
 ```bash
 forge new [project-name] --template <id> [options]
@@ -14,6 +20,20 @@ forge new [project-name] --template <id> [options]
 | `--output, -o <dir>` | Output directory (defaults to project name)                      |
 | `--no-lock`          | Skip generating `Cargo.lock` before the initial commit           |
 | `--include-skill`    | Run the skill installer non-interactively after project creation |
+
+### 2. Scaffold a handler in an existing project
+
+```bash
+forge new <kind> <name>
+```
+
+`<kind>` is one of `query`, `mutation`, `job`, `cron`, `workflow`, `daemon`, `webhook`, `mcp_tool`, `model`, `enum`. Writes a new file under `src/functions/<name>.rs` (or `src/schema/<name>.rs` for `model`/`enum`), appends `pub mod <name>;` to the appropriate `mod.rs`, and inserts `mod functions;` into `src/main.rs` if missing. The generated file includes a top-of-file Context API reference and sensible per-kind defaults you can edit. Walks up to find `forge.toml`, so you can run it from any subdirectory.
+
+```bash
+forge new query list_invoices
+forge new mutation create_invoice
+forge new model Invoice
+```
 
 Supported template ids:
 
@@ -166,9 +186,17 @@ Validate project configuration and dependencies.
 forge check [options]
 ```
 
-| Option                | Description                                |
-| --------------------- | ------------------------------------------ |
-| `--config, -c <path>` | Path to forge.toml (default: ./forge.toml) |
+| Option                | Description                                                                                              |
+| --------------------- | -------------------------------------------------------------------------------------------------------- |
+| `--config, -c <path>` | Path to forge.toml (default: ./forge.toml)                                                               |
+| `--no-prepare`        | Skip the auto-refresh of `.sqlx/`. Treats a stale cache as a real failure (use this in CI)               |
+| `--prepare-only`      | Run the `.sqlx/` auto-refresh and exit. Useful when you want the refresh side-effect without the rest    |
+
+### Auto-Refresh of `.sqlx/`
+
+`forge check` hashes source mtimes under `src/` against the `.sqlx/` cache and runs `cargo sqlx prepare --workspace` automatically when sources are newer. This eliminates the "edit SQL → check → cache-miss errors → prepare → check again" loop.
+
+Requires `cargo-sqlx` and a reachable `DATABASE_URL` (resolved from the env var first, then `forge.toml [database].url`). If either is missing, the refresh fails with an actionable hint and the rest of the check still runs.
 
 ### Checks Performed
 
@@ -316,6 +344,48 @@ CREATE TABLE users (
 -- @down
 DROP TABLE users;
 ```
+
+---
+
+## forge env
+
+Print shell-init snippets for Forge dev. Add `eval "$(forge env)"` to your shell rc file (`~/.zshrc`, `~/.bashrc`) or `eval (forge env)` for Fish (`~/.config/fish/config.fish`).
+
+```bash
+forge env [--shell bash|zsh|fish] [--no-completions]
+```
+
+Output:
+
+- `export SQLX_OFFLINE=true` (or the Fish equivalent), so raw `cargo check` does not validate against your live DB
+- `export FORGE_ROOT=<resolved project root>` when run inside a project
+- Shell completion bindings via `clap_complete`, unless `--no-completions` is set
+
+The shell is auto-detected from `$SHELL`. Pass `--shell` to override.
+
+---
+
+## forge doctor
+
+One-shot environment check. Verifies your dev environment is set up correctly and prints a remediation hint for anything that fails.
+
+```bash
+forge doctor
+```
+
+Checks performed:
+
+- Rust toolchain meets the workspace `rust-version` requirement
+- `cargo-sqlx` is installed
+- `SQLX_OFFLINE=true` is exported
+- `DATABASE_URL` is set, parseable, and reachable on a TCP probe (1s timeout)
+- Docker daemon is reachable when `docker-compose.yml` exists at the project root
+- `bun` is available when `frontend/package.json` exists; `dx` (dioxus-cli) when `frontend/Cargo.toml` exists
+- `forge.toml` parses cleanly (when run inside a project)
+- `.sqlx/` cache is fresher than the newest `src/**/*.rs` file
+- The most recent migration has both `-- @up` and `-- @down` markers
+
+Each result is one line, prefixed with `[OK]`, `[!]`, `[X]`, or `[i]`. The command exits non-zero if any check fails.
 
 ---
 

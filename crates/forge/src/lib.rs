@@ -12,6 +12,11 @@ mod runtime;
 #[doc(hidden)]
 pub use forge_core;
 
+// Re-export schemars so user crates don't need it as a direct dep.
+// The mcp_tool scaffold uses `#[schemars(crate = "forge::schemars")]` to point
+// the derive at this re-export.
+pub use forge_core::schemars;
+
 // Re-export inventory for macro-generated auto-registration
 #[doc(hidden)]
 pub use inventory;

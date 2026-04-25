@@ -6,6 +6,8 @@ This reference provides a comprehensive guide to Forge macros, context types, co
 
 Forge handlers are defined using Rust macros that generate necessary structs and registration logic.
 
+> Scaffold a new handler with `forge new <kind> <name>` (e.g. `forge new query list_invoices`). It writes the file with sane defaults, appends `pub mod <name>;` to `src/functions/mod.rs`, and inserts `mod functions;` in `src/main.rs` if missing. Kinds: `query`, `mutation`, `job`, `cron`, `workflow`, `daemon`, `webhook`, `mcp_tool`, `model`, `enum`.
+
 ### `#[forge::query]`
 Defines a read-only operation. The macro generates a `{PascalCase}Query` struct and implements the `ForgeQuery` trait. All private queries must explicitly filter results by the current user or owner unless the `unscoped` attribute is used.
 

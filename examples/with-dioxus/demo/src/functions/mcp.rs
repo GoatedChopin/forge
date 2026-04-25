@@ -52,7 +52,8 @@ pub async fn mcp_list_users(ctx: &McpToolContext) -> forge::forge_core::Result<V
     Ok(users)
 }
 
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Debug, serde::Deserialize, forge::schemars::JsonSchema)]
+#[schemars(crate = "forge::schemars")]
 pub struct McpGetUserInput {
     /// The email address of the user to look up
     pub email: String,

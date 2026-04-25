@@ -504,6 +504,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "clap_complete"
+version = "4.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ff7a1dccbdd8b078c2bdebff47e404615151534d5043da397ec50286816f9cb"
+dependencies = [
+ "clap",
+]
+
+[[package]]
 name = "clap_derive"
 version = "4.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1166,7 +1175,6 @@ dependencies = [
  "futures-util",
  "reqwest",
  "rust-embed",
- "schemars 0.8.22",
  "serde",
  "serde_json",
  "sqlx",
@@ -1260,7 +1268,6 @@ dependencies = [
  "futures-util",
  "reqwest",
  "rust-embed",
- "schemars 0.8.22",
  "serde",
  "serde_json",
  "sqlx",
@@ -1296,6 +1303,7 @@ dependencies = [
  "axum",
  "chrono",
  "clap",
+ "clap_complete",
  "console",
  "dotenvy",
  "forge-codegen",

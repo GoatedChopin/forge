@@ -40,14 +40,14 @@ pub struct TestCommand {
 
 impl TestCommand {
     pub async fn execute(self) -> Result<()> {
-        if !Path::new("forge.toml").exists() {
-            anyhow::bail!(
-                "Not a FORGE project (forge.toml not found).\n\n\
-                To create a new project:\n  forge new my-app --template with-svelte/minimal"
-            );
-        }
+        let root = super::project_root::enter_project_root()?;
 
         ui::section("FORGE Test");
+        println!(
+            "  {} Project root: {}",
+            ui::info(),
+            style(root.display()).cyan()
+        );
 
         let mut any_failed = false;
 
@@ -151,8 +151,7 @@ impl TestCommand {
             return self.execute_frontend_tests(frontend_dir, &url).await;
         }
 
-        // Compiled test flow: build, start PG, run binary, test, cleanup
-        if !check_docker_available().await {
+        if !super::project_root::docker_available().await {
             anyhow::bail!(
                 "Docker is required for running frontend tests.\n\n\
                 Install Docker or set FORGE_TEST_URL to point to a running server."
@@ -617,17 +616,6 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
         }
     }
     Ok(())
-}
-
-async fn check_docker_available() -> bool {
-    let result = Command::new("docker")
-        .args(["info"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .await;
-
-    matches!(result, Ok(status) if status.success())
 }
 
 #[cfg(test)]

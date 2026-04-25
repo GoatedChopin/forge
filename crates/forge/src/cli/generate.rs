@@ -35,6 +35,13 @@ pub struct GenerateCommand {
 impl GenerateCommand {
     /// Execute the generate command.
     pub async fn execute(self) -> Result<()> {
+        let root = super::project_root::enter_project_root()?;
+        eprintln!(
+            "  {} Project root: {}",
+            ui::info(),
+            style(root.display()).cyan()
+        );
+
         let src_dir = self.src.unwrap_or_else(|| "src".to_string());
         let src_path = Path::new(&src_dir);
 

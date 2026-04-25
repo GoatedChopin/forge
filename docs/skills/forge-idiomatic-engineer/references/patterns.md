@@ -2,6 +2,14 @@
 
 Backend, auth, integrations. Testing lives in [testing.md](./testing.md); copy-paste templates in [recipes.md](./recipes.md).
 
+## 0. Compile Loop Discipline
+
+Use `forge check`. It auto-prepares the offline cache before running the rest of the pipeline, so you don't have to think about prepare ordering. If anything in the loop feels off, run `forge doctor` first.
+
+The only thing you still have to remember by hand: when you add a new handler file under `src/functions/`, append `pub mod <name>;` to `src/functions/mod.rs`. The macro generates the inventory entry, but the module must be reachable from the crate root.
+
+For raw `cargo check`, `SQLX_OFFLINE=true` is mandatory (see Compile-Loop Hard Rules in SKILL.md, or `eval "$(forge env)"`). Pass `--no-prepare` to `forge check` in CI.
+
 ## 1. Backend Design
 
 ### Shared logic via `DbConn`

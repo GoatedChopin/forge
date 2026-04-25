@@ -45,8 +45,15 @@ pub enum MigrateAction {
 
 impl MigrateCommand {
     pub async fn execute(self) -> Result<()> {
-        // Load .env if present
+        let root = super::project_root::enter_project_root()?;
+
         dotenvy::dotenv().ok();
+
+        println!(
+            "  {} Project root: {}",
+            ui::info(),
+            style(root.display()).cyan()
+        );
 
         // Load configuration
         let config_path = Path::new(&self.config);
@@ -125,28 +132,14 @@ impl MigrateCommand {
                     println!("  {} Migrations complete", ui::ok());
                 }
 
-                // Check for cargo-sqlx
-                let has_cargo_sqlx = std::process::Command::new("cargo-sqlx")
-                    .arg("--version")
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()
-                    .map(|s| s.success())
-                    .unwrap_or(false);
+                let has_cargo_sqlx = super::project_root::cargo_sqlx_available();
 
                 if !has_cargo_sqlx {
-                    println!(
-                        "  {} {} not found. Install it with:",
-                        ui::warn(),
-                        style("cargo-sqlx").bold()
+                    anyhow::bail!(
+                        "cargo-sqlx is required to generate the offline cache.\n\
+                         Install it with:\n  \
+                         cargo install sqlx-cli --no-default-features --features postgres"
                     );
-                    println!(
-                        "    {}",
-                        style("cargo install sqlx-cli --no-default-features --features postgres")
-                            .cyan()
-                    );
-                    println!();
-                    return Ok(());
                 }
 
                 let database_url = config.database.url();

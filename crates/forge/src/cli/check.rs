@@ -18,6 +18,14 @@ pub struct CheckCommand {
     /// Path to forge.toml (default: ./forge.toml)
     #[arg(short, long, default_value = "forge.toml")]
     pub config: String,
+
+    /// Skip the auto-refresh of `.sqlx/` and treat a stale cache as a real failure.
+    #[arg(long)]
+    pub no_prepare: bool,
+
+    /// Run the auto-refresh of `.sqlx/` and exit, skipping the rest of the check pipeline.
+    #[arg(long)]
+    pub prepare_only: bool,
 }
 
 struct CheckResult {
@@ -70,13 +78,33 @@ impl CheckResult {
 impl CheckCommand {
     /// Execute the check command.
     pub async fn execute(self) -> Result<()> {
+        let root = super::project_root::enter_project_root()?;
+
         ui::section("FORGE Project Check");
         println!(
             "  {} Scanning project configuration and dependencies",
             ui::tool()
         );
+        println!(
+            "  {} Project root: {}",
+            ui::info(),
+            style(root.display()).cyan()
+        );
 
         let mut result = CheckResult::new();
+
+        // Auto-refresh the offline cache before downstream checks so cache-miss
+        // noise doesn't bury real type errors. `--no-prepare` opts out (CI),
+        // `--prepare-only` exits after this step.
+        if !self.no_prepare {
+            result.section("Offline Cache Refresh");
+            self.refresh_sqlx_cache_if_stale(&mut result)?;
+            if self.prepare_only {
+                println!();
+                println!("{} Prepare-only mode: skipping remaining checks.", ui::ok());
+                return Ok(());
+            }
+        }
 
         result.section("Configuration");
         self.check_forge_toml(&mut result)?;
@@ -542,6 +570,63 @@ impl CheckCommand {
         Ok(())
     }
 
+    fn refresh_sqlx_cache_if_stale(&self, result: &mut CheckResult) -> Result<()> {
+        let src_dir = Path::new("src");
+        let sqlx_dir = Path::new(".sqlx");
+
+        if !project_uses_compile_time_sqlx_macros(src_dir)? {
+            result.info(".sqlx/ refresh skipped (no sqlx::query!() macros in src/)");
+            return Ok(());
+        }
+
+        let stale_reason = sqlx_cache_staleness(sqlx_dir, src_dir)?;
+        let Some(reason) = stale_reason else {
+            result.pass(".sqlx/ is up to date");
+            return Ok(());
+        };
+
+        result.info(&format!(".sqlx/ refresh needed: {reason}"));
+
+        let has_cargo_sqlx = super::project_root::cargo_sqlx_available();
+        if !has_cargo_sqlx {
+            result.fail(
+                "cargo-sqlx is required to refresh .sqlx/",
+                "cargo install sqlx-cli --no-default-features --features postgres \
+                 (or pass --no-prepare to forge check)",
+            );
+            return Ok(());
+        }
+
+        let database_url = match resolve_database_url(&self.config) {
+            Ok(u) => u,
+            Err(e) => {
+                result.fail(
+                    &format!("DATABASE_URL not resolvable: {e}"),
+                    "Set DATABASE_URL to a running Postgres instance, or pass --no-prepare",
+                );
+                return Ok(());
+            }
+        };
+
+        println!("  {} Running cargo sqlx prepare --workspace", ui::step());
+        let output = StdCommand::new("cargo")
+            .args(["sqlx", "prepare", "--workspace"])
+            .env("DATABASE_URL", &database_url)
+            .output()?;
+        if output.status.success() {
+            result.pass(".sqlx/ refreshed");
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            result.fail(
+                ".sqlx/ refresh failed",
+                "Inspect cargo sqlx prepare output below; if intentional, pass --no-prepare",
+            );
+            eprintln!("{}", stderr);
+        }
+
+        Ok(())
+    }
+
     fn check_sqlx_cache(&self, result: &mut CheckResult) -> Result<()> {
         let sqlx_dir = Path::new(".sqlx");
         let uses_compile_time_macros = project_uses_compile_time_sqlx_macros(Path::new("src"))?;
@@ -1002,6 +1087,76 @@ impl CheckCommand {
     }
 }
 
+/// Decide if `.sqlx/` is stale relative to source. Returns `Some(reason)` if so.
+fn sqlx_cache_staleness(sqlx_dir: &Path, src_dir: &Path) -> Result<Option<String>> {
+    if !sqlx_dir.exists() {
+        return Ok(Some(".sqlx/ missing".to_string()));
+    }
+
+    let entries: Vec<_> = match std::fs::read_dir(sqlx_dir) {
+        Ok(it) => it.flatten().collect(),
+        Err(e) => return Ok(Some(format!(".sqlx/ unreadable: {e}"))),
+    };
+    if entries.is_empty() {
+        return Ok(Some(".sqlx/ empty".to_string()));
+    }
+
+    let cache_oldest = entries
+        .iter()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("query-"))
+        .filter_map(|e| e.metadata().ok())
+        .filter_map(|m| m.modified().ok())
+        .min();
+
+    if cache_oldest.is_none() {
+        return Ok(Some(".sqlx/ has no query entries".to_string()));
+    }
+
+    let mut newest_src: Option<std::time::SystemTime> = None;
+    let mut stack = vec![src_dir.to_path_buf()];
+    while let Some(path) = stack.pop() {
+        let Ok(meta) = std::fs::metadata(&path) else {
+            continue;
+        };
+        if meta.is_dir() {
+            if let Ok(it) = std::fs::read_dir(&path) {
+                for e in it.flatten() {
+                    stack.push(e.path());
+                }
+            }
+        } else if path.extension().and_then(|s| s.to_str()) == Some("rs")
+            && let Ok(modified) = meta.modified()
+        {
+            newest_src = Some(newest_src.map(|n| n.max(modified)).unwrap_or(modified));
+        }
+    }
+
+    if let (Some(src), Some(cache)) = (newest_src, cache_oldest)
+        && src > cache
+    {
+        return Ok(Some("Rust source newer than .sqlx/".to_string()));
+    }
+
+    Ok(None)
+}
+
+/// Resolve `DATABASE_URL`, preferring the env var, then `forge.toml [database].url`
+/// (with `${VAR}` substitution applied).
+fn resolve_database_url(config_path: &str) -> Result<String> {
+    if let Ok(url) = std::env::var("DATABASE_URL")
+        && !url.is_empty()
+    {
+        return Ok(url);
+    }
+    let path = Path::new(config_path);
+    if !path.exists() {
+        anyhow::bail!("DATABASE_URL not set and {} not found", config_path);
+    }
+    let cfg = forge_core::config::ForgeConfig::from_file(config_path)
+        .map_err(|e| anyhow::anyhow!("failed to load {config_path}: {e}"))?;
+    Ok(cfg.database.url().to_string())
+}
+
 fn project_uses_compile_time_sqlx_macros(src_dir: &Path) -> Result<bool> {
     if !src_dir.exists() {
         return Ok(false);
@@ -1024,17 +1179,29 @@ fn project_uses_compile_time_sqlx_macros(src_dir: &Path) -> Result<bool> {
         }
 
         let content = std::fs::read_to_string(&path)?;
-        if content.contains("sqlx::query!(")
-            || content.contains("sqlx::query_as!(")
-            || content.contains("sqlx::query_scalar!(")
-            || content.contains("sqlx::query_file!(")
-            || content.contains("sqlx::query_file_as!(")
-        {
+        if file_uses_sqlx_macros(&content) {
             return Ok(true);
         }
     }
 
     Ok(false)
+}
+
+fn file_uses_sqlx_macros(content: &str) -> bool {
+    const NEEDLES: &[&str] = &[
+        "sqlx::query!(",
+        "sqlx::query_as!(",
+        "sqlx::query_scalar!(",
+        "sqlx::query_file!(",
+        "sqlx::query_file_as!(",
+    ];
+    content.lines().any(|line| {
+        let code = match line.split_once("//") {
+            Some((before, _)) => before,
+            None => line,
+        };
+        NEEDLES.iter().any(|needle| code.contains(needle))
+    })
 }
 
 fn inspect_sqlx_cache(sqlx_dir: &Path) -> Result<SqlxCacheCheck> {
