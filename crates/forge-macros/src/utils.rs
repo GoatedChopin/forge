@@ -19,6 +19,7 @@ pub fn to_pascal_case(s: &str) -> String {
 }
 
 /// Parse a duration string (e.g., "30s", "5m", "1h") into a `Duration`.
+/// Bare integers without a unit suffix are rejected.
 fn parse_duration(s: &str) -> Option<Duration> {
     let s = s.trim();
     if let Some(num) = s.strip_suffix("ms") {
@@ -36,18 +37,20 @@ fn parse_duration(s: &str) -> Option<Duration> {
             .ok()
             .map(|d| Duration::from_secs(d * 86400))
     } else {
-        s.parse::<u64>().ok().map(Duration::from_secs)
+        // Bare integers without a unit suffix are not accepted. Require explicit
+        // suffixes (e.g. "30s") so intent is unambiguous at the macro callsite.
+        None
     }
 }
 
 /// Parse a duration string into seconds.
-/// Returns None if the string cannot be parsed.
+/// Returns None if the string cannot be parsed or has no unit suffix.
 pub fn parse_duration_secs(s: &str) -> Option<u64> {
     parse_duration(s).map(|d| d.as_secs())
 }
 
 /// Parse a duration string into a TokenStream representing std::time::Duration.
-/// Falls back to the provided default_secs if parsing fails.
+/// Emits a `compile_error!` if the string has no recognized unit suffix.
 pub fn parse_duration_tokens(s: &str, default_secs: u64) -> TokenStream {
     let s = s.trim();
     if s.ends_with("ms") {
@@ -78,8 +81,11 @@ pub fn parse_duration_tokens(s: &str, default_secs: u64) -> TokenStream {
         let secs = n * 86400;
         quote! { std::time::Duration::from_secs(#secs) }
     } else {
-        let n: u64 = s.parse().unwrap_or(default_secs);
-        quote! { std::time::Duration::from_secs(#n) }
+        let msg = format!(
+            "invalid duration \"{}\": use a suffix like \"30s\", \"5m\", or \"1h\"",
+            s
+        );
+        quote! { compile_error!(#msg) }
     }
 }
 
@@ -193,6 +199,134 @@ fn is_ident_char(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
 }
 
+/// Extract the top-level attribute key identifiers from an attribute string.
+///
+/// Recognizes flag form (`public`), key=value form (`cache = "5m"`), and
+/// key(args) form (`rate_limit(...)`). Once a `=` is seen at top level, the
+/// scanner skips the value expression until the next top-level comma so
+/// values like `WebhookSignature::hmac_sha256("X", "Y")` don't leak in.
+pub fn extract_top_level_keys(attr_str: &str) -> Vec<String> {
+    let bytes = attr_str.as_bytes();
+    let mut keys = Vec::new();
+    let mut i = 0usize;
+    let mut depth: u32 = 0;
+    let mut in_quote: Option<u8> = None;
+    let mut escaped = false;
+    let mut expecting_key = true;
+
+    while i < bytes.len() {
+        let b = bytes[i];
+
+        if let Some(q) = in_quote {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == q {
+                in_quote = None;
+            }
+            i += 1;
+            continue;
+        }
+
+        if b == b'"' || b == b'\'' {
+            in_quote = Some(b);
+            i += 1;
+            continue;
+        }
+
+        if b == b'(' || b == b'[' || b == b'{' {
+            depth += 1;
+            i += 1;
+            continue;
+        }
+        if b == b')' || b == b']' || b == b'}' {
+            depth = depth.saturating_sub(1);
+            i += 1;
+            continue;
+        }
+
+        if depth == 0 && b == b',' {
+            expecting_key = true;
+            i += 1;
+            continue;
+        }
+
+        if depth == 0 && b == b'=' {
+            expecting_key = false;
+            i += 1;
+            continue;
+        }
+
+        if depth == 0 && expecting_key && (b.is_ascii_alphabetic() || b == b'_') {
+            let start = i;
+            while i < bytes.len() && is_ident_char(bytes[i]) {
+                i += 1;
+            }
+            let key = &attr_str[start..i];
+            if !key.is_empty() {
+                keys.push(key.to_string());
+            }
+            // Stay in expecting_key until we hit `=` or `,`. Reaching `(` will
+            // bump depth, so the args don't get scanned for keys here.
+            continue;
+        }
+
+        i += 1;
+    }
+
+    keys
+}
+
+/// Suggest the closest allowed key for a misspelling, if any is close enough.
+fn suggest_closest(unknown: &str, allowed: &[&str]) -> Option<String> {
+    let mut best: Option<(usize, &str)> = None;
+    for &candidate in allowed {
+        let dist = levenshtein(unknown, candidate);
+        if dist <= 2.max(candidate.len() / 3) && best.map(|(d, _)| dist < d).unwrap_or(true) {
+            best = Some((dist, candidate));
+        }
+    }
+    best.map(|(_, c)| c.to_string())
+}
+
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut curr: Vec<usize> = vec![0; b.len() + 1];
+    for i in 1..=a.len() {
+        curr[0] = i;
+        for j in 1..=b.len() {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[b.len()]
+}
+
+/// Validate that every top-level attribute key is in the allowlist.
+/// Returns a `syn::Error` with a "did you mean" hint on the first unknown key.
+pub fn validate_attr_keys(attr_str: &str, allowed: &[&str], macro_name: &str) -> syn::Result<()> {
+    for key in extract_top_level_keys(attr_str) {
+        if allowed.contains(&key.as_str()) {
+            continue;
+        }
+        let msg = match suggest_closest(&key, allowed) {
+            Some(hint) => {
+                format!("Unknown attribute `{key}` for #[{macro_name}]. Did you mean `{hint}`?")
+            }
+            None => format!(
+                "Unknown attribute `{key}` for #[{macro_name}]. Allowed: {}",
+                allowed.join(", ")
+            ),
+        };
+        return Err(syn::Error::new(proc_macro2::Span::call_site(), msg));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,7 +345,8 @@ mod tests {
         assert_eq!(parse_duration_secs("5m"), Some(300));
         assert_eq!(parse_duration_secs("1h"), Some(3600));
         assert_eq!(parse_duration_secs("2d"), Some(172800));
-        assert_eq!(parse_duration_secs("60"), Some(60));
+        // Bare integers are rejected — unit suffix required.
+        assert_eq!(parse_duration_secs("60"), None);
         assert_eq!(parse_duration_secs("1000ms"), Some(1));
         assert_eq!(parse_duration_secs("invalid"), None);
     }
@@ -226,6 +361,13 @@ mod tests {
 
         let ts = parse_duration_tokens("1h", 3600);
         assert!(!ts.is_empty());
+
+        let ts = parse_duration_tokens("30", 30);
+        let output = ts.to_string();
+        assert!(
+            output.contains("compile_error"),
+            "bare integer should emit compile_error, got: {output}"
+        );
     }
 
     #[test]
@@ -271,5 +413,43 @@ mod tests {
 
         assert_eq!(parse_attr_value(attr, "timeout").as_deref(), Some("30"));
         assert_eq!(parse_attr_value(attr, "max_timeout").as_deref(), Some("5s"));
+    }
+
+    #[test]
+    fn extract_keys_handles_flags_and_kv_and_calls() {
+        let attr = r#"public, timeout = 30, rate_limit(requests = 100, per = "60s")"#;
+        let keys = extract_top_level_keys(attr);
+        assert_eq!(keys, vec!["public", "timeout", "rate_limit"]);
+    }
+
+    #[test]
+    fn extract_keys_skips_value_side_path_expressions() {
+        let attr =
+            r#"path = "/x", signature = WebhookSignature::hmac_sha256("H", "S"), timeout = "30s""#;
+        let keys = extract_top_level_keys(attr);
+        assert_eq!(keys, vec!["path", "signature", "timeout"]);
+    }
+
+    #[test]
+    fn validate_keys_accepts_known() {
+        let attr = r#"public, cache = "5m""#;
+        assert!(validate_attr_keys(attr, &["public", "cache"], "query").is_ok());
+    }
+
+    #[test]
+    fn validate_keys_rejects_misspelling_with_hint() {
+        let attr = r#"cach = "5m""#;
+        let err = validate_attr_keys(attr, &["cache", "timeout"], "query").unwrap_err();
+        assert!(
+            err.to_string().contains("cach") && err.to_string().contains("cache"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn validate_keys_rejects_completely_unknown() {
+        let attr = r#"completely_unrelated = 1"#;
+        let err = validate_attr_keys(attr, &["cache", "timeout"], "query").unwrap_err();
+        assert!(err.to_string().contains("Allowed:"), "{err}");
     }
 }

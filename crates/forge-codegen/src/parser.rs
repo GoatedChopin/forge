@@ -17,6 +17,8 @@ use forge_core::schema::{
     SchemaRegistry, TableDef,
 };
 use forge_core::util::to_snake_case;
+use std::collections::BTreeMap;
+
 use quote::ToTokens;
 use syn::{Attribute, Expr, Fields, FnArg, Lit, Meta, Pat, ReturnType};
 
@@ -53,6 +55,41 @@ pub fn parse_project(src_dir: &Path) -> Result<SchemaRegistry, Error> {
     }
 
     Ok(registry)
+}
+
+/// Scan a source directory and return every `(kind, name)` pair that appears in more
+/// than one file. The returned map is keyed by `"kind:name"` with a list of file paths
+/// as the value.
+pub fn find_duplicate_handlers(src_dir: &Path) -> Result<BTreeMap<String, Vec<PathBuf>>, Error> {
+    let mut occurrences: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
+
+    let mut files = Vec::new();
+    collect_rs_files(src_dir, &mut files);
+    files.sort();
+
+    for path in &files {
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let file = match syn::parse_file(&content) {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
+        for item in &file.items {
+            if let syn::Item::Fn(item_fn) = item
+                && let Some(func) = parse_function(item_fn)
+            {
+                let key = format!("{}:{}", func.kind.as_str(), func.name);
+                occurrences.entry(key).or_default().push(path.clone());
+            }
+        }
+    }
+
+    Ok(occurrences
+        .into_iter()
+        .filter(|(_, paths)| paths.len() > 1)
+        .collect())
 }
 
 /// Parse a single Rust source file and extract schema definitions.

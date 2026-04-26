@@ -39,6 +39,13 @@ impl std::fmt::Display for SubscriptionId {
     }
 }
 
+/// Opaque dedup key for subscriptions sharing the same query+args+auth_scope.
+///
+/// Wraps a 64-bit FNV-1a hash (fixed seed, stable across processes) so the
+/// algorithm can be swapped later without changing any call sites.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SubscriptionKey(pub u64);
+
 /// Compact identifier for query groups. u32 for cache-friendly storage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct QueryGroupId(pub u32);
@@ -102,23 +109,46 @@ pub struct QueryGroup {
     pub execution_count: u64,
 }
 
+/// `DefaultHasher` randomises its seed per process, so equal inputs hash to
+/// different values after a restart. FNV-1a's fixed basis avoids that.
+struct FnvHasher(u64);
+
+impl FnvHasher {
+    fn new() -> Self {
+        Self(14695981039346656037)
+    }
+}
+
+impl std::hash::Hasher for FnvHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 ^= b as u64;
+            self.0 = self.0.wrapping_mul(1099511628211);
+        }
+    }
+
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
 impl QueryGroup {
-    /// Compute the lookup key for dedup: hash of (query_name, args, auth_scope).
+    /// Compute the dedup key for (query_name, args, auth_scope).
+    ///
+    /// Uses FNV-1a so the result is stable across process restarts — unlike
+    /// `DefaultHasher` which randomises its seed per process.
     pub fn compute_lookup_key(
         query_name: &str,
         args: &serde_json::Value,
         auth_scope: &AuthScope,
-    ) -> u64 {
-        use std::collections::hash_map::DefaultHasher;
+    ) -> SubscriptionKey {
         use std::hash::{Hash, Hasher};
 
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = FnvHasher::new();
         query_name.hash(&mut hasher);
-        // Canonical hashing: sort object keys so {"a":1,"b":2} and {"b":2,"a":1}
-        // produce the same hash.
         Self::hash_json_canonical(args, &mut hasher);
         auth_scope.hash(&mut hasher);
-        hasher.finish()
+        SubscriptionKey(hasher.finish())
     }
 
     fn hash_json_canonical(value: &serde_json::Value, hasher: &mut impl std::hash::Hasher) {
@@ -299,7 +329,7 @@ mod tests {
     }
 
     #[test]
-    fn test_query_group_lookup_key() {
+    fn lookup_key_stable_across_calls() {
         let scope = AuthScope {
             principal_id: Some("user-1".to_string()),
             tenant_id: None,
@@ -326,6 +356,34 @@ mod tests {
             &other_scope,
         );
         assert_ne!(key1, key3);
+    }
+
+    #[test]
+    fn lookup_key_is_deterministic() {
+        let scope = AuthScope {
+            principal_id: Some("u1".to_string()),
+            tenant_id: None,
+        };
+        let key =
+            QueryGroup::compute_lookup_key("get_items", &serde_json::json!({"id": "42"}), &scope);
+        let expected =
+            QueryGroup::compute_lookup_key("get_items", &serde_json::json!({"id": "42"}), &scope);
+        assert_eq!(key, expected);
+        // FNV-1a with a non-empty input can't produce 0 (sanity: hashing actually ran).
+        assert_ne!(key.0, 0);
+    }
+
+    #[test]
+    fn lookup_key_canonical_json_order_invariant() {
+        let scope = AuthScope {
+            principal_id: None,
+            tenant_id: None,
+        };
+        let key_ab =
+            QueryGroup::compute_lookup_key("q", &serde_json::json!({"a": 1, "b": 2}), &scope);
+        let key_ba =
+            QueryGroup::compute_lookup_key("q", &serde_json::json!({"b": 2, "a": 1}), &scope);
+        assert_eq!(key_ab, key_ba);
     }
 
     #[test]

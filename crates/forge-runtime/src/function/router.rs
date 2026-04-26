@@ -6,9 +6,9 @@ use chrono::Utc;
 use forge_core::{
     AuthContext, CircuitBreakerClient, ForgeError, FunctionInfo, FunctionKind, JobDispatch,
     MutationContext, OutboxBuffer, PendingJob, PendingWorkflow, QueryContext, RequestMetadata,
-    Result, WorkflowDispatch,
+    Result, SharedRoleResolver, WorkflowDispatch, default_role_resolver,
     job::JobStatus,
-    rate_limit::{RateLimitConfig, RateLimitKey},
+    rate_limit::{RateLimitConfig, RateLimitKey, RateLimiterBackend},
     workflow::WorkflowStatus,
 };
 use serde_json::Value;
@@ -20,17 +20,27 @@ use crate::db::Database;
 use crate::rate_limit::HybridRateLimiter;
 
 /// Shared auth enforcement: checks public flag, authentication, and role.
-fn require_auth(is_public: bool, required_role: Option<&str>, auth: &AuthContext) -> Result<()> {
+///
+/// When a `RoleResolver` is provided, roles are resolved from JWT claims
+/// before the `require_role` check. This allows hierarchy expansion or
+/// remote permission lookups without changing the handler surface.
+fn require_auth(
+    is_public: bool,
+    required_role: Option<&str>,
+    auth: &AuthContext,
+    role_resolver: &SharedRoleResolver,
+) -> Result<()> {
     if is_public {
         return Ok(());
     }
     if !auth.is_authenticated() {
         return Err(ForgeError::Unauthorized("Authentication required".into()));
     }
-    if let Some(role) = required_role
-        && !auth.has_role(role)
-    {
-        return Err(ForgeError::Forbidden(format!("Role '{role}' required")));
+    if let Some(role) = required_role {
+        let effective_roles = role_resolver.resolve(auth);
+        if !effective_roles.iter().any(|r| r == role) {
+            return Err(ForgeError::Forbidden(format!("Role '{role}' required")));
+        }
     }
     Ok(())
 }
@@ -54,7 +64,8 @@ pub struct FunctionRouter {
     http_client: CircuitBreakerClient,
     job_dispatcher: Option<Arc<dyn JobDispatch>>,
     workflow_dispatcher: Option<Arc<dyn WorkflowDispatch>>,
-    rate_limiter: HybridRateLimiter,
+    rate_limiter: Arc<dyn RateLimiterBackend>,
+    role_resolver: SharedRoleResolver,
     query_cache: QueryCache,
     token_issuer: Option<Arc<dyn forge_core::TokenIssuer>>,
     token_ttl: forge_core::AuthTokenTtl,
@@ -63,7 +74,8 @@ pub struct FunctionRouter {
 impl FunctionRouter {
     /// Create a new function router.
     pub fn new(registry: Arc<FunctionRegistry>, db: Database) -> Self {
-        let rate_limiter = HybridRateLimiter::new(db.primary().clone());
+        let rate_limiter: Arc<dyn RateLimiterBackend> =
+            Arc::new(HybridRateLimiter::new(db.primary().clone()));
         Self {
             registry,
             db,
@@ -71,6 +83,7 @@ impl FunctionRouter {
             job_dispatcher: None,
             workflow_dispatcher: None,
             rate_limiter,
+            role_resolver: default_role_resolver(),
             query_cache: QueryCache::new(),
             token_issuer: None,
             token_ttl: forge_core::AuthTokenTtl::default(),
@@ -83,7 +96,8 @@ impl FunctionRouter {
         db: Database,
         http_client: CircuitBreakerClient,
     ) -> Self {
-        let rate_limiter = HybridRateLimiter::new(db.primary().clone());
+        let rate_limiter: Arc<dyn RateLimiterBackend> =
+            Arc::new(HybridRateLimiter::new(db.primary().clone()));
         Self {
             registry,
             db,
@@ -91,10 +105,34 @@ impl FunctionRouter {
             job_dispatcher: None,
             workflow_dispatcher: None,
             rate_limiter,
+            role_resolver: default_role_resolver(),
             query_cache: QueryCache::new(),
             token_issuer: None,
             token_ttl: forge_core::AuthTokenTtl::default(),
         }
+    }
+
+    /// Set a custom role resolver for RBAC extension.
+    pub fn with_role_resolver(mut self, resolver: SharedRoleResolver) -> Self {
+        self.role_resolver = resolver;
+        self
+    }
+
+    /// Set a custom role resolver (mutable reference version).
+    pub fn set_role_resolver(&mut self, resolver: SharedRoleResolver) {
+        self.role_resolver = resolver;
+    }
+
+    /// Override the default [`HybridRateLimiter`] with a custom backend
+    /// (e.g. [`crate::rate_limit::StrictRateLimiter`] for cluster-correct quotas).
+    pub fn with_rate_limiter(mut self, rate_limiter: Arc<dyn RateLimiterBackend>) -> Self {
+        self.rate_limiter = rate_limiter;
+        self
+    }
+
+    /// Replace the rate-limiter backend (mutable variant for late binding).
+    pub fn set_rate_limiter(&mut self, rate_limiter: Arc<dyn RateLimiterBackend>) {
+        self.rate_limiter = rate_limiter;
     }
 
     /// Set the token issuer for this router (enables `ctx.issue_token()` in mutations).
@@ -243,7 +281,12 @@ impl FunctionRouter {
     }
 
     fn check_auth(&self, info: &FunctionInfo, auth: &AuthContext) -> Result<()> {
-        require_auth(info.is_public, info.required_role, auth)
+        require_auth(
+            info.is_public,
+            info.required_role,
+            auth,
+            &self.role_resolver,
+        )
     }
 
     /// Verify that the authenticated user still exists in the database.
@@ -267,7 +310,12 @@ impl FunctionRouter {
     }
 
     fn check_job_auth(&self, info: &forge_core::job::JobInfo, auth: &AuthContext) -> Result<()> {
-        require_auth(info.is_public, info.required_role, auth)
+        require_auth(
+            info.is_public,
+            info.required_role,
+            auth,
+            &self.role_resolver,
+        )
     }
 
     fn check_workflow_auth(
@@ -275,7 +323,12 @@ impl FunctionRouter {
         info: &forge_core::workflow::WorkflowInfo,
         auth: &AuthContext,
     ) -> Result<()> {
-        require_auth(info.is_public, info.required_role, auth)
+        require_auth(
+            info.is_public,
+            info.required_role,
+            auth,
+            &self.role_resolver,
+        )
     }
 
     /// Check rate limit for a function call.
@@ -306,8 +359,8 @@ impl FunctionRouter {
             }
         };
 
-        let config =
-            RateLimitConfig::new(requests, Duration::from_secs(per_secs)).with_key(key_type);
+        let config = RateLimitConfig::new(requests, Duration::from_secs(per_secs))
+            .with_key(key_type.clone());
 
         // Build bucket key
         let bucket_key = self

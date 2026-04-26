@@ -5,7 +5,20 @@ use syn::{FnArg, ItemFn, Pat, ReturnType, Type, parse_macro_input};
 
 use crate::utils::{
     has_attr_flag, parse_attr_value, parse_duration_secs, parse_size_bytes, to_pascal_case,
+    validate_attr_keys,
 };
+
+const ALLOWED_MUTATION_KEYS: &[&str] = &[
+    "name",
+    "transactional",
+    "public",
+    "unscoped",
+    "require_role",
+    "timeout",
+    "rate_limit",
+    "log",
+    "max_size",
+];
 
 /// Expand the #[forge::mutation] attribute.
 ///
@@ -16,15 +29,25 @@ use crate::utils::{
 /// - Generates a struct implementing ForgeMutation trait
 pub fn expand_mutation(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
-    let attrs = parse_mutation_attrs(attr);
+    let attr_str = attr.to_string();
+
+    if let Err(e) = validate_attr_keys(&attr_str, ALLOWED_MUTATION_KEYS, "mutation") {
+        return e.to_compile_error().into();
+    }
+
+    let attrs = match parse_mutation_attrs(attr) {
+        Ok(a) => a,
+        Err(e) => return e.to_compile_error().into(),
+    };
 
     expand_mutation_impl(input, attrs)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }
 
-#[derive(Default)]
 struct MutationAttrs {
+    /// Override the wire name (default: function name).
+    name: Option<String>,
     required_role: Option<String>,
     is_public: bool,
     is_unscoped: bool,
@@ -33,17 +56,45 @@ struct MutationAttrs {
     rate_limit_per_secs: Option<u64>,
     rate_limit_key: Option<String>,
     log_level: Option<String>,
+    /// Defaults to `true`. Opt out with `transactional = false` for
+    /// high-throughput mutations that don't need atomicity.
     transactional: bool,
     max_upload_size_bytes: Option<usize>,
 }
 
-fn parse_mutation_attrs(attr: TokenStream) -> MutationAttrs {
+impl Default for MutationAttrs {
+    fn default() -> Self {
+        Self {
+            name: None,
+            required_role: None,
+            is_public: false,
+            is_unscoped: false,
+            timeout: None,
+            rate_limit_requests: None,
+            rate_limit_per_secs: None,
+            rate_limit_key: None,
+            log_level: None,
+            transactional: true,
+            max_upload_size_bytes: None,
+        }
+    }
+}
+
+fn parse_mutation_attrs(attr: TokenStream) -> Result<MutationAttrs, syn::Error> {
     let mut attrs = MutationAttrs::default();
 
     let attr_str = attr.to_string();
 
-    if has_attr_flag(&attr_str, "transactional") {
-        attrs.transactional = true;
+    if let Some(name) = parse_attr_value(&attr_str, "name") {
+        attrs.name = Some(name);
+    }
+
+    // `transactional = false` opts out; bare `transactional` flag is a no-op
+    // (the default is already true, but we accept it for clarity).
+    if let Some(val) = parse_attr_value(&attr_str, "transactional")
+        && val == "false"
+    {
+        attrs.transactional = false;
     }
 
     if has_attr_flag(&attr_str, "public") {
@@ -64,10 +115,18 @@ fn parse_mutation_attrs(attr: TokenStream) -> MutationAttrs {
         }
     }
 
-    if let Some(timeout) = parse_attr_value(&attr_str, "timeout")
-        && let Ok(secs) = timeout.parse::<u64>()
-    {
-        attrs.timeout = Some(secs);
+    if let Some(timeout) = parse_attr_value(&attr_str, "timeout") {
+        match parse_duration_secs(&timeout) {
+            Some(secs) => attrs.timeout = Some(secs),
+            None => {
+                return Err(syn::Error::new(
+                    proc_macro2::Span::call_site(),
+                    format!(
+                        "invalid timeout \"{timeout}\": use a duration string like \"30s\", \"5m\", or \"1h\""
+                    ),
+                ));
+            }
+        }
     }
 
     if let Some(rl_start) = attr_str.find("rate_limit")
@@ -136,12 +195,14 @@ fn parse_mutation_attrs(attr: TokenStream) -> MutationAttrs {
         attrs.max_upload_size_bytes = parse_size_bytes(&size_str);
     }
 
-    attrs
+    Ok(attrs)
 }
 
 fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<TokenStream2> {
     let fn_name = &input.sig.ident;
     let fn_name_str = fn_name.to_string();
+    let rpc_name = attrs.name.as_deref().unwrap_or(&fn_name_str).to_string();
+    let module_name = syn::Ident::new(&format!("__forge_handler_{}", fn_name_str), fn_name.span());
     let struct_name = syn::Ident::new(
         &format!("{}Mutation", to_pascal_case(&fn_name_str)),
         fn_name.span(),
@@ -152,15 +213,17 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
     let fn_block = &input.block;
     let fn_attrs = &input.attrs;
 
-    // Check for dispatch_job or start_workflow calls without transactional attribute
+    // dispatch_job / start_workflow require a transaction so the outbox flush is
+    // atomic with the database write. Explicitly opting out of transactions with
+    // `transactional = false` while calling these is always a bug.
     let block_str = quote! { #fn_block }.to_string();
     let has_dispatch = block_str.contains("dispatch_job") || block_str.contains("start_workflow");
     if has_dispatch && !attrs.transactional {
         return Err(syn::Error::new_spanned(
             &input.sig.ident,
-            "Mutations that call `dispatch_job()` or `start_workflow()` must use \
-             #[forge::mutation(transactional)] to ensure atomicity. Without it, \
-             jobs may be dispatched but database changes rolled back on error.",
+            "Mutations that call `dispatch_job()` or `start_workflow()` cannot use \
+             `transactional = false` — jobs dispatched outside a transaction may \
+             execute even when the database write is rolled back on error.",
         ));
     }
 
@@ -337,38 +400,30 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
         None
     };
 
-    // Generate the args struct (use unit type if no args, user type if single custom args)
-    let (args_struct, args_type, execute_call) = if args_fields.is_empty() {
+    let (module_struct_defs, args_type, execute_call) = if args_fields.is_empty() {
         (
-            quote! {
-                #vis struct #struct_name;
-            },
+            quote! { pub struct #struct_name; },
             quote! { () },
-            quote! { #fn_name(ctx).await },
+            quote! { super::#fn_name(ctx).await },
         )
     } else if let Some(user_args_type) = single_custom_args_type {
-        // Use the user's args type directly
         (
-            quote! {
-                #vis struct #struct_name;
-            },
+            quote! { pub struct #struct_name; },
             quote! { #user_args_type },
-            quote! { #fn_name(ctx, args).await },
+            quote! { super::#fn_name(ctx, args).await },
         )
     } else {
-        // Generate a wrapper struct for multiple args
         let args_struct_name = syn::Ident::new(&format!("{}Args", struct_name), fn_name.span());
         (
             quote! {
                 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-                #vis struct #args_struct_name {
+                pub struct #args_struct_name {
                     #(#args_fields),*
                 }
-
-                #vis struct #struct_name;
+                pub struct #struct_name;
             },
             quote! { #args_struct_name },
-            quote! { #fn_name(ctx, #(args.#arg_names),*).await },
+            quote! { super::#fn_name(ctx, #(args.#arg_names),*).await },
         )
     };
 
@@ -402,49 +457,57 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
     };
 
     Ok(quote! {
-        #args_struct
-
         #inner_fn
 
-        impl forge::forge_core::ForgeMutation for #struct_name {
-            type Args = #args_type;
-            type Output = #output_type;
+        #[doc(hidden)]
+        #[allow(non_snake_case)]
+        mod #module_name {
+            use super::*;
 
-            fn info() -> forge::forge_core::FunctionInfo {
-                forge::forge_core::FunctionInfo {
-                    name: #fn_name_str,
-                    description: None,
-                    kind: forge::forge_core::FunctionKind::Mutation,
-                    required_role: #required_role,
-                    is_public: #is_public,
-                    cache_ttl: None,
-                    timeout: #timeout,
-                    http_timeout: #http_timeout,
-                    rate_limit_requests: #rate_limit_requests,
-                    rate_limit_per_secs: #rate_limit_per_secs,
-                    rate_limit_key: #rate_limit_key,
-                    log_level: #log_level,
-                    table_dependencies: &[],
-                    selected_columns: &[],
-                    transactional: #transactional,
-                    consistent: false,
-                    max_upload_size_bytes: #max_upload_size_bytes,
+            #module_struct_defs
+
+            impl forge::forge_core::__sealed::Sealed for #struct_name {}
+
+            impl forge::forge_core::ForgeMutation for #struct_name {
+                type Args = #args_type;
+                type Output = #output_type;
+
+                fn info() -> forge::forge_core::FunctionInfo {
+                    forge::forge_core::FunctionInfo {
+                        name: #rpc_name,
+                        description: None,
+                        kind: forge::forge_core::FunctionKind::Mutation,
+                        required_role: #required_role,
+                        is_public: #is_public,
+                        cache_ttl: None,
+                        timeout: #timeout,
+                        http_timeout: #http_timeout,
+                        rate_limit_requests: #rate_limit_requests,
+                        rate_limit_per_secs: #rate_limit_per_secs,
+                        rate_limit_key: #rate_limit_key,
+                        log_level: #log_level,
+                        table_dependencies: &[],
+                        selected_columns: &[],
+                        transactional: #transactional,
+                        consistent: false,
+                        max_upload_size_bytes: #max_upload_size_bytes,
+                    }
+                }
+
+                fn execute(
+                    ctx: &forge::forge_core::MutationContext,
+                    args: Self::Args,
+                ) -> std::pin::Pin<Box<dyn std::future::Future<Output = forge::forge_core::Result<Self::Output>> + Send + '_>> {
+                    Box::pin(async move {
+                        #execute_call
+                    })
                 }
             }
 
-            fn execute(
-                ctx: &forge::forge_core::MutationContext,
-                args: Self::Args,
-            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = forge::forge_core::Result<Self::Output>> + Send + '_>> {
-                Box::pin(async move {
-                    #execute_call
-                })
-            }
+            forge::inventory::submit!(forge::AutoMutation(|registry| {
+                registry.register_mutation::<#struct_name>();
+            }));
         }
-
-        forge::inventory::submit!(forge::AutoMutation(|registry| {
-            registry.register_mutation::<#struct_name>();
-        }));
     })
 }
 
@@ -460,9 +523,9 @@ mod tests {
     // --- MutationAttrs default ---
 
     #[test]
-    fn default_attrs_are_all_none_or_false() {
+    fn default_attrs_transactional_is_true() {
         let attrs = MutationAttrs::default();
-        assert!(!attrs.transactional);
+        assert!(attrs.transactional, "transactional defaults to true");
         assert!(!attrs.is_public);
         assert!(!attrs.is_unscoped);
         assert!(attrs.required_role.is_none());
@@ -477,7 +540,7 @@ mod tests {
     // --- Validation: transactional requirement ---
 
     #[test]
-    fn rejects_dispatch_job_without_transactional() {
+    fn rejects_dispatch_job_with_transactional_false() {
         let input: ItemFn = syn::parse_str(
             r#"
             pub async fn create_user(ctx: &MutationContext, name: String) -> Result<User> {
@@ -488,7 +551,10 @@ mod tests {
         )
         .unwrap();
 
-        let attrs = MutationAttrs::default();
+        let attrs = MutationAttrs {
+            transactional: false,
+            ..MutationAttrs::default()
+        };
         let result = expand_mutation_impl(input, attrs);
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
@@ -499,7 +565,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_start_workflow_without_transactional() {
+    fn rejects_start_workflow_with_transactional_false() {
         let input: ItemFn = syn::parse_str(
             r#"
             pub async fn begin_onboarding(ctx: &MutationContext) -> Result<()> {
@@ -510,11 +576,35 @@ mod tests {
         )
         .unwrap();
 
-        let attrs = MutationAttrs::default();
+        let attrs = MutationAttrs {
+            transactional: false,
+            ..MutationAttrs::default()
+        };
         let result = expand_mutation_impl(input, attrs);
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("transactional"));
+    }
+
+    #[test]
+    fn accepts_dispatch_job_with_default_transactional() {
+        let input: ItemFn = syn::parse_str(
+            r#"
+            pub async fn create_user(ctx: &MutationContext, name: String) -> Result<User> {
+                ctx.dispatch_job("send_email", json!({})).await?;
+                Ok(User { name })
+            }
+            "#,
+        )
+        .unwrap();
+
+        // Default is transactional = true, so dispatch_job is fine.
+        let attrs = MutationAttrs::default();
+        let result = expand_mutation_impl(input, attrs);
+        assert!(
+            result.is_ok(),
+            "Should accept dispatch_job with default transactional=true"
+        );
     }
 
     #[test]

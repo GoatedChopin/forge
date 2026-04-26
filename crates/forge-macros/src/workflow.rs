@@ -5,7 +5,20 @@ use syn::{ExprAwait, ExprCall, ItemFn, Lit, parse_macro_input};
 
 use std::collections::BTreeSet;
 
-use crate::utils::{has_attr_flag, parse_attr_value, parse_duration_tokens, to_pascal_case};
+use crate::utils::{
+    has_attr_flag, parse_attr_value, parse_duration_tokens, to_pascal_case, validate_attr_keys,
+};
+
+const ALLOWED_WORKFLOW_KEYS: &[&str] = &[
+    "name",
+    "version",
+    "status",
+    "timeout",
+    "public",
+    "active",
+    "deprecated",
+    "require_role",
+];
 
 /// Minimum sleep duration (in seconds) that triggers the tokio::sleep warning.
 /// Sleeps shorter than this are allowed since they're typically used for polling/retry loops.
@@ -139,15 +152,34 @@ impl<'ast> Visit<'ast> for TokioSleepDetector {
 }
 
 /// Workflow attributes.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct WorkflowAttrs {
     name: Option<String>,
     version: Option<String>,
     timeout: Option<String>,
     is_public: bool,
-    is_active: bool,
-    is_deprecated: bool,
+    status: WorkflowStatus,
     required_role: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorkflowStatus {
+    Active,
+    Deprecated,
+    Staging,
+}
+
+impl Default for WorkflowAttrs {
+    fn default() -> Self {
+        Self {
+            name: None,
+            version: None,
+            timeout: None,
+            is_public: false,
+            status: WorkflowStatus::Active,
+            required_role: None,
+        }
+    }
 }
 
 fn parse_workflow_attrs(attr: TokenStream) -> WorkflowAttrs {
@@ -170,12 +202,18 @@ fn parse_workflow_attrs(attr: TokenStream) -> WorkflowAttrs {
         result.is_public = true;
     }
 
-    if has_attr_flag(&attr_str, "active") {
-        result.is_active = true;
-    }
-
-    if has_attr_flag(&attr_str, "deprecated") {
-        result.is_deprecated = true;
+    // status = "active" | "deprecated" | "staging"
+    if let Some(s) = parse_attr_value(&attr_str, "status") {
+        match s.as_str() {
+            "active" => result.status = WorkflowStatus::Active,
+            "deprecated" => result.status = WorkflowStatus::Deprecated,
+            "staging" => result.status = WorkflowStatus::Staging,
+            _ => {} // validated later at the expansion site
+        }
+    } else if has_attr_flag(&attr_str, "active") {
+        result.status = WorkflowStatus::Active;
+    } else if has_attr_flag(&attr_str, "deprecated") {
+        result.status = WorkflowStatus::Deprecated;
     }
 
     if let Some(role_start) = attr_str.find("require_role")
@@ -186,11 +224,6 @@ fn parse_workflow_attrs(attr: TokenStream) -> WorkflowAttrs {
             let role = remaining[..paren_end].trim().trim_matches('"');
             result.required_role = Some(role.to_string());
         }
-    }
-
-    // Default to active if neither active nor deprecated is specified
-    if !result.is_active && !result.is_deprecated {
-        result.is_active = true;
     }
 
     result
@@ -296,24 +329,23 @@ fn derive_signature(
 
 pub fn workflow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
+    let attr_str = attr.to_string();
+
+    if let Err(e) = validate_attr_keys(&attr_str, ALLOWED_WORKFLOW_KEYS, "workflow") {
+        return e.to_compile_error().into();
+    }
+
     let attrs = parse_workflow_attrs(attr);
 
-    // Validate: cannot be both active and deprecated
-    if attrs.is_active && attrs.is_deprecated {
-        return syn::Error::new(
-            proc_macro2::Span::call_site(),
-            "A workflow version cannot be both `active` and `deprecated`",
-        )
-        .to_compile_error()
-        .into();
-    }
+    // No invalid combination check needed — WorkflowStatus is an enum, mutually exclusive by design.
 
     let fn_name = &input.sig.ident;
     let fn_name_str = fn_name.to_string();
+    let module_name = format_ident!("__forge_handler_{}", fn_name);
     let workflow_name = attrs.name.as_deref().unwrap_or(&fn_name_str);
     let struct_name = format_ident!("{}Workflow", to_pascal_case(&fn_name.to_string()));
 
-    let vis = &input.vis;
+    let _vis = &input.vis;
     let block = &input.block;
 
     // Detect tokio::sleep usage (only for long sleeps > 100s)
@@ -388,8 +420,17 @@ pub fn workflow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let version_str = attrs.version.as_deref().unwrap_or("v1");
     let is_public = attrs.is_public;
-    let is_active = attrs.is_active;
-    let is_deprecated = attrs.is_deprecated;
+    let workflow_status = match attrs.status {
+        WorkflowStatus::Active => {
+            quote! { forge::forge_core::workflow::WorkflowDefStatus::Active }
+        }
+        WorkflowStatus::Deprecated => {
+            quote! { forge::forge_core::workflow::WorkflowDefStatus::Deprecated }
+        }
+        WorkflowStatus::Staging => {
+            quote! { forge::forge_core::workflow::WorkflowDefStatus::Staging }
+        }
+    };
 
     let required_role = if let Some(ref role) = attrs.required_role {
         quote! { Some(#role) }
@@ -431,38 +472,45 @@ pub fn workflow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let fn_attrs = &input.attrs;
 
     let expanded = quote! {
-        #(#fn_attrs)*
-        #vis struct #struct_name;
+        #[doc(hidden)]
+        #[allow(non_snake_case)]
+        mod #module_name {
+            use super::*;
 
-        impl forge::forge_core::workflow::ForgeWorkflow for #struct_name {
-            type Input = #input_type;
-            type Output = #output_type;
+            #(#fn_attrs)*
+            pub struct #struct_name;
 
-            fn info() -> forge::forge_core::workflow::WorkflowInfo {
-                forge::forge_core::workflow::WorkflowInfo {
-                    name: #workflow_name,
-                    version: #version_str,
-                    signature: #signature,
-                    is_active: #is_active,
-                    is_deprecated: #is_deprecated,
-                    timeout: #timeout,
-                    http_timeout: #http_timeout,
-                    is_public: #is_public,
-                    required_role: #required_role,
+            impl forge::forge_core::__sealed::Sealed for #struct_name {}
+
+            impl forge::forge_core::workflow::ForgeWorkflow for #struct_name {
+                type Input = #input_type;
+                type Output = #output_type;
+
+                fn info() -> forge::forge_core::workflow::WorkflowInfo {
+                    forge::forge_core::workflow::WorkflowInfo {
+                        name: #workflow_name,
+                        version: #version_str,
+                        signature: #signature,
+                        status: #workflow_status,
+                        timeout: #timeout,
+                        http_timeout: #http_timeout,
+                        is_public: #is_public,
+                        required_role: #required_role,
+                    }
+                }
+
+                fn execute(
+                    ctx: &forge::forge_core::workflow::WorkflowContext,
+                    #input_ident: Self::Input,
+                ) -> std::pin::Pin<Box<dyn std::future::Future<Output = forge::forge_core::Result<Self::Output>> + Send + '_>> {
+                    Box::pin(async move #block)
                 }
             }
 
-            fn execute(
-                ctx: &forge::forge_core::workflow::WorkflowContext,
-                #input_ident: Self::Input,
-            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = forge::forge_core::Result<Self::Output>> + Send + '_>> {
-                Box::pin(async move #block)
-            }
+            forge::inventory::submit!(forge::AutoWorkflow(|registry| {
+                registry.register::<#struct_name>();
+            }));
         }
-
-        forge::inventory::submit!(forge::AutoWorkflow(|registry| {
-            registry.register::<#struct_name>();
-        }));
     };
 
     TokenStream::from(expanded)

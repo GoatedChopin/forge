@@ -628,6 +628,9 @@ impl WorkflowExecutor {
                 "blocked_missing_handler",
             ],
             WorkflowStatus::Created => &[], // entry state only
+            // WorkflowStatus is #[non_exhaustive]; reject transitions to
+            // unrecognized future states until the runtime adds support.
+            _ => &[],
         }
     }
 

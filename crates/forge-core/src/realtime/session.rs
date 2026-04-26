@@ -40,6 +40,7 @@ impl std::fmt::Display for SessionId {
 
 /// Session status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SessionStatus {
     /// Session is connecting.
     Connecting,

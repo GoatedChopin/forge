@@ -5,6 +5,7 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use super::context::{MutationContext, QueryContext};
 use crate::error::Result;
+use crate::metadata::HandlerMetadata;
 
 /// Information about a registered function.
 #[derive(Debug, Clone)]
@@ -56,6 +57,7 @@ pub struct FunctionInfo {
 
 /// The kind of function.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum FunctionKind {
     Query,
     Mutation,
@@ -78,7 +80,7 @@ impl std::fmt::Display for FunctionKind {
 /// - Can be subscribed to for real-time updates
 /// - Should be deterministic (same inputs → same outputs)
 /// - Should not have side effects
-pub trait ForgeQuery: Send + Sync + 'static {
+pub trait ForgeQuery: crate::__sealed::Sealed + Send + Sync + 'static {
     /// The input arguments type.
     type Args: DeserializeOwned + Serialize + Send + Sync;
     /// The output type.
@@ -86,6 +88,11 @@ pub trait ForgeQuery: Send + Sync + 'static {
 
     /// Function metadata.
     fn info() -> FunctionInfo;
+
+    /// Unified metadata for uniform consumers (observability, admin, codegen).
+    fn metadata() -> HandlerMetadata {
+        HandlerMetadata::from(&Self::info())
+    }
 
     /// Execute the query.
     fn execute(
@@ -101,7 +108,7 @@ pub trait ForgeQuery: Send + Sync + 'static {
 /// - Can read and write to the database
 /// - Should NOT call external APIs (use Actions)
 /// - Are atomic: all changes commit or none do
-pub trait ForgeMutation: Send + Sync + 'static {
+pub trait ForgeMutation: crate::__sealed::Sealed + Send + Sync + 'static {
     /// The input arguments type.
     type Args: DeserializeOwned + Serialize + Send + Sync;
     /// The output type.
@@ -109,6 +116,11 @@ pub trait ForgeMutation: Send + Sync + 'static {
 
     /// Function metadata.
     fn info() -> FunctionInfo;
+
+    /// Unified metadata for uniform consumers (observability, admin, codegen).
+    fn metadata() -> HandlerMetadata {
+        HandlerMetadata::from(&Self::info())
+    }
 
     /// Execute the mutation within a transaction.
     fn execute(

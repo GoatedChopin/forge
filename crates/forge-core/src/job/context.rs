@@ -13,6 +13,7 @@ pub fn empty_saved_data() -> serde_json::Value {
 }
 
 /// Context available to job handlers.
+#[non_exhaustive]
 pub struct JobContext {
     /// Job ID.
     pub job_id: Uuid,

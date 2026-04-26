@@ -13,6 +13,7 @@ type CompensateFn<'a, T, C> = Arc<dyn Fn(T) -> Pin<Box<C>> + Send + Sync + 'a>;
 
 /// Step execution status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum StepStatus {
     /// Step not yet started.
     Pending,

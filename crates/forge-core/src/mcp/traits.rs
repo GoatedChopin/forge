@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use super::context::McpToolContext;
 use crate::error::{ForgeError, Result};
+use crate::metadata::HandlerMetadata;
 
 /// Icon metadata exposed for an MCP tool.
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -64,6 +65,7 @@ impl McpToolInfo {
 /// Content block for MCP tool call results.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum McpContentBlock {
     Text { text: String },
     ResourceLink(McpContent),
@@ -128,11 +130,16 @@ impl McpToolResult {
 }
 
 /// Trait implemented by all FORGE MCP tools.
-pub trait ForgeMcpTool: Send + Sync + 'static {
+pub trait ForgeMcpTool: crate::__sealed::Sealed + Send + Sync + 'static {
     type Args: DeserializeOwned + JsonSchema + Send + Sync;
     type Output: Serialize + JsonSchema + Send;
 
     fn info() -> McpToolInfo;
+
+    /// Unified metadata for uniform consumers (observability, admin, codegen).
+    fn metadata() -> HandlerMetadata {
+        HandlerMetadata::from(&Self::info())
+    }
 
     fn execute(
         ctx: &McpToolContext,

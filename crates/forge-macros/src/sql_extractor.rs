@@ -6,7 +6,8 @@
 use std::collections::HashSet;
 
 use sqlparser::ast::{
-    Expr, Query, Select, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins,
+    Expr, JoinConstraint, JoinOperator, Query, Select, SelectItem, SetExpr, Statement, TableFactor,
+    TableWithJoins,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -513,43 +514,230 @@ fn normalize_table_name(name: &str) -> String {
     }
 }
 
-/// Check if any SQL string references `user_id` or `owner_id` in a filtering
-/// context (WHERE, AND, ON). Used at compile time to verify that private
-/// queries scope data to the authenticated user.
+/// Scope columns that identify a row's owning principal.
+const SCOPE_COLS: &[&str] = &["user_id", "owner_id", "tenant_id"];
+
+/// Check whether every data path in the SQL flows through a scope predicate
+/// (`user_id`, `owner_id`, or `tenant_id` in a WHERE or JOIN ON clause).
+///
+/// Walks the full sqlparser AST including CTE bodies and nested subqueries.
+/// Each SELECT context must be scoped either directly (own WHERE/JOIN ON) or
+/// indirectly (all FROM sources resolve to scoped CTEs or scoped subqueries).
+/// Scope propagates forward through CTE definitions so that later CTEs and
+/// the main query can inherit scope from earlier CTEs.
+///
+/// Falls back to a string search for SQL that sqlparser cannot parse.
 pub fn sql_references_identity_scope(sql_strings: &[String]) -> bool {
     for sql in sql_strings {
-        let upper = sql.to_uppercase();
-        // Look for user_id or owner_id appearing after WHERE, AND, or ON keywords
-        for scope_col in ["USER_ID", "OWNER_ID"] {
-            for keyword in ["WHERE", "AND", "ON"] {
-                // Find each occurrence of the keyword and check if scope_col follows
-                let mut search_start = 0;
-                while let Some(kw_pos) = upper[search_start..].find(keyword) {
-                    let abs_pos = search_start + kw_pos + keyword.len();
-                    // Check that the keyword is preceded by a word boundary
-                    let before_ok = search_start + kw_pos == 0
-                        || !upper
-                            .as_bytes()
-                            .get(search_start + kw_pos - 1)
-                            .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_');
-                    if before_ok {
-                        // Look at the rest of the clause until the next keyword boundary
-                        let rest = &upper[abs_pos..];
-                        // Check a reasonable window (next 100 chars or until another major clause)
-                        let window_end = rest
-                            .find("ORDER BY")
-                            .or_else(|| rest.find("GROUP BY"))
-                            .or_else(|| rest.find("LIMIT"))
-                            .or_else(|| rest.find("RETURNING"))
-                            .unwrap_or(rest.len())
-                            .min(200);
-                        let window = &rest[..window_end];
-                        if window.contains(scope_col) {
-                            return true;
-                        }
+        match Parser::parse_sql(&PostgreSqlDialect {}, sql) {
+            Ok(stmts) => {
+                for stmt in &stmts {
+                    if stmt_is_scoped(stmt) {
+                        return true;
                     }
-                    search_start = abs_pos;
                 }
+            }
+            Err(_) => {
+                if scope_fallback(sql) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Names of CTEs whose bodies have been determined to be scoped.
+/// Built up in definition order so later CTEs can reference earlier ones.
+struct ScopeCtx {
+    scoped_ctes: HashSet<String>,
+}
+
+impl ScopeCtx {
+    fn new() -> Self {
+        Self {
+            scoped_ctes: HashSet::new(),
+        }
+    }
+}
+
+fn stmt_is_scoped(stmt: &Statement) -> bool {
+    let mut ctx = ScopeCtx::new();
+    match stmt {
+        Statement::Query(q) => query_is_scoped(q, &mut ctx),
+        Statement::Update { selection, .. } => selection.as_ref().is_some_and(expr_has_scope),
+        Statement::Delete(d) => d.selection.as_ref().is_some_and(expr_has_scope),
+        _ => false,
+    }
+}
+
+fn query_is_scoped(q: &Query, ctx: &mut ScopeCtx) -> bool {
+    // Evaluate CTEs in definition order. Each scoped CTE is recorded so
+    // later CTEs and the main body can treat it as a scoped source.
+    if let Some(with) = &q.with {
+        for cte in &with.cte_tables {
+            let cte_name = cte.alias.name.value.to_lowercase();
+            // Evaluate CTE body with current ctx (can see earlier CTEs).
+            if query_is_scoped(
+                &cte.query,
+                &mut ScopeCtx {
+                    scoped_ctes: ctx.scoped_ctes.clone(),
+                },
+            ) {
+                ctx.scoped_ctes.insert(cte_name);
+            }
+        }
+    }
+    set_expr_is_scoped(&q.body, ctx)
+}
+
+fn set_expr_is_scoped(e: &SetExpr, ctx: &ScopeCtx) -> bool {
+    match e {
+        SetExpr::Select(s) => select_is_scoped(s, ctx),
+        SetExpr::Query(q) => query_is_scoped(
+            q,
+            &mut ScopeCtx {
+                scoped_ctes: ctx.scoped_ctes.clone(),
+            },
+        ),
+        SetExpr::SetOperation { left, right, .. } => {
+            // Both branches must be scoped for a UNION/INTERSECT/EXCEPT
+            set_expr_is_scoped(left, ctx) && set_expr_is_scoped(right, ctx)
+        }
+        SetExpr::Insert(stmt) => stmt_is_scoped(stmt),
+        _ => false,
+    }
+}
+
+/// A SELECT is scoped if it has a direct scope predicate (WHERE or JOIN ON),
+/// OR if every FROM source is itself scoped (CTE reference to a scoped CTE,
+/// derived subquery that is scoped, or a table involved in a scoped join).
+fn select_is_scoped(s: &Select, ctx: &ScopeCtx) -> bool {
+    // Fast path: direct scope in WHERE
+    if s.selection.as_ref().is_some_and(expr_has_scope) {
+        return true;
+    }
+    // Fast path: any JOIN ON references a scope column
+    if s.from.iter().any(joins_have_scope) {
+        return true;
+    }
+    // Slow path: check if all FROM sources are inherently scoped
+    // (every source is a scoped CTE or a scoped subquery)
+    if s.from.is_empty() {
+        return false;
+    }
+    s.from.iter().all(|twj| all_sources_in_twj_scoped(twj, ctx))
+}
+
+/// Check if any JOIN ON condition in this table-with-joins has a scope column.
+fn joins_have_scope(twj: &TableWithJoins) -> bool {
+    twj.joins.iter().any(|join| match &join.join_operator {
+        JoinOperator::Inner(c)
+        | JoinOperator::LeftOuter(c)
+        | JoinOperator::RightOuter(c)
+        | JoinOperator::FullOuter(c) => {
+            if let JoinConstraint::On(expr) = c {
+                expr_has_scope(expr)
+            } else {
+                false
+            }
+        }
+        _ => false,
+    })
+}
+
+/// Check if every source in a TableWithJoins is scoped through CTE or subquery.
+fn all_sources_in_twj_scoped(twj: &TableWithJoins, ctx: &ScopeCtx) -> bool {
+    if !source_is_scoped(&twj.relation, ctx) {
+        return false;
+    }
+    twj.joins
+        .iter()
+        .all(|join| source_is_scoped(&join.relation, ctx))
+}
+
+/// A single FROM source is scoped if it's a known-scoped CTE reference, a
+/// scoped derived subquery, or a scoped nested join. Plain table references
+/// are never inherently scoped (they need external WHERE/JOIN ON).
+fn source_is_scoped(factor: &TableFactor, ctx: &ScopeCtx) -> bool {
+    match factor {
+        TableFactor::Table { name, .. } => {
+            let table_name = normalize_table_name(&name.to_string());
+            ctx.scoped_ctes.contains(&table_name.to_lowercase())
+        }
+        TableFactor::Derived { subquery, .. } => query_is_scoped(
+            subquery,
+            &mut ScopeCtx {
+                scoped_ctes: ctx.scoped_ctes.clone(),
+            },
+        ),
+        TableFactor::NestedJoin {
+            table_with_joins, ..
+        } => all_sources_in_twj_scoped(table_with_joins, ctx),
+        _ => false,
+    }
+}
+
+/// Walk a WHERE/ON expression looking for any scope-column reference.
+fn expr_has_scope(e: &Expr) -> bool {
+    match e {
+        Expr::Identifier(ident) => is_scope_col(&ident.value),
+        Expr::CompoundIdentifier(parts) => parts.last().is_some_and(|p| is_scope_col(&p.value)),
+        Expr::BinaryOp { left, right, .. } => expr_has_scope(left) || expr_has_scope(right),
+        Expr::UnaryOp { expr, .. } | Expr::Nested(expr) => expr_has_scope(expr),
+        Expr::Between {
+            expr, low, high, ..
+        } => expr_has_scope(expr) || expr_has_scope(low) || expr_has_scope(high),
+        Expr::IsNull(e)
+        | Expr::IsNotNull(e)
+        | Expr::IsTrue(e)
+        | Expr::IsNotTrue(e)
+        | Expr::IsFalse(e)
+        | Expr::IsNotFalse(e) => expr_has_scope(e),
+        Expr::InList { expr, list, .. } => expr_has_scope(expr) || list.iter().any(expr_has_scope),
+        Expr::InSubquery { expr, subquery, .. } => {
+            expr_has_scope(expr) || query_is_scoped(subquery, &mut ScopeCtx::new())
+        }
+        Expr::Subquery(q) | Expr::Exists { subquery: q, .. } => {
+            query_is_scoped(q, &mut ScopeCtx::new())
+        }
+        _ => false,
+    }
+}
+
+fn is_scope_col(name: &str) -> bool {
+    SCOPE_COLS.iter().any(|&c| name.eq_ignore_ascii_case(c))
+}
+
+/// String-based fallback for SQL that sqlparser cannot parse.
+/// Looks for scope column names that appear after WHERE, AND, or ON.
+fn scope_fallback(sql: &str) -> bool {
+    let upper = sql.to_uppercase();
+    for col in SCOPE_COLS {
+        let col_upper = col.to_uppercase();
+        for keyword in ["WHERE", "AND", "ON"] {
+            let mut pos = 0;
+            while let Some(kw) = upper[pos..].find(keyword) {
+                let abs = pos + kw + keyword.len();
+                let before_ok = pos + kw == 0
+                    || !upper
+                        .as_bytes()
+                        .get(pos + kw - 1)
+                        .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_');
+                if before_ok {
+                    let rest = &upper[abs..];
+                    let end = rest
+                        .find("ORDER BY")
+                        .or_else(|| rest.find("GROUP BY"))
+                        .or_else(|| rest.find("LIMIT"))
+                        .or_else(|| rest.find("RETURNING"))
+                        .unwrap_or(rest.len())
+                        .min(200);
+                    if rest[..end].contains(col_upper.as_str()) {
+                        return true;
+                    }
+                }
+                pos = abs;
             }
         }
     }
@@ -848,6 +1036,144 @@ mod tests {
         assert!(sql_references_identity_scope(&[
             "SELECT count(*) FROM tasks".to_string(),
             "SELECT * FROM tasks WHERE user_id = $1".to_string(),
+        ]));
+    }
+
+    #[test]
+    fn scope_check_tenant_id() {
+        assert!(sql_references_identity_scope(&[
+            "SELECT * FROM tasks WHERE tenant_id = $1".to_string()
+        ]));
+    }
+
+    #[test]
+    fn scope_check_cte_body_scoped() {
+        assert!(sql_references_identity_scope(&[
+            "WITH t AS (SELECT * FROM tasks WHERE user_id = $1) SELECT * FROM t".to_string()
+        ]));
+    }
+
+    #[test]
+    fn scope_check_subquery_in_from_scoped() {
+        assert!(sql_references_identity_scope(&[
+            "SELECT * FROM (SELECT * FROM tasks WHERE owner_id = $1) sub".to_string()
+        ]));
+    }
+
+    #[test]
+    fn scope_check_cte_body_unscoped_outer_scoped_passes() {
+        // Outer WHERE scopes the CTE output — this should pass.
+        assert!(sql_references_identity_scope(&[
+            "WITH all_t AS (SELECT * FROM tasks) SELECT * FROM all_t WHERE user_id = $1"
+                .to_string()
+        ]));
+    }
+
+    #[test]
+    fn scope_check_no_scope_anywhere_fails() {
+        assert!(!sql_references_identity_scope(&[
+            "WITH all_t AS (SELECT * FROM tasks) SELECT * FROM all_t".to_string()
+        ]));
+    }
+
+    #[test]
+    fn scope_check_bare_cte_without_scope_fails() {
+        // CTE body reads a real table without scope, outer query doesn't scope either.
+        assert!(!sql_references_identity_scope(&[
+            "WITH leaked AS (SELECT * FROM secrets) SELECT * FROM leaked".to_string()
+        ]));
+    }
+
+    #[test]
+    fn scope_check_nested_subquery_without_scope_fails() {
+        // Derived subquery reads a real table without scope.
+        assert!(!sql_references_identity_scope(&[
+            "SELECT * FROM (SELECT * FROM secrets) sub".to_string()
+        ]));
+    }
+
+    #[test]
+    fn scope_check_cte_scoped_propagates_to_later_cte() {
+        // First CTE is scoped; second CTE reads from the first (inherits scope);
+        // outer query reads from the second. Should pass.
+        assert!(sql_references_identity_scope(&[
+            "WITH scoped AS (SELECT * FROM tasks WHERE user_id = $1), \
+             derived AS (SELECT * FROM scoped) \
+             SELECT * FROM derived"
+                .to_string()
+        ]));
+    }
+
+    #[test]
+    fn scope_check_mixed_cte_one_unscoped_with_real_table_fails() {
+        // First CTE is scoped, second reads an unscoped real table.
+        // Outer query reads from both, but joins don't carry scope.
+        // The outer query has no WHERE/JOIN ON with scope, and `leaked`
+        // is not a scoped source, so it should fail.
+        assert!(!sql_references_identity_scope(&[
+            "WITH scoped AS (SELECT * FROM tasks WHERE user_id = $1), \
+             leaked AS (SELECT * FROM secrets) \
+             SELECT * FROM scoped JOIN leaked ON scoped.id = leaked.task_id"
+                .to_string()
+        ]));
+    }
+
+    #[test]
+    fn scope_check_subquery_in_where_scoped() {
+        // Main query has WHERE with IN-subquery that is scoped. The outer
+        // WHERE references the subquery result which carries scope.
+        assert!(sql_references_identity_scope(&[
+            "SELECT * FROM tasks WHERE user_id IN (SELECT user_id FROM team_members WHERE tenant_id = $1)"
+                .to_string()
+        ]));
+    }
+
+    #[test]
+    fn scope_check_exists_subquery_scoped() {
+        assert!(sql_references_identity_scope(&[
+            "SELECT * FROM tasks t WHERE EXISTS (SELECT 1 FROM users u WHERE u.id = t.user_id AND u.tenant_id = $1)"
+                .to_string()
+        ]));
+    }
+
+    #[test]
+    fn scope_check_union_both_scoped_passes() {
+        assert!(sql_references_identity_scope(&[
+            "SELECT * FROM tasks WHERE user_id = $1 UNION ALL SELECT * FROM archived_tasks WHERE user_id = $1"
+                .to_string()
+        ]));
+    }
+
+    #[test]
+    fn scope_check_union_one_unscoped_fails() {
+        // One branch of a UNION is scoped, the other is not.
+        assert!(!sql_references_identity_scope(&[
+            "SELECT * FROM tasks WHERE user_id = $1 UNION ALL SELECT * FROM public_notices"
+                .to_string()
+        ]));
+    }
+
+    #[test]
+    fn scope_check_join_on_scope_col() {
+        // JOIN ON with a scope column scopes the SELECT.
+        assert!(sql_references_identity_scope(&[
+            "SELECT t.*, p.name FROM tasks t INNER JOIN projects p ON t.user_id = p.owner_id"
+                .to_string()
+        ]));
+    }
+
+    #[test]
+    fn scope_check_deeply_nested_subquery_scoped() {
+        assert!(sql_references_identity_scope(&[
+            "SELECT * FROM (SELECT * FROM (SELECT * FROM tasks WHERE owner_id = $1) a) b"
+                .to_string()
+        ]));
+    }
+
+    #[test]
+    fn scope_check_deeply_nested_subquery_unscoped_fails() {
+        assert!(!sql_references_identity_scope(&[
+            "SELECT * FROM (SELECT * FROM (SELECT * FROM tasks) a) b".to_string()
         ]));
     }
 

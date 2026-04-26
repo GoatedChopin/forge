@@ -4,10 +4,23 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{ItemFn, parse_macro_input};
 
-use crate::utils::{has_attr_flag, parse_attr_value, parse_duration_tokens, to_pascal_case};
+use crate::utils::{
+    has_attr_flag, parse_attr_value, parse_duration_tokens, to_pascal_case, validate_attr_keys,
+};
+
+const ALLOWED_CRON_KEYS: &[&str] = &[
+    "name",
+    "timezone",
+    "group",
+    "catch_up",
+    "catch_up_limit",
+    "timeout",
+];
 
 #[derive(Debug, Default)]
 struct CronAttrs {
+    /// Override the registry name (default: function name).
+    name: Option<String>,
     schedule: Option<String>,
     timezone: Option<String>,
     group: Option<String>,
@@ -19,6 +32,10 @@ struct CronAttrs {
 fn parse_cron_attrs(attr: TokenStream) -> CronAttrs {
     let mut result = CronAttrs::default();
     let attr_str = attr.to_string();
+
+    if let Some(name) = parse_attr_value(&attr_str, "name") {
+        result.name = Some(name);
+    }
 
     if let Some(quote_start) = attr_str.find('"') {
         let remaining = &attr_str[quote_start + 1..];
@@ -78,13 +95,21 @@ fn parse_cron_attrs(attr: TokenStream) -> CronAttrs {
 
 pub fn cron_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
+    let attr_str = attr.to_string();
+
+    if let Err(e) = validate_attr_keys(&attr_str, ALLOWED_CRON_KEYS, "cron") {
+        return e.to_compile_error().into();
+    }
+
     let attrs = parse_cron_attrs(attr);
 
     let fn_name = &input.sig.ident;
     let fn_name_str = fn_name.to_string();
+    let rpc_name = attrs.name.as_deref().unwrap_or(&fn_name_str).to_string();
+    let module_name = format_ident!("__forge_handler_{}", fn_name);
     let struct_name = format_ident!("{}Cron", to_pascal_case(&fn_name.to_string()));
 
-    let vis = &input.vis;
+    let _vis = &input.vis;
     let block = &input.block;
 
     let schedule = attrs.schedule.unwrap_or_else(|| "* * * * *".to_string());
@@ -127,34 +152,42 @@ pub fn cron_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let other_attrs = &input.attrs;
 
     let expanded = quote! {
-        #(#other_attrs)*
-        #vis struct #struct_name;
+        #[doc(hidden)]
+        #[allow(non_snake_case)]
+        mod #module_name {
+            use super::*;
 
-        impl forge::forge_core::cron::ForgeCron for #struct_name {
-            fn info() -> forge::forge_core::cron::CronInfo {
-                forge::forge_core::cron::CronInfo {
-                    name: #fn_name_str,
-                    schedule: forge::forge_core::cron::CronSchedule::new(#schedule)
-                        .expect("Invalid cron schedule"),
-                    timezone: #timezone,
-                    group: #group,
-                    catch_up: #catch_up,
-                    catch_up_limit: #catch_up_limit,
-                    timeout: #timeout,
-                    http_timeout: #http_timeout,
+            #(#other_attrs)*
+            pub struct #struct_name;
+
+            impl forge::forge_core::__sealed::Sealed for #struct_name {}
+
+            impl forge::forge_core::cron::ForgeCron for #struct_name {
+                fn info() -> forge::forge_core::cron::CronInfo {
+                    forge::forge_core::cron::CronInfo {
+                        name: #rpc_name,
+                        schedule: forge::forge_core::cron::CronSchedule::new(#schedule)
+                            .expect("Invalid cron schedule"),
+                        timezone: #timezone,
+                        group: #group,
+                        catch_up: #catch_up,
+                        catch_up_limit: #catch_up_limit,
+                        timeout: #timeout,
+                        http_timeout: #http_timeout,
+                    }
+                }
+
+                fn execute(
+                    ctx: &forge::forge_core::cron::CronContext,
+                ) -> std::pin::Pin<Box<dyn std::future::Future<Output = forge::forge_core::Result<()>> + Send + '_>> {
+                    Box::pin(async move #block)
                 }
             }
 
-            fn execute(
-                ctx: &forge::forge_core::cron::CronContext,
-            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = forge::forge_core::Result<()>> + Send + '_>> {
-                Box::pin(async move #block)
-            }
+            forge::inventory::submit!(forge::AutoCron(|registry| {
+                registry.register::<#struct_name>();
+            }));
         }
-
-        forge::inventory::submit!(forge::AutoCron(|registry| {
-            registry.register::<#struct_name>();
-        }));
     };
 
     TokenStream::from(expanded)

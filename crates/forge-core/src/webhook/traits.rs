@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::Result;
+use crate::metadata::HandlerMetadata;
 
 use super::context::WebhookContext;
 use super::signature::{IdempotencyConfig, SignatureConfig};
@@ -14,9 +15,14 @@ use super::signature::{IdempotencyConfig, SignatureConfig};
 ///
 /// Webhooks are HTTP endpoints that receive external events (e.g., from Stripe, GitHub).
 /// They support signature validation, idempotency, and bypass authentication.
-pub trait ForgeWebhook: Send + Sync + 'static {
+pub trait ForgeWebhook: crate::__sealed::Sealed + Send + Sync + 'static {
     /// Get webhook metadata.
     fn info() -> WebhookInfo;
+
+    /// Unified metadata for uniform consumers (observability, admin, codegen).
+    fn metadata() -> HandlerMetadata {
+        HandlerMetadata::from(&Self::info())
+    }
 
     /// Execute the webhook handler.
     ///
@@ -67,6 +73,7 @@ impl Default for WebhookInfo {
 /// Result returned by webhook handlers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "status")]
+#[non_exhaustive]
 pub enum WebhookResult {
     /// Request processed successfully (HTTP 200).
     #[serde(rename = "ok")]

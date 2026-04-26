@@ -70,7 +70,7 @@ pub struct GatewayConfig {
     /// MCP configuration.
     pub mcp: McpConfig,
     /// Routes excluded from request logs, metrics, and traces.
-    pub quiet_routes: Vec<String>,
+    pub quiet_paths: Vec<String>,
     /// Token TTL configuration for refresh token management.
     pub token_ttl: forge_core::AuthTokenTtl,
     /// Project name (displayed on OAuth consent page).
@@ -80,6 +80,8 @@ pub struct GatewayConfig {
     /// Default per-file cap in bytes for multipart uploads. Applies when
     /// a mutation does not declare its own `max_size`. Defaults to 10 MB.
     pub max_file_size_bytes: usize,
+    /// Reactor, invalidation, listener, and SSE knobs. Defaults match production.
+    pub reactor_config: ReactorConfig,
 }
 
 impl Default for GatewayConfig {
@@ -93,11 +95,12 @@ impl Default for GatewayConfig {
             cors_origins: Vec::new(),
             auth: AuthConfig::default(),
             mcp: McpConfig::default(),
-            quiet_routes: Vec::new(),
+            quiet_paths: Vec::new(),
             token_ttl: forge_core::AuthTokenTtl::default(),
             project_name: "forge-app".to_string(),
             max_body_size_bytes: DEFAULT_MAX_MULTIPART_BODY_SIZE,
             max_file_size_bytes: DEFAULT_MAX_FILE_SIZE,
+            reactor_config: ReactorConfig::default(),
         }
     }
 }
@@ -109,15 +112,26 @@ pub struct HealthResponse {
     pub version: String,
 }
 
-/// Readiness check response.
+/// Public readiness probe payload.
+///
+/// Intentionally minimal: load-balancer probes can call this without
+/// authentication and we don't want to leak internal load signals (e.g.
+/// the count of blocked workflow runs) to anonymous callers. Detailed
+/// per-subsystem state lives in tracing/metrics/dashboards.
 #[derive(Debug, Serialize)]
 pub struct ReadinessResponse {
     pub ready: bool,
     pub database: bool,
     pub reactor: bool,
     pub workflows: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub blocked_workflow_runs: Option<i64>,
+    /// Count of non-terminal workflow runs whose `(name, version)` is missing
+    /// from the current binary's registry. Operators clear these via
+    /// `UPDATE forge_workflow_runs SET status = 'cancelled_by_operator'` (or
+    /// `'retired_unresumable'`) directly in PG. Reported as a number rather
+    /// than per-run details to match the anonymous-probe rationale that
+    /// keeps `workflows` boolean-only.
+    #[serde(default)]
+    pub drain_pending: usize,
     pub version: String,
 }
 
@@ -126,6 +140,10 @@ pub struct ReadinessResponse {
 pub struct ReadinessState {
     db_pool: sqlx::PgPool,
     reactor: Arc<Reactor>,
+    #[cfg(feature = "workflows")]
+    workflow_readiness: Option<Arc<crate::workflow::WorkflowReadiness>>,
+    #[cfg(feature = "workflows")]
+    workflow_registry: Option<Arc<crate::workflow::WorkflowRegistry>>,
 }
 
 /// Gateway HTTP server.
@@ -142,6 +160,12 @@ pub struct GatewayServer {
     signals_anonymize_ip: bool,
     signals_geoip: Option<crate::signals::geoip::GeoIpResolver>,
     custom_routes: Option<Router>,
+    rate_limiter: Option<Arc<dyn forge_core::rate_limit::RateLimiterBackend>>,
+    role_resolver: Option<forge_core::SharedRoleResolver>,
+    #[cfg(feature = "workflows")]
+    workflow_readiness: Option<Arc<crate::workflow::WorkflowReadiness>>,
+    #[cfg(feature = "workflows")]
+    workflow_registry: Option<Arc<crate::workflow::WorkflowRegistry>>,
 }
 
 impl GatewayServer {
@@ -152,7 +176,7 @@ impl GatewayServer {
             node_id,
             db.primary().clone(),
             registry.clone(),
-            ReactorConfig::default(),
+            config.reactor_config.clone(),
         ));
 
         let token_ttl = config.token_ttl.clone();
@@ -169,7 +193,44 @@ impl GatewayServer {
             signals_anonymize_ip: false,
             signals_geoip: None,
             custom_routes: None,
+            rate_limiter: None,
+            role_resolver: None,
+            #[cfg(feature = "workflows")]
+            workflow_readiness: None,
+            #[cfg(feature = "workflows")]
+            workflow_registry: None,
         }
+    }
+
+    /// Override the default rate limiter backend.
+    pub fn with_rate_limiter(
+        mut self,
+        rate_limiter: Arc<dyn forge_core::rate_limit::RateLimiterBackend>,
+    ) -> Self {
+        self.rate_limiter = Some(rate_limiter);
+        self
+    }
+
+    /// Set a custom role resolver for RBAC extension.
+    ///
+    /// See [`forge_core::RoleResolver`] for the trait contract.
+    pub fn with_role_resolver(mut self, resolver: forge_core::SharedRoleResolver) -> Self {
+        self.role_resolver = Some(resolver);
+        self
+    }
+
+    /// Wire the shared workflow readiness handle. Must be set when
+    /// the runtime registers workflows so the readiness probe can detect
+    /// stranded runs from removed `(name, version)` tuples.
+    #[cfg(feature = "workflows")]
+    pub fn with_workflow_readiness(
+        mut self,
+        registry: Arc<crate::workflow::WorkflowRegistry>,
+        readiness: Arc<crate::workflow::WorkflowReadiness>,
+    ) -> Self {
+        self.workflow_registry = Some(registry);
+        self.workflow_readiness = Some(readiness);
+        self
     }
 
     /// Set the job dispatcher.
@@ -249,6 +310,7 @@ impl GatewayServer {
             self.config.auth.is_hmac(),
             self.config.project_name.clone(),
             jwt_secret,
+            self.config.mcp.allow_unauthenticated_dcr,
         ));
 
         let router = Router::new()
@@ -276,6 +338,12 @@ impl GatewayServer {
             token_issuer,
         );
         rpc.set_token_ttl(self.token_ttl.clone());
+        if let Some(rate_limiter) = &self.rate_limiter {
+            rpc.set_rate_limiter(rate_limiter.clone());
+        }
+        if let Some(resolver) = &self.role_resolver {
+            rpc.set_role_resolver(resolver.clone());
+        }
         if let Some(collector) = &self.signals_collector {
             let secret = self.config.auth.jwt_secret.clone().unwrap_or_else(|| {
                 tracing::warn!(
@@ -350,6 +418,10 @@ impl GatewayServer {
         let readiness_state = Arc::new(ReadinessState {
             db_pool: self.db.primary().clone(),
             reactor: self.reactor.clone(),
+            #[cfg(feature = "workflows")]
+            workflow_readiness: self.workflow_readiness.clone(),
+            #[cfg(feature = "workflows")]
+            workflow_registry: self.workflow_registry.clone(),
         });
 
         // Build the main router with middleware
@@ -482,12 +554,13 @@ impl GatewayServer {
                 self.config.request_timeout_secs,
             )))
             .layer(cors.clone())
+            .layer(middleware::from_fn(api_version_middleware))
             .layer(middleware::from_fn_with_state(
                 auth_middleware_state,
                 auth_middleware,
             ))
             .layer(middleware::from_fn_with_state(
-                Arc::new(self.config.quiet_routes.clone()),
+                Arc::new(self.config.quiet_paths.clone()),
                 tracing_middleware,
             ));
 
@@ -541,22 +614,54 @@ async fn readiness_handler(
     let reactor_stats = state.reactor.stats().await;
     let reactor_ok = reactor_stats.listener_running;
 
-    // Check for blocked workflow runs (strict mode: unhealthy if any runs are blocked)
-    let (workflows_ok, blocked_count) = if db_ok {
-        match sqlx::query_scalar!(
+    // Check for blocked workflow runs (strict mode: unhealthy if any runs are blocked).
+    // The count is intentionally not exposed in the response — it would let
+    // anonymous callers probe for internal load. We log it so operators see
+    // the detail in tracing/metrics.
+    let workflows_ok =
+        if db_ok {
+            match sqlx::query_scalar!(
             r#"SELECT COUNT(*) as "count!" FROM forge_workflow_runs WHERE status LIKE 'blocked_%'"#,
         )
         .fetch_one(&state.db_pool)
         .await
         {
-            Ok(count) => (count == 0, if count > 0 { Some(count) } else { None }),
-            Err(_) => (true, None), // if query fails, don't block on this check
+            Ok(count) => {
+                if count > 0 {
+                    tracing::warn!(blocked_workflow_runs = count, "Blocked workflow runs present");
+                }
+                count == 0
+            }
+            Err(_) => true, // if query fails, don't block on this check
         }
-    } else {
-        (true, None)
+        } else {
+            true
+        };
+
+    // Check for stranded workflow runs whose (name, version) is no longer
+    // in this binary's registry. Refresh the cached count if it has aged
+    // out, otherwise reuse it to avoid hammering PG on hot probe paths.
+    let drain_pending = {
+        #[cfg(feature = "workflows")]
+        {
+            match (&state.workflow_registry, &state.workflow_readiness) {
+                (Some(registry), Some(readiness)) if db_ok => {
+                    if let Err(e) = readiness.refresh_if_stale(registry, &state.db_pool).await {
+                        tracing::warn!(error = %e, "drain check refresh failed");
+                    }
+                    readiness.drain_pending()
+                }
+                (_, Some(readiness)) => readiness.drain_pending(),
+                _ => 0,
+            }
+        }
+        #[cfg(not(feature = "workflows"))]
+        {
+            0usize
+        }
     };
 
-    let ready = db_ok && reactor_ok && workflows_ok;
+    let ready = db_ok && reactor_ok && workflows_ok && drain_pending == 0;
     let status_code = if ready {
         axum::http::StatusCode::OK
     } else {
@@ -570,7 +675,7 @@ async fn readiness_handler(
             database: db_ok,
             reactor: reactor_ok,
             workflows: workflows_ok,
-            blocked_workflow_runs: blocked_count,
+            drain_pending,
             version: env!("CARGO_PKG_VERSION").to_string(),
         }),
     )
@@ -617,13 +722,46 @@ impl<'a> Extractor for HeaderExtractor<'a> {
     }
 }
 
+/// The only wire version currently supported.
+const FORGE_API_V1: &str = "application/vnd.forge.v1+json";
+
+/// Validates the `Accept` header for RPC routes.
+///
+/// Clients should send `Accept: application/vnd.forge.v1+json`. Omitting the
+/// header is accepted (defaults to v1). Any other value returns 406 so that
+/// future versions can be introduced without ambiguity.
+async fn api_version_middleware(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let is_rpc = req.uri().path().starts_with("/rpc");
+    if is_rpc && let Some(accept) = req.headers().get(axum::http::header::ACCEPT) {
+        let accept_str = accept.to_str().unwrap_or("");
+        // Allow wildcard and explicit v1; reject anything else.
+        if accept_str != "*/*" && !accept_str.is_empty() && !accept_str.contains(FORGE_API_V1) {
+            let body = axum::Json(serde_json::json!({
+                "success": false,
+                "error": {
+                    "code": "unsupported_api_version",
+                    "message": format!(
+                        "Unsupported Accept header '{}'. Use '{}' or omit the header.",
+                        accept_str, FORGE_API_V1
+                    )
+                }
+            }));
+            return (axum::http::StatusCode::NOT_ACCEPTABLE, body).into_response();
+        }
+    }
+    next.run(req).await
+}
+
 /// Wraps each request in a span with HTTP semantics and OpenTelemetry
 /// context propagation. Incoming `traceparent` headers are extracted so
 /// that spans join the caller's distributed trace.
 /// Quiet routes skip spans, logs, and metrics to avoid noise from
 /// probes or high-frequency internal endpoints.
 async fn tracing_middleware(
-    axum::extract::State(quiet_routes): axum::extract::State<Arc<Vec<String>>>,
+    axum::extract::State(quiet_paths): axum::extract::State<Arc<Vec<String>>>,
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
@@ -669,7 +807,7 @@ async fn tracing_middleware(
     // Config uses full paths (/_api/health) but axum strips the prefix
     // for nested routers, so the middleware sees /health not /_api/health.
     let full_path = format!("/_api{}", path);
-    let is_quiet = quiet_routes.iter().any(|r| *r == full_path || *r == path);
+    let is_quiet = quiet_paths.iter().any(|r| *r == full_path || *r == path);
 
     if is_quiet {
         let mut response = next.run(req).await;

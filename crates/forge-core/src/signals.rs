@@ -9,6 +9,7 @@ use uuid::Uuid;
 /// Event types tracked by the signals pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum SignalEventType {
     /// Page or screen view.
     PageView,

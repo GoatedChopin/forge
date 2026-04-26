@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use console::style;
 use std::path::Path;
 use std::process::{Command as StdCommand, Stdio};
@@ -8,6 +8,18 @@ use tokio::process::Command as TokioCommand;
 use super::frontend_codegen::BindingGeneratorInput;
 use super::frontend_target::FrontendTarget;
 use super::ui;
+
+use forge_codegen::find_duplicate_handlers;
+
+/// Output format for `forge check`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Default)]
+pub enum CheckFormat {
+    /// Human-readable output with colours (default).
+    #[default]
+    Human,
+    /// Machine-readable JSON: `{ "status": "ok"|"failed", "checks": [...] }`.
+    Json,
+}
 
 /// Validate project configuration and dependencies.
 ///
@@ -26,12 +38,26 @@ pub struct CheckCommand {
     /// Run the auto-refresh of `.sqlx/` and exit, skipping the rest of the check pipeline.
     #[arg(long)]
     pub prepare_only: bool,
+
+    /// Output format: `human` (default) or `json`.
+    #[arg(long, value_enum, default_value = "human")]
+    pub format: CheckFormat,
+}
+
+#[derive(Debug, Clone)]
+struct CheckEntry {
+    name: String,
+    status: &'static str,
+    error: Option<String>,
 }
 
 struct CheckResult {
     passed: bool,
     warnings: Vec<String>,
     errors: Vec<String>,
+    /// Individual check records for JSON output.
+    entries: Vec<CheckEntry>,
+    format: CheckFormat,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,37 +68,99 @@ enum SqlxCacheCheck {
 }
 
 impl CheckResult {
-    fn new() -> Self {
+    fn new(format: CheckFormat) -> Self {
         Self {
             passed: true,
             warnings: Vec::new(),
             errors: Vec::new(),
+            entries: Vec::new(),
+            format,
         }
     }
 
     fn pass(&mut self, msg: &str) {
-        println!("  {} {}", ui::ok(), msg);
+        if self.format == CheckFormat::Human {
+            println!("  {} {}", ui::ok(), msg);
+        }
+        self.entries.push(CheckEntry {
+            name: msg.to_string(),
+            status: "ok",
+            error: None,
+        });
     }
 
     fn warn(&mut self, msg: &str, fix: &str) {
-        println!("  {} {}", ui::warn(), msg);
+        if self.format == CheckFormat::Human {
+            println!("  {} {}", ui::warn(), msg);
+        }
         self.warnings.push(fix.to_string());
+        self.entries.push(CheckEntry {
+            name: msg.to_string(),
+            status: "warn",
+            error: Some(fix.to_string()),
+        });
     }
 
     fn fail(&mut self, msg: &str, fix: &str) {
-        println!("  {} {}", ui::error(), msg);
+        if self.format == CheckFormat::Human {
+            println!("  {} {}", ui::error(), msg);
+        }
         self.errors.push(fix.to_string());
+        self.entries.push(CheckEntry {
+            name: msg.to_string(),
+            status: "failed",
+            error: Some(fix.to_string()),
+        });
         self.passed = false;
     }
 
     fn info(&mut self, msg: &str) {
-        println!("    {} {}", ui::info(), msg);
+        if self.format == CheckFormat::Human {
+            println!("    {} {}", ui::info(), msg);
+        }
     }
 
     fn section(&mut self, title: &str) {
-        println!();
-        println!("  {} {}", ui::step(), style(title).bold());
+        if self.format == CheckFormat::Human {
+            println!();
+            println!("  {} {}", ui::step(), style(title).bold());
+        }
     }
+
+    fn print_json(&self) {
+        let status = if self.passed { "ok" } else { "failed" };
+        let checks: Vec<String> = self
+            .entries
+            .iter()
+            .map(|e| {
+                let error_field = match &e.error {
+                    Some(err) => format!(r#","error":{}"#, json_str(err)),
+                    None => String::new(),
+                };
+                format!(
+                    r#"{{"name":{},"status":"{}"{}}}"#,
+                    json_str(&e.name),
+                    e.status,
+                    error_field
+                )
+            })
+            .collect();
+        println!(
+            r#"{{"status":"{}","checks":[{}]}}"#,
+            status,
+            checks.join(",")
+        );
+    }
+}
+
+fn json_str(s: &str) -> String {
+    let escaped = s
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t");
+    format!("\"{}\"", escaped)
 }
 
 impl CheckCommand {
@@ -80,18 +168,20 @@ impl CheckCommand {
     pub async fn execute(self) -> Result<()> {
         let root = super::project_root::enter_project_root()?;
 
-        ui::section("FORGE Project Check");
-        println!(
-            "  {} Scanning project configuration and dependencies",
-            ui::tool()
-        );
-        println!(
-            "  {} Project root: {}",
-            ui::info(),
-            style(root.display()).cyan()
-        );
+        if self.format == CheckFormat::Human {
+            ui::section("FORGE Project Check");
+            println!(
+                "  {} Scanning project configuration and dependencies",
+                ui::tool()
+            );
+            println!(
+                "  {} Project root: {}",
+                ui::info(),
+                style(root.display()).cyan()
+            );
+        }
 
-        let mut result = CheckResult::new();
+        let mut result = CheckResult::new(self.format);
 
         // Auto-refresh the offline cache before downstream checks so cache-miss
         // noise doesn't bury real type errors. `--no-prepare` opts out (CI),
@@ -140,7 +230,15 @@ impl CheckCommand {
         result.section("Frontend Tooling");
         self.check_frontend_linting(&mut result).await;
 
-        // Summary
+        if self.format == CheckFormat::Json {
+            result.print_json();
+            if !result.passed {
+                return Err(anyhow::anyhow!("Project check failed"));
+            }
+            return Ok(());
+        }
+
+        // Human summary
         println!();
         if result.passed && result.warnings.is_empty() {
             println!("{} All checks passed! Ready for development.", ui::ok());
@@ -260,6 +358,19 @@ impl CheckCommand {
                     "Use a port between 1 and 65535",
                 );
             }
+        }
+
+        // Check [observability] section: warn on full sampling.
+        if let Some(obs) = config.get("observability")
+            && let Some(ratio) = obs.get("sampling_ratio").and_then(|v| v.as_float())
+            && ratio >= 1.0
+        {
+            result.warn(
+                &format!(
+                    "[observability].sampling_ratio = {ratio} sends every span to OTLP"
+                ),
+                "Lower to 0.05-0.1 in production builds; full sampling can saturate the collector and inflate cost",
+            );
         }
 
         Ok(())
@@ -460,6 +571,33 @@ impl CheckCommand {
                 &format!("{}/{} files have forge macros", macro_count, function_count),
                 "Ensure all function files use #[forge::*] macros",
             );
+        }
+
+        // Duplicate handler name check
+        match find_duplicate_handlers(functions_dir) {
+            Ok(dupes) if dupes.is_empty() => {}
+            Ok(dupes) => {
+                for (key, paths) in &dupes {
+                    let (kind, name) = key.split_once(':').unwrap_or(("handler", key));
+                    let file_list = paths
+                        .iter()
+                        .filter_map(|p| p.to_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    result.fail(
+                        &format!("Duplicate {} name \"{name}\"", kind),
+                        &format!(
+                            "Found in: {file_list}. Use name = \"...\" in the macro attribute or rename one of the functions.",
+                        ),
+                    );
+                }
+            }
+            Err(e) => {
+                result.warn(
+                    "Could not scan for duplicate handler names",
+                    &format!("Parse error: {e}"),
+                );
+            }
         }
 
         Ok(())
@@ -1364,10 +1502,25 @@ mod tests {
 
     #[test]
     fn test_check_result() {
-        let result = CheckResult::new();
+        let result = CheckResult::new(CheckFormat::Human);
         assert!(result.passed);
         assert!(result.warnings.is_empty());
         assert!(result.errors.is_empty());
+    }
+
+    #[test]
+    fn json_output_shape() {
+        let mut result = CheckResult::new(CheckFormat::Json);
+        result.pass("config ok");
+        result.warn("missing file", "add file");
+        result.fail("bad setting", "fix setting");
+        // Verify the JSON string is well-formed by manual inspection.
+        // status should be "failed" since there's one failure.
+        assert!(!result.passed);
+        assert_eq!(result.entries.len(), 3);
+        assert_eq!(result.entries[0].status, "ok");
+        assert_eq!(result.entries[1].status, "warn");
+        assert_eq!(result.entries[2].status, "failed");
     }
 
     #[test]

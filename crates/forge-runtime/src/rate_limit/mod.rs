@@ -1,3 +1,3 @@
 mod limiter;
 
-pub use limiter::{HybridRateLimiter, RateLimiter};
+pub use limiter::{HybridRateLimiter, StrictRateLimiter};

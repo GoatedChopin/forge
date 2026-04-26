@@ -4,6 +4,7 @@ use uuid::Uuid;
 
 /// Reason for workflow suspension.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum SuspendReason {
     /// Workflow is sleeping until a specific time.
     Sleep { wake_at: DateTime<Utc> },

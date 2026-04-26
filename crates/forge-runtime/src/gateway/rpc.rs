@@ -68,6 +68,23 @@ impl RpcHandler {
         }
     }
 
+    /// Replace the rate-limiter backend. Call before handling requests.
+    pub fn set_rate_limiter(
+        &mut self,
+        rate_limiter: Arc<dyn forge_core::rate_limit::RateLimiterBackend>,
+    ) {
+        if let Some(executor) = Arc::get_mut(&mut self.executor) {
+            executor.set_rate_limiter(rate_limiter);
+        }
+    }
+
+    /// Set a custom role resolver. Call before handling requests.
+    pub fn set_role_resolver(&mut self, resolver: forge_core::SharedRoleResolver) {
+        if let Some(executor) = Arc::get_mut(&mut self.executor) {
+            executor.set_role_resolver(resolver);
+        }
+    }
+
     /// Look up function metadata by name.
     pub fn function_info(&self, name: &str) -> Option<FunctionInfo> {
         self.executor.function_info(name)
@@ -98,9 +115,9 @@ impl RpcHandler {
             .await
         {
             Ok(exec_result) => RpcResponse::success(exec_result.result)
-                .with_request_id(metadata.request_id.to_string()),
+                .with_request_id(metadata.request_id().to_string()),
             Err(e) => RpcResponse::error(RpcError::from(e))
-                .with_request_id(metadata.request_id.to_string()),
+                .with_request_id(metadata.request_id().to_string()),
         }
     }
 }
@@ -117,15 +134,13 @@ fn extract_user_agent(headers: &HeaderMap) -> Option<String> {
 
 /// Build request metadata from tracing state and headers.
 fn build_metadata(tracing: TracingState, headers: &HeaderMap) -> RequestMetadata {
-    RequestMetadata {
-        request_id: uuid::Uuid::parse_str(&tracing.request_id)
-            .unwrap_or_else(|_| uuid::Uuid::new_v4()),
-        trace_id: tracing.trace_id,
-        client_ip: extract_client_ip(headers),
-        user_agent: extract_user_agent(headers),
-        correlation_id: extract_correlation_id(headers),
-        timestamp: chrono::Utc::now(),
-    }
+    RequestMetadata::build(
+        uuid::Uuid::parse_str(&tracing.request_id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
+        tracing.trace_id,
+        extract_client_ip(headers),
+        extract_user_agent(headers),
+        extract_correlation_id(headers),
+    )
 }
 
 /// Extract the correlation ID from the x-correlation-id header.
@@ -228,14 +243,13 @@ pub async fn rpc_batch_handler(
             )));
             continue;
         }
-        let metadata = RequestMetadata {
-            request_id: uuid::Uuid::new_v4(),
-            trace_id: tracing.trace_id.clone(),
-            client_ip: client_ip.clone(),
-            user_agent: user_agent.clone(),
-            correlation_id: correlation_id.clone(),
-            timestamp: chrono::Utc::now(),
-        };
+        let metadata = RequestMetadata::build(
+            uuid::Uuid::new_v4(),
+            tracing.trace_id.clone(),
+            client_ip.clone(),
+            user_agent.clone(),
+            correlation_id.clone(),
+        );
 
         let response = handler.handle(request, auth.clone(), metadata).await;
         results.push(response);

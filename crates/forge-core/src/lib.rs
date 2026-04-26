@@ -8,17 +8,36 @@
 //! Library code depends on `forge-core` for types. The runtime (`forge-runtime`) implements
 //! the execution engine. Proc macros (`forge-macros`) generate trait implementations.
 
+/// Internal sealing marker. Not part of the public API.
+///
+/// Handler traits (`ForgeQuery`, `ForgeMutation`, `ForgeJob`, `ForgeCron`,
+/// `ForgeWorkflow`, `ForgeDaemon`, `ForgeWebhook`, `ForgeMcpTool`) require
+/// implementors to also implement [`__sealed::Sealed`]. The `forge-macros`
+/// proc-macros emit this impl automatically; user code should not implement
+/// any handler trait by hand. Manual `impl Sealed` opts into framework
+/// internals that may break in any release.
+#[doc(hidden)]
+pub mod __sealed {
+    /// Marker trait that gates manual handler-trait implementations. Hidden
+    /// from rustdoc because it is an implementation detail; do not implement
+    /// it directly.
+    pub trait Sealed {}
+}
+
 pub mod auth;
 pub mod cluster;
 pub mod config;
+pub mod context;
 pub mod cron;
 pub mod daemon;
+pub mod db;
 pub mod env;
 pub mod error;
 pub mod function;
 pub mod http;
 pub mod job;
 pub mod mcp;
+pub mod metadata;
 pub mod oauth;
 pub mod rate_limit;
 pub mod realtime;
@@ -33,11 +52,16 @@ pub mod workflow;
 // Testing utilities
 pub mod testing;
 
-pub use auth::{Claims, ClaimsBuilder, TokenPair};
+pub use auth::{
+    Claims, ClaimsBuilder, DefaultRoleResolver, RoleResolver, SharedRoleResolver, TokenPair,
+    default_role_resolver,
+};
 pub use cluster::{ClusterInfo, LeaderInfo, LeaderRole, NodeId, NodeInfo, NodeRole, NodeStatus};
 pub use config::{ForgeConfig, McpConfig, SignalsConfig};
+pub use context::{AuthenticatedContext, HandlerContext};
 pub use cron::{CronContext, CronInfo, CronSchedule, ForgeCron};
 pub use daemon::{DaemonContext, DaemonInfo, DaemonStatus, ForgeDaemon};
+pub use db::ForgePool;
 pub use env::{EnvAccess, EnvProvider, MockEnvProvider, RealEnvProvider};
 pub use error::{ForgeError, Result};
 pub use function::{
@@ -54,6 +78,7 @@ pub use mcp::{
     ForgeMcpTool, McpContent, McpContentBlock, McpToolAnnotations, McpToolContext, McpToolIcon,
     McpToolInfo, McpToolResult,
 };
+pub use metadata::{HandlerKind, HandlerMetadata};
 pub use rate_limit::{RateLimitConfig, RateLimitHeaders, RateLimitKey, RateLimitResult};
 pub use realtime::{
     AuthScope, BloomFilter, Change, ChangeOperation, Delta, QueryGroup, QueryGroupId, ReadSet,

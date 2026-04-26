@@ -7,9 +7,10 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use super::context::WorkflowContext;
 use crate::Result;
+use crate::metadata::HandlerMetadata;
 
 /// Trait for workflow handlers.
-pub trait ForgeWorkflow: Send + Sync + 'static {
+pub trait ForgeWorkflow: crate::__sealed::Sealed + Send + Sync + 'static {
     /// Input type for the workflow.
     type Input: DeserializeOwned + Serialize + Send + Sync;
     /// Output type for the workflow.
@@ -18,11 +19,53 @@ pub trait ForgeWorkflow: Send + Sync + 'static {
     /// Get workflow metadata.
     fn info() -> WorkflowInfo;
 
+    /// Unified metadata for uniform consumers (observability, admin, codegen).
+    fn metadata() -> HandlerMetadata {
+        HandlerMetadata::from(&Self::info())
+    }
+
     /// Execute the workflow.
     fn execute(
         ctx: &WorkflowContext,
         input: Self::Input,
     ) -> Pin<Box<dyn Future<Output = Result<Self::Output>> + Send + '_>>;
+}
+
+/// Lifecycle state of a workflow definition version.
+///
+/// A workflow name can have at most one `Active` version at a time.
+/// `Deprecated` versions are kept alive only to drain in-flight runs.
+/// `Staging` versions accept no new runs and are skipped during drain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WorkflowDefStatus {
+    /// This version accepts new runs (at most one per workflow name).
+    #[default]
+    Active,
+    /// Old version kept alive to drain in-flight runs; accepts no new runs.
+    Deprecated,
+    /// Pre-release version: not yet promoted, not visible to new runs.
+    Staging,
+}
+
+impl WorkflowDefStatus {
+    /// Convert to the string written to `forge_workflow_definitions.status`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Deprecated => "deprecated",
+            Self::Staging => "staging",
+        }
+    }
+
+    /// True if this version should accept new workflow runs.
+    pub fn is_active(self) -> bool {
+        matches!(self, Self::Active)
+    }
+
+    /// True if this version is deprecated.
+    pub fn is_deprecated(self) -> bool {
+        matches!(self, Self::Deprecated)
+    }
 }
 
 /// Workflow metadata.
@@ -34,10 +77,8 @@ pub struct WorkflowInfo {
     pub version: &'static str,
     /// Derived signature from the persisted contract. Used as the hard runtime safety gate.
     pub signature: &'static str,
-    /// Whether this is the active version (new runs start here).
-    pub is_active: bool,
-    /// Whether this version is deprecated (kept for draining old runs).
-    pub is_deprecated: bool,
+    /// Lifecycle status of this version.
+    pub status: WorkflowDefStatus,
     /// Default timeout for the entire workflow.
     pub timeout: Duration,
     /// Default timeout for outbound HTTP requests made by the workflow.
@@ -48,14 +89,25 @@ pub struct WorkflowInfo {
     pub required_role: Option<&'static str>,
 }
 
+impl WorkflowInfo {
+    /// Convenience accessor so existing call sites compile without changes.
+    pub fn is_active(&self) -> bool {
+        self.status.is_active()
+    }
+
+    /// Convenience accessor so existing call sites compile without changes.
+    pub fn is_deprecated(&self) -> bool {
+        self.status.is_deprecated()
+    }
+}
+
 impl Default for WorkflowInfo {
     fn default() -> Self {
         Self {
             name: "",
             version: "v1",
             signature: "",
-            is_active: true,
-            is_deprecated: false,
+            status: WorkflowDefStatus::Active,
             timeout: Duration::from_secs(86400), // 24 hours
             http_timeout: None,
             is_public: false,
@@ -66,6 +118,7 @@ impl Default for WorkflowInfo {
 
 /// Workflow execution status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum WorkflowStatus {
     /// Workflow is created but not started.
     Created,
@@ -178,8 +231,9 @@ mod tests {
         let info = WorkflowInfo::default();
         assert_eq!(info.name, "");
         assert_eq!(info.version, "v1");
-        assert!(info.is_active);
-        assert!(!info.is_deprecated);
+        assert_eq!(info.status, WorkflowDefStatus::Active);
+        assert!(info.is_active());
+        assert!(!info.is_deprecated());
     }
 
     #[test]

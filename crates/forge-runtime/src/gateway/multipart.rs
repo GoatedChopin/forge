@@ -16,6 +16,29 @@ const MAX_FIELD_NAME_LENGTH: usize = 255;
 const MAX_JSON_FIELD_SIZE: usize = 1024 * 1024;
 const JSON_FIELD_NAME: &str = "_json";
 
+/// Lightweight magic-byte check: for a small set of well-known media types,
+/// the declared `Content-Type` must match the file's leading bytes. Types
+/// outside this list pass through (we don't have a signature library, and
+/// rejecting unknown types would break legitimate uploads).
+fn mime_matches_magic(declared: &str, bytes: &[u8]) -> bool {
+    let declared = declared.split(';').next().unwrap_or(declared).trim();
+    match declared {
+        "image/png" => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "image/jpeg" | "image/jpg" => bytes.starts_with(b"\xff\xd8\xff"),
+        "image/gif" => bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a"),
+        "image/webp" => bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP".as_slice()),
+        "image/bmp" => bytes.starts_with(b"BM"),
+        "application/pdf" => bytes.starts_with(b"%PDF-"),
+        "application/zip" => {
+            bytes.starts_with(b"PK\x03\x04")
+                || bytes.starts_with(b"PK\x05\x06")
+                || bytes.starts_with(b"PK\x07\x08")
+        }
+        "application/gzip" | "application/x-gzip" => bytes.starts_with(b"\x1f\x8b"),
+        _ => true,
+    }
+}
+
 /// Configurable limits for multipart uploads, injected via Axum extension.
 ///
 /// `max_body_size_bytes` caps the total request body when a mutation does
@@ -270,6 +293,16 @@ pub async fn rpc_multipart_handler(
                 }
             }
 
+            if !mime_matches_magic(&content_type, &buffer) {
+                return multipart_error(
+                    StatusCode::BAD_REQUEST,
+                    "MIME_MISMATCH",
+                    format!(
+                        "File '{filename}' content does not match declared Content-Type '{content_type}'"
+                    ),
+                );
+            }
+
             let upload = Upload::new(filename, content_type, buffer.freeze());
             uploads.insert(name, upload);
         }
@@ -377,4 +410,35 @@ mod tests {
     }
 
     const MB: usize = 1024 * 1024;
+
+    #[test]
+    fn mime_matches_known_signatures() {
+        assert!(mime_matches_magic("image/png", b"\x89PNG\r\n\x1a\n..."));
+        assert!(mime_matches_magic("image/jpeg", b"\xff\xd8\xff\xe0junk"));
+        assert!(mime_matches_magic("application/pdf", b"%PDF-1.7\n"));
+        assert!(mime_matches_magic(
+            "image/webp",
+            b"RIFF\x10\x00\x00\x00WEBP...."
+        ));
+    }
+
+    #[test]
+    fn mime_rejects_mismatched_signatures() {
+        assert!(!mime_matches_magic("image/png", b"GIF89a"));
+        assert!(!mime_matches_magic("application/pdf", b"<html>"));
+    }
+
+    #[test]
+    fn mime_passes_through_unknown_types() {
+        assert!(mime_matches_magic("application/octet-stream", b"\x00\x01"));
+        assert!(mime_matches_magic("text/plain", b"hello"));
+    }
+
+    #[test]
+    fn mime_handles_content_type_parameters() {
+        assert!(mime_matches_magic(
+            "image/png; charset=binary",
+            b"\x89PNG\r\n\x1a\n"
+        ));
+    }
 }

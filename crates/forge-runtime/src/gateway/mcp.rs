@@ -20,7 +20,7 @@ use serde_json::Value;
 use tokio::sync::RwLock;
 
 use crate::mcp::McpToolRegistry;
-use crate::rate_limit::RateLimiter;
+use crate::rate_limit::StrictRateLimiter;
 
 const SUPPORTED_VERSIONS: &[&str] = &["2025-11-25", "2025-03-26", "2024-11-05"];
 #[cfg(test)]
@@ -46,7 +46,7 @@ pub struct McpState {
     sessions: Arc<RwLock<HashMap<String, McpSession>>>,
     job_dispatcher: Option<Arc<dyn JobDispatch>>,
     workflow_dispatcher: Option<Arc<dyn WorkflowDispatch>>,
-    rate_limiter: Arc<RateLimiter>,
+    rate_limiter: Arc<StrictRateLimiter>,
 }
 
 impl McpState {
@@ -64,7 +64,7 @@ impl McpState {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             job_dispatcher,
             workflow_dispatcher,
-            rate_limiter: Arc::new(RateLimiter::new(pool)),
+            rate_limiter: Arc::new(StrictRateLimiter::new(pool)),
         }
     }
 
@@ -77,12 +77,13 @@ impl McpState {
     async fn touch_session(&self, session_id: &str) {
         let mut sessions = self.sessions.write().await;
         if let Some(session) = sessions.get_mut(session_id) {
-            session.expires_at = Instant::now() + Duration::from_secs(self.config.session_ttl_secs);
+            session.expires_at =
+                Instant::now() + Duration::from_secs(self.config.session_ttl_secs());
         }
     }
 
     fn session_ttl(&self) -> Duration {
-        Duration::from_secs(self.config.session_ttl_secs)
+        Duration::from_secs(self.config.session_ttl_secs())
     }
 }
 
@@ -578,7 +579,7 @@ async fn handle_tools_call(
             .unwrap_or_default();
 
         let config = forge_core::RateLimitConfig::new(requests, Duration::from_secs(per_secs))
-            .with_key(key_type);
+            .with_key(key_type.clone());
         let bucket_key = state
             .rate_limiter
             .build_key(key_type, tool_name, auth, &request_metadata);
@@ -845,15 +846,13 @@ fn build_request_metadata(
     tracing: &super::tracing::TracingState,
     headers: &HeaderMap,
 ) -> RequestMetadata {
-    RequestMetadata {
-        request_id: uuid::Uuid::parse_str(&tracing.request_id)
-            .unwrap_or_else(|_| uuid::Uuid::new_v4()),
-        trace_id: tracing.trace_id.clone(),
-        client_ip: extract_client_ip(headers),
-        user_agent: extract_user_agent(headers),
-        correlation_id: None,
-        timestamp: chrono::Utc::now(),
-    }
+    RequestMetadata::build(
+        uuid::Uuid::parse_str(&tracing.request_id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
+        tracing.trace_id.clone(),
+        extract_client_ip(headers),
+        extract_user_agent(headers),
+        None,
+    )
 }
 
 fn json_rpc_success(id: Option<Value>, result: Value) -> Value {
@@ -905,6 +904,14 @@ mod tests {
     use serde::{Deserialize, Serialize};
     use std::collections::HashMap;
     use std::future::Future;
+
+    /// `McpConfig` is `#[non_exhaustive]`, so cross-crate functional-record-update
+    /// is blocked. Build a default and mutate the field we care about.
+    fn mcp_enabled() -> McpConfig {
+        let mut c = McpConfig::default();
+        c.enabled = true;
+        c
+    }
     use std::pin::Pin;
 
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -937,6 +944,8 @@ mod tests {
     }
 
     struct EchoTool;
+
+    impl forge_core::__sealed::Sealed for EchoTool {}
 
     impl ForgeMcpTool for EchoTool {
         type Args = EchoArgs;
@@ -972,6 +981,8 @@ mod tests {
 
     struct AdminTool;
 
+    impl forge_core::__sealed::Sealed for AdminTool {}
+
     impl ForgeMcpTool for AdminTool {
         type Args = EchoArgs;
         type Output = EchoOutput;
@@ -1005,6 +1016,8 @@ mod tests {
     }
 
     struct MetadataTool;
+
+    impl forge_core::__sealed::Sealed for MetadataTool {}
 
     impl ForgeMcpTool for MetadataTool {
         type Args = MetadataArgs;
@@ -1134,20 +1147,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_initialize_sets_session_header() {
-        let state = test_state(McpConfig {
-            enabled: true,
-            ..Default::default()
-        });
+        let state = test_state(mcp_enabled());
         let session = initialize_session(state).await;
         assert!(!session.is_empty());
     }
 
     #[tokio::test]
     async fn test_initialize_rejects_unsupported_protocol_version() {
-        let state = test_state(McpConfig {
-            enabled: true,
-            ..Default::default()
-        });
+        let state = test_state(mcp_enabled());
         let payload = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -1184,10 +1191,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_tools_list_requires_initialized_session() {
-        let state = test_state(McpConfig {
-            enabled: true,
-            ..Default::default()
-        });
+        let state = test_state(mcp_enabled());
 
         let session_id = initialize_session(state.clone()).await;
 
@@ -1225,13 +1229,7 @@ mod tests {
         let mut registry = McpToolRegistry::new();
         registry.register::<EchoTool>();
 
-        let state = test_state_with_registry(
-            McpConfig {
-                enabled: true,
-                ..Default::default()
-            },
-            registry,
-        );
+        let state = test_state_with_registry(mcp_enabled(), registry);
         let headers = initialized_headers(state.clone()).await;
         let payload = serde_json::json!({
             "jsonrpc": "2.0",
@@ -1266,13 +1264,7 @@ mod tests {
         let mut registry = McpToolRegistry::new();
         registry.register::<MetadataTool>();
 
-        let state = test_state_with_registry(
-            McpConfig {
-                enabled: true,
-                ..Default::default()
-            },
-            registry,
-        );
+        let state = test_state_with_registry(mcp_enabled(), registry);
         let headers = initialized_headers(state.clone()).await;
         let payload = serde_json::json!({
             "jsonrpc": "2.0",
@@ -1314,13 +1306,7 @@ mod tests {
         let mut registry = McpToolRegistry::new();
         registry.register::<EchoTool>();
 
-        let state = test_state_with_registry(
-            McpConfig {
-                enabled: true,
-                ..Default::default()
-            },
-            registry,
-        );
+        let state = test_state_with_registry(mcp_enabled(), registry);
         let headers = initialized_headers(state.clone()).await;
         let auth = AuthContext::authenticated(
             uuid::Uuid::new_v4(),
@@ -1358,13 +1344,7 @@ mod tests {
         let mut registry = McpToolRegistry::new();
         registry.register::<EchoTool>();
 
-        let state = test_state_with_registry(
-            McpConfig {
-                enabled: true,
-                ..Default::default()
-            },
-            registry,
-        );
+        let state = test_state_with_registry(mcp_enabled(), registry);
         let headers = initialized_headers(state.clone()).await;
         let auth = AuthContext::authenticated(
             uuid::Uuid::new_v4(),
@@ -1401,13 +1381,7 @@ mod tests {
         let mut registry = McpToolRegistry::new();
         registry.register::<EchoTool>();
 
-        let state = test_state_with_registry(
-            McpConfig {
-                enabled: true,
-                ..Default::default()
-            },
-            registry,
-        );
+        let state = test_state_with_registry(mcp_enabled(), registry);
         let headers = initialized_headers(state.clone()).await;
         let payload = serde_json::json!({
             "jsonrpc": "2.0",
@@ -1439,13 +1413,7 @@ mod tests {
         let mut registry = McpToolRegistry::new();
         registry.register::<AdminTool>();
 
-        let state = test_state_with_registry(
-            McpConfig {
-                enabled: true,
-                ..Default::default()
-            },
-            registry,
-        );
+        let state = test_state_with_registry(mcp_enabled(), registry);
         let headers = initialized_headers(state.clone()).await;
         let auth = AuthContext::authenticated(
             uuid::Uuid::new_v4(),
@@ -1479,10 +1447,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_invalid_protocol_header_returns_400() {
-        let state = test_state(McpConfig {
-            enabled: true,
-            ..Default::default()
-        });
+        let state = test_state(mcp_enabled());
         let session_id = initialize_session(state.clone()).await;
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -1515,10 +1480,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_expired_session_is_rejected_after_cleanup() {
-        let state = test_state(McpConfig {
-            enabled: true,
-            ..Default::default()
-        });
+        let state = test_state(mcp_enabled());
         let session_id = "expired-session".to_string();
         {
             let mut sessions = state.sessions.write().await;
@@ -1570,10 +1532,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_missing_protocol_header_returns_400() {
-        let state = test_state(McpConfig {
-            enabled: true,
-            ..Default::default()
-        });
+        let state = test_state(mcp_enabled());
         let session_id = initialize_session(state.clone()).await;
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -1602,10 +1561,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_notifications_return_202() {
-        let state = test_state(McpConfig {
-            enabled: true,
-            ..Default::default()
-        });
+        let state = test_state(mcp_enabled());
         let mut headers = HeaderMap::new();
         headers.insert(
             MCP_PROTOCOL_HEADER,
@@ -1630,10 +1586,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_invalid_origin_rejected() {
-        let state = test_state(McpConfig {
-            enabled: true,
-            allowed_origins: vec!["https://allowed.example".to_string()],
-            ..Default::default()
+        let state = test_state({
+            let mut c = McpConfig::default();
+            c.enabled = true;
+            c.allowed_origins = vec!["https://allowed.example".to_string()];
+            c
         });
         let payload = serde_json::json!({
             "jsonrpc": "2.0",

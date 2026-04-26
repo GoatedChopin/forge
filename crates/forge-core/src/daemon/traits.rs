@@ -4,6 +4,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use crate::error::Result;
+use crate::metadata::HandlerMetadata;
 
 use super::context::DaemonContext;
 
@@ -12,9 +13,14 @@ use super::context::DaemonContext;
 /// Daemons are long-running singleton tasks that run continuously in the background.
 /// They support leader election (only one instance in cluster), automatic restart
 /// on panic, and graceful shutdown.
-pub trait ForgeDaemon: Send + Sync + 'static {
+pub trait ForgeDaemon: crate::__sealed::Sealed + Send + Sync + 'static {
     /// Get daemon metadata.
     fn info() -> DaemonInfo;
+
+    /// Unified metadata for uniform consumers (observability, admin, codegen).
+    fn metadata() -> HandlerMetadata {
+        HandlerMetadata::from(&Self::info())
+    }
 
     /// Execute the daemon.
     ///
@@ -68,6 +74,7 @@ impl Default for DaemonInfo {
 
 /// Daemon status in the cluster.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DaemonStatus {
     /// Waiting to start (startup delay).
     Pending,

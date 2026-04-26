@@ -2,6 +2,7 @@ use std::str::FromStr;
 
 /// Node role in the cluster.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum NodeRole {
     /// HTTP gateway for client requests.
     Gateway,
@@ -63,6 +64,7 @@ impl std::fmt::Display for NodeRole {
 
 /// Leader role for coordinated operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum LeaderRole {
     /// Job assignment and cron triggering.
     Scheduler,

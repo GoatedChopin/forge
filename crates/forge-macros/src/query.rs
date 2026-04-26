@@ -8,7 +8,22 @@ use crate::sql_extractor::{
     SqlStringExtractor, extract_columns_from_sql, extract_tables_from_sql,
     sql_references_identity_scope,
 };
-use crate::utils::{has_attr_flag, parse_attr_value, parse_duration_secs, to_pascal_case};
+use crate::utils::{
+    has_attr_flag, parse_attr_value, parse_duration_secs, to_pascal_case, validate_attr_keys,
+};
+
+const ALLOWED_QUERY_KEYS: &[&str] = &[
+    "name",
+    "public",
+    "unscoped",
+    "consistent",
+    "require_role",
+    "cache",
+    "timeout",
+    "rate_limit",
+    "log",
+    "tables",
+];
 
 /// Expand the #[forge::query] attribute.
 ///
@@ -18,7 +33,16 @@ use crate::utils::{has_attr_flag, parse_attr_value, parse_duration_secs, to_pasc
 /// - Generates a struct implementing ForgeQuery trait
 pub fn expand_query(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
-    let attrs = parse_query_attrs(attr);
+    let attr_str = attr.to_string();
+
+    if let Err(e) = validate_attr_keys(&attr_str, ALLOWED_QUERY_KEYS, "query") {
+        return e.to_compile_error().into();
+    }
+
+    let attrs = match parse_query_attrs(attr) {
+        Ok(a) => a,
+        Err(e) => return e.to_compile_error().into(),
+    };
 
     expand_query_impl(input, attrs)
         .unwrap_or_else(|e| e.to_compile_error())
@@ -27,6 +51,8 @@ pub fn expand_query(attr: TokenStream, item: TokenStream) -> TokenStream {
 
 #[derive(Default)]
 struct QueryAttrs {
+    /// Override the wire name (default: function name).
+    name: Option<String>,
     cache_ttl: Option<u64>,
     required_role: Option<String>,
     is_public: bool,
@@ -41,10 +67,14 @@ struct QueryAttrs {
     tables: Option<Vec<String>>,
 }
 
-fn parse_query_attrs(attr: TokenStream) -> QueryAttrs {
+fn parse_query_attrs(attr: TokenStream) -> Result<QueryAttrs, syn::Error> {
     let mut attrs = QueryAttrs::default();
 
     let attr_str = attr.to_string();
+
+    if let Some(name) = parse_attr_value(&attr_str, "name") {
+        attrs.name = Some(name);
+    }
 
     if has_attr_flag(&attr_str, "public") {
         attrs.is_public = true;
@@ -78,10 +108,18 @@ fn parse_query_attrs(attr: TokenStream) -> QueryAttrs {
         }
     }
 
-    if let Some(timeout) = parse_attr_value(&attr_str, "timeout")
-        && let Ok(secs) = timeout.parse::<u64>()
-    {
-        attrs.timeout = Some(secs);
+    if let Some(timeout) = parse_attr_value(&attr_str, "timeout") {
+        match parse_duration_secs(&timeout) {
+            Some(secs) => attrs.timeout = Some(secs),
+            None => {
+                return Err(syn::Error::new(
+                    proc_macro2::Span::call_site(),
+                    format!(
+                        "invalid timeout \"{timeout}\": use a duration string like \"30s\", \"5m\", or \"1h\""
+                    ),
+                ));
+            }
+        }
     }
 
     if let Some(rl_start) = attr_str.find("rate_limit")
@@ -163,12 +201,14 @@ fn parse_query_attrs(attr: TokenStream) -> QueryAttrs {
         }
     }
 
-    attrs
+    Ok(attrs)
 }
 
 fn expand_query_impl(input: ItemFn, attrs: QueryAttrs) -> syn::Result<TokenStream2> {
     let fn_name = &input.sig.ident;
     let fn_name_str = fn_name.to_string();
+    let rpc_name = attrs.name.as_deref().unwrap_or(&fn_name_str).to_string();
+    let module_name = syn::Ident::new(&format!("__forge_handler_{}", fn_name_str), fn_name.span());
     let struct_name = syn::Ident::new(
         &format!("{}Query", to_pascal_case(&fn_name_str)),
         fn_name.span(),
@@ -412,38 +452,33 @@ fn expand_query_impl(input: ItemFn, attrs: QueryAttrs) -> syn::Result<TokenStrea
         None
     };
 
-    // Generate the args struct (use unit type if no args, user type if single custom args)
-    let (args_struct, args_type, execute_call) = if args_fields.is_empty() {
+    // Generate handler struct definitions and execute call for the hidden module.
+    // The struct and its args live in a private per-handler module; the original function
+    // stays at the parent level and is called via super::.
+    let (module_struct_defs, args_type, execute_call) = if args_fields.is_empty() {
         (
-            quote! {
-                #vis struct #struct_name;
-            },
+            quote! { pub struct #struct_name; },
             quote! { () },
-            quote! { #fn_name(ctx).await },
+            quote! { super::#fn_name(ctx).await },
         )
     } else if let Some(user_args_type) = single_custom_args_type {
-        // Use the user's args type directly
         (
-            quote! {
-                #vis struct #struct_name;
-            },
+            quote! { pub struct #struct_name; },
             quote! { #user_args_type },
-            quote! { #fn_name(ctx, args).await },
+            quote! { super::#fn_name(ctx, args).await },
         )
     } else {
-        // Generate a wrapper struct for multiple args
         let args_struct_name = syn::Ident::new(&format!("{}Args", struct_name), fn_name.span());
         (
             quote! {
                 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-                #vis struct #args_struct_name {
+                pub struct #args_struct_name {
                     #(#args_fields),*
                 }
-
-                #vis struct #struct_name;
+                pub struct #struct_name;
             },
             quote! { #args_struct_name },
-            quote! { #fn_name(ctx, #(args.#arg_names),*).await },
+            quote! { super::#fn_name(ctx, #(args.#arg_names),*).await },
         )
     };
 
@@ -477,49 +512,57 @@ fn expand_query_impl(input: ItemFn, attrs: QueryAttrs) -> syn::Result<TokenStrea
     };
 
     Ok(quote! {
-        #args_struct
-
         #inner_fn
 
-        impl forge::forge_core::ForgeQuery for #struct_name {
-            type Args = #args_type;
-            type Output = #output_type;
+        #[doc(hidden)]
+        #[allow(non_snake_case)]
+        mod #module_name {
+            use super::*;
 
-            fn info() -> forge::forge_core::FunctionInfo {
-                forge::forge_core::FunctionInfo {
-                    name: #fn_name_str,
-                    description: None,
-                    kind: forge::forge_core::FunctionKind::Query,
-                    required_role: #required_role,
-                    is_public: #is_public,
-                    cache_ttl: #cache_ttl,
-                    timeout: #timeout,
-                    http_timeout: #http_timeout,
-                    rate_limit_requests: #rate_limit_requests,
-                    rate_limit_per_secs: #rate_limit_per_secs,
-                    rate_limit_key: #rate_limit_key,
-                    log_level: #log_level,
-                    table_dependencies: #table_deps_tokens,
-                    selected_columns: #selected_cols_tokens,
-                    transactional: false,
-                    consistent: #consistent,
-                    max_upload_size_bytes: None,
+            #module_struct_defs
+
+            impl forge::forge_core::__sealed::Sealed for #struct_name {}
+
+            impl forge::forge_core::ForgeQuery for #struct_name {
+                type Args = #args_type;
+                type Output = #output_type;
+
+                fn info() -> forge::forge_core::FunctionInfo {
+                    forge::forge_core::FunctionInfo {
+                        name: #rpc_name,
+                        description: None,
+                        kind: forge::forge_core::FunctionKind::Query,
+                        required_role: #required_role,
+                        is_public: #is_public,
+                        cache_ttl: #cache_ttl,
+                        timeout: #timeout,
+                        http_timeout: #http_timeout,
+                        rate_limit_requests: #rate_limit_requests,
+                        rate_limit_per_secs: #rate_limit_per_secs,
+                        rate_limit_key: #rate_limit_key,
+                        log_level: #log_level,
+                        table_dependencies: #table_deps_tokens,
+                        selected_columns: #selected_cols_tokens,
+                        transactional: false,
+                        consistent: #consistent,
+                        max_upload_size_bytes: None,
+                    }
+                }
+
+                fn execute(
+                    ctx: &forge::forge_core::QueryContext,
+                    args: Self::Args,
+                ) -> std::pin::Pin<Box<dyn std::future::Future<Output = forge::forge_core::Result<Self::Output>> + Send + '_>> {
+                    Box::pin(async move {
+                        #execute_call
+                    })
                 }
             }
 
-            fn execute(
-                ctx: &forge::forge_core::QueryContext,
-                args: Self::Args,
-            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = forge::forge_core::Result<Self::Output>> + Send + '_>> {
-                Box::pin(async move {
-                    #execute_call
-                })
-            }
+            forge::inventory::submit!(forge::AutoQuery(|registry| {
+                registry.register_query::<#struct_name>();
+            }));
         }
-
-        forge::inventory::submit!(forge::AutoQuery(|registry| {
-            registry.register_query::<#struct_name>();
-        }));
     })
 }
 

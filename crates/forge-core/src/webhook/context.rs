@@ -9,6 +9,7 @@ use crate::function::JobDispatch;
 use crate::http::CircuitBreakerClient;
 
 /// Context available to webhook handlers.
+#[non_exhaustive]
 pub struct WebhookContext {
     /// Webhook name.
     pub webhook_name: String,

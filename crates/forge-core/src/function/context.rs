@@ -444,6 +444,7 @@ pub struct OutboxBuffer {
 
 /// Authentication context available to all functions.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct AuthContext {
     /// The authenticated user ID (if any).
     user_id: Option<Uuid>,
@@ -453,6 +454,9 @@ pub struct AuthContext {
     claims: HashMap<String, serde_json::Value>,
     /// Whether the request is authenticated.
     authenticated: bool,
+    /// JWT expiry as Unix timestamp (`exp` claim). `None` for unauthenticated
+    /// sessions or when no JWT was presented.
+    token_exp: Option<i64>,
 }
 
 impl AuthContext {
@@ -463,6 +467,7 @@ impl AuthContext {
             roles: Vec::new(),
             claims: HashMap::new(),
             authenticated: false,
+            token_exp: None,
         }
     }
 
@@ -477,6 +482,7 @@ impl AuthContext {
             roles,
             claims,
             authenticated: true,
+            token_exp: None,
         }
     }
 
@@ -494,7 +500,31 @@ impl AuthContext {
             roles,
             claims,
             authenticated: true,
+            token_exp: None,
         }
+    }
+
+    /// Attach the JWT expiry timestamp to this context.
+    ///
+    /// Called by the auth middleware immediately after building the context so
+    /// downstream SSE session tracking can evict sessions when their token expires.
+    pub fn with_token_exp(mut self, exp: i64) -> Self {
+        self.token_exp = Some(exp);
+        self
+    }
+
+    /// Return the JWT expiry as a Unix timestamp, if available.
+    pub fn token_exp(&self) -> Option<i64> {
+        self.token_exp
+    }
+
+    /// Check whether the JWT this context was built from has expired.
+    ///
+    /// Returns `false` for unauthenticated sessions (no token → never expires).
+    pub fn token_is_expired(&self) -> bool {
+        self.token_exp
+            .map(|exp| exp < chrono::Utc::now().timestamp())
+            .unwrap_or(false)
     }
 
     /// Check if the user is authenticated.
@@ -593,20 +623,25 @@ impl AuthContext {
 }
 
 /// Request metadata available to all functions.
+///
+/// Fields are crate-private; use the accessor methods. Construct via
+/// [`RequestMetadata::new`] / [`RequestMetadata::with_trace_id`] and
+/// populate optional fields with the fluent setters.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct RequestMetadata {
     /// Unique request ID for tracing.
-    pub request_id: Uuid,
+    pub(crate) request_id: Uuid,
     /// Trace ID for distributed tracing.
-    pub trace_id: String,
+    pub(crate) trace_id: String,
     /// Client IP address.
-    pub client_ip: Option<String>,
+    pub(crate) client_ip: Option<String>,
     /// User agent string.
-    pub user_agent: Option<String>,
+    pub(crate) user_agent: Option<String>,
     /// Correlation ID linking frontend events to this backend call.
-    pub correlation_id: Option<String>,
+    pub(crate) correlation_id: Option<String>,
     /// Request timestamp.
-    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub(crate) timestamp: chrono::DateTime<chrono::Utc>,
 }
 
 impl RequestMetadata {
@@ -633,6 +668,71 @@ impl RequestMetadata {
             timestamp: chrono::Utc::now(),
         }
     }
+
+    /// Build request metadata from gateway-extracted parts. Intended for
+    /// framework internals; user code should use [`RequestMetadata::new`]
+    /// or [`RequestMetadata::with_trace_id`] and the fluent setters.
+    pub fn build(
+        request_id: Uuid,
+        trace_id: String,
+        client_ip: Option<String>,
+        user_agent: Option<String>,
+        correlation_id: Option<String>,
+    ) -> Self {
+        Self {
+            request_id,
+            trace_id,
+            client_ip,
+            user_agent,
+            correlation_id,
+            timestamp: chrono::Utc::now(),
+        }
+    }
+
+    /// Set the client IP.
+    pub fn set_client_ip(&mut self, ip: Option<String>) {
+        self.client_ip = ip;
+    }
+
+    /// Set the user-agent string.
+    pub fn set_user_agent(&mut self, ua: Option<String>) {
+        self.user_agent = ua;
+    }
+
+    /// Set the correlation ID.
+    pub fn set_correlation_id(&mut self, id: Option<String>) {
+        self.correlation_id = id;
+    }
+
+    /// Get the unique request ID.
+    pub fn request_id(&self) -> Uuid {
+        self.request_id
+    }
+
+    /// Get the distributed-tracing trace ID.
+    pub fn trace_id(&self) -> &str {
+        &self.trace_id
+    }
+
+    /// Get the client IP, if known.
+    pub fn client_ip(&self) -> Option<&str> {
+        self.client_ip.as_deref()
+    }
+
+    /// Get the user-agent string, if any.
+    pub fn user_agent(&self) -> Option<&str> {
+        self.user_agent.as_deref()
+    }
+
+    /// Get the frontend-supplied correlation ID, if any.
+    pub fn correlation_id(&self) -> Option<&str> {
+        self.correlation_id.as_deref()
+    }
+
+    /// Get the request timestamp.
+    pub fn timestamp(&self) -> chrono::DateTime<chrono::Utc> {
+        self.timestamp
+    }
 }
 
 impl Default for RequestMetadata {
@@ -642,6 +742,7 @@ impl Default for RequestMetadata {
 }
 
 /// Context for query functions (read-only database access).
+#[non_exhaustive]
 pub struct QueryContext {
     /// Authentication context.
     pub auth: AuthContext,
@@ -717,6 +818,14 @@ impl QueryContext {
     pub fn tenant_id(&self) -> Option<Uuid> {
         self.auth.tenant_id()
     }
+
+    /// Look up a custom JWT claim by name. Reserved JWT claims
+    /// (`iss`, `aud`, `nbf`, `jti`, `sub`, `iat`, `exp`, `roles`) are
+    /// filtered out by [`AuthContext::claim`] to prevent injection via
+    /// `#[serde(flatten)]`. Shortcut for `self.auth.claim(key)`.
+    pub fn claim(&self, key: &str) -> Option<&serde_json::Value> {
+        self.auth.claim(key)
+    }
 }
 
 impl EnvAccess for QueryContext {
@@ -730,11 +839,22 @@ pub type JobInfoLookup = Arc<dyn Fn(&str) -> Option<JobInfo> + Send + Sync>;
 
 /// Token TTL configuration resolved from `[auth]` in forge.toml.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct AuthTokenTtl {
     /// Access token lifetime in seconds (default 3600).
     pub access_token_secs: i64,
     /// Refresh token lifetime in days (default 30).
     pub refresh_token_days: i64,
+}
+
+impl AuthTokenTtl {
+    /// Construct token TTLs from raw seconds and days.
+    pub fn new(access_token_secs: i64, refresh_token_days: i64) -> Self {
+        Self {
+            access_token_secs,
+            refresh_token_days,
+        }
+    }
 }
 
 impl Default for AuthTokenTtl {
@@ -747,6 +867,7 @@ impl Default for AuthTokenTtl {
 }
 
 /// Context for mutation functions (transactional database access).
+#[non_exhaustive]
 pub struct MutationContext {
     /// Authentication context.
     pub auth: AuthContext,
@@ -965,6 +1086,13 @@ impl MutationContext {
     /// Get the tenant ID from JWT claims, if present.
     pub fn tenant_id(&self) -> Option<Uuid> {
         self.auth.tenant_id()
+    }
+
+    /// Look up a custom JWT claim by name. Reserved JWT claims (`iss`,
+    /// `aud`, `nbf`, `jti`, `sub`, `iat`, `exp`, `roles`) are filtered
+    /// out. Shortcut for `self.auth.claim(key)`.
+    pub fn claim(&self, key: &str) -> Option<&serde_json::Value> {
+        self.auth.claim(key)
     }
 
     /// Set the token issuer for this context.

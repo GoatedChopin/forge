@@ -5,7 +5,12 @@ use thiserror::Error;
 /// Core error type for Forge operations.
 ///
 /// Each variant maps to an HTTP status code and error code for consistent client handling.
+///
+/// Marked `#[non_exhaustive]` so new variants can be added in minor releases without
+/// breaking exhaustive `match` arms in user code. Always include a `_ =>` catch-all
+/// when matching on this enum.
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum ForgeError {
     /// Configuration file parsing or validation failed.
     #[error("Configuration error: {0}")]
@@ -93,6 +98,103 @@ pub enum ForgeError {
         /// Remaining requests (always 0 when exceeded).
         remaining: u32,
     },
+
+    /// Reserved for future audit-logging errors. Maps to 500.
+    #[doc(hidden)]
+    #[error("Audit event: {0}")]
+    AuditEvent(String),
+
+    /// Reserved for future policy-enforcement errors. Maps to 500.
+    #[doc(hidden)]
+    #[error("Policy denied: {0}")]
+    PolicyDenied(String),
+
+    /// Reserved for future operational-constraint errors. Maps to 500.
+    #[doc(hidden)]
+    #[error("Operational constraint: {0}")]
+    OperationalConstraint(String),
+}
+
+impl ForgeError {
+    /// Build a 404 [`ForgeError::NotFound`] from any displayable message.
+    ///
+    /// ```
+    /// # use forge_core::ForgeError;
+    /// let e = ForgeError::not_found("user 42");
+    /// assert_eq!(e.to_string(), "Not found: user 42");
+    /// ```
+    pub fn not_found(msg: impl Into<String>) -> Self {
+        ForgeError::NotFound(msg.into())
+    }
+
+    /// Build a 401 [`ForgeError::Unauthorized`].
+    pub fn unauthorized(msg: impl Into<String>) -> Self {
+        ForgeError::Unauthorized(msg.into())
+    }
+
+    /// Build a 403 [`ForgeError::Forbidden`].
+    pub fn forbidden(msg: impl Into<String>) -> Self {
+        ForgeError::Forbidden(msg.into())
+    }
+
+    /// Build a 400 [`ForgeError::Validation`].
+    pub fn validation(msg: impl Into<String>) -> Self {
+        ForgeError::Validation(msg.into())
+    }
+
+    /// Build a 400 [`ForgeError::InvalidArgument`].
+    pub fn invalid_argument(msg: impl Into<String>) -> Self {
+        ForgeError::InvalidArgument(msg.into())
+    }
+
+    /// Build a 504 [`ForgeError::Timeout`].
+    pub fn timeout(msg: impl Into<String>) -> Self {
+        ForgeError::Timeout(msg.into())
+    }
+
+    /// Build a 500 [`ForgeError::Internal`]. Use sparingly — prefer one of
+    /// the typed variants when the cause is known.
+    pub fn internal(msg: impl Into<String>) -> Self {
+        ForgeError::Internal(msg.into())
+    }
+
+    /// Build a [`ForgeError::InvalidState`] (also surfaces as 500).
+    pub fn invalid_state(msg: impl Into<String>) -> Self {
+        ForgeError::InvalidState(msg.into())
+    }
+
+    /// Returns the HTTP status code for this error.
+    ///
+    /// This is the canonical variant → status mapping. The gateway layer uses it
+    /// when converting errors to HTTP responses so downstream consumers don't need
+    /// to depend on `forge-runtime` just to know what status a variant maps to.
+    ///
+    /// | Variant | Status |
+    /// |---|---|
+    /// | `NotFound` | 404 |
+    /// | `Unauthorized` | 401 |
+    /// | `Forbidden` | 403 |
+    /// | `Validation` | 400 |
+    /// | `InvalidArgument` | 400 |
+    /// | `Deserialization` | 400 |
+    /// | `Timeout` | 504 |
+    /// | `RateLimitExceeded` | 429 |
+    /// | `JobCancelled` | 409 |
+    /// | All others | 500 |
+    pub fn http_status(&self) -> u16 {
+        match self {
+            Self::NotFound(_) => 404,
+            Self::Unauthorized(_) => 401,
+            Self::Forbidden(_) => 403,
+            Self::Validation(_) => 400,
+            Self::InvalidArgument(_) => 400,
+            Self::Deserialization(_) => 400,
+            Self::Timeout(_) => 504,
+            Self::RateLimitExceeded { .. } => 429,
+            Self::JobCancelled(_) => 409,
+            _ => 500,
+        }
+    }
 }
 
 impl From<serde_json::Error> for ForgeError {
@@ -111,6 +213,9 @@ impl From<crate::http::CircuitBreakerError> for ForgeError {
                 ForgeError::Timeout(err.to_string())
             }
             crate::http::CircuitBreakerError::Request(err) => ForgeError::Internal(err.to_string()),
+            crate::http::CircuitBreakerError::PrivateHostBlocked(host) => {
+                ForgeError::Forbidden(format!("Outbound request to private host '{host}' blocked"))
+            }
         }
     }
 }
@@ -304,5 +409,39 @@ mod tests {
         // ForgeError must be Send+Sync for use across async task boundaries
         assert_send::<ForgeError>();
         assert_sync::<ForgeError>();
+    }
+
+    #[test]
+    fn http_status_returns_correct_codes() {
+        assert_eq!(ForgeError::NotFound("x".into()).http_status(), 404);
+        assert_eq!(ForgeError::Unauthorized("x".into()).http_status(), 401);
+        assert_eq!(ForgeError::Forbidden("x".into()).http_status(), 403);
+        assert_eq!(ForgeError::Validation("x".into()).http_status(), 400);
+        assert_eq!(ForgeError::InvalidArgument("x".into()).http_status(), 400);
+        assert_eq!(ForgeError::Deserialization("x".into()).http_status(), 400);
+        assert_eq!(ForgeError::Timeout("x".into()).http_status(), 504);
+        assert_eq!(ForgeError::JobCancelled("x".into()).http_status(), 409);
+        assert_eq!(
+            ForgeError::RateLimitExceeded {
+                retry_after: Duration::from_secs(1),
+                limit: 10,
+                remaining: 0,
+            }
+            .http_status(),
+            429
+        );
+        // Internal variants all map to 500
+        for err in [
+            ForgeError::Internal("x".into()),
+            ForgeError::Database("x".into()),
+            ForgeError::Function("x".into()),
+            ForgeError::Config("x".into()),
+            ForgeError::Cluster("x".into()),
+            ForgeError::InvalidState("x".into()),
+            ForgeError::Job("x".into()),
+            ForgeError::WorkflowSuspended,
+        ] {
+            assert_eq!(err.http_status(), 500, "expected 500 for {err:?}");
+        }
     }
 }

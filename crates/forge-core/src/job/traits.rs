@@ -6,11 +6,12 @@ use std::time::Duration;
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::error::Result;
+use crate::metadata::HandlerMetadata;
 
 use super::context::JobContext;
 
 /// Trait for FORGE job handlers.
-pub trait ForgeJob: Send + Sync + 'static {
+pub trait ForgeJob: crate::__sealed::Sealed + Send + Sync + 'static {
     /// Input arguments type.
     type Args: DeserializeOwned + Serialize + Send + Sync;
     /// Output result type.
@@ -18,6 +19,11 @@ pub trait ForgeJob: Send + Sync + 'static {
 
     /// Get job metadata.
     fn info() -> JobInfo;
+
+    /// Unified metadata for uniform consumers (observability, admin, codegen).
+    fn metadata() -> HandlerMetadata {
+        HandlerMetadata::from(&Self::info())
+    }
 
     /// Execute the job.
     fn execute(
@@ -83,6 +89,7 @@ impl Default for JobInfo {
 
 /// Job priority levels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[non_exhaustive]
 pub enum JobPriority {
     Background = 0,
     Low = 25,
@@ -138,6 +145,7 @@ impl FromStr for JobPriority {
 
 /// Job status in the queue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum JobStatus {
     /// Waiting to be claimed.
     Pending,
