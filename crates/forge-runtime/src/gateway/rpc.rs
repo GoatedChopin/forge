@@ -131,7 +131,7 @@ impl RpcHandler {
     }
 }
 
-use super::extract_client_ip;
+use super::ResolvedClientIp;
 
 /// Extract user agent from headers.
 fn extract_user_agent(headers: &HeaderMap) -> Option<String> {
@@ -141,12 +141,16 @@ fn extract_user_agent(headers: &HeaderMap) -> Option<String> {
         .map(String::from)
 }
 
-/// Build request metadata from tracing state and headers.
-fn build_metadata(tracing: TracingState, headers: &HeaderMap) -> RequestMetadata {
+/// Build request metadata from tracing state, resolved IP, and headers.
+fn build_metadata(
+    tracing: TracingState,
+    client_ip: Option<String>,
+    headers: &HeaderMap,
+) -> RequestMetadata {
     RequestMetadata::build(
         uuid::Uuid::parse_str(&tracing.request_id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
         tracing.trace_id,
-        extract_client_ip(headers),
+        client_ip,
         extract_user_agent(headers),
         extract_correlation_id(headers),
     )
@@ -166,6 +170,7 @@ pub async fn rpc_handler(
     State(handler): State<Arc<RpcHandler>>,
     Extension(auth): Extension<AuthContext>,
     Extension(tracing): Extension<TracingState>,
+    Extension(resolved_ip): Extension<ResolvedClientIp>,
     headers: HeaderMap,
     Json(request): Json<RpcRequest>,
 ) -> RpcResponse {
@@ -175,7 +180,11 @@ pub async fn rpc_handler(
         ));
     }
     handler
-        .handle(request, auth, build_metadata(tracing, &headers))
+        .handle(
+            request,
+            auth,
+            build_metadata(tracing, resolved_ip.0, &headers),
+        )
         .await
 }
 
@@ -202,6 +211,7 @@ pub async fn rpc_function_handler(
     State(handler): State<Arc<RpcHandler>>,
     Extension(auth): Extension<AuthContext>,
     Extension(tracing): Extension<TracingState>,
+    Extension(resolved_ip): Extension<ResolvedClientIp>,
     headers: HeaderMap,
     axum::extract::Path(function): axum::extract::Path<String>,
     Json(body): Json<RpcFunctionBody>,
@@ -213,7 +223,11 @@ pub async fn rpc_function_handler(
     }
     let request = RpcRequest::new(function, body.args);
     handler
-        .handle(request, auth, build_metadata(tracing, &headers))
+        .handle(
+            request,
+            auth,
+            build_metadata(tracing, resolved_ip.0, &headers),
+        )
         .await
 }
 
@@ -222,6 +236,7 @@ pub async fn rpc_batch_handler(
     State(handler): State<Arc<RpcHandler>>,
     Extension(auth): Extension<AuthContext>,
     Extension(tracing): Extension<TracingState>,
+    Extension(resolved_ip): Extension<ResolvedClientIp>,
     headers: HeaderMap,
     Json(batch): Json<BatchRpcRequest>,
 ) -> BatchRpcResponse {
@@ -236,7 +251,7 @@ pub async fn rpc_batch_handler(
         };
     }
 
-    let client_ip = extract_client_ip(&headers);
+    let client_ip = resolved_ip.0;
     let user_agent = extract_user_agent(&headers);
     let correlation_id = extract_correlation_id(&headers);
     let mut results = Vec::with_capacity(batch.requests.len());

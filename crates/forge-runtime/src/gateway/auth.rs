@@ -30,6 +30,8 @@ pub struct AuthConfig {
     pub audience: Option<String>,
     /// Clock-skew tolerance for `exp` / `nbf` validation, in seconds.
     pub leeway_secs: u64,
+    /// Session cookie lifetime in seconds. Defaults to the access token TTL.
+    pub session_cookie_ttl_secs: i64,
     /// Old HMAC secrets still accepted for validation (never signing). See `legacy_secrets` in forge.toml.
     pub legacy_secrets: Vec<String>,
     /// JWT spec claims that must be present. Derived from `required_claims` in forge.toml.
@@ -49,6 +51,7 @@ impl Default for AuthConfig {
             issuer: None,
             audience: None,
             leeway_secs: 60,
+            session_cookie_ttl_secs: 3600,
             legacy_secrets: Vec::new(),
             required_claims: vec!["exp".into(), "sub".into()],
             skip_verification: false,
@@ -76,6 +79,7 @@ impl AuthConfig {
             issuer: config.jwt_issuer.clone(),
             audience: config.jwt_audience.clone(),
             leeway_secs: config.jwt_leeway_secs(),
+            session_cookie_ttl_secs: config.session_cookie_ttl_secs(),
             legacy_secrets: config.legacy_secrets.clone(),
             required_claims: config.required_claims.clone(),
             skip_verification: false,
@@ -113,6 +117,7 @@ impl AuthConfig {
             issuer: None,
             audience: None,
             leeway_secs: 60,
+            session_cookie_ttl_secs: 3600,
             legacy_secrets: Vec::new(),
             required_claims: vec!["exp".into(), "sub".into()],
             skip_verification: true,
@@ -467,7 +472,10 @@ pub enum AuthError {
 
 /// Pull client IP + user-agent from a request for auth-failure signal emission.
 fn extract_auth_diag(req: &Request<Body>) -> (Option<String>, Option<String>) {
-    let ip = crate::gateway::extract_client_ip(req.headers());
+    let ip = req
+        .extensions()
+        .get::<crate::gateway::ResolvedClientIp>()
+        .and_then(|r| r.0.clone());
     let ua = crate::gateway::extract_header(req.headers(), "user-agent");
     (ip, ua)
 }
@@ -654,10 +662,11 @@ pub async fn auth_middleware(
         && let Some(subject) = auth_context.subject()
         && let Some(secret) = &middleware.config.jwt_secret
     {
-        let cookie_value = sign_session_cookie(subject, secret);
+        let cookie_ttl = middleware.config.session_cookie_ttl_secs;
+        let cookie_value = sign_session_cookie(subject, secret, cookie_ttl);
         let secure_flag = if req_is_https { "; Secure" } else { "" };
         let cookie = format!(
-            "forge_session={cookie_value}; Path=/_api/oauth/; HttpOnly; SameSite=Lax; Max-Age=86400{secure_flag}"
+            "forge_session={cookie_value}; Path=/_api/oauth/; HttpOnly; SameSite=Lax; Max-Age={cookie_ttl}{secure_flag}"
         );
         if let Ok(val) = axum::http::HeaderValue::from_str(&cookie) {
             response.headers_mut().append(header::SET_COOKIE, val);
@@ -670,12 +679,12 @@ pub async fn auth_middleware(
 /// OAuth session cookie format: `subject.expiry_unix.hmac_signature`
 /// The cookie identifies a user for the OAuth consent page without requiring
 /// localStorage (which doesn't work cross-origin in dev).
-pub fn sign_session_cookie(subject: &str, secret: &str) -> String {
+pub fn sign_session_cookie(subject: &str, secret: &str, ttl_secs: i64) -> String {
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
 
-    let expiry = chrono::Utc::now().timestamp() + 86400; // 24h
+    let expiry = chrono::Utc::now().timestamp() + ttl_secs;
     let payload = format!("{subject}.{expiry}");
 
     let mut mac =
@@ -950,7 +959,7 @@ mod tests {
 
     #[test]
     fn test_verify_session_cookie_round_trip_and_tamper_detection() {
-        let cookie = sign_session_cookie("user-123", "session-secret");
+        let cookie = sign_session_cookie("user-123", "session-secret", 86400);
 
         assert_eq!(
             verify_session_cookie(&cookie, "session-secret"),

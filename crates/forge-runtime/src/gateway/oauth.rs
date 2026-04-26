@@ -73,6 +73,7 @@ pub struct OAuthState {
     auth_is_hmac: bool,
     project_name: String,
     jwt_secret: String,
+    session_cookie_ttl_secs: i64,
     rate_limiter: OAuthRateLimiter,
     /// CSRF tokens: token -> expiry
     csrf_tokens: Arc<RwLock<HashMap<String, Instant>>>,
@@ -93,6 +94,7 @@ impl OAuthState {
         auth_is_hmac: bool,
         project_name: String,
         jwt_secret: String,
+        session_cookie_ttl_secs: i64,
         allow_unauthenticated_dcr: bool,
     ) -> Self {
         Self {
@@ -104,6 +106,7 @@ impl OAuthState {
             auth_is_hmac,
             project_name,
             jwt_secret,
+            session_cookie_ttl_secs,
             rate_limiter: OAuthRateLimiter::default(),
             csrf_tokens: Arc::new(RwLock::new(HashMap::new())),
             allow_unauthenticated_dcr,
@@ -739,10 +742,12 @@ pub async fn oauth_authorize_post(
     // Set session cookie so the next authorize visit shows consent directly
     // instead of the login form. This is same-origin (backend serves both
     // the authorize page and this POST), so the cookie sticks.
-    let cookie_value = super::auth::sign_session_cookie(&user_id.to_string(), &state.jwt_secret);
+    let cookie_ttl = state.session_cookie_ttl_secs;
+    let cookie_value =
+        super::auth::sign_session_cookie(&user_id.to_string(), &state.jwt_secret, cookie_ttl);
     let secure_flag = if is_https(&headers) { "; Secure" } else { "" };
     let session_cookie = format!(
-        "forge_session={cookie_value}; Path=/_api/oauth/; HttpOnly; SameSite=Lax; Max-Age=86400{secure_flag}"
+        "forge_session={cookie_value}; Path=/_api/oauth/; HttpOnly; SameSite=Lax; Max-Age={cookie_ttl}{secure_flag}"
     );
     if let Ok(val) = HeaderValue::from_str(&session_cookie) {
         response.headers_mut().append(header::SET_COOKIE, val);

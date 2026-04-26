@@ -3,8 +3,10 @@ use std::time::Duration;
 
 use uuid::Uuid;
 
+use serde::Serialize;
+
 use crate::env::{EnvAccess, EnvProvider, RealEnvProvider};
-use crate::function::AuthContext;
+use crate::function::{AuthContext, OutboxBuffer, PendingJob, PendingWorkflow};
 use crate::http::CircuitBreakerClient;
 
 /// Returns an empty JSON object for initializing job saved data.
@@ -38,6 +40,8 @@ pub struct JobContext {
     progress_tx: Option<mpsc::Sender<ProgressUpdate>>,
     /// Environment variable provider.
     env_provider: Arc<dyn EnvProvider>,
+    /// Buffered dispatches, flushed by the executor after successful completion.
+    pending_dispatches: Arc<tokio::sync::Mutex<OutboxBuffer>>,
 }
 
 /// Progress update message.
@@ -73,6 +77,7 @@ impl JobContext {
             http_timeout: None,
             progress_tx: None,
             env_provider: Arc::new(RealEnvProvider::new()),
+            pending_dispatches: Arc::new(tokio::sync::Mutex::new(OutboxBuffer::default())),
         }
     }
 
@@ -189,6 +194,59 @@ impl JobContext {
             return Ok(());
         }
         self.persist_saved_data(persisted).await
+    }
+
+    /// Buffer a sub-job for dispatch after this job completes successfully.
+    ///
+    /// The job is not inserted immediately. The executor drains the buffer
+    /// only on success, preventing orphaned sub-jobs if the parent fails.
+    pub async fn dispatch_job<T: Serialize>(
+        &self,
+        job_type: &str,
+        args: &T,
+    ) -> crate::Result<Uuid> {
+        let id = Uuid::new_v4();
+        let args_json = serde_json::to_value(args)
+            .map_err(|e| crate::ForgeError::Serialization(e.to_string()))?;
+        let pending = PendingJob {
+            id,
+            job_type: job_type.to_string(),
+            args: args_json,
+            context: serde_json::Value::Object(serde_json::Map::new()),
+            owner_subject: self.auth.subject().map(String::from),
+            priority: 0,
+            max_attempts: 3,
+            worker_capability: None,
+        };
+        self.pending_dispatches.lock().await.jobs.push(pending);
+        Ok(id)
+    }
+
+    /// Buffer a workflow start for dispatch after this job completes successfully.
+    pub async fn start_workflow<T: Serialize>(
+        &self,
+        workflow_name: &str,
+        args: &T,
+    ) -> crate::Result<Uuid> {
+        let id = Uuid::new_v4();
+        let input_json = serde_json::to_value(args)
+            .map_err(|e| crate::ForgeError::Serialization(e.to_string()))?;
+        let pending = PendingWorkflow {
+            id,
+            workflow_name: workflow_name.to_string(),
+            workflow_version: String::new(),
+            workflow_signature: String::new(),
+            input: input_json,
+            owner_subject: self.auth.subject().map(String::from),
+        };
+        self.pending_dispatches.lock().await.workflows.push(pending);
+        Ok(id)
+    }
+
+    /// Drain all pending dispatches. Called by the executor after successful completion.
+    pub async fn take_pending_dispatches(&self) -> OutboxBuffer {
+        let mut guard = self.pending_dispatches.lock().await;
+        std::mem::take(&mut *guard)
     }
 
     /// Check if cancellation has been requested for this job.

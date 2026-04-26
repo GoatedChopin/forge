@@ -58,7 +58,7 @@ fn render_binding(b: &FunctionBinding) -> String {
     match b.kind {
         forge_core::schema::FunctionKind::Query => {
             format!(
-                "pub async fn {fn_name}(client: &ForgeClient{fn_params}) -> Result<{return_type}, ForgeClientError> {{\n    client.call(\"{fn_name}\", {call_args}).await\n}}\n\npub fn use_{fn_name}{hook_params_str} -> QueryState<{return_type}> {{\n    use_forge_query(\"{fn_name}\", {call_args})\n}}\n\npub fn use_{fn_name}_live{hook_params_str} -> SubscriptionState<{return_type}> {{\n    use_forge_subscription(\"{fn_name}\", {call_args})\n}}"
+                "pub async fn {fn_name}(client: &ForgeClient{fn_params}) -> Result<{return_type}, ForgeClientError> {{\n    client.call(\"{fn_name}\", {call_args}).await\n}}\n\npub fn use_{fn_name}{hook_params_str} -> QueryState<{return_type}> {{\n    use_forge_query(\"{fn_name}\", {call_args})\n}}\n\npub fn use_{fn_name}_subscription{hook_params_str} -> SubscriptionState<{return_type}> {{\n    use_forge_subscription(\"{fn_name}\", {call_args})\n}}"
             )
         }
         forge_core::schema::FunctionKind::Mutation => {
@@ -240,7 +240,7 @@ mod tests {
     };
 
     #[test]
-    fn generates_query_default_and_live_subscription() {
+    fn generates_query_with_subscription() {
         let registry = SchemaRegistry::new();
         let mut func = FunctionDef::query("get_user", RustType::Custom("User".into()));
         func.args.push(FunctionArg::new("id", RustType::Uuid));
@@ -255,11 +255,9 @@ mod tests {
         );
         assert!(content.contains("pub fn use_get_user(args: GetUserParams) -> QueryState<User>"));
         assert!(content.contains("use_forge_query(\"get_user\", args)"));
-        assert!(
-            content.contains(
-                "pub fn use_get_user_live(args: GetUserParams) -> SubscriptionState<User>"
-            )
-        );
+        assert!(content.contains(
+            "pub fn use_get_user_subscription(args: GetUserParams) -> SubscriptionState<User>"
+        ));
         assert!(content.contains("use_forge_subscription(\"get_user\", args)"));
         assert!(!content.contains("use_get_user_signal"));
         assert!(!content.contains("use_get_user_query"));
@@ -305,7 +303,10 @@ mod tests {
         assert!(content.contains("pub async fn list_users(client: &ForgeClient)"));
         assert!(content.contains("client.call(\"list_users\", ()).await"));
         assert!(content.contains("pub fn use_list_users() -> QueryState<Vec<User>>"));
-        assert!(content.contains("pub fn use_list_users_live() -> SubscriptionState<Vec<User>>"));
+        assert!(
+            content
+                .contains("pub fn use_list_users_subscription() -> SubscriptionState<Vec<User>>")
+        );
     }
 
     #[test]

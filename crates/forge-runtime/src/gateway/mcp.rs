@@ -168,6 +168,7 @@ pub async fn mcp_post_handler(
     State(state): State<Arc<McpState>>,
     Extension(auth): Extension<AuthContext>,
     Extension(tracing): Extension<super::tracing::TracingState>,
+    Extension(resolved_ip): Extension<ResolvedClientIp>,
     method: Method,
     headers: HeaderMap,
     Json(payload): Json<Value>,
@@ -240,7 +241,7 @@ pub async fn mcp_post_handler(
             };
             state.touch_session(&session_id).await;
 
-            let metadata = build_request_metadata(&tracing, &headers);
+            let metadata = build_request_metadata(&tracing, resolved_ip.0.clone(), &headers);
             handle_tools_call(&state, id, &params, &auth, metadata).await
         }
         _ => (
@@ -874,7 +875,7 @@ fn enforce_protocol_header(
     Ok(())
 }
 
-use super::extract_client_ip;
+use super::ResolvedClientIp;
 
 fn extract_user_agent(headers: &HeaderMap) -> Option<String> {
     headers
@@ -885,12 +886,13 @@ fn extract_user_agent(headers: &HeaderMap) -> Option<String> {
 
 fn build_request_metadata(
     tracing: &super::tracing::TracingState,
+    client_ip: Option<String>,
     headers: &HeaderMap,
 ) -> RequestMetadata {
     RequestMetadata::build(
         uuid::Uuid::parse_str(&tracing.request_id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
         tracing.trace_id.clone(),
-        extract_client_ip(headers),
+        client_ip,
         extract_user_agent(headers),
         None,
     )
@@ -1138,6 +1140,7 @@ mod tests {
             State(state),
             Extension(AuthContext::unauthenticated()),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             HeaderMap::new(),
             Json(payload),
@@ -1163,6 +1166,7 @@ mod tests {
             State(state),
             Extension(AuthContext::unauthenticated()),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             headers,
             Json(payload),
@@ -1211,6 +1215,7 @@ mod tests {
             State(state),
             Extension(AuthContext::unauthenticated()),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             HeaderMap::new(),
             Json(payload),
@@ -1256,6 +1261,7 @@ mod tests {
             State(state),
             Extension(AuthContext::unauthenticated()),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             headers,
             Json(list_payload),
@@ -1283,6 +1289,7 @@ mod tests {
             State(state),
             Extension(AuthContext::unauthenticated()),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             headers,
             Json(payload),
@@ -1318,6 +1325,7 @@ mod tests {
             State(state),
             Extension(AuthContext::unauthenticated()),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             headers,
             Json(payload),
@@ -1368,6 +1376,7 @@ mod tests {
             State(state),
             Extension(auth),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             headers,
             Json(payload),
@@ -1406,6 +1415,7 @@ mod tests {
             State(state),
             Extension(auth),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             headers,
             Json(payload),
@@ -1438,6 +1448,7 @@ mod tests {
             State(state),
             Extension(AuthContext::unauthenticated()),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             headers,
             Json(payload),
@@ -1475,6 +1486,7 @@ mod tests {
             State(state),
             Extension(auth),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             headers,
             Json(payload),
@@ -1511,6 +1523,7 @@ mod tests {
             State(state),
             Extension(AuthContext::unauthenticated()),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             headers,
             Json(payload),
@@ -1557,6 +1570,7 @@ mod tests {
             State(state),
             Extension(AuthContext::unauthenticated()),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             headers,
             Json(payload),
@@ -1593,6 +1607,7 @@ mod tests {
             State(state),
             Extension(AuthContext::unauthenticated()),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             headers,
             Json(payload),
@@ -1618,6 +1633,7 @@ mod tests {
             State(state),
             Extension(AuthContext::unauthenticated()),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             headers,
             Json(payload),
@@ -1652,6 +1668,7 @@ mod tests {
             State(state),
             Extension(AuthContext::unauthenticated()),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             headers,
             Json(payload),

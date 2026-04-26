@@ -86,6 +86,9 @@ proc-macro2 = "1.0"
 # SQL parsing
 sqlparser = "0.54"
 
+# Networking
+ipnet = "2"
+
 # Concurrent data structures
 dashmap = "6"
 

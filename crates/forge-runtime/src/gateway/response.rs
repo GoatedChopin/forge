@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 /// RPC response for function calls.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RpcResponse {
     /// Whether the call succeeded.
     pub success: bool,
@@ -67,6 +68,7 @@ impl IntoResponse for RpcResponse {
 /// Wire shape: `{ code, message, retry_after_secs?, details? }`.
 /// All frontend clients (SvelteKit, Dioxus) deserialize into this same shape.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RpcError {
     /// Error code (e.g. `"NOT_FOUND"`, `"RATE_LIMITED"`).
     pub code: String,

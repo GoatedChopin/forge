@@ -39,6 +39,7 @@ pub mod job;
 pub mod mcp;
 pub mod metadata;
 pub mod oauth;
+pub mod pagination;
 pub mod rate_limit;
 pub mod realtime;
 pub mod schema;
@@ -79,6 +80,7 @@ pub use mcp::{
     McpToolInfo, McpToolResult,
 };
 pub use metadata::{HandlerKind, HandlerMetadata};
+pub use pagination::{Cursor, Page, PageInfo};
 pub use rate_limit::{RateLimitConfig, RateLimitHeaders, RateLimitKey, RateLimitResult};
 pub use realtime::{
     AuthScope, BloomFilter, Change, ChangeOperation, Delta, QueryGroup, QueryGroupId, ReadSet,

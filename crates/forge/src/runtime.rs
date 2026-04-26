@@ -136,6 +136,11 @@ pub mod prelude {
     pub use axum;
 
     pub use crate::{Forge, ForgeBuilder};
+
+    pub use forge_core::testing::{
+        TestCronContext, TestDaemonContext, TestJobContext, TestMcpToolContext,
+        TestMutationContext, TestQueryContext, TestWebhookContext, TestWorkflowContext,
+    };
 }
 
 /// The main FORGE runtime.
@@ -733,6 +738,17 @@ impl Forge {
                 max_multipart_fields: self.config.gateway.max_multipart_fields,
                 security_headers: self.config.gateway.security_headers,
                 hsts: self.config.gateway.hsts,
+                trusted_proxies: self
+                    .config
+                    .gateway
+                    .trusted_proxies
+                    .iter()
+                    .filter_map(|s| {
+                        s.parse::<ipnet::IpNet>()
+                            .or_else(|_| s.parse::<std::net::IpAddr>().map(ipnet::IpNet::from))
+                            .ok()
+                    })
+                    .collect(),
             };
 
             // Build gateway server (pass Database wrapper for read replica routing)

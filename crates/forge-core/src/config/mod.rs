@@ -162,6 +162,32 @@ impl ForgeConfig {
             }
         }
 
+        if self.gateway.max_multipart_fields < 1 {
+            return Err(ForgeError::Config(
+                "gateway.max_multipart_fields must be at least 1".into(),
+            ));
+        }
+
+        let quiet_ms = self.realtime.debounce_quiet_ms();
+        let max_ms = self.realtime.debounce_max_ms();
+        if quiet_ms > max_ms {
+            return Err(ForgeError::Config(format!(
+                "realtime.debounce_quiet_window ({}) cannot exceed \
+                 realtime.debounce_max_wait ({})",
+                self.realtime.debounce_quiet_window, self.realtime.debounce_max_wait
+            )));
+        }
+
+        for entry in &self.gateway.trusted_proxies {
+            if entry.parse::<std::net::IpAddr>().is_err() && entry.parse::<ipnet::IpNet>().is_err()
+            {
+                return Err(ForgeError::Config(format!(
+                    "gateway.trusted_proxies contains invalid entry \"{entry}\". \
+                     Expected an IP address (e.g. \"10.0.0.1\") or CIDR range (e.g. \"10.0.0.0/8\")."
+                )));
+            }
+        }
+
         self.validate_durations()?;
 
         Ok(())
@@ -216,6 +242,7 @@ impl ForgeConfig {
         let optional_fields: &[(&str, &Option<String>)] = &[
             ("auth.access_token_ttl", &self.auth.access_token_ttl),
             ("auth.refresh_token_ttl", &self.auth.refresh_token_ttl),
+            ("auth.session_cookie_ttl", &self.auth.session_cookie_ttl),
         ];
 
         for (name, value) in optional_fields {
@@ -394,6 +421,13 @@ pub struct GatewayConfig {
     /// local development uses plain HTTP.
     #[serde(default)]
     pub hsts: bool,
+
+    /// IP ranges of trusted reverse proxies (e.g. `["10.0.0.0/8", "172.16.0.0/12"]`).
+    /// When set, `X-Forwarded-For` is only trusted if the connecting peer IP
+    /// matches one of these ranges. When empty (default), the peer socket IP
+    /// is always used and forwarding headers are ignored.
+    #[serde(default)]
+    pub trusted_proxies: Vec<String>,
 }
 
 impl Default for GatewayConfig {
@@ -412,6 +446,7 @@ impl Default for GatewayConfig {
             max_multipart_fields: default_max_multipart_fields(),
             security_headers: true,
             hsts: false,
+            trusted_proxies: Vec::new(),
         }
     }
 }
@@ -685,6 +720,10 @@ pub struct AuthConfig {
     #[serde(default = "default_required_claims")]
     pub required_claims: Vec<String>,
 
+    /// Session cookie lifetime (e.g., "1h", "24h").
+    /// Used for OAuth consent flow cookies. Defaults to the access token TTL.
+    pub session_cookie_ttl: Option<String>,
+
     /// Old HMAC secrets still accepted for validation (never for signing).
     /// Rotate by adding the outgoing secret here, swapping `jwt_secret` to the
     /// new value, then removing it after one access-token TTL elapses.
@@ -707,6 +746,7 @@ impl Default for AuthConfig {
             jwt_leeway: default_jwt_leeway(),
             audience_required: default_audience_required(),
             required_claims: default_required_claims(),
+            session_cookie_ttl: None,
             legacy_secrets: Vec::new(),
         }
     }
@@ -748,6 +788,16 @@ impl AuthConfig {
             .map(|d| (d.as_secs() / 86400) as i64)
             .map(|d| if d == 0 { 1 } else { d })
             .unwrap_or(30)
+    }
+
+    /// Resolved session cookie TTL in seconds.
+    /// Falls back to `access_token_ttl_secs()` when not explicitly set.
+    pub fn session_cookie_ttl_secs(&self) -> i64 {
+        self.session_cookie_ttl
+            .as_deref()
+            .and_then(crate::util::parse_duration)
+            .map(|d| (d.as_secs() as i64).max(1))
+            .unwrap_or_else(|| self.access_token_ttl_secs())
     }
 
     /// Check if auth is configured (any credential or claim validation is set).

@@ -424,6 +424,17 @@ pub async fn sse_handler(
                 msg = rt_rx.recv() => {
                     match msg {
                         Some(rt_msg) => {
+                            if let Some(exp) = token_exp
+                                && chrono::Utc::now().timestamp() > exp
+                            {
+                                let expired_msg = SseMessage::Error {
+                                    target: "session".to_string(),
+                                    code: "SESSION_EXPIRED".to_string(),
+                                    message: "Authentication token expired".to_string(),
+                                };
+                                let _ = tx.send(expired_msg).await;
+                                break;
+                            }
                             if let Some(sse_msg) = convert_realtime_to_sse(rt_msg)
                                 && tx.send(sse_msg).await.is_err() {
                                     break;

@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS forge_cron_runs (
     started_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ,
     error TEXT,
+    owner_subject TEXT,
     UNIQUE(cron_name, scheduled_time)
 );
 
@@ -133,7 +134,11 @@ CREATE TABLE IF NOT EXISTS forge_workflow_runs (
     wake_at TIMESTAMPTZ,
     waiting_for_event TEXT,
     event_timeout_at TIMESTAMPTZ,
-    tenant_id UUID
+    tenant_id UUID,
+    -- Compensation metadata for crash-safe saga compensation
+    compensation_state JSONB,
+    -- User-defined key-value state that persists across suspension points
+    saved_state JSONB DEFAULT '{}'
 );
 
 CREATE INDEX IF NOT EXISTS idx_forge_workflow_runs_status
@@ -361,6 +366,7 @@ CREATE INDEX IF NOT EXISTS idx_forge_daemons_node
 CREATE TABLE IF NOT EXISTS forge_webhook_events (
     webhook_name VARCHAR(255) NOT NULL,
     idempotency_key VARCHAR(255) NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'claimed',
     processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     expires_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (webhook_name, idempotency_key)
@@ -420,6 +426,7 @@ CREATE TABLE IF NOT EXISTS forge_refresh_tokens (
     user_id     UUID NOT NULL,
     token_hash  TEXT NOT NULL UNIQUE,
     client_id   TEXT,
+    token_family UUID NOT NULL DEFAULT gen_random_uuid(),
     expires_at  TIMESTAMPTZ NOT NULL,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -429,6 +436,9 @@ CREATE INDEX IF NOT EXISTS idx_forge_refresh_tokens_user_id
 
 CREATE INDEX IF NOT EXISTS idx_forge_refresh_tokens_expires_at
     ON forge_refresh_tokens (expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_family
+    ON forge_refresh_tokens (token_family);
 
 -- Periodically purge expired tokens to prevent table bloat.
 -- Runs every hour, deleting tokens that expired more than 24 hours ago

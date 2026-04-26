@@ -90,6 +90,8 @@ pub struct GatewayConfig {
     pub security_headers: bool,
     /// Enable HTTP Strict Transport Security header.
     pub hsts: bool,
+    /// Parsed trusted proxy CIDR ranges for IP extraction.
+    pub trusted_proxies: Vec<ipnet::IpNet>,
 }
 
 impl Default for GatewayConfig {
@@ -113,9 +115,14 @@ impl Default for GatewayConfig {
             reactor_config: ReactorConfig::default(),
             security_headers: true,
             hsts: false,
+            trusted_proxies: Vec::new(),
         }
     }
 }
+
+/// Parsed trusted proxy networks, shared across middleware and handlers.
+#[derive(Debug, Clone)]
+pub struct TrustedProxies(pub Arc<Vec<ipnet::IpNet>>);
 
 /// Health check response.
 #[derive(Debug, Serialize)]
@@ -322,6 +329,7 @@ impl GatewayServer {
             self.config.auth.is_hmac(),
             self.config.project_name.clone(),
             jwt_secret,
+            self.config.auth.session_cookie_ttl_secs,
             self.config.mcp.allow_unauthenticated_dcr,
         ));
 
@@ -571,6 +579,9 @@ impl GatewayServer {
             hsts: self.config.hsts,
         });
 
+        // Trusted proxies for client IP resolution
+        let trusted_proxies = TrustedProxies(Arc::new(self.config.trusted_proxies.clone()));
+
         // Build middleware stack
         let service_builder = ServiceBuilder::new()
             .layer(HandleErrorLayer::new(handle_middleware_error))
@@ -584,6 +595,10 @@ impl GatewayServer {
                 security_headers_middleware,
             ))
             .layer(middleware::from_fn(api_version_middleware))
+            .layer(middleware::from_fn_with_state(
+                trusted_proxies,
+                resolve_client_ip_middleware,
+            ))
             .layer(middleware::from_fn_with_state(
                 auth_middleware_state,
                 auth_middleware,
@@ -617,7 +632,11 @@ impl GatewayServer {
         tracing::info!("Gateway server listening on {}", addr);
 
         let listener = tokio::net::TcpListener::bind(addr).await?;
-        axum::serve(listener, router.into_make_service()).await
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
     }
 }
 
@@ -751,6 +770,22 @@ impl<'a> Extractor for HeaderExtractor<'a> {
     }
 }
 
+/// Resolve the real client IP using trusted proxy configuration and inject
+/// it as `Extension<ResolvedClientIp>` for downstream handlers.
+async fn resolve_client_ip_middleware(
+    axum::extract::State(trusted): axum::extract::State<TrustedProxies>,
+    mut req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let peer_ip = req
+        .extensions()
+        .get::<axum::extract::connect_info::ConnectInfo<std::net::SocketAddr>>()
+        .map(|ci| ci.0.ip());
+    let ip = super::resolve_client_ip(req.headers(), peer_ip, &trusted.0);
+    req.extensions_mut().insert(super::ResolvedClientIp(ip));
+    next.run(req).await
+}
+
 #[derive(Debug, Clone)]
 struct SecurityHeadersConfig {
     enabled: bool,
@@ -772,6 +807,14 @@ async fn security_headers_middleware(
         headers.insert(
             axum::http::header::X_FRAME_OPTIONS,
             axum::http::HeaderValue::from_static("DENY"),
+        );
+        headers.insert(
+            axum::http::header::REFERRER_POLICY,
+            axum::http::HeaderValue::from_static("strict-origin-when-cross-origin"),
+        );
+        headers.insert(
+            axum::http::HeaderName::from_static("permissions-policy"),
+            axum::http::HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
         );
         if config.hsts {
             headers.insert(

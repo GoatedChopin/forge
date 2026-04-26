@@ -69,6 +69,19 @@ fn ts_custom(name: &str, pos: Position) -> String {
             ts_hashmap(name)
         }
 
+        "Cursor" => "string".into(),
+        "PageInfo" => "PageInfo".into(),
+        _ if name.starts_with("Page<") => {
+            let inner = name
+                .strip_prefix("Page<")
+                .and_then(|s| s.strip_suffix('>'))
+                .unwrap_or("unknown");
+            format!(
+                "{{ items: {}[], page_info: PageInfo }}",
+                ts_type(&RustType::Custom(inner.to_string()), pos)
+            )
+        }
+
         _ => name.to_string(),
     }
 }
@@ -129,6 +142,18 @@ fn dioxus_custom(name: &str) -> String {
         "Value" | "serde_json::Value" => "JsonValue".into(),
         "Bytes" => "Vec<u8>".into(),
         "Upload" => "ForgeUpload".into(),
+        "Cursor" => "String".into(),
+        "PageInfo" => "forge_core::PageInfo".into(),
+        _ if name.starts_with("Page<") => {
+            let inner = name
+                .strip_prefix("Page<")
+                .and_then(|s| s.strip_suffix('>'))
+                .unwrap_or("JsonValue");
+            format!(
+                "forge_core::Page<{}>",
+                dioxus_type(&RustType::Custom(inner.to_string()))
+            )
+        }
         other => other.to_string(),
     }
 }
@@ -179,10 +204,11 @@ pub fn collect_type_imports(rust_type: &RustType, imports: &mut Vec<String>) {
 fn is_importable_type(name: &str) -> bool {
     !matches!(
         name,
-        "()" | "Upload" | "Bytes" | "Instant" | "LocalDate" | "LocalTime"
+        "()" | "Upload" | "Bytes" | "Instant" | "LocalDate" | "LocalTime" | "Cursor" | "PageInfo"
     ) && !name.starts_with("Vec<")
         && !name.starts_with("HashMap<")
         && !name.starts_with("std::collections::")
+        && !name.starts_with("Page<")
 }
 
 #[cfg(test)]
@@ -314,6 +340,40 @@ mod tests {
             &mut imports,
         );
         assert_eq!(imports, vec!["User", "Project"]);
+    }
+
+    #[test]
+    fn pagination_types_not_importable() {
+        let mut imports = Vec::new();
+        collect_type_imports(&RustType::Custom("Cursor".into()), &mut imports);
+        collect_type_imports(&RustType::Custom("PageInfo".into()), &mut imports);
+        collect_type_imports(&RustType::Custom("Page<User>".into()), &mut imports);
+        assert!(imports.is_empty());
+    }
+
+    #[test]
+    fn pagination_type_mapping() {
+        assert_eq!(
+            ts_type(&RustType::Custom("Cursor".into()), Position::Arg),
+            "string"
+        );
+        assert_eq!(
+            ts_type(&RustType::Custom("PageInfo".into()), Position::Arg),
+            "PageInfo"
+        );
+        assert_eq!(
+            ts_type(&RustType::Custom("Page<User>".into()), Position::Arg),
+            "{ items: User[], page_info: PageInfo }"
+        );
+        assert_eq!(dioxus_type(&RustType::Custom("Cursor".into())), "String");
+        assert_eq!(
+            dioxus_type(&RustType::Custom("PageInfo".into())),
+            "forge_core::PageInfo"
+        );
+        assert_eq!(
+            dioxus_type(&RustType::Custom("Page<User>".into())),
+            "forge_core::Page<User>"
+        );
     }
 
     // --- Cross-target consistency ---

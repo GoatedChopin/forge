@@ -18,21 +18,10 @@ use super::runner::Migration;
 /// System migration prefix. All forge internal migrations use this prefix.
 pub const SYSTEM_MIGRATION_PREFIX: &str = "__forge_v";
 
-/// System migration v001: Initial FORGE schema.
-/// Creates all core tables for jobs, workflows, crons, observability, daemons, webhooks, etc.
+/// System migration v001: Complete FORGE schema.
+/// Creates all core tables for jobs, workflows, crons, observability, daemons,
+/// webhooks, auth, signals, and cluster coordination.
 const V001_INITIAL: &str = include_str!("../../migrations/system/v001_initial.sql");
-
-/// System migration v002: Add owner_subject to forge_cron_runs.
-/// Mirrors forge_jobs.owner_subject for per-tenant audit trails.
-const V002_CRON_OWNER_SUBJECT: &str =
-    include_str!("../../migrations/system/v002_cron_owner_subject.sql");
-
-/// System migration v003: Add token_family column for refresh token chain reuse detection.
-const V003_TOKEN_FAMILIES: &str = include_str!("../../migrations/system/v003_token_families.sql");
-
-/// System migration v004: Add compensation_state column to forge_workflow_runs.
-const V004_WORKFLOW_COMPENSATION_STATE: &str =
-    include_str!("../../migrations/system/v004_workflow_compensation_state.sql");
 
 /// A system migration with a version number.
 #[derive(Debug, Clone)]
@@ -61,28 +50,11 @@ impl SystemMigration {
 ///
 /// These are applied in order before any user migrations.
 pub fn get_system_migrations() -> Vec<SystemMigration> {
-    vec![
-        SystemMigration {
-            version: 1,
-            sql: V001_INITIAL,
-            description: "Initial FORGE schema with jobs, workflows, crons, daemons, webhooks, and auth",
-        },
-        SystemMigration {
-            version: 2,
-            sql: V002_CRON_OWNER_SUBJECT,
-            description: "Add owner_subject to forge_cron_runs for per-tenant audit trails",
-        },
-        SystemMigration {
-            version: 3,
-            sql: V003_TOKEN_FAMILIES,
-            description: "Add token_family to forge_refresh_tokens for chain reuse detection",
-        },
-        SystemMigration {
-            version: 4,
-            sql: V004_WORKFLOW_COMPENSATION_STATE,
-            description: "Add compensation_state to forge_workflow_runs for crash-safe saga compensation",
-        },
-    ]
+    vec![SystemMigration {
+        version: 1,
+        sql: V001_INITIAL,
+        description: "Complete FORGE schema",
+    }]
 }
 
 /// Get system migrations as Migration structs.
@@ -125,11 +97,9 @@ mod tests {
     #[test]
     fn test_get_system_migrations() {
         let migrations = get_system_migrations();
-        assert!(!migrations.is_empty());
+        assert_eq!(migrations.len(), 1);
         assert_eq!(migrations[0].version, 1);
         assert_eq!(migrations[0].name(), "__forge_v001");
-        assert_eq!(migrations[1].version, 2);
-        assert_eq!(migrations[1].name(), "__forge_v002");
     }
 
     #[test]
@@ -145,7 +115,6 @@ mod tests {
         let migrations = get_system_migrations();
         let sql = migrations[0].sql;
 
-        // Verify all core tables are defined
         assert!(sql.contains("forge_nodes"));
         assert!(sql.contains("forge_leaders"));
         assert!(sql.contains("forge_jobs"));
@@ -160,10 +129,15 @@ mod tests {
         assert!(sql.contains("forge_oauth_clients"));
         assert!(sql.contains("forge_oauth_codes"));
 
-        // Signals tables
         assert!(sql.contains("forge_signals_events"));
         assert!(sql.contains("forge_signals_sessions"));
         assert!(sql.contains("forge_signals_users"));
+
+        // Verify columns merged from v002-v004
+        assert!(sql.contains("owner_subject"));
+        assert!(sql.contains("token_family"));
+        assert!(sql.contains("compensation_state"));
+        assert!(sql.contains("saved_state"));
     }
 
     #[test]
@@ -182,19 +156,6 @@ mod tests {
         assert_eq!(extract_version("__forge_v100"), Some(100));
         assert_eq!(extract_version("0001_create_users"), None);
         assert_eq!(extract_version("invalid"), None);
-    }
-
-    #[test]
-    fn test_system_migrations_version_ordering() {
-        let migrations = get_system_migrations();
-        for window in migrations.windows(2) {
-            assert!(
-                window[0].version < window[1].version,
-                "Migrations must be in ascending version order: v{} >= v{}",
-                window[0].version,
-                window[1].version,
-            );
-        }
     }
 
     #[test]

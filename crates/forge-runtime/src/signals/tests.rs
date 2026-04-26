@@ -624,10 +624,15 @@ async fn test_event_handler_roundtrip() {
         }),
     };
 
-    let response =
-        endpoints::event_handler(State(state.clone()), None, make_headers(), Json(batch))
-            .await
-            .into_response();
+    let response = endpoints::event_handler(
+        State(state.clone()),
+        None,
+        None,
+        make_headers(),
+        Json(batch),
+    )
+    .await
+    .into_response();
 
     let body: serde_json::Value = axum::body::to_bytes(response.into_body(), 1024)
         .await
@@ -679,10 +684,15 @@ async fn test_view_handler_with_utm() {
         correlation_id: None,
     };
 
-    let response =
-        endpoints::view_handler(State(state.clone()), None, make_headers(), Json(payload))
-            .await
-            .into_response();
+    let response = endpoints::view_handler(
+        State(state.clone()),
+        None,
+        None,
+        make_headers(),
+        Json(payload),
+    )
+    .await
+    .into_response();
 
     let body: serde_json::Value = axum::body::to_bytes(response.into_body(), 1024)
         .await
@@ -733,10 +743,15 @@ async fn test_report_handler_stores_errors() {
         ],
     };
 
-    let response =
-        endpoints::report_handler(State(state.clone()), None, make_headers(), Json(report))
-            .await
-            .into_response();
+    let response = endpoints::report_handler(
+        State(state.clone()),
+        None,
+        None,
+        make_headers(),
+        Json(report),
+    )
+    .await
+    .into_response();
 
     let body: serde_json::Value = axum::body::to_bytes(response.into_body(), 1024)
         .await
@@ -777,10 +792,15 @@ async fn test_user_handler_rejects_invalid_uuid() {
         traits: serde_json::json!({}),
     };
 
-    let response =
-        endpoints::user_handler(State(state.clone()), None, make_headers(), Json(payload))
-            .await
-            .into_response();
+    let response = endpoints::user_handler(
+        State(state.clone()),
+        None,
+        None,
+        make_headers(),
+        Json(payload),
+    )
+    .await
+    .into_response();
 
     let body: serde_json::Value = axum::body::to_bytes(response.into_body(), 1024)
         .await
@@ -810,6 +830,7 @@ async fn test_event_handler_populates_device_fields() {
 
     endpoints::event_handler(
         State(state.clone()),
+        None,
         None,
         make_headers_with_platform("desktop-macos"),
         Json(batch),

@@ -150,15 +150,27 @@ fn parse_mutation_attrs(attr: TokenStream) -> Result<MutationAttrs, syn::Error> 
             if let Some(req_start) = rl_content.find("requests")
                 && let Some(eq_pos) = rl_content[req_start..].find('=')
             {
-                let after_eq = &rl_content[req_start + eq_pos + 1..];
-                if let Ok(n) = after_eq
+                let after_eq = rl_content[req_start + eq_pos + 1..]
                     .split(',')
                     .next()
                     .unwrap_or("")
-                    .trim()
-                    .parse::<u32>()
-                {
-                    attrs.rate_limit_requests = Some(n);
+                    .trim();
+                match after_eq.parse::<u32>() {
+                    Ok(0) => {
+                        return Err(syn::Error::new(
+                            proc_macro2::Span::call_site(),
+                            "rate_limit requests must be at least 1",
+                        ));
+                    }
+                    Ok(n) => attrs.rate_limit_requests = Some(n),
+                    Err(_) => {
+                        return Err(syn::Error::new(
+                            proc_macro2::Span::call_site(),
+                            format!(
+                                "invalid rate_limit requests value \"{after_eq}\": expected a positive integer"
+                            ),
+                        ));
+                    }
                 }
             }
 
@@ -168,7 +180,17 @@ fn parse_mutation_attrs(attr: TokenStream) -> Result<MutationAttrs, syn::Error> 
                 let after_quote = &rl_content[per_start + quote_start + 1..];
                 if let Some(quote_end) = after_quote.find('"') {
                     let per_str = &after_quote[..quote_end];
-                    attrs.rate_limit_per_secs = parse_duration_secs(per_str);
+                    match parse_duration_secs(per_str) {
+                        Some(secs) => attrs.rate_limit_per_secs = Some(secs),
+                        None => {
+                            return Err(syn::Error::new(
+                                proc_macro2::Span::call_site(),
+                                format!(
+                                    "invalid rate_limit per duration \"{per_str}\": use a duration like \"1m\", \"30s\", or \"1h\""
+                                ),
+                            ));
+                        }
+                    }
                 }
             }
 
@@ -190,6 +212,22 @@ fn parse_mutation_attrs(attr: TokenStream) -> Result<MutationAttrs, syn::Error> 
                     }
                     attrs.rate_limit_key = Some(key.to_string());
                 }
+            }
+
+            let has_any_rl = attrs.rate_limit_requests.is_some()
+                || attrs.rate_limit_per_secs.is_some()
+                || attrs.rate_limit_key.is_some();
+            if has_any_rl && attrs.rate_limit_requests.is_none() {
+                return Err(syn::Error::new(
+                    proc_macro2::Span::call_site(),
+                    "rate_limit requires `requests` field (e.g. rate_limit(requests = 100, per = \"1m\", key = \"user\"))",
+                ));
+            }
+            if has_any_rl && attrs.rate_limit_per_secs.is_none() {
+                return Err(syn::Error::new(
+                    proc_macro2::Span::call_site(),
+                    "rate_limit requires `per` field (e.g. rate_limit(requests = 100, per = \"1m\", key = \"user\"))",
+                ));
             }
         }
     }
@@ -258,8 +296,26 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
     // dispatch_job / start_workflow require a transaction so the outbox flush is
     // atomic with the database write. Explicitly opting out of transactions with
     // `transactional = false` while calling these is always a bug.
-    let block_str = quote! { #fn_block }.to_string();
-    let has_dispatch = block_str.contains("dispatch_job") || block_str.contains("start_workflow");
+    let has_dispatch = {
+        struct DispatchCallVisitor {
+            found: bool,
+        }
+        impl<'ast> syn::visit::Visit<'ast> for DispatchCallVisitor {
+            fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
+                let method = node.method.to_string();
+                if method == "dispatch_job"
+                    || method == "dispatch_job_with_context"
+                    || method == "start_workflow"
+                {
+                    self.found = true;
+                }
+                syn::visit::visit_expr_method_call(self, node);
+            }
+        }
+        let mut visitor = DispatchCallVisitor { found: false };
+        syn::visit::visit_block(&mut visitor, fn_block);
+        visitor.found
+    };
     if has_dispatch && !attrs.transactional {
         return Err(syn::Error::new_spanned(
             &input.sig.ident,

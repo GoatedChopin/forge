@@ -63,6 +63,7 @@ pub struct SignalsState {
 /// POST /signal/event -- batch custom events.
 pub async fn event_handler(
     State(state): State<Arc<SignalsState>>,
+    resolved_ip: Option<axum::Extension<crate::gateway::ResolvedClientIp>>,
     auth: Option<axum::Extension<AuthContext>>,
     headers: HeaderMap,
     Json(batch): Json<SignalEventBatch>,
@@ -82,6 +83,7 @@ pub async fn event_handler(
 
     let ctx = extract_request_ctx(
         &headers,
+        resolved_ip.and_then(|r| r.0.0.clone()),
         &auth,
         &state.server_secret,
         state.anonymize_ip,
@@ -151,6 +153,7 @@ pub async fn event_handler(
 /// POST /signal/view -- page view event.
 pub async fn view_handler(
     State(state): State<Arc<SignalsState>>,
+    resolved_ip: Option<axum::Extension<crate::gateway::ResolvedClientIp>>,
     auth: Option<axum::Extension<AuthContext>>,
     headers: HeaderMap,
     Json(payload): Json<PageViewPayload>,
@@ -163,6 +166,7 @@ pub async fn view_handler(
     }
     let ctx = extract_request_ctx(
         &headers,
+        resolved_ip.and_then(|r| r.0.0.clone()),
         &auth,
         &state.server_secret,
         state.anonymize_ip,
@@ -244,6 +248,7 @@ pub async fn view_handler(
 /// POST /signal/user -- identify user.
 pub async fn user_handler(
     State(state): State<Arc<SignalsState>>,
+    resolved_ip: Option<axum::Extension<crate::gateway::ResolvedClientIp>>,
     auth: Option<axum::Extension<AuthContext>>,
     headers: HeaderMap,
     Json(payload): Json<IdentifyPayload>,
@@ -287,6 +292,7 @@ pub async fn user_handler(
 
     let ctx = extract_request_ctx(
         &headers,
+        resolved_ip.and_then(|r| r.0.0.clone()),
         &auth,
         &state.server_secret,
         state.anonymize_ip,
@@ -338,6 +344,7 @@ pub async fn user_handler(
 /// persistent identifier by default.
 pub async fn report_handler(
     State(state): State<Arc<SignalsState>>,
+    resolved_ip: Option<axum::Extension<crate::gateway::ResolvedClientIp>>,
     auth: Option<axum::Extension<AuthContext>>,
     headers: HeaderMap,
     Json(report): Json<DiagnosticReport>,
@@ -351,6 +358,7 @@ pub async fn report_handler(
 
     let ctx = extract_request_ctx(
         &headers,
+        resolved_ip.and_then(|r| r.0.0.clone()),
         &auth,
         &state.server_secret,
         state.anonymize_ip,
@@ -425,6 +433,7 @@ pub async fn report_handler(
 /// event so dashboards can slice by metric name and aggregate p75/p95.
 pub async fn vital_handler(
     State(state): State<Arc<SignalsState>>,
+    resolved_ip: Option<axum::Extension<crate::gateway::ResolvedClientIp>>,
     auth: Option<axum::Extension<AuthContext>>,
     headers: HeaderMap,
     Json(batch): Json<WebVitalBatch>,
@@ -444,6 +453,7 @@ pub async fn vital_handler(
 
     let ctx = extract_request_ctx(
         &headers,
+        resolved_ip.and_then(|r| r.0.0.clone()),
         &auth,
         &state.server_secret,
         state.anonymize_ip,
@@ -549,6 +559,7 @@ struct RequestCtx {
 
 fn extract_request_ctx(
     headers: &HeaderMap,
+    resolved_ip: Option<String>,
     auth: &Option<axum::Extension<AuthContext>>,
     server_secret: &str,
     anonymize_ip: bool,
@@ -556,7 +567,7 @@ fn extract_request_ctx(
 ) -> RequestCtx {
     let user_agent = extract_header(headers, "user-agent");
     let platform_header = extract_header(headers, "x-forge-platform");
-    let raw_ip = extract_client_ip(headers);
+    let raw_ip = resolved_ip.or_else(|| extract_client_ip(headers));
     let ua_lower = user_agent
         .as_deref()
         .unwrap_or_default()

@@ -38,6 +38,7 @@ sha2 = "0.10"
 # and the per-component dep savings are negligible compared to the gateway
 # vs no-gateway split.
 axum = { workspace = true, optional = true }
+ipnet = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
 tower-http = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }
@@ -76,6 +77,7 @@ gateway = [
     "dep:tower",
     "dep:tower-http",
     "dep:bytes",
+    "dep:ipnet",
     "dep:jsonwebtoken",
     "dep:bcrypt",
     "dep:ed25519-dalek",

@@ -183,8 +183,8 @@ impl WorkflowExecutor {
             Ok(Err(e)) => {
                 // Check if this is a suspension (not a real failure)
                 if matches!(e, forge_core::ForgeError::WorkflowSuspended) {
-                    // Workflow suspended itself (sleep or wait_for_event)
-                    // Status already set to 'waiting' by ctx.sleep() - don't mark as failed
+                    self.persist_saved_state(run_id, &ctx.take_saved_state())
+                        .await?;
                     return Ok(WorkflowResult::Waiting {
                         event_type: "timer".to_string(),
                     });
@@ -249,7 +249,10 @@ impl WorkflowExecutor {
             );
         }
 
-        // Create resumed workflow context with step states
+        // Load user-defined saved state
+        let saved_state = self.load_saved_state(run_id).await?;
+
+        // Create resumed workflow context with step states and saved state
         let mut ctx = WorkflowContext::resumed(
             run_id,
             entry.info.name.to_string(),
@@ -257,7 +260,8 @@ impl WorkflowExecutor {
             self.pool.clone(),
             self.http_client.clone(),
         )
-        .with_step_states(step_states);
+        .with_step_states(step_states)
+        .with_saved_state(saved_state);
         ctx.set_http_timeout(entry.info.http_timeout);
 
         // If resuming from a sleep timer, mark the context so sleep() returns immediately
@@ -301,8 +305,8 @@ impl WorkflowExecutor {
             Ok(Err(e)) => {
                 // Check if this is a suspension (not a real failure)
                 if matches!(e, forge_core::ForgeError::WorkflowSuspended) {
-                    // Workflow suspended itself (sleep or wait_for_event)
-                    // Status already set to 'waiting' by ctx.sleep() - don't mark as failed
+                    self.persist_saved_state(run_id, &ctx.take_saved_state())
+                        .await?;
                     return Ok(WorkflowResult::Waiting {
                         event_type: "timer".to_string(),
                     });
@@ -622,6 +626,45 @@ impl WorkflowExecutor {
                 Ok(Some(metadata))
             }
             None => Ok(None),
+        }
+    }
+
+    /// Persist user-defined saved_state to the database on suspension.
+    async fn persist_saved_state(
+        &self,
+        run_id: Uuid,
+        state: &std::collections::HashMap<String, serde_json::Value>,
+    ) -> forge_core::Result<()> {
+        if state.is_empty() {
+            return Ok(());
+        }
+        let json = serde_json::to_value(state)
+            .map_err(|e| forge_core::ForgeError::Serialization(e.to_string()))?;
+        sqlx::query("UPDATE forge_workflow_runs SET saved_state = $1 WHERE id = $2")
+            .bind(json)
+            .bind(run_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Load user-defined saved_state from the database on resume.
+    async fn load_saved_state(
+        &self,
+        run_id: Uuid,
+    ) -> forge_core::Result<std::collections::HashMap<String, serde_json::Value>> {
+        let row: Option<(serde_json::Value,)> =
+            sqlx::query_as("SELECT saved_state FROM forge_workflow_runs WHERE id = $1")
+                .bind(run_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+
+        match row {
+            Some((json,)) => serde_json::from_value(json)
+                .map_err(|e| forge_core::ForgeError::Deserialization(e.to_string())),
+            None => Ok(std::collections::HashMap::new()),
         }
     }
 

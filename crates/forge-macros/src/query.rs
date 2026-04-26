@@ -111,7 +111,17 @@ fn parse_query_attrs(attr: TokenStream) -> Result<QueryAttrs, syn::Error> {
         let remaining = &attr_str[cache_start + quote_start + 1..];
         if let Some(quote_end) = remaining.find('"') {
             let ttl_str = &remaining[..quote_end];
-            attrs.cache_ttl = parse_duration_secs(ttl_str);
+            match parse_duration_secs(ttl_str) {
+                Some(secs) => attrs.cache_ttl = Some(secs),
+                None => {
+                    return Err(syn::Error::new(
+                        proc_macro2::Span::call_site(),
+                        format!(
+                            "invalid cache duration \"{ttl_str}\": use a duration string like \"30s\", \"5m\", or \"1h\""
+                        ),
+                    ));
+                }
+            }
         }
     }
 
@@ -139,15 +149,27 @@ fn parse_query_attrs(attr: TokenStream) -> Result<QueryAttrs, syn::Error> {
             if let Some(req_start) = rl_content.find("requests")
                 && let Some(eq_pos) = rl_content[req_start..].find('=')
             {
-                let after_eq = &rl_content[req_start + eq_pos + 1..];
-                if let Ok(n) = after_eq
+                let after_eq = rl_content[req_start + eq_pos + 1..]
                     .split(',')
                     .next()
                     .unwrap_or("")
-                    .trim()
-                    .parse::<u32>()
-                {
-                    attrs.rate_limit_requests = Some(n);
+                    .trim();
+                match after_eq.parse::<u32>() {
+                    Ok(0) => {
+                        return Err(syn::Error::new(
+                            proc_macro2::Span::call_site(),
+                            "rate_limit requests must be at least 1",
+                        ));
+                    }
+                    Ok(n) => attrs.rate_limit_requests = Some(n),
+                    Err(_) => {
+                        return Err(syn::Error::new(
+                            proc_macro2::Span::call_site(),
+                            format!(
+                                "invalid rate_limit requests value \"{after_eq}\": expected a positive integer"
+                            ),
+                        ));
+                    }
                 }
             }
 
@@ -157,7 +179,17 @@ fn parse_query_attrs(attr: TokenStream) -> Result<QueryAttrs, syn::Error> {
                 let after_quote = &rl_content[per_start + quote_start + 1..];
                 if let Some(quote_end) = after_quote.find('"') {
                     let per_str = &after_quote[..quote_end];
-                    attrs.rate_limit_per_secs = parse_duration_secs(per_str);
+                    match parse_duration_secs(per_str) {
+                        Some(secs) => attrs.rate_limit_per_secs = Some(secs),
+                        None => {
+                            return Err(syn::Error::new(
+                                proc_macro2::Span::call_site(),
+                                format!(
+                                    "invalid rate_limit per duration \"{per_str}\": use a duration like \"1m\", \"30s\", or \"1h\""
+                                ),
+                            ));
+                        }
+                    }
                 }
             }
 
@@ -179,6 +211,23 @@ fn parse_query_attrs(attr: TokenStream) -> Result<QueryAttrs, syn::Error> {
                     }
                     attrs.rate_limit_key = Some(key.to_string());
                 }
+            }
+
+            // Validate that required fields are present when rate_limit is used
+            let has_any_rl = attrs.rate_limit_requests.is_some()
+                || attrs.rate_limit_per_secs.is_some()
+                || attrs.rate_limit_key.is_some();
+            if has_any_rl && attrs.rate_limit_requests.is_none() {
+                return Err(syn::Error::new(
+                    proc_macro2::Span::call_site(),
+                    "rate_limit requires `requests` field (e.g. rate_limit(requests = 100, per = \"1m\", key = \"user\"))",
+                ));
+            }
+            if has_any_rl && attrs.rate_limit_per_secs.is_none() {
+                return Err(syn::Error::new(
+                    proc_macro2::Span::call_site(),
+                    "rate_limit requires `per` field (e.g. rate_limit(requests = 100, per = \"1m\", key = \"user\"))",
+                ));
             }
         }
     }

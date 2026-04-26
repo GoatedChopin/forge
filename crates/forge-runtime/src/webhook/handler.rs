@@ -182,7 +182,15 @@ pub async fn webhook_handler(
     if let Some(ref key) = idempotency_key
         && let Some(ref idem_config) = info.idempotency
     {
-        match claim_idempotency(&state.pool, info.name, key, idem_config.ttl).await {
+        match claim_idempotency(
+            &state.pool,
+            info.name,
+            key,
+            idem_config.ttl,
+            idem_config.processing_timeout,
+        )
+        .await
+        {
             Ok(true) => {
                 idempotency_claimed = true;
             }
@@ -260,6 +268,16 @@ pub async fn webhook_handler(
 
     match result {
         Ok(Ok(webhook_result)) => {
+            if idempotency_claimed
+                && let Some(ref key) = idempotency_key
+                && let Err(complete_err) = complete_idempotency(&state.pool, info.name, key).await
+            {
+                warn!(
+                    webhook = info.name,
+                    error = %complete_err,
+                    "Failed to mark idempotency key as completed"
+                );
+            }
             let status =
                 StatusCode::from_u16(webhook_result.status_code()).unwrap_or(StatusCode::OK);
             crate::signals::emit_server_execution(
@@ -570,33 +588,63 @@ fn extract_json_path(value: &Value, path: &str) -> Option<String> {
 ///
 /// Returns:
 /// - `Ok(true)` if this request acquired the claim
-/// - `Ok(false)` if key is already active
+/// - `Ok(false)` if key is already active (completed or being processed)
+///
+/// A key with `status = 'claimed'` is eligible for reclaim once
+/// `processing_timeout` has elapsed (crash recovery).
 async fn claim_idempotency(
     pool: &PgPool,
     webhook_name: &str,
     key: &str,
     ttl: std::time::Duration,
+    processing_timeout: std::time::Duration,
 ) -> Result<bool, sqlx::Error> {
     let expires_at =
         chrono::Utc::now() + chrono::Duration::from_std(ttl).unwrap_or(chrono::Duration::hours(24));
+    let processing_timeout_secs = processing_timeout.as_secs().try_into().unwrap_or(i32::MAX);
 
-    let result = sqlx::query!(
+    let result = sqlx::query(
         r#"
-        INSERT INTO forge_webhook_events (idempotency_key, webhook_name, processed_at, expires_at)
-        VALUES ($1, $2, NOW(), $3)
+        INSERT INTO forge_webhook_events (idempotency_key, webhook_name, status, processed_at, expires_at)
+        VALUES ($1, $2, 'claimed', NOW(), $3)
         ON CONFLICT (webhook_name, idempotency_key) DO UPDATE
-            SET processed_at = EXCLUDED.processed_at,
+            SET status = 'claimed',
+                processed_at = NOW(),
                 expires_at = EXCLUDED.expires_at
         WHERE forge_webhook_events.expires_at < NOW()
+           OR (forge_webhook_events.status = 'claimed'
+               AND forge_webhook_events.processed_at + make_interval(secs => $4::double precision) < NOW())
         "#,
-        key,
-        webhook_name,
-        expires_at,
     )
+    .bind(key)
+    .bind(webhook_name)
+    .bind(expires_at)
+    .bind(processing_timeout_secs)
     .execute(pool)
     .await?;
 
     Ok(result.rows_affected() > 0)
+}
+
+/// Mark idempotency key as completed after successful processing.
+async fn complete_idempotency(
+    pool: &PgPool,
+    webhook_name: &str,
+    key: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        UPDATE forge_webhook_events
+        SET status = 'completed'
+        WHERE webhook_name = $1 AND idempotency_key = $2
+        "#,
+    )
+    .bind(webhook_name)
+    .bind(key)
+    .execute(pool)
+    .await?;
+
+    Ok(())
 }
 
 /// Release idempotency key after failure so retries can proceed.
@@ -605,14 +653,14 @@ async fn release_idempotency(
     webhook_name: &str,
     key: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query!(
+    sqlx::query(
         r#"
         DELETE FROM forge_webhook_events
         WHERE webhook_name = $1 AND idempotency_key = $2
         "#,
-        webhook_name,
-        key,
     )
+    .bind(webhook_name)
+    .bind(key)
     .execute(pool)
     .await?;
 

@@ -95,6 +95,11 @@ pub struct IdempotencyConfig {
     pub source: IdempotencySource,
     /// TTL for idempotency records (default: 24 hours).
     pub ttl: Duration,
+    /// Maximum time a webhook handler can run before the claim is
+    /// considered stale and eligible for reclaim. Protects against
+    /// process crashes leaving keys permanently locked.
+    /// Defaults to 5 minutes.
+    pub processing_timeout: Duration,
 }
 
 impl IdempotencyConfig {
@@ -102,13 +107,20 @@ impl IdempotencyConfig {
     pub fn new(source: IdempotencySource) -> Self {
         Self {
             source,
-            ttl: Duration::from_secs(24 * 60 * 60), // 24 hours
+            ttl: Duration::from_secs(24 * 60 * 60),
+            processing_timeout: Duration::from_secs(5 * 60),
         }
     }
 
     /// Set a custom TTL.
     pub fn with_ttl(mut self, ttl: Duration) -> Self {
         self.ttl = ttl;
+        self
+    }
+
+    /// Set a custom processing timeout for crash recovery.
+    pub fn with_processing_timeout(mut self, timeout: Duration) -> Self {
+        self.processing_timeout = timeout;
         self
     }
 }

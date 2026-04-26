@@ -113,6 +113,8 @@ pub struct WorkflowContext {
     tenant_id: Option<Uuid>,
     /// Environment variable provider.
     env_provider: Arc<dyn EnvProvider>,
+    /// User-defined key-value state that persists across suspension points.
+    saved_state: Arc<RwLock<HashMap<String, serde_json::Value>>>,
 }
 
 impl WorkflowContext {
@@ -141,6 +143,7 @@ impl WorkflowContext {
             resumed_from_sleep: false,
             tenant_id: None,
             env_provider: Arc::new(RealEnvProvider::new()),
+            saved_state: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -169,6 +172,7 @@ impl WorkflowContext {
             resumed_from_sleep: false,
             tenant_id: None,
             env_provider: Arc::new(RealEnvProvider::new()),
+            saved_state: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -240,6 +244,47 @@ impl WorkflowContext {
     pub fn with_auth(mut self, auth: AuthContext) -> Self {
         self.auth = auth;
         self
+    }
+
+    /// Restore saved state from persisted data (used on resume).
+    pub fn with_saved_state(self, state: HashMap<String, serde_json::Value>) -> Self {
+        *self.saved_state.write().expect("workflow lock poisoned") = state;
+        self
+    }
+
+    /// Save arbitrary state that persists across suspension points.
+    pub fn save_state(&self, key: &str, value: impl serde::Serialize) -> crate::Result<()> {
+        let json = serde_json::to_value(value)
+            .map_err(|e| crate::ForgeError::Serialization(e.to_string()))?;
+        self.saved_state
+            .write()
+            .expect("workflow lock poisoned")
+            .insert(key.to_string(), json);
+        Ok(())
+    }
+
+    /// Load previously saved state. Returns `None` if the key doesn't exist.
+    pub fn load_state<T: serde::de::DeserializeOwned>(
+        &self,
+        key: &str,
+    ) -> crate::Result<Option<T>> {
+        let guard = self.saved_state.read().expect("workflow lock poisoned");
+        match guard.get(key) {
+            Some(value) => {
+                let result = serde_json::from_value(value.clone())
+                    .map_err(|e| crate::ForgeError::Deserialization(e.to_string()))?;
+                Ok(Some(result))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Get a snapshot of all saved state for persistence.
+    pub fn take_saved_state(&self) -> HashMap<String, serde_json::Value> {
+        self.saved_state
+            .read()
+            .expect("workflow lock poisoned")
+            .clone()
     }
 
     /// Restore step states from persisted data.
