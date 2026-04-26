@@ -47,6 +47,7 @@ ed25519-dalek = { version = "2", optional = true }
 serde_urlencoded = { version = "0.7", optional = true }
 hmac = { version = "0.12", optional = true }
 sha1 = { version = "0.10", optional = true }
+jsonschema = { workspace = true, optional = true }
 
 # `geoip` feature: bundled IP-to-country DB (~10MB) + MaxMind reader.
 # Network access is required at compile time to fetch the DB; opt-in only.
@@ -81,6 +82,7 @@ gateway = [
     "dep:serde_urlencoded",
     "dep:hmac",
     "dep:sha1",
+    "dep:jsonschema",
 ]
 
 # Background job queue and worker (PG-backed, SKIP LOCKED).

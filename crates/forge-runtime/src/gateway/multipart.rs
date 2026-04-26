@@ -11,7 +11,6 @@ use forge_core::types::Upload;
 
 use super::rpc::RpcHandler;
 
-const MAX_UPLOAD_FIELDS: usize = 20;
 const MAX_FIELD_NAME_LENGTH: usize = 255;
 const MAX_JSON_FIELD_SIZE: usize = 1024 * 1024;
 const JSON_FIELD_NAME: &str = "_json";
@@ -49,6 +48,7 @@ fn mime_matches_magic(declared: &str, bytes: &[u8]) -> bool {
 pub struct MultipartConfig {
     pub max_body_size_bytes: usize,
     pub max_file_size_bytes: usize,
+    pub max_upload_fields: usize,
 }
 
 /// Resolve the effective (total, per-file) upload limits for a request.
@@ -159,11 +159,14 @@ pub async fn rpc_multipart_handler(
         }
 
         // Check upload count before processing to prevent bypass via _json field ordering
-        if name != JSON_FIELD_NAME && uploads.len() >= MAX_UPLOAD_FIELDS {
+        if name != JSON_FIELD_NAME && uploads.len() >= mp_config.max_upload_fields {
             return multipart_error(
                 StatusCode::BAD_REQUEST,
                 "TOO_MANY_FIELDS",
-                format!("Maximum {} upload fields allowed", MAX_UPLOAD_FIELDS),
+                format!(
+                    "Maximum {} upload fields allowed",
+                    mp_config.max_upload_fields
+                ),
             );
         }
 
@@ -369,6 +372,7 @@ mod tests {
         MultipartConfig {
             max_body_size_bytes: body,
             max_file_size_bytes: file,
+            max_upload_fields: 20,
         }
     }
 

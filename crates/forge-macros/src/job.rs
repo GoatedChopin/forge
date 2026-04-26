@@ -9,6 +9,7 @@ use crate::utils::{
 const ALLOWED_JOB_KEYS: &[&str] = &[
     "public",
     "name",
+    "description",
     "timeout",
     "priority",
     "max_attempts",
@@ -25,6 +26,7 @@ const ALLOWED_JOB_KEYS: &[&str] = &[
 #[derive(Debug, Default)]
 struct JobAttrs {
     name: Option<String>,
+    description: Option<String>,
     timeout: Option<String>,
     priority: Option<String>,
     max_attempts: Option<u32>,
@@ -48,6 +50,10 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
 
     if has_attr_flag(&attr_str, "public") {
         result.is_public = true;
+    }
+
+    if let Some(description) = parse_attr_value(&attr_str, "description") {
+        result.description = Some(description);
     }
 
     if let Some(idem_start) = attr_str.find("idempotent") {
@@ -351,6 +357,11 @@ pub fn job_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
+    let description_tokens = match &attrs.description {
+        Some(d) => quote! { Some(#d) },
+        None => quote! { None },
+    };
+
     let timeout = if let Some(ref t) = attrs.timeout {
         parse_duration_tokens(t, 3600)
     } else {
@@ -458,6 +469,7 @@ pub fn job_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                 fn info() -> forge::forge_core::job::JobInfo {
                     forge::forge_core::job::JobInfo {
                         name: #fn_name_str,
+                        description: #description_tokens,
                         timeout: #timeout,
                         http_timeout: #http_timeout,
                         priority: #priority,

@@ -40,6 +40,8 @@ pub trait ForgeWebhook: crate::__sealed::Sealed + Send + Sync + 'static {
 pub struct WebhookInfo {
     /// Webhook name (used for identification).
     pub name: &'static str,
+    /// Human-readable description of the webhook's purpose.
+    pub description: Option<&'static str>,
     /// URL path for the webhook (e.g., "/webhooks/stripe").
     pub path: &'static str,
     /// Signature validation configuration.
@@ -60,6 +62,7 @@ impl Default for WebhookInfo {
     fn default() -> Self {
         Self {
             name: "",
+            description: None,
             path: "",
             signature: None,
             allow_unsigned: false,

@@ -141,7 +141,7 @@ impl From<&crate::job::JobInfo> for HandlerMetadata {
         Self {
             kind: HandlerKind::Job,
             name: info.name.to_string(),
-            description: None,
+            description: info.description.map(str::to_string),
             is_public: info.is_public,
             required_role: info.required_role.map(str::to_string),
             timeout: Some(info.timeout),
@@ -261,7 +261,7 @@ impl From<&crate::webhook::WebhookInfo> for HandlerMetadata {
         Self {
             kind: HandlerKind::Webhook,
             name: info.name.to_string(),
-            description: None,
+            description: info.description.map(str::to_string),
             is_public: true, // webhooks bypass auth by design
             required_role: None,
             timeout: Some(info.timeout),

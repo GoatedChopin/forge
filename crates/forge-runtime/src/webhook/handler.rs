@@ -120,8 +120,9 @@ pub async fn webhook_handler(
             }
         };
 
-        // Get secret from environment
-        let secret = match std::env::var(sig_config.secret_env) {
+        // Get secret(s) from environment. Comma-separated values support
+        // rotation: set to "new-secret,old-secret" during rollover.
+        let secrets_raw = match std::env::var(sig_config.secret_env) {
             Ok(s) => s,
             Err(_) => {
                 error!(
@@ -136,8 +137,16 @@ pub async fn webhook_handler(
             }
         };
 
-        // Validate signature
-        if !validate_signature(sig_config.algorithm, &body, &secret, signature, &headers) {
+        // Try each secret, first match wins
+        let secrets: Vec<&str> = secrets_raw
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect();
+        let signature_valid = secrets.iter().any(|secret| {
+            validate_signature(sig_config.algorithm, &body, secret, signature, &headers)
+        });
+        if !signature_valid {
             warn!(webhook = info.name, "Invalid signature");
             return (
                 StatusCode::UNAUTHORIZED,

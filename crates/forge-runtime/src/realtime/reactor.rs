@@ -34,6 +34,8 @@ pub struct ReactorConfig {
     /// stale. Re-evaluating every active group on this cadence recovers from
     /// dropped notifications. `0` disables the sweep.
     pub resync_interval_secs: u64,
+    /// Number of DashMap shards for the subscription manager.
+    pub shard_count: usize,
 }
 
 impl Default for ReactorConfig {
@@ -47,6 +49,7 @@ impl Default for ReactorConfig {
             max_concurrent_reexecutions: 64,
             session_cleanup_interval_secs: 60,
             resync_interval_secs: 60,
+            shard_count: 64,
         }
     }
 }
@@ -98,8 +101,9 @@ impl Reactor {
         registry: FunctionRegistry,
         config: ReactorConfig,
     ) -> Self {
-        let subscription_manager = Arc::new(SubscriptionManager::new(
+        let subscription_manager = Arc::new(SubscriptionManager::with_shard_count(
             config.realtime.max_subscriptions_per_session,
+            config.shard_count,
         ));
         let session_server = Arc::new(SessionServer::new(node_id, config.realtime.clone()));
         let change_listener = Arc::new(ChangeListener::new(db_pool.clone(), config.listener));

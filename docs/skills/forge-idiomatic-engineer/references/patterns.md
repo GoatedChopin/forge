@@ -222,6 +222,9 @@ Forge::builder()
 - **Pool isolation**: queries use `default`; jobs use `jobs`; OTLP uses `observability`; signals use `analytics`. Size in `[database.pools.<name>]`.
 - **Observability**: enable OTLP in `forge.toml`; `x-correlation-id` propagates across RPC boundaries. Full metric/span catalog: `docs/docs/reference/observability-catalog.mdx`.
 - **Workflow safety**: startup validates active versions against persisted signatures; run the binary before shipping or `/_api/ready` reports unhealthy.
+- **Cluster fencing**: leader-exclusive writes (cron scheduling, stale reclaim, workflow recovery) check `current_term` against the DB before executing. If a stale leader lost its election during a partition, the fencing check rejects the write. Custom leader-mode daemons should follow the same pattern.
+- **Webhook idempotency**: best-effort via `INSERT ... ON CONFLICT`. Narrow race window between claim and handler completion. For strict exactly-once (financial ops), add application-level dedup inside your handler's transaction.
+- **Signal analytics**: approximate by design. Unauthenticated endpoints, bounded channel that drops under pressure, UA-based bot detection, daily-rotating visitor IDs. Not suitable as a security audit log.
 - **System tables**: `forge_jobs`, `forge_workflow_runs`, `forge_signals_events`, etc. are framework-owned. Use `ctx.dispatch_job()`, `ctx.start_workflow()`, `ctx.record_signal()`. `forge check` fails the build on manual writes.
-- **DB primary failover**: the LISTEN/NOTIFY connection (`ChangeListener`) is not auto-reconnected after a primary failover. Restart the process. Pool connections reconnect automatically — this is the exception.
+- **DB primary failover**: the LISTEN/NOTIFY connection (`ChangeListener`) is not auto-reconnected after a primary failover. Restart the process. Pool connections reconnect automatically.
 - **`forge_*` namespace**: reserved for framework tables. Never create application tables with this prefix.

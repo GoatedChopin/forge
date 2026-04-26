@@ -36,6 +36,10 @@ pub struct DatabaseConfig {
     #[serde(default)]
     pub read_from_replica: bool,
 
+    /// Replica pool size. When unset, defaults to `pool_size / 2`.
+    #[serde(default)]
+    pub replica_pool_size: Option<u32>,
+
     /// Minimum connections to keep alive in the pool (pre-warming).
     #[serde(default)]
     pub min_pool_size: u32,
@@ -59,6 +63,7 @@ impl Default for DatabaseConfig {
             statement_timeout: default_statement_timeout(),
             replica_urls: Vec::new(),
             read_from_replica: false,
+            replica_pool_size: None,
             min_pool_size: 0,
             test_before_acquire: true,
             pools: PoolsConfig::default(),

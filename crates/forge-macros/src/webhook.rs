@@ -8,6 +8,7 @@ use crate::utils::{
 
 const ALLOWED_WEBHOOK_KEYS: &[&str] = &[
     "name",
+    "description",
     "path",
     "signature",
     "allow_unsigned",
@@ -19,6 +20,7 @@ const ALLOWED_WEBHOOK_KEYS: &[&str] = &[
 struct WebhookAttrs {
     /// Override the registry name (default: function name).
     name: Option<String>,
+    description: Option<String>,
     path: Option<String>,
     signature_algorithm: Option<String>,
     signature_header: Option<String>,
@@ -34,6 +36,10 @@ fn parse_webhook_attrs(attr: TokenStream) -> syn::Result<WebhookAttrs> {
 
     if let Some(name) = parse_attr_value(&attr_str, "name") {
         result.name = Some(name);
+    }
+
+    if let Some(description) = parse_attr_value(&attr_str, "description") {
+        result.description = Some(description);
     }
 
     if has_attr_flag(&attr_str, "allow_unsigned") {
@@ -181,6 +187,11 @@ pub fn webhook_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let path = attrs.path.unwrap_or_else(|| "/webhooks".to_string());
     let allow_unsigned = attrs.allow_unsigned;
 
+    let description_tokens = match &attrs.description {
+        Some(d) => quote! { Some(#d) },
+        None => quote! { None },
+    };
+
     let timeout = if let Some(ref t) = attrs.timeout {
         parse_duration_tokens(t, 30)
     } else {
@@ -268,6 +279,7 @@ pub fn webhook_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                 fn info() -> forge::forge_core::webhook::WebhookInfo {
                     forge::forge_core::webhook::WebhookInfo {
                         name: #rpc_name,
+                        description: #description_tokens,
                         path: #path,
                         signature: #signature,
                         allow_unsigned: #allow_unsigned,

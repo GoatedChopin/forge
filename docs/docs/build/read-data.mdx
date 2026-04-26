@@ -117,6 +117,34 @@ pub async fn get_my_orders(ctx: &QueryContext) -> Result<Vec<Order>> {
 }
 ```
 
+### Understanding `public` vs `unscoped`
+
+These are orthogonal concepts that control different things:
+
+- **`public`** controls **authentication**. A public query can be called without credentials. A non-public query requires a valid JWT.
+- **`unscoped`** controls **compile-time row filtering**. By default, the macro requires private queries to filter by `user_id` or `owner_id` in their SQL. `unscoped` opts out of that check.
+
+| Combination | Auth Required | Row Filter Required | Use Case |
+|---|---|---|---|
+| (default) | Yes | Yes | User's own data: orders, profile, settings |
+| `unscoped` | Yes | No | Admin dashboards, shared reference data behind auth |
+| `public` | No | No | Product catalog, landing page data, health checks |
+| `public, unscoped` | No | No | Same as `public` (scope check is already skipped for public queries) |
+
+```rust
+// Requires auth, must filter by user_id/owner_id
+#[forge::query]
+pub async fn my_orders(ctx: &QueryContext) -> Result<Vec<Order>> { ... }
+
+// Requires auth, but serves shared data (no row filter)
+#[forge::query(unscoped)]
+pub async fn dashboard_stats(ctx: &QueryContext) -> Result<Stats> { ... }
+
+// No auth needed, no row filter
+#[forge::query(public)]
+pub async fn list_products(ctx: &QueryContext) -> Result<Vec<Product>> { ... }
+```
+
 ### Dynamic SQL with Explicit Tables
 
 When SQL is constructed dynamically, the macro cannot extract table dependencies. Specify them explicitly for real-time subscriptions.

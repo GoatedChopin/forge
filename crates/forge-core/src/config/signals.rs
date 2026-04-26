@@ -50,6 +50,10 @@ pub struct SignalsConfig {
     #[serde(default = "default_flush_interval_ms")]
     pub flush_interval_ms: u64,
 
+    /// Internal mpsc channel capacity for event buffering.
+    #[serde(default = "default_channel_capacity")]
+    pub channel_capacity: usize,
+
     /// Function names to exclude from auto-capture (exact match).
     #[serde(default)]
     pub excluded_functions: Vec<String>,
@@ -76,6 +80,7 @@ impl Default for SignalsConfig {
             anonymize_ip: false,
             batch_size: default_batch_size(),
             flush_interval_ms: default_flush_interval_ms(),
+            channel_capacity: default_channel_capacity(),
             excluded_functions: Vec::new(),
             bot_detection: true,
             geoip_db_path: None,
@@ -99,6 +104,10 @@ fn default_batch_size() -> usize {
 
 fn default_flush_interval_ms() -> u64 {
     5000
+}
+
+fn default_channel_capacity() -> usize {
+    10_000
 }
 
 #[cfg(test)]

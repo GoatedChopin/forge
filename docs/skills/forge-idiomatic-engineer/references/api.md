@@ -191,13 +191,13 @@ mode = "hybrid"               # "hybrid" (default, per-node DashMap for user/ip)
 
 [realtime]
 # All fields are optional; production-safe defaults shown.
-debounce_quiet = "50ms"              # coalesce window for change notifications
-debounce_max = "200ms"               # max wait before forcing a flush
+debounce_quiet_window = "50ms"       # coalesce window for change notifications
+debounce_max_wait = "200ms"          # max wait before forcing a flush
 max_concurrent_reexecutions = 64     # parallel query re-runs during invalidation
 resync_interval = "60s"              # periodic sweep to recover dropped NOTIFYs; "0s" disables
-listener_channel_buffer = 1024       # broadcast channel buffer for raw PG change events
-subscription_max_per_session = 50    # max subscriptions a single SSE client may hold
-adaptive_row_threshold = 200         # switches from row-level to table-level tracking above this
+postgres_change_buffer_size = 1024   # broadcast channel buffer for raw PG change events
+subscription_max_per_session = 100   # max subscriptions a single SSE client may hold
+change_tracking_row_threshold = 200  # switches from row-level to table-level tracking above this
 sse_max_sessions = 10000             # max concurrent SSE sessions across all clients
 
 [observability]

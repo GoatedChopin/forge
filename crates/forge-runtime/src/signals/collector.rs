@@ -12,9 +12,6 @@ use sqlx::PgPool;
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tracing::{debug, error, warn};
 
-/// Channel capacity before events start getting dropped.
-const CHANNEL_CAPACITY: usize = 10_000;
-
 /// Buffered signal event collector.
 ///
 /// Clone-friendly (shares the mpsc sender). Send events from any async
@@ -33,8 +30,13 @@ impl SignalsCollector {
     ///
     /// Returns the collector handle. The flush task runs until [`shutdown`] is
     /// called or all senders are dropped.
-    pub fn spawn(pool: Arc<PgPool>, batch_size: usize, flush_interval: Duration) -> Self {
-        let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
+    pub fn spawn(
+        pool: Arc<PgPool>,
+        batch_size: usize,
+        flush_interval: Duration,
+        channel_capacity: usize,
+    ) -> Self {
+        let (tx, rx) = mpsc::channel(channel_capacity);
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         tokio::spawn(flush_loop(
             rx,

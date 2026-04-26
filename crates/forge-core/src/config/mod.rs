@@ -82,6 +82,8 @@ impl ForgeConfig {
 
     /// Parse configuration from a TOML string.
     pub fn parse_toml(content: &str) -> Result<Self> {
+        reject_secret_defaults(content)?;
+
         // Substitute environment variables
         let content = substitute_env_vars(content);
 
@@ -139,6 +141,91 @@ impl ForgeConfig {
                      Browsers ignore wildcards on credentialed requests."
                         .into(),
                 ));
+            }
+
+            for origin in &self.gateway.cors_origins {
+                if origin == "*" {
+                    continue;
+                }
+                if origin.bytes().any(|b| b < 32 || b == 127) {
+                    return Err(ForgeError::Config(format!(
+                        "gateway.cors_origins contains invalid origin \"{origin}\". \
+                         Origins must be valid HTTP header values."
+                    )));
+                }
+                if !origin.starts_with("http://") && !origin.starts_with("https://") {
+                    return Err(ForgeError::Config(format!(
+                        "gateway.cors_origins contains \"{origin}\" which is not a valid origin. \
+                         Origins must start with http:// or https://."
+                    )));
+                }
+            }
+        }
+
+        self.validate_durations()?;
+
+        Ok(())
+    }
+
+    /// Validate all duration string fields parse correctly instead of silently
+    /// falling back to defaults.
+    fn validate_durations(&self) -> Result<()> {
+        let fields: &[(&str, &str)] = &[
+            ("gateway.request_timeout", &self.gateway.request_timeout),
+            ("function.timeout", &self.function.timeout),
+            ("worker.job_timeout", &self.worker.job_timeout),
+            ("worker.poll_interval", &self.worker.poll_interval),
+            ("auth.jwks_cache_ttl", &self.auth.jwks_cache_ttl),
+            ("auth.session_ttl", &self.auth.session_ttl),
+            ("auth.jwt_leeway", &self.auth.jwt_leeway),
+            ("mcp.session_ttl", &self.mcp.session_ttl),
+            (
+                "observability.metrics_interval",
+                &self.observability.metrics_interval,
+            ),
+            ("realtime.resync_interval", &self.realtime.resync_interval),
+            (
+                "realtime.debounce_quiet_window",
+                &self.realtime.debounce_quiet_window,
+            ),
+            (
+                "realtime.debounce_max_wait",
+                &self.realtime.debounce_max_wait,
+            ),
+            (
+                "cluster.heartbeat_interval",
+                &self.cluster.heartbeat_interval,
+            ),
+            ("cluster.dead_threshold", &self.cluster.dead_threshold),
+            ("database.pool_timeout", &self.database.pool_timeout),
+            (
+                "database.statement_timeout",
+                &self.database.statement_timeout,
+            ),
+        ];
+
+        for (name, value) in fields {
+            if crate::util::parse_duration(value).is_none() {
+                return Err(ForgeError::Config(format!(
+                    "{name} = \"{value}\" is not a valid duration. \
+                     Use a suffix like \"30s\", \"5m\", \"1h\", or \"200ms\"."
+                )));
+            }
+        }
+
+        let optional_fields: &[(&str, &Option<String>)] = &[
+            ("auth.access_token_ttl", &self.auth.access_token_ttl),
+            ("auth.refresh_token_ttl", &self.auth.refresh_token_ttl),
+        ];
+
+        for (name, value) in optional_fields {
+            if let Some(v) = value
+                && crate::util::parse_duration(v).is_none()
+            {
+                return Err(ForgeError::Config(format!(
+                    "{name} = \"{v}\" is not a valid duration. \
+                     Use a suffix like \"30s\", \"5m\", \"1h\", or \"200ms\"."
+                )));
             }
         }
 
@@ -289,6 +376,24 @@ pub struct GatewayConfig {
     /// Defaults to "10mb".
     #[serde(default = "default_max_file_size")]
     pub max_file_size: String,
+
+    /// Maximum requests in a single RPC batch call.
+    #[serde(default = "default_max_rpc_batch_size")]
+    pub max_rpc_batch_size: usize,
+
+    /// Maximum file fields in a single multipart upload.
+    #[serde(default = "default_max_multipart_fields")]
+    pub max_multipart_fields: usize,
+
+    /// Add standard security headers (X-Content-Type-Options, X-Frame-Options)
+    /// to all responses.
+    #[serde(default = "default_true")]
+    pub security_headers: bool,
+
+    /// Enable HTTP Strict Transport Security header. Off by default since
+    /// local development uses plain HTTP.
+    #[serde(default)]
+    pub hsts: bool,
 }
 
 impl Default for GatewayConfig {
@@ -303,6 +408,10 @@ impl Default for GatewayConfig {
             quiet_paths: default_quiet_paths(),
             max_body_size: default_max_body_size(),
             max_file_size: default_max_file_size(),
+            max_rpc_batch_size: default_max_rpc_batch_size(),
+            max_multipart_fields: default_max_multipart_fields(),
+            security_headers: true,
+            hsts: false,
         }
     }
 }
@@ -375,6 +484,14 @@ fn default_max_body_size() -> String {
 
 fn default_max_file_size() -> String {
     "10mb".to_string()
+}
+
+fn default_max_rpc_batch_size() -> usize {
+    100
+}
+
+fn default_max_multipart_fields() -> usize {
+    20
 }
 
 /// Function execution configuration.
@@ -849,6 +966,14 @@ pub struct McpConfig {
     #[serde(default = "default_true")]
     pub require_protocol_version_header: bool,
 
+    /// Maximum total MCP sessions across all users.
+    #[serde(default = "default_max_mcp_sessions")]
+    pub max_sessions: usize,
+
+    /// Maximum sessions a single authenticated user can hold.
+    #[serde(default = "default_max_sessions_per_user")]
+    pub max_sessions_per_user: usize,
+
     /// Allow unauthenticated dynamic client registration (RFC 7591).
     ///
     /// When **false** (default), `POST /_api/oauth/register` returns 403
@@ -872,10 +997,20 @@ impl Default for McpConfig {
             path: default_mcp_path(),
             session_ttl: default_mcp_session_ttl(),
             allowed_origins: Vec::new(),
+            max_sessions: default_max_mcp_sessions(),
+            max_sessions_per_user: default_max_sessions_per_user(),
             require_protocol_version_header: default_true(),
             allow_unauthenticated_dcr: false,
         }
     }
+}
+
+fn default_max_mcp_sessions() -> usize {
+    10_000
+}
+
+fn default_max_sessions_per_user() -> usize {
+    100
 }
 
 impl McpConfig {
@@ -947,6 +1082,45 @@ fn parse_duration_millis(s: &str, default_ms: u64) -> u64 {
     crate::util::parse_duration(s)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(default_ms)
+}
+
+/// Reject config patterns where secret-like env vars have hardcoded defaults.
+/// Catches `${JWT_SECRET-my-default}` before it silently becomes a production secret.
+fn reject_secret_defaults(content: &str) -> crate::Result<()> {
+    const SECRET_KEYWORDS: &[&str] = &["secret", "password", "key"];
+
+    let bytes = content.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+
+    while i < len {
+        if i + 1 < len
+            && bytes.get(i) == Some(&b'$')
+            && bytes.get(i + 1) == Some(&b'{')
+            && let Some(end) = content.get(i + 2..).and_then(|s| s.find('}'))
+        {
+            let inner = &content[i + 2..i + 2 + end];
+            let (var_name, default_value) = parse_var_with_default(inner);
+
+            if default_value.is_some() {
+                let var_lower = var_name.to_lowercase();
+                for keyword in SECRET_KEYWORDS {
+                    if var_lower.contains(keyword) {
+                        return Err(ForgeError::Config(format!(
+                            "${{{inner}}} uses a hardcoded default for a secret. \
+                             Remove the default value and set {var_name} as an environment variable."
+                        )));
+                    }
+                }
+            }
+
+            i += 2 + end + 1;
+            continue;
+        }
+        i += 1;
+    }
+
+    Ok(())
 }
 
 /// Substitute environment variables in the format `${VAR_NAME}`.
@@ -1029,11 +1203,28 @@ pub enum RateLimitMode {
 }
 
 /// `[rate_limit]` configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RateLimitSettings {
     /// Rate-limiter mode. Defaults to `hybrid`.
     #[serde(default)]
     pub mode: RateLimitMode,
+
+    /// Maximum local (in-memory) rate limit buckets before eviction.
+    #[serde(default = "default_max_local_buckets")]
+    pub max_local_buckets: usize,
+}
+
+impl Default for RateLimitSettings {
+    fn default() -> Self {
+        Self {
+            mode: RateLimitMode::default(),
+            max_local_buckets: default_max_local_buckets(),
+        }
+    }
+}
+
+fn default_max_local_buckets() -> usize {
+    100_000
 }
 
 /// Configuration for the real-time subscription engine and SSE transport.
@@ -1052,17 +1243,20 @@ pub struct RealtimeConfig {
     pub resync_interval: String,
 
     /// Broadcast channel buffer for raw change notifications from PG.
-    #[serde(default = "default_listener_channel_buffer")]
-    pub listener_channel_buffer: usize,
+    #[serde(
+        default = "default_postgres_change_buffer_size",
+        alias = "listener_channel_buffer"
+    )]
+    pub postgres_change_buffer_size: usize,
 
     /// Debounce quiet window duration. Changes arriving within this window are
     /// coalesced into a single flush (e.g. "50ms", "100ms").
-    #[serde(default = "default_debounce_quiet")]
-    pub debounce_quiet: String,
+    #[serde(default = "default_debounce_quiet_window", alias = "debounce_quiet")]
+    pub debounce_quiet_window: String,
 
     /// Absolute maximum debounce wait before forcing a flush (e.g. "200ms", "1s").
-    #[serde(default = "default_debounce_max")]
-    pub debounce_max: String,
+    #[serde(default = "default_debounce_max_wait", alias = "debounce_max")]
+    pub debounce_max_wait: String,
 
     /// Maximum concurrent SSE sessions across all clients.
     #[serde(default = "default_sse_max_sessions")]
@@ -1075,8 +1269,16 @@ pub struct RealtimeConfig {
     /// Row-count threshold for switching from row-level to table-level
     /// change tracking per table. Lowering reduces memory; raising reduces
     /// false-positive invalidations on write-heavy tables.
-    #[serde(default = "default_adaptive_row_threshold")]
-    pub adaptive_row_threshold: usize,
+    #[serde(
+        default = "default_change_tracking_row_threshold",
+        alias = "adaptive_row_threshold"
+    )]
+    pub change_tracking_row_threshold: usize,
+
+    /// Number of DashMap shards for the subscription manager. Higher values
+    /// reduce lock contention at the cost of memory.
+    #[serde(default = "default_shard_count")]
+    pub shard_count: usize,
 }
 
 fn default_max_concurrent_reexecutions() -> usize {
@@ -1085,23 +1287,26 @@ fn default_max_concurrent_reexecutions() -> usize {
 fn default_resync_interval() -> String {
     "60s".to_string()
 }
-fn default_listener_channel_buffer() -> usize {
+fn default_postgres_change_buffer_size() -> usize {
     1024
 }
-fn default_debounce_quiet() -> String {
+fn default_debounce_quiet_window() -> String {
     "50ms".to_string()
 }
-fn default_debounce_max() -> String {
+fn default_debounce_max_wait() -> String {
     "200ms".to_string()
 }
 fn default_sse_max_sessions() -> usize {
     10_000
 }
 fn default_subscription_max_per_session() -> usize {
-    50
+    100
 }
-fn default_adaptive_row_threshold() -> usize {
+fn default_change_tracking_row_threshold() -> usize {
     200
+}
+fn default_shard_count() -> usize {
+    64
 }
 
 impl Default for RealtimeConfig {
@@ -1109,12 +1314,13 @@ impl Default for RealtimeConfig {
         Self {
             max_concurrent_reexecutions: default_max_concurrent_reexecutions(),
             resync_interval: default_resync_interval(),
-            listener_channel_buffer: default_listener_channel_buffer(),
-            debounce_quiet: default_debounce_quiet(),
-            debounce_max: default_debounce_max(),
+            postgres_change_buffer_size: default_postgres_change_buffer_size(),
+            debounce_quiet_window: default_debounce_quiet_window(),
+            debounce_max_wait: default_debounce_max_wait(),
             sse_max_sessions: default_sse_max_sessions(),
             subscription_max_per_session: default_subscription_max_per_session(),
-            adaptive_row_threshold: default_adaptive_row_threshold(),
+            change_tracking_row_threshold: default_change_tracking_row_threshold(),
+            shard_count: default_shard_count(),
         }
     }
 }
@@ -1125,14 +1331,14 @@ impl RealtimeConfig {
         parse_duration_secs(&self.resync_interval, 60)
     }
 
-    /// Debounce quiet window in milliseconds, parsed from the `debounce_quiet` string.
+    /// Debounce quiet window in milliseconds, parsed from the `debounce_quiet_window` string.
     pub fn debounce_quiet_ms(&self) -> u64 {
-        parse_duration_millis(&self.debounce_quiet, 50)
+        parse_duration_millis(&self.debounce_quiet_window, 50)
     }
 
-    /// Absolute maximum debounce wait in milliseconds, parsed from the `debounce_max` string.
+    /// Absolute maximum debounce wait in milliseconds, parsed from the `debounce_max_wait` string.
     pub fn debounce_max_ms(&self) -> u64 {
-        parse_duration_millis(&self.debounce_max, 200)
+        parse_duration_millis(&self.debounce_max_wait, 200)
     }
 }
 

@@ -12,7 +12,6 @@ use crate::utils::{
 const ALLOWED_WORKFLOW_KEYS: &[&str] = &[
     "name",
     "version",
-    "status",
     "timeout",
     "public",
     "active",

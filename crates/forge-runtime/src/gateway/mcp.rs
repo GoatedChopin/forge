@@ -28,7 +28,6 @@ const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 const MCP_SESSION_HEADER: &str = "mcp-session-id";
 const MCP_PROTOCOL_HEADER: &str = "mcp-protocol-version";
 const DEFAULT_PAGE_SIZE: usize = 50;
-const MAX_MCP_SESSIONS: usize = 10_000;
 type ResponseError = Box<Response>;
 
 #[derive(Debug, Clone)]
@@ -36,6 +35,7 @@ struct McpSession {
     initialized: bool,
     protocol_version: String,
     expires_at: Instant,
+    principal_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -224,7 +224,7 @@ pub async fn mcp_post_handler(
     }
 
     match method_name {
-        "initialize" => handle_initialize(&state, id, &params).await,
+        "initialize" => handle_initialize(&state, id, &params, &auth).await,
         "tools/list" => {
             let session_id = match required_session_id(&state, &headers, true).await {
                 Ok(v) => v,
@@ -290,7 +290,12 @@ async fn handle_notification(
     }
 }
 
-async fn handle_initialize(state: &Arc<McpState>, id: Option<Value>, params: &Value) -> Response {
+async fn handle_initialize(
+    state: &Arc<McpState>,
+    id: Option<Value>,
+    params: &Value,
+    auth: &forge_core::function::AuthContext,
+) -> Response {
     let Some(requested_version) = params.get("protocolVersion").and_then(Value::as_str) else {
         return (
             StatusCode::OK,
@@ -320,10 +325,11 @@ async fn handle_initialize(state: &Arc<McpState>, id: Option<Value>, params: &Va
     }
 
     let session_id = uuid::Uuid::new_v4().to_string();
+    let principal = auth.principal_id();
     {
         let mut sessions = state.sessions.write().await;
-        // Enforce session limit to prevent memory exhaustion DoS
-        if sessions.len() >= MAX_MCP_SESSIONS {
+        // Enforce global session limit to prevent memory exhaustion DoS
+        if sessions.len() >= state.config.max_sessions {
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(json_rpc_error(
@@ -335,12 +341,32 @@ async fn handle_initialize(state: &Arc<McpState>, id: Option<Value>, params: &Va
             )
                 .into_response();
         }
+        // Enforce per-user session limit
+        if let Some(ref pid) = principal {
+            let user_count = sessions
+                .values()
+                .filter(|s| s.principal_id.as_ref() == Some(pid))
+                .count();
+            if user_count >= state.config.max_sessions_per_user {
+                return (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(json_rpc_error(
+                        id,
+                        -32000,
+                        "Per-user MCP session limit reached",
+                        None,
+                    )),
+                )
+                    .into_response();
+            }
+        }
         sessions.insert(
             session_id.clone(),
             McpSession {
                 initialized: false,
                 protocol_version: requested_version.to_string(),
                 expires_at: Instant::now() + state.session_ttl(),
+                principal_id: principal,
             },
         );
     }
@@ -597,6 +623,21 @@ async fn handle_tools_call(
         .get("arguments")
         .cloned()
         .unwrap_or(Value::Object(Default::default()));
+
+    if let Err(validation_err) = jsonschema::validate(&entry.input_schema, &args) {
+        let msg = format!("Invalid tool arguments: {validation_err}");
+        return (
+            StatusCode::OK,
+            Json(json_rpc_success(
+                id,
+                serde_json::json!({
+                    "content": [{ "type": "text", "text": msg }],
+                    "isError": true
+                }),
+            )),
+        )
+            .into_response();
+    }
 
     let ctx = McpToolContext::with_dispatch(
         state.pool.clone(),
@@ -1490,6 +1531,7 @@ mod tests {
                     initialized: true,
                     protocol_version: MCP_PROTOCOL_VERSION.to_string(),
                     expires_at: Instant::now() - Duration::from_secs(1),
+                    principal_id: None,
                 },
             );
         }

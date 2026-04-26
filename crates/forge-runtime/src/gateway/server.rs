@@ -80,8 +80,16 @@ pub struct GatewayConfig {
     /// Default per-file cap in bytes for multipart uploads. Applies when
     /// a mutation does not declare its own `max_size`. Defaults to 10 MB.
     pub max_file_size_bytes: usize,
+    /// Maximum requests in a single RPC batch call.
+    pub max_rpc_batch_size: usize,
+    /// Maximum file fields in a single multipart upload.
+    pub max_multipart_fields: usize,
     /// Reactor, invalidation, listener, and SSE knobs. Defaults match production.
     pub reactor_config: ReactorConfig,
+    /// Add standard security headers to all responses.
+    pub security_headers: bool,
+    /// Enable HTTP Strict Transport Security header.
+    pub hsts: bool,
 }
 
 impl Default for GatewayConfig {
@@ -100,7 +108,11 @@ impl Default for GatewayConfig {
             project_name: "forge-app".to_string(),
             max_body_size_bytes: DEFAULT_MAX_MULTIPART_BODY_SIZE,
             max_file_size_bytes: DEFAULT_MAX_FILE_SIZE,
+            max_rpc_batch_size: 100,
+            max_multipart_fields: 20,
             reactor_config: ReactorConfig::default(),
+            security_headers: true,
+            hsts: false,
         }
     }
 }
@@ -338,6 +350,7 @@ impl GatewayServer {
             token_issuer,
         );
         rpc.set_token_ttl(self.token_ttl.clone());
+        rpc.set_max_batch_size(self.config.max_rpc_batch_size);
         if let Some(rate_limiter) = &self.rate_limiter {
             rpc.set_rate_limiter(rate_limiter.clone());
         }
@@ -410,6 +423,11 @@ impl GatewayServer {
             auth_middleware_state.clone(),
             super::sse::SseConfig {
                 max_sessions: self.config.sse_max_sessions,
+                max_subscriptions_per_session: self
+                    .config
+                    .reactor_config
+                    .realtime
+                    .max_subscriptions_per_session,
                 ..Default::default()
             },
         ));
@@ -455,6 +473,7 @@ impl GatewayServer {
         let mp_config = MultipartConfig {
             max_body_size_bytes: self.config.max_body_size_bytes,
             max_file_size_bytes: self.config.max_file_size_bytes,
+            max_upload_fields: self.config.max_multipart_fields,
         };
         let multipart_router = Router::new()
             .route("/rpc/{function}/upload", post(rpc_multipart_handler))
@@ -546,6 +565,12 @@ impl GatewayServer {
             main_router = main_router.merge(custom.clone());
         }
 
+        // Security headers config
+        let security_config = Arc::new(SecurityHeadersConfig {
+            enabled: self.config.security_headers,
+            hsts: self.config.hsts,
+        });
+
         // Build middleware stack
         let service_builder = ServiceBuilder::new()
             .layer(HandleErrorLayer::new(handle_middleware_error))
@@ -554,6 +579,10 @@ impl GatewayServer {
                 self.config.request_timeout_secs,
             )))
             .layer(cors.clone())
+            .layer(middleware::from_fn_with_state(
+                security_config,
+                security_headers_middleware,
+            ))
             .layer(middleware::from_fn(api_version_middleware))
             .layer(middleware::from_fn_with_state(
                 auth_middleware_state,
@@ -720,6 +749,38 @@ impl<'a> Extractor for HeaderExtractor<'a> {
     fn keys(&self) -> Vec<&str> {
         self.0.keys().map(|k| k.as_str()).collect()
     }
+}
+
+#[derive(Debug, Clone)]
+struct SecurityHeadersConfig {
+    enabled: bool,
+    hsts: bool,
+}
+
+async fn security_headers_middleware(
+    axum::extract::State(config): axum::extract::State<Arc<SecurityHeadersConfig>>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let mut response = next.run(req).await;
+    if config.enabled {
+        let headers = response.headers_mut();
+        headers.insert(
+            axum::http::header::X_CONTENT_TYPE_OPTIONS,
+            axum::http::HeaderValue::from_static("nosniff"),
+        );
+        headers.insert(
+            axum::http::header::X_FRAME_OPTIONS,
+            axum::http::HeaderValue::from_static("DENY"),
+        );
+        if config.hsts {
+            headers.insert(
+                axum::http::header::STRICT_TRANSPORT_SECURITY,
+                axum::http::HeaderValue::from_static("max-age=63072000; includeSubDomains"),
+            );
+        }
+    }
+    response
 }
 
 /// The only wire version currently supported.

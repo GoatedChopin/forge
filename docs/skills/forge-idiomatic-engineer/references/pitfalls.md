@@ -32,6 +32,7 @@ pub struct Item { ... }
 - Don't include the type in the fn name (`heartbeat`, not `heartbeat_daemon` → avoids `HeartbeatDaemonDaemon`).
 - Omit the args parameter entirely when a handler takes no input — no `Option<()>` or dummy structs.
 - Handlers require auth by default; opt out with `public`.
+- `public` and `unscoped` are orthogonal. `public` skips auth. `unscoped` skips the compile-time row-filter check (`WHERE user_id = ...`). A query can be authenticated but unscoped (admin dashboard), or public without unscoped (public queries already skip scope checks).
 - Register every handler in `src/main.rs` via `.register_*::<NameType>()` or `.auto_register()`. Macros alone don't wire them in.
 - Adding a new handler file under `src/functions/` requires `pub mod <name>;` in `src/functions/mod.rs`. The simplest path is `forge new <kind> <name>`, which writes the file and updates `mod.rs` (and `src/main.rs` if needed) for you. If you write the file by hand, remember the `pub mod` line — the macro generates the inventory entry, but the module must be reachable from the crate root.
 - Attribute values like `log = "info"` must be quoted strings.

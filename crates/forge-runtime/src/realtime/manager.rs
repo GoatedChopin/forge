@@ -164,11 +164,16 @@ impl SubscriberStore {
 impl SubscriptionManager {
     /// Create a new subscription manager.
     pub fn new(max_per_session: usize) -> Self {
+        Self::with_shard_count(max_per_session, 64)
+    }
+
+    /// Create a new subscription manager with a custom shard count.
+    pub fn with_shard_count(max_per_session: usize, shard_count: usize) -> Self {
         Self {
-            groups: DashMap::with_shard_amount(64),
-            group_lookup: DashMap::with_shard_amount(64),
+            groups: DashMap::with_shard_amount(shard_count),
+            group_lookup: DashMap::with_shard_amount(shard_count),
             subscribers: Arc::new(Mutex::new(SubscriberStore::new())),
-            session_subscribers: DashMap::with_shard_amount(64),
+            session_subscribers: DashMap::with_shard_amount(shard_count),
             next_group_id: AtomicU32::new(0),
             max_per_session,
         }

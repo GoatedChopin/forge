@@ -28,7 +28,10 @@ pub fn expand_mcp_tool(attr: TokenStream, item: TokenStream) -> TokenStream {
         return e.to_compile_error().into();
     }
 
-    let attrs = parse_mcp_tool_attrs(attr);
+    let attrs = match parse_mcp_tool_attrs(attr) {
+        Ok(a) => a,
+        Err(e) => return e.to_compile_error().into(),
+    };
 
     expand_mcp_tool_impl(input, attrs)
         .unwrap_or_else(|e| e.to_compile_error())
@@ -52,7 +55,7 @@ struct McpToolAttrs {
     open_world_hint: Option<bool>,
 }
 
-fn parse_mcp_tool_attrs(attr: TokenStream) -> McpToolAttrs {
+fn parse_mcp_tool_attrs(attr: TokenStream) -> syn::Result<McpToolAttrs> {
     let mut attrs = McpToolAttrs::default();
     let attr_str = attr.to_string();
 
@@ -124,13 +127,15 @@ fn parse_mcp_tool_attrs(attr: TokenStream) -> McpToolAttrs {
     {
         let remaining = &attr_str[timeout_start + eq_pos + 1..];
         let trimmed = remaining.trim();
-        if let Ok(secs) = trimmed
+        let raw = trimmed
             .split(&[',', ')'])
             .next()
             .unwrap_or("")
             .trim()
-            .parse::<u64>()
-        {
+            .trim_matches('"');
+        if let Some(secs) = crate::utils::parse_duration_secs(raw) {
+            attrs.timeout = Some(secs);
+        } else if let Ok(secs) = raw.parse::<u64>() {
             attrs.timeout = Some(secs);
         }
     }
@@ -173,13 +178,23 @@ fn parse_mcp_tool_attrs(attr: TokenStream) -> McpToolAttrs {
                 let after_quote = &rl_content[key_start + quote_start + 1..];
                 if let Some(quote_end) = after_quote.find('"') {
                     let key = &after_quote[..quote_end];
+                    if !["user", "ip", "tenant", "global"].contains(&key)
+                        && !key.starts_with("custom(")
+                    {
+                        return Err(syn::Error::new(
+                            proc_macro2::Span::call_site(),
+                            format!(
+                                "invalid rate_limit key \"{key}\". Valid keys: \"user\", \"ip\", \"tenant\", \"global\", or \"custom(...)\"."
+                            ),
+                        ));
+                    }
                     attrs.rate_limit_key = Some(key.to_string());
                 }
             }
         }
     }
 
-    attrs
+    Ok(attrs)
 }
 
 fn validate_tool_name(name: &str) -> syn::Result<()> {

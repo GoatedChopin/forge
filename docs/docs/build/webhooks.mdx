@@ -269,6 +269,10 @@ When the same webhook arrives again:
 
 Idempotency keys are scoped per webhook. The same key can appear in different webhooks without conflict. The composite primary key `(webhook_name, idempotency_key)` guarantees exactly-once processing per webhook without distributed locks or external coordination services.
 
+**Idempotency is best-effort.** There is a narrow race window between claiming the idempotency key and completing the handler. If the process crashes after claiming but before finishing, the key is held until its TTL expires. Retries during that window are silently dropped.
+
+For strict exactly-once semantics where the race window matters (financial transactions, inventory adjustments), implement application-level deduplication. Store a processing record inside the same transaction as your side effect, and check for it before acting.
+
 ### TTL-Based Cleanup
 
 Idempotency records expire after 24 hours by default. Forge periodically purges expired records to prevent unbounded table growth.

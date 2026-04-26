@@ -274,6 +274,16 @@ their CC BY 4.0 license: *"IP geolocation by [DB-IP](https://db-ip.com)"*.
 Setting `geoip_db_path` to a MaxMind MMDB file uses your own licensed
 data instead and removes the attribution requirement.
 
+## Limitations
+
+Signals are designed for product analytics and diagnostics, not as a security audit log.
+
+- **Unauthenticated by design.** The `/_api/signal/*` endpoints accept requests without authentication so client-side JavaScript can report events, page views, and errors. This means anyone can submit signal data. Don't rely on signals for access control decisions or billing.
+- **Approximate counts.** Events are buffered in memory and batch-inserted. Under load, the bounded channel (configurable via `channel_capacity`) drops events rather than applying backpressure. Counts are approximate, not exact.
+- **Bot detection is UA-based.** Forge filters known bot user-agent patterns, but sophisticated bots that mimic real browsers will pass through.
+- **Visitor IDs rotate daily.** The daily-rotating `SHA256(ip + user-agent + daily_salt)` visitor ID is GDPR-friendly but means the same person gets a new ID each day. Long-term user tracking requires `identify()` calls from authenticated sessions.
+- **IP-dependent visitor IDs.** Users behind shared NATs or VPNs may share a visitor ID. Users who change networks mid-session get a new one.
+
 ## Troubleshooting
 
 **Events not appearing in Grafana**: Check that `[signals] enabled = true` in forge.toml, the PostgreSQL datasource is configured in Grafana, and materialized views have had time to refresh (first refresh is 5 minutes after startup). Verify events exist with `SELECT count(*) FROM forge_signals_events`.

@@ -231,10 +231,6 @@ impl LocalBucket {
     }
 }
 
-/// Maximum number of local rate limit buckets to prevent unbounded memory growth.
-/// When exceeded, a cleanup is triggered to evict idle entries.
-const MAX_LOCAL_BUCKETS: usize = 100_000;
-
 /// Hybrid rate limiter with in-memory fast path and periodic DB sync.
 ///
 /// Per-user/per-IP checks use a local DashMap for sub-microsecond decisions,
@@ -246,13 +242,20 @@ const MAX_LOCAL_BUCKETS: usize = 100_000;
 pub struct HybridRateLimiter {
     local: DashMap<String, LocalBucket>,
     db_limiter: StrictRateLimiter,
+    max_local_buckets: usize,
 }
 
 impl HybridRateLimiter {
     pub fn new(pool: PgPool) -> Self {
+        Self::with_max_buckets(pool, 100_000)
+    }
+
+    /// Create a hybrid rate limiter with a custom local bucket limit.
+    pub fn with_max_buckets(pool: PgPool, max_local_buckets: usize) -> Self {
         Self {
             local: DashMap::new(),
             db_limiter: StrictRateLimiter::new(pool),
+            max_local_buckets,
         }
     }
 
@@ -271,7 +274,7 @@ impl HybridRateLimiter {
         let refill_rate = config.refill_rate();
 
         // Evict idle buckets when the map gets too large to prevent memory exhaustion
-        if self.local.len() > MAX_LOCAL_BUCKETS {
+        if self.local.len() > self.max_local_buckets {
             self.cleanup_local(Duration::from_secs(300)); // evict entries idle > 5 min
         }
 

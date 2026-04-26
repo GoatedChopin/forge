@@ -14,6 +14,7 @@ use crate::utils::{
 
 const ALLOWED_QUERY_KEYS: &[&str] = &[
     "name",
+    "description",
     "public",
     "unscoped",
     "consistent",
@@ -53,6 +54,8 @@ pub fn expand_query(attr: TokenStream, item: TokenStream) -> TokenStream {
 struct QueryAttrs {
     /// Override the wire name (default: function name).
     name: Option<String>,
+    /// Human-readable description surfaced in metadata and docs.
+    description: Option<String>,
     cache_ttl: Option<u64>,
     required_role: Option<String>,
     is_public: bool,
@@ -74,6 +77,10 @@ fn parse_query_attrs(attr: TokenStream) -> Result<QueryAttrs, syn::Error> {
 
     if let Some(name) = parse_attr_value(&attr_str, "name") {
         attrs.name = Some(name);
+    }
+
+    if let Some(description) = parse_attr_value(&attr_str, "description") {
+        attrs.description = Some(description);
     }
 
     if has_attr_flag(&attr_str, "public") {
@@ -160,6 +167,16 @@ fn parse_query_attrs(attr: TokenStream) -> Result<QueryAttrs, syn::Error> {
                 let after_quote = &rl_content[key_start + quote_start + 1..];
                 if let Some(quote_end) = after_quote.find('"') {
                     let key = &after_quote[..quote_end];
+                    if !["user", "ip", "tenant", "global"].contains(&key)
+                        && !key.starts_with("custom(")
+                    {
+                        return Err(syn::Error::new(
+                            proc_macro2::Span::call_site(),
+                            format!(
+                                "invalid rate_limit key \"{key}\". Valid keys: \"user\", \"ip\", \"tenant\", \"global\", or \"custom(...)\""
+                            ),
+                        ));
+                    }
                     attrs.rate_limit_key = Some(key.to_string());
                 }
             }
@@ -377,6 +394,11 @@ fn expand_query_impl(input: ItemFn, attrs: QueryAttrs) -> syn::Result<TokenStrea
     };
     let http_timeout = timeout.clone();
 
+    let description = match &attrs.description {
+        Some(d) => quote! { Some(#d) },
+        None => quote! { None },
+    };
+
     let is_public = attrs.is_public;
     let consistent = attrs.consistent;
 
@@ -530,7 +552,7 @@ fn expand_query_impl(input: ItemFn, attrs: QueryAttrs) -> syn::Result<TokenStrea
                 fn info() -> forge::forge_core::FunctionInfo {
                     forge::forge_core::FunctionInfo {
                         name: #rpc_name,
-                        description: None,
+                        description: #description,
                         kind: forge::forge_core::FunctionKind::Query,
                         required_role: #required_role,
                         is_public: #is_public,

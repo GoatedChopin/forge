@@ -46,6 +46,8 @@ pub trait ForgeJob: crate::__sealed::Sealed + Send + Sync + 'static {
 pub struct JobInfo {
     /// Job name (used for routing).
     pub name: &'static str,
+    /// Human-readable description of the job's purpose.
+    pub description: Option<&'static str>,
     /// Job timeout.
     pub timeout: Duration,
     /// Default timeout for outbound HTTP requests made by this job.
@@ -73,6 +75,7 @@ impl Default for JobInfo {
     fn default() -> Self {
         Self {
             name: "",
+            description: None,
             timeout: Duration::from_secs(3600), // 1 hour default
             http_timeout: None,
             priority: JobPriority::Normal,

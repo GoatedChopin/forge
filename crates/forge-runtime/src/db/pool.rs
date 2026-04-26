@@ -100,7 +100,7 @@ impl Database {
         for replica_url in &config.replica_urls {
             let pool = Self::create_pool(
                 replica_url,
-                config.pool_size / 2,
+                config.replica_pool_size.unwrap_or(config.pool_size / 2),
                 config.pool_timeout_secs(),
                 service_name,
             )

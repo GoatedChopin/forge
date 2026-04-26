@@ -20,6 +20,8 @@ use crate::function::{FunctionExecutor, FunctionRegistry};
 pub struct RpcHandler {
     /// Function executor.
     executor: Arc<FunctionExecutor>,
+    /// Maximum requests in a single batch call.
+    max_batch_size: usize,
 }
 
 impl RpcHandler {
@@ -28,6 +30,7 @@ impl RpcHandler {
         let executor = FunctionExecutor::new(Arc::new(registry), db);
         Self {
             executor: Arc::new(executor),
+            max_batch_size: 100,
         }
     }
 
@@ -58,7 +61,13 @@ impl RpcHandler {
         );
         Self {
             executor: Arc::new(executor),
+            max_batch_size: 100,
         }
+    }
+
+    /// Set the maximum batch size for RPC batch requests.
+    pub fn set_max_batch_size(&mut self, max: usize) {
+        self.max_batch_size = max;
     }
 
     /// Set the token TTL config. Must be called before any requests are handled.
@@ -208,9 +217,6 @@ pub async fn rpc_function_handler(
         .await
 }
 
-/// Maximum number of requests allowed in a single batch.
-const MAX_BATCH_SIZE: usize = 100;
-
 /// Axum handler for POST /rpc/batch.
 pub async fn rpc_batch_handler(
     State(handler): State<Arc<RpcHandler>>,
@@ -220,12 +226,12 @@ pub async fn rpc_batch_handler(
     Json(batch): Json<BatchRpcRequest>,
 ) -> BatchRpcResponse {
     // Prevent DoS via unbounded batch size
-    if batch.requests.len() > MAX_BATCH_SIZE {
+    if batch.requests.len() > handler.max_batch_size {
         return BatchRpcResponse {
             results: vec![RpcResponse::error(RpcError::validation(format!(
                 "Batch size {} exceeds maximum of {}",
                 batch.requests.len(),
-                MAX_BATCH_SIZE
+                handler.max_batch_size
             )))],
         };
     }

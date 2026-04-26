@@ -67,6 +67,37 @@ The macro validates your code at compile time. Using `tokio::sleep()` with durat
 
 Duration formats: `30s`, `5m`, `1h`, `7d`, `30d`
 
+## Signature Stability
+
+Forge derives a 64-bit FNV-1a signature from each workflow definition's persisted contract: the name, version, step keys, wait keys, timeout, and input/output types. This signature is recorded when a workflow run starts and checked on every resume.
+
+If the signature changes between deploys, in-flight runs are blocked rather than resumed with potentially incompatible logic. The `/_api/ready` health endpoint reports unhealthy when blocked runs exist, which prevents rolling deploys from completing until the issue is resolved.
+
+**What changes the signature:**
+- Adding, removing, or renaming steps (`ctx.step("name", ...)`)
+- Adding, removing, or changing wait-for-event keys (`ctx.wait_for_event("key", ...)`)
+- Changing the workflow timeout
+- Changing input or output types
+
+**What does not change the signature:**
+- Modifying logic inside a step (the step name is the same)
+- Changing compensation handlers
+- Updating log messages or non-persisted behavior
+
+**When you need to change the contract:** create a new version. Set the old version to `deprecated` so it drains in-flight runs while the new version handles new starts. Once all old runs complete, remove the deprecated version.
+
+```rust
+#[forge::workflow(name = "onboard_user", version = "v2", status = "active")]
+pub async fn onboard_user_v2(ctx: &WorkflowContext, input: OnboardInput) -> Result<Value> {
+    // New step structure
+}
+
+#[forge::workflow(name = "onboard_user", version = "v1", status = "deprecated")]
+pub async fn onboard_user_v1(ctx: &WorkflowContext, input: OnboardInput) -> Result<Value> {
+    // Old step structure, kept until all v1 runs complete
+}
+```
+
 ## Patterns
 
 ### Ownership Tracking

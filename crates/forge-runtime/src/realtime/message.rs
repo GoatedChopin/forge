@@ -16,7 +16,7 @@ pub struct RealtimeConfig {
 impl Default for RealtimeConfig {
     fn default() -> Self {
         Self {
-            max_subscriptions_per_session: 50,
+            max_subscriptions_per_session: 100,
         }
     }
 }
@@ -384,7 +384,7 @@ mod tests {
     #[test]
     fn test_realtime_config_default() {
         let config = RealtimeConfig::default();
-        assert_eq!(config.max_subscriptions_per_session, 50);
+        assert_eq!(config.max_subscriptions_per_session, 100);
     }
 
     #[test]

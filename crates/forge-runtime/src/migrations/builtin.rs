@@ -30,6 +30,10 @@ const V002_CRON_OWNER_SUBJECT: &str =
 /// System migration v003: Add token_family column for refresh token chain reuse detection.
 const V003_TOKEN_FAMILIES: &str = include_str!("../../migrations/system/v003_token_families.sql");
 
+/// System migration v004: Add compensation_state column to forge_workflow_runs.
+const V004_WORKFLOW_COMPENSATION_STATE: &str =
+    include_str!("../../migrations/system/v004_workflow_compensation_state.sql");
+
 /// A system migration with a version number.
 #[derive(Debug, Clone)]
 pub struct SystemMigration {
@@ -72,6 +76,11 @@ pub fn get_system_migrations() -> Vec<SystemMigration> {
             version: 3,
             sql: V003_TOKEN_FAMILIES,
             description: "Add token_family to forge_refresh_tokens for chain reuse detection",
+        },
+        SystemMigration {
+            version: 4,
+            sql: V004_WORKFLOW_COMPENSATION_STATE,
+            description: "Add compensation_state to forge_workflow_runs for crash-safe saga compensation",
         },
     ]
 }

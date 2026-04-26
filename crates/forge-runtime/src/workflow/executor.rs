@@ -3,6 +3,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -28,6 +29,15 @@ pub enum WorkflowResult {
 /// Compensation state for a running workflow.
 struct CompensationState {
     handlers: HashMap<String, CompensationHandler>,
+    completed_steps: Vec<String>,
+}
+
+/// Persisted compensation metadata. Survives process restarts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CompensationMetadata {
+    /// Step names that registered compensation handlers, in completion order.
+    compensatable_steps: Vec<String>,
+    /// All completed steps in completion order.
     completed_steps: Vec<String>,
 }
 
@@ -148,6 +158,8 @@ impl WorkflowExecutor {
             handlers: ctx.compensation_handlers(),
             completed_steps: ctx.completed_steps_reversed().into_iter().rev().collect(),
         };
+        self.persist_compensation_metadata(run_id, &compensation_state)
+            .await?;
         self.compensation_state
             .write()
             .await
@@ -157,6 +169,7 @@ impl WorkflowExecutor {
             Ok(Ok(output)) => {
                 // Mark as completed, clean up compensation state
                 self.complete_workflow(run_id, output.clone()).await?;
+                self.clear_compensation_metadata(run_id).await?;
                 self.compensation_state.write().await.remove(&run_id);
                 crate::signals::emit_server_execution(
                     entry.info.name,
@@ -263,6 +276,8 @@ impl WorkflowExecutor {
             handlers: ctx.compensation_handlers(),
             completed_steps: ctx.completed_steps_reversed().into_iter().rev().collect(),
         };
+        self.persist_compensation_metadata(run_id, &compensation_state)
+            .await?;
         self.compensation_state
             .write()
             .await
@@ -272,6 +287,7 @@ impl WorkflowExecutor {
             Ok(Ok(output)) => {
                 // Mark as completed, clean up compensation state
                 self.complete_workflow(run_id, output.clone()).await?;
+                self.clear_compensation_metadata(run_id).await?;
                 self.compensation_state.write().await.remove(&run_id);
                 crate::signals::emit_server_execution(
                     entry.info.name,
@@ -403,65 +419,86 @@ impl WorkflowExecutor {
         self.update_workflow_status(run_id, WorkflowStatus::Compensating)
             .await?;
 
-        // Get compensation state
+        // Get compensation state from memory, falling back to persisted metadata
         let state = self.compensation_state.write().await.remove(&run_id);
 
         if let Some(state) = state {
-            // Get completed steps with results from database
-            let steps = self.get_workflow_steps(run_id).await?;
-
-            // Run compensation in reverse order of completion.
-            // This is critical for maintaining consistency: if step B depends on
-            // step A's output, we must undo B before A. The completed_steps list
-            // preserves insertion order, so reversing gives us the correct undo order.
-            for step_name in state.completed_steps.iter().rev() {
-                if let Some(handler) = state.handlers.get(step_name) {
-                    // Find the step result
-                    let step_result = steps
-                        .iter()
-                        .find(|s| &s.step_name == step_name)
-                        .and_then(|s| s.result.clone())
-                        .unwrap_or(serde_json::Value::Null);
-
-                    // Run compensation handler
-                    match handler(step_result).await {
-                        Ok(()) => {
-                            tracing::info!(
-                                workflow_run_id = %run_id,
-                                step = %step_name,
-                                "Compensation completed"
-                            );
-                            self.update_step_status(run_id, step_name, StepStatus::Compensated)
-                                .await?;
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                workflow_run_id = %run_id,
-                                step = %step_name,
-                                error = %e,
-                                "Compensation failed"
-                            );
-                            // Continue with other compensations even if one fails
-                        }
-                    }
-                } else {
-                    // No handler, just mark as compensated
-                    self.update_step_status(run_id, step_name, StepStatus::Compensated)
-                        .await?;
-                }
-            }
+            self.run_compensation(run_id, &state).await?;
         } else {
-            // Fail closed: never report compensated when handlers are unavailable.
-            let msg =
-                "Compensation handlers unavailable (likely restart); refusing to mark compensated";
-            tracing::error!(workflow_run_id = %run_id, "{msg}");
-            self.fail_workflow(run_id, msg).await?;
-            return Err(forge_core::ForgeError::InvalidState(msg.to_string()));
+            // No in-memory state. Check persisted metadata for crash recovery.
+            let metadata = self.load_compensation_metadata(run_id).await?;
+            if let Some(metadata) = metadata {
+                // We have the step order from before the crash, but handlers
+                // are closures that can't survive a restart. Fail closed with
+                // enough context for operators to investigate.
+                let steps_needing_compensation = metadata
+                    .compensatable_steps
+                    .iter()
+                    .rev()
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let msg = format!(
+                    "Compensation handlers lost after restart. Steps requiring compensation (reverse order): [{}]",
+                    steps_needing_compensation.join(", ")
+                );
+                tracing::error!(workflow_run_id = %run_id, "{msg}");
+                self.fail_workflow(run_id, &msg).await?;
+                return Err(forge_core::ForgeError::InvalidState(msg));
+            } else {
+                let msg = "Compensation handlers unavailable and no persisted metadata found";
+                tracing::error!(workflow_run_id = %run_id, "{msg}");
+                self.fail_workflow(run_id, msg).await?;
+                return Err(forge_core::ForgeError::InvalidState(msg.to_string()));
+            }
         }
 
+        self.clear_compensation_metadata(run_id).await?;
         self.update_workflow_status(run_id, WorkflowStatus::Compensated)
             .await?;
 
+        Ok(())
+    }
+
+    /// Run compensation handlers in reverse completion order.
+    async fn run_compensation(
+        &self,
+        run_id: Uuid,
+        state: &CompensationState,
+    ) -> forge_core::Result<()> {
+        let steps = self.get_workflow_steps(run_id).await?;
+
+        for step_name in state.completed_steps.iter().rev() {
+            if let Some(handler) = state.handlers.get(step_name) {
+                let step_result = steps
+                    .iter()
+                    .find(|s| &s.step_name == step_name)
+                    .and_then(|s| s.result.clone())
+                    .unwrap_or(serde_json::Value::Null);
+
+                match handler(step_result).await {
+                    Ok(()) => {
+                        tracing::info!(
+                            workflow_run_id = %run_id,
+                            step = %step_name,
+                            "Compensation completed"
+                        );
+                        self.update_step_status(run_id, step_name, StepStatus::Compensated)
+                            .await?;
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            workflow_run_id = %run_id,
+                            step = %step_name,
+                            error = %e,
+                            "Compensation failed"
+                        );
+                    }
+                }
+            } else {
+                self.update_step_status(run_id, step_name, StepStatus::Compensated)
+                    .await?;
+            }
+        }
         Ok(())
     }
 
@@ -526,6 +563,81 @@ impl WorkflowExecutor {
         .await
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
 
+        Ok(())
+    }
+
+    /// Persist compensation metadata to the database so it survives restarts.
+    async fn persist_compensation_metadata(
+        &self,
+        run_id: Uuid,
+        state: &CompensationState,
+    ) -> forge_core::Result<()> {
+        let metadata = CompensationMetadata {
+            compensatable_steps: state
+                .completed_steps
+                .iter()
+                .filter(|s| state.handlers.contains_key(*s))
+                .cloned()
+                .collect(),
+            completed_steps: state.completed_steps.clone(),
+        };
+        let json = serde_json::to_value(&metadata)
+            .map_err(|e| forge_core::ForgeError::Serialization(e.to_string()))?;
+        sqlx::query!(
+            r#"
+            UPDATE forge_workflow_runs
+            SET compensation_state = $1
+            WHERE id = $2
+            "#,
+            json,
+            run_id,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Load persisted compensation metadata from the database.
+    async fn load_compensation_metadata(
+        &self,
+        run_id: Uuid,
+    ) -> forge_core::Result<Option<CompensationMetadata>> {
+        let row = sqlx::query!(
+            r#"
+            SELECT compensation_state as "compensation_state?"
+            FROM forge_workflow_runs
+            WHERE id = $1
+            "#,
+            run_id,
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+
+        match row.and_then(|r| r.compensation_state) {
+            Some(json) => {
+                let metadata: CompensationMetadata = serde_json::from_value(json)
+                    .map_err(|e| forge_core::ForgeError::Deserialization(e.to_string()))?;
+                Ok(Some(metadata))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Clear compensation metadata after workflow completes or compensation finishes.
+    async fn clear_compensation_metadata(&self, run_id: Uuid) -> forge_core::Result<()> {
+        sqlx::query!(
+            r#"
+            UPDATE forge_workflow_runs
+            SET compensation_state = NULL
+            WHERE id = $1
+            "#,
+            run_id,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
         Ok(())
     }
 

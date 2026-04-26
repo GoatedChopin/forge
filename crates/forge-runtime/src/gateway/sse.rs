@@ -39,9 +39,6 @@ use crate::realtime::RealtimeMessage;
 /// Maximum length for client subscription IDs to prevent memory bloat
 const MAX_CLIENT_SUB_ID_LEN: usize = 255;
 
-/// Maximum subscriptions per session to prevent resource exhaustion
-const MAX_SUBSCRIPTIONS_PER_SESSION: usize = 100;
-
 fn try_parse_session_id(session_id: &str) -> Option<SessionId> {
     uuid::Uuid::parse_str(session_id)
         .ok()
@@ -96,6 +93,8 @@ pub struct SseConfig {
     pub channel_buffer_size: usize,
     /// Keepalive interval in seconds.
     pub keepalive_interval_secs: u64,
+    /// Maximum subscriptions per session.
+    pub max_subscriptions_per_session: usize,
 }
 
 impl Default for SseConfig {
@@ -104,6 +103,7 @@ impl Default for SseConfig {
             max_sessions: 10_000,
             channel_buffer_size: 256,
             keepalive_interval_secs: 30,
+            max_subscriptions_per_session: 100,
         }
     }
 }
@@ -619,13 +619,13 @@ pub async fn sse_subscribe_handler(
     let session_data = match sessions.get(&session_id) {
         Some(data) => {
             // Enforce per-session subscription limit to prevent resource exhaustion
-            if data.subscriptions.len() >= MAX_SUBSCRIPTIONS_PER_SESSION {
+            if data.subscriptions.len() >= state.config.max_subscriptions_per_session {
                 return subscribe_error(
                     StatusCode::TOO_MANY_REQUESTS,
                     "TOO_MANY_SUBSCRIPTIONS",
                     format!(
                         "Session has reached the maximum of {} subscriptions",
-                        MAX_SUBSCRIPTIONS_PER_SESSION
+                        state.config.max_subscriptions_per_session
                     ),
                 );
             }

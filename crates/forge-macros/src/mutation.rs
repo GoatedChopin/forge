@@ -10,6 +10,7 @@ use crate::utils::{
 
 const ALLOWED_MUTATION_KEYS: &[&str] = &[
     "name",
+    "description",
     "transactional",
     "public",
     "unscoped",
@@ -18,6 +19,7 @@ const ALLOWED_MUTATION_KEYS: &[&str] = &[
     "rate_limit",
     "log",
     "max_size",
+    "tables",
 ];
 
 /// Expand the #[forge::mutation] attribute.
@@ -48,6 +50,7 @@ pub fn expand_mutation(attr: TokenStream, item: TokenStream) -> TokenStream {
 struct MutationAttrs {
     /// Override the wire name (default: function name).
     name: Option<String>,
+    description: Option<String>,
     required_role: Option<String>,
     is_public: bool,
     is_unscoped: bool,
@@ -60,12 +63,15 @@ struct MutationAttrs {
     /// high-throughput mutations that don't need atomicity.
     transactional: bool,
     max_upload_size_bytes: Option<usize>,
+    /// Override auto-detected table dependencies from SQL extraction.
+    tables: Option<Vec<String>>,
 }
 
 impl Default for MutationAttrs {
     fn default() -> Self {
         Self {
             name: None,
+            description: None,
             required_role: None,
             is_public: false,
             is_unscoped: false,
@@ -76,6 +82,7 @@ impl Default for MutationAttrs {
             log_level: None,
             transactional: true,
             max_upload_size_bytes: None,
+            tables: None,
         }
     }
 }
@@ -87,6 +94,10 @@ fn parse_mutation_attrs(attr: TokenStream) -> Result<MutationAttrs, syn::Error> 
 
     if let Some(name) = parse_attr_value(&attr_str, "name") {
         attrs.name = Some(name);
+    }
+
+    if let Some(desc) = parse_attr_value(&attr_str, "description") {
+        attrs.description = Some(desc);
     }
 
     // `transactional = false` opts out; bare `transactional` flag is a no-op
@@ -167,6 +178,16 @@ fn parse_mutation_attrs(attr: TokenStream) -> Result<MutationAttrs, syn::Error> 
                 let after_quote = &rl_content[key_start + quote_start + 1..];
                 if let Some(quote_end) = after_quote.find('"') {
                     let key = &after_quote[..quote_end];
+                    if !["user", "ip", "tenant", "global"].contains(&key)
+                        && !key.starts_with("custom(")
+                    {
+                        return Err(syn::Error::new(
+                            proc_macro2::Span::call_site(),
+                            format!(
+                                "invalid rate_limit key \"{key}\". Valid keys: \"user\", \"ip\", \"tenant\", \"global\", or \"custom(...)\""
+                            ),
+                        ));
+                    }
                     attrs.rate_limit_key = Some(key.to_string());
                 }
             }
@@ -195,6 +216,23 @@ fn parse_mutation_attrs(attr: TokenStream) -> Result<MutationAttrs, syn::Error> 
         attrs.max_upload_size_bytes = parse_size_bytes(&size_str);
     }
 
+    if let Some(tables_start) = attr_str.find("tables")
+        && let Some(bracket_start) = attr_str[tables_start..].find('[')
+    {
+        let remaining = &attr_str[tables_start + bracket_start + 1..];
+        if let Some(bracket_end) = remaining.find(']') {
+            let tables_str = &remaining[..bracket_end];
+            let tables: Vec<String> = tables_str
+                .split(',')
+                .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !tables.is_empty() {
+                attrs.tables = Some(tables);
+            }
+        }
+    }
+
     Ok(attrs)
 }
 
@@ -202,6 +240,10 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
     let fn_name = &input.sig.ident;
     let fn_name_str = fn_name.to_string();
     let rpc_name = attrs.name.as_deref().unwrap_or(&fn_name_str).to_string();
+    let description = match &attrs.description {
+        Some(d) => quote! { Some(#d) },
+        None => quote! { None },
+    };
     let module_name = syn::Ident::new(&format!("__forge_handler_{}", fn_name_str), fn_name.span());
     let struct_name = syn::Ident::new(
         &format!("{}Mutation", to_pascal_case(&fn_name_str)),
@@ -366,6 +408,11 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
         None => quote! { None },
     };
 
+    let table_deps_tokens = match &attrs.tables {
+        Some(tables) => quote! { &[#(#tables),*] },
+        None => quote! { &[] },
+    };
+
     let transactional = attrs.transactional;
     let is_public = attrs.is_public;
 
@@ -475,7 +522,7 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
                 fn info() -> forge::forge_core::FunctionInfo {
                     forge::forge_core::FunctionInfo {
                         name: #rpc_name,
-                        description: None,
+                        description: #description,
                         kind: forge::forge_core::FunctionKind::Mutation,
                         required_role: #required_role,
                         is_public: #is_public,
@@ -486,7 +533,7 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
                         rate_limit_per_secs: #rate_limit_per_secs,
                         rate_limit_key: #rate_limit_key,
                         log_level: #log_level,
-                        table_dependencies: &[],
+                        table_dependencies: #table_deps_tokens,
                         selected_columns: &[],
                         transactional: #transactional,
                         consistent: false,
@@ -535,6 +582,7 @@ mod tests {
         assert!(attrs.rate_limit_key.is_none());
         assert!(attrs.log_level.is_none());
         assert!(attrs.max_upload_size_bytes.is_none());
+        assert!(attrs.tables.is_none());
     }
 
     // --- Validation: transactional requirement ---
@@ -748,6 +796,49 @@ mod tests {
         assert!(output_str.contains("transactional : true"));
         assert!(
             output_str.contains(r#"Some ("admin")"#) || output_str.contains(r#"Some("admin")"#)
+        );
+    }
+
+    #[test]
+    fn generates_explicit_table_dependencies() {
+        let input: ItemFn = syn::parse_str(
+            r#"
+            pub async fn create_order(ctx: &MutationContext) -> Result<()> {
+                Ok(())
+            }
+            "#,
+        )
+        .unwrap();
+
+        let attrs = MutationAttrs {
+            tables: Some(vec!["users".into(), "orders".into()]),
+            ..Default::default()
+        };
+        let output = expand_mutation_impl(input, attrs).expect("should expand");
+        let output_str = output.to_string();
+        assert!(
+            output_str.contains("users") && output_str.contains("orders"),
+            "Should include explicit table dependencies in output: {output_str}"
+        );
+    }
+
+    #[test]
+    fn generates_empty_table_dependencies_by_default() {
+        let input: ItemFn = syn::parse_str(
+            r#"
+            pub async fn update_user(ctx: &MutationContext) -> Result<()> {
+                Ok(())
+            }
+            "#,
+        )
+        .unwrap();
+
+        let attrs = MutationAttrs::default();
+        let output = expand_mutation_impl(input, attrs).expect("should expand");
+        let output_str = output.to_string();
+        assert!(
+            output_str.contains("table_dependencies : & []"),
+            "Should have empty table_dependencies by default: {output_str}"
         );
     }
 }

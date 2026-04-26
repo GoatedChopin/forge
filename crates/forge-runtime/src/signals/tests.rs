@@ -39,6 +39,7 @@ fn make_signals_state(pool: &PgPool) -> Arc<SignalsState> {
         Arc::new(pool.clone()),
         1, // batch_size=1 for immediate flush
         Duration::from_millis(50),
+        10_000,
     );
     Arc::new(SignalsState {
         collector,
@@ -483,6 +484,7 @@ async fn test_collector_single_event_flush() {
         Arc::new(pool.clone()),
         1, // flush on every event
         Duration::from_secs(60),
+        10_000,
     );
 
     collector.try_send(make_test_event());
@@ -508,6 +510,7 @@ async fn test_collector_batch_trigger() {
         Arc::new(pool.clone()),
         5, // flush at 5 events
         Duration::from_secs(60),
+        10_000,
     );
 
     for i in 0..5 {
@@ -539,6 +542,7 @@ async fn test_collector_timer_trigger() {
         Arc::new(pool.clone()),
         100,                        // high batch size so it won't trigger
         Duration::from_millis(100), // but short timer
+        10_000,
     );
 
     for i in 0..3 {
@@ -572,6 +576,7 @@ async fn test_collector_drop_flushes_remaining() {
             Arc::new(pool.clone()),
             100,                     // won't trigger batch
             Duration::from_secs(60), // won't trigger timer
+            10_000,
         );
 
         for i in 0..3 {

@@ -712,7 +712,7 @@ impl Forge {
                     let rt = &self.config.realtime;
                     ReactorConfig {
                         listener: ListenerConfig {
-                            buffer_size: rt.listener_channel_buffer,
+                            buffer_size: rt.postgres_change_buffer_size,
                             ..ListenerConfig::default()
                         },
                         invalidation: InvalidationConfig {
@@ -725,9 +725,14 @@ impl Forge {
                         },
                         max_concurrent_reexecutions: rt.max_concurrent_reexecutions,
                         resync_interval_secs: rt.resync_interval_secs(),
+                        shard_count: rt.shard_count,
                         ..ReactorConfig::default()
                     }
                 },
+                max_rpc_batch_size: self.config.gateway.max_rpc_batch_size,
+                max_multipart_fields: self.config.gateway.max_multipart_fields,
+                security_headers: self.config.gateway.security_headers,
+                hsts: self.config.gateway.hsts,
             };
 
             // Build gateway server (pass Database wrapper for read replica routing)
@@ -775,6 +780,7 @@ impl Forge {
                     signals_pool.clone(),
                     self.config.signals.batch_size,
                     std::time::Duration::from_millis(self.config.signals.flush_interval_ms),
+                    self.config.signals.channel_capacity,
                 );
                 // Explicit MMDB path means the operator wants city-level data.
                 // Fail fast rather than silently downgrading to the embedded DB.

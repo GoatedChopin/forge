@@ -99,6 +99,19 @@ pub enum ForgeError {
         remaining: u32,
     },
 
+    /// Conflict (409). Use for concurrent modification errors.
+    #[error("Conflict: {0}")]
+    Conflict(String),
+
+    /// Unprocessable entity (422). Use when input is syntactically valid but
+    /// semantically wrong.
+    #[error("Unprocessable entity: {0}")]
+    UnprocessableEntity(String),
+
+    /// Service unavailable (503). Use for temporary outages.
+    #[error("Service unavailable: {0}")]
+    ServiceUnavailable(String),
+
     /// Reserved for future audit-logging errors. Maps to 500.
     #[doc(hidden)]
     #[error("Audit event: {0}")]
@@ -191,7 +204,9 @@ impl ForgeError {
             Self::Deserialization(_) => 400,
             Self::Timeout(_) => 504,
             Self::RateLimitExceeded { .. } => 429,
-            Self::JobCancelled(_) => 409,
+            Self::JobCancelled(_) | Self::Conflict(_) => 409,
+            Self::UnprocessableEntity(_) => 422,
+            Self::ServiceUnavailable(_) => 503,
             _ => 500,
         }
     }
