@@ -36,6 +36,10 @@ pub struct McpToolAnnotations {
 }
 
 /// Metadata describing an MCP tool.
+///
+/// Constructed by the `#[mcp_tool]` macro. Adding a field is a breaking change
+/// for hand-written `ForgeMcpTool` impls; stage extensions through a builder
+/// or major bump.
 #[derive(Debug, Clone, Copy)]
 pub struct McpToolInfo {
     pub name: &'static str,

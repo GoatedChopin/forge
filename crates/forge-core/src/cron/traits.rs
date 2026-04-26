@@ -21,6 +21,10 @@ pub trait ForgeCron: crate::__sealed::Sealed + Send + Sync + 'static {
 }
 
 /// Cron job metadata.
+///
+/// Constructed by the `#[cron]` macro. Adding a field is a breaking change for
+/// hand-written `ForgeCron` impls; stage extensions through a builder or major
+/// bump.
 #[derive(Debug, Clone)]
 pub struct CronInfo {
     /// Cron name (function name).

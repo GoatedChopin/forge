@@ -69,6 +69,10 @@ impl WorkflowDefStatus {
 }
 
 /// Workflow metadata.
+///
+/// Constructed by the `#[workflow]` macro. Adding a field is a breaking change
+/// for hand-written `ForgeWorkflow` impls; stage extensions through a builder
+/// or major bump.
 #[derive(Debug, Clone)]
 pub struct WorkflowInfo {
     /// Workflow logical name (stable across versions).

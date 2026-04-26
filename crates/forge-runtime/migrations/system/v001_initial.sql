@@ -65,7 +65,9 @@ CREATE TABLE IF NOT EXISTS forge_jobs (
     cancelled_at TIMESTAMPTZ,
     cancel_reason TEXT,
     last_heartbeat TIMESTAMPTZ,
-    expires_at TIMESTAMPTZ
+    expires_at TIMESTAMPTZ,
+    -- Forward-compat slot. Future-versioned fields land here without ALTER TABLE.
+    metadata JSONB NOT NULL DEFAULT '{}'
 );
 
 CREATE INDEX IF NOT EXISTS idx_forge_jobs_status_scheduled
@@ -138,7 +140,9 @@ CREATE TABLE IF NOT EXISTS forge_workflow_runs (
     -- Compensation metadata for crash-safe saga compensation
     compensation_state JSONB,
     -- User-defined key-value state that persists across suspension points
-    saved_state JSONB DEFAULT '{}'
+    saved_state JSONB DEFAULT '{}',
+    -- Forward-compat slot. Future-versioned fields land here without ALTER TABLE.
+    metadata JSONB NOT NULL DEFAULT '{}'
 );
 
 CREATE INDEX IF NOT EXISTS idx_forge_workflow_runs_status
@@ -234,7 +238,10 @@ CREATE INDEX IF NOT EXISTS idx_forge_subscriptions_query_hash
 
 -- Realtime: Change notification function
 -- Sends NOTIFY on forge_changes channel when data changes.
--- Format: table:OP:row_id or table:OP:row_id:col1,col2,... (UPDATE only)
+-- Format: v1:table:OP:row_id or v1:table:OP:row_id:col1,col2,... (UPDATE only).
+-- The leading "v1:" prefix lets future schema bumps land without coordinated
+-- cluster restart: a v2 listener can branch on the prefix while v1 emitters
+-- and listeners stay in service during rolling upgrades.
 CREATE OR REPLACE FUNCTION forge_notify_change() RETURNS TRIGGER AS $$
 DECLARE
     row_id TEXT;
@@ -249,7 +256,7 @@ BEGIN
         row_id := COALESCE(NEW.id::TEXT, '');
     END IF;
 
-    payload := TG_TABLE_NAME || ':' || TG_OP || ':' || row_id;
+    payload := 'v1:' || TG_TABLE_NAME || ':' || TG_OP || ':' || row_id;
 
     IF TG_OP = 'UPDATE' THEN
         old_json := to_jsonb(OLD);
@@ -489,7 +496,7 @@ CREATE TABLE IF NOT EXISTS forge_invalidations (
     id              BIGSERIAL PRIMARY KEY,
     table_name      TEXT NOT NULL,
     row_id          TEXT,
-    operation       TEXT NOT NULL,          -- INSERT, UPDATE, DELETE
+    operation       TEXT NOT NULL CHECK (operation IN ('INSERT', 'UPDATE', 'DELETE')),
     changed_columns TEXT[],
     node_id         UUID,                   -- originating node
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -553,6 +560,9 @@ CREATE TABLE IF NOT EXISTS forge_signals_events (
 
     -- Classification
     is_bot          BOOLEAN NOT NULL DEFAULT FALSE,
+
+    -- Forward-compat slot. Future-versioned fields land here without ALTER TABLE.
+    metadata        JSONB NOT NULL DEFAULT '{}',
 
     timestamp       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 

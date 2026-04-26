@@ -42,6 +42,10 @@ pub trait ForgeJob: crate::__sealed::Sealed + Send + Sync + 'static {
 }
 
 /// Job metadata.
+///
+/// Constructed by the `#[job]` macro. Adding a field is a breaking change for
+/// hand-written `ForgeJob` impls; stage extensions through a builder or major
+/// bump.
 #[derive(Debug, Clone)]
 pub struct JobInfo {
     /// Job name (used for routing).

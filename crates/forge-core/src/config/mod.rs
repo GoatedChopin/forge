@@ -1329,6 +1329,50 @@ pub struct RealtimeConfig {
     /// reduce lock contention at the cost of memory.
     #[serde(default = "default_shard_count")]
     pub shard_count: usize,
+
+    // -- Reserved 1.0 quota fields -------------------------------------------------
+    // These names are reserved so apps can't squat on them with their own meaning.
+    // Forge parses them today but does not act on them; behavior lands in 1.0.x.
+    /// RESERVED. Maximum concurrent SSE sessions per authenticated user.
+    /// Parsed today, not yet enforced; will be honored in a 1.0.x release.
+    #[serde(default)]
+    pub max_sessions_per_user: Option<usize>,
+
+    /// RESERVED. Maximum concurrent SSE sessions per source IP.
+    /// Parsed today, not yet enforced; will be honored in a 1.0.x release.
+    #[serde(default)]
+    pub max_sessions_per_ip: Option<usize>,
+
+    /// RESERVED. Cap on a user's total subscriptions across every active session.
+    /// Parsed today, not yet enforced; will be honored in a 1.0.x release.
+    #[serde(default)]
+    pub max_subscriptions_per_user: Option<usize>,
+
+    /// RESERVED. Per-query cached-result memory ceiling (bytes). Cached results
+    /// exceeding this size are dropped after re-execution. Parsed today, not yet
+    /// enforced; will be honored in a 1.0.x release.
+    #[serde(default)]
+    pub max_cached_result_bytes: Option<usize>,
+
+    /// RESERVED. Rate limit on `POST /_api/subscribe`. Parsed today, not yet
+    /// enforced; will be honored in a 1.0.x release.
+    #[serde(default)]
+    pub subscribe_rate_limit: Option<RateLimit>,
+}
+
+/// Per-route rate limit specification used in `[realtime].subscribe_rate_limit`
+/// and reserved for future config sections that gate request rates.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct RateLimit {
+    /// Maximum requests per `per` window.
+    pub requests: u32,
+    /// Window duration string (e.g. `"1m"`, `"30s"`).
+    pub per: String,
+    /// Bucket key. One of `"user"`, `"ip"`, `"tenant"`, `"global"`.
+    /// Defaults to `"user"` when omitted.
+    #[serde(default)]
+    pub key: Option<String>,
 }
 
 fn default_max_concurrent_reexecutions() -> usize {
@@ -1371,6 +1415,11 @@ impl Default for RealtimeConfig {
             subscription_max_per_session: default_subscription_max_per_session(),
             change_tracking_row_threshold: default_change_tracking_row_threshold(),
             shard_count: default_shard_count(),
+            max_sessions_per_user: None,
+            max_sessions_per_ip: None,
+            max_subscriptions_per_user: None,
+            max_cached_result_bytes: None,
+            subscribe_rate_limit: None,
         }
     }
 }
@@ -1881,5 +1930,30 @@ mod tests {
             cors_enabled = false
         "#;
         assert!(ForgeConfig::parse_toml(toml).is_ok());
+    }
+
+    #[test]
+    fn reserved_realtime_quota_fields_parse_today() {
+        // Reserved field names must be parseable now so 1.0.x can light them
+        // up without a config-format break. They aren't enforced yet.
+        let toml = r#"
+            [database]
+            url = "postgres://localhost/test"
+            [realtime]
+            max_sessions_per_user = 4
+            max_sessions_per_ip = 16
+            max_subscriptions_per_user = 200
+            max_cached_result_bytes = 1048576
+            subscribe_rate_limit = { requests = 10, per = "1m", key = "user" }
+        "#;
+        let config = ForgeConfig::parse_toml(toml).unwrap();
+        assert_eq!(config.realtime.max_sessions_per_user, Some(4));
+        assert_eq!(config.realtime.max_sessions_per_ip, Some(16));
+        assert_eq!(config.realtime.max_subscriptions_per_user, Some(200));
+        assert_eq!(config.realtime.max_cached_result_bytes, Some(1024 * 1024));
+        let rl = config.realtime.subscribe_rate_limit.unwrap();
+        assert_eq!(rl.requests, 10);
+        assert_eq!(rl.per, "1m");
+        assert_eq!(rl.key.as_deref(), Some("user"));
     }
 }

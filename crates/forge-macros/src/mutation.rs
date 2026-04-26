@@ -4,8 +4,8 @@ use quote::quote;
 use syn::{FnArg, ItemFn, Pat, ReturnType, Type, parse_macro_input};
 
 use crate::utils::{
-    has_attr_flag, parse_attr_value, parse_duration_secs, parse_size_bytes, to_pascal_case,
-    validate_attr_keys,
+    has_attr_flag, parse_attr_value, parse_duration_secs, parse_size_bytes, reject_reserved_keys,
+    to_pascal_case, validate_attr_keys,
 };
 
 const ALLOWED_MUTATION_KEYS: &[&str] = &[
@@ -20,7 +20,16 @@ const ALLOWED_MUTATION_KEYS: &[&str] = &[
     "log",
     "max_size",
     "tables",
+    // Reserved for future Forge releases. Parsed here so apps fail loudly
+    // (via `reject_reserved_keys` below) until coalescing lands.
+    "coalesce_window",
+    "coalesce_by",
 ];
+
+/// Attribute keys whose names are reserved for upcoming mutation-coalescing
+/// support (cursor positions, autosave, etc). Using one today is a hard
+/// compile error to surface that the feature isn't wired up yet.
+const RESERVED_MUTATION_KEYS: &[&str] = &["coalesce_window", "coalesce_by"];
 
 /// Expand the #[forge::mutation] attribute.
 ///
@@ -32,6 +41,10 @@ const ALLOWED_MUTATION_KEYS: &[&str] = &[
 pub fn expand_mutation(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
     let attr_str = attr.to_string();
+
+    if let Err(e) = reject_reserved_keys(&attr_str, RESERVED_MUTATION_KEYS, "mutation") {
+        return e.to_compile_error().into();
+    }
 
     if let Err(e) = validate_attr_keys(&attr_str, ALLOWED_MUTATION_KEYS, "mutation") {
         return e.to_compile_error().into();

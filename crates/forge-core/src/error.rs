@@ -126,6 +126,37 @@ pub enum ForgeError {
     #[doc(hidden)]
     #[error("Operational constraint: {0}")]
     OperationalConstraint(String),
+
+    /// Reserved for future channel-publish failures. Maps to 500.
+    #[doc(hidden)]
+    #[error("Channel publish failed: {0}")]
+    ChannelPublishFailed(String),
+
+    /// Reserved for future quota-exhaustion errors (distinct from per-window
+    /// rate limits). Maps to 429.
+    #[doc(hidden)]
+    #[error("Quota exceeded: {0}")]
+    QuotaExceeded(String),
+
+    /// Reserved for future SSE subscription gap signaling. Maps to 410.
+    #[doc(hidden)]
+    #[error("Subscription gapped: {0}")]
+    SubscriptionGapped(String),
+
+    /// Reserved for future oversized-result errors. Maps to 413.
+    #[doc(hidden)]
+    #[error("Result too large: {0}")]
+    ResultTooLarge(String),
+
+    /// Reserved for future revoked-role errors. Maps to 403.
+    #[doc(hidden)]
+    #[error("Role revoked: {0}")]
+    RoleRevoked(String),
+
+    /// Reserved for future oversized-payload errors. Maps to 413.
+    #[doc(hidden)]
+    #[error("Payload too large: {0}")]
+    PayloadTooLarge(String),
 }
 
 impl ForgeError {
@@ -186,27 +217,33 @@ impl ForgeError {
     /// |---|---|
     /// | `NotFound` | 404 |
     /// | `Unauthorized` | 401 |
-    /// | `Forbidden` | 403 |
+    /// | `Forbidden`, `RoleRevoked` | 403 |
     /// | `Validation` | 400 |
     /// | `InvalidArgument` | 400 |
     /// | `Deserialization` | 400 |
     /// | `Timeout` | 504 |
-    /// | `RateLimitExceeded` | 429 |
-    /// | `JobCancelled` | 409 |
+    /// | `RateLimitExceeded`, `QuotaExceeded` | 429 |
+    /// | `JobCancelled`, `Conflict` | 409 |
+    /// | `UnprocessableEntity` | 422 |
+    /// | `ServiceUnavailable` | 503 |
+    /// | `PayloadTooLarge`, `ResultTooLarge` | 413 |
+    /// | `SubscriptionGapped` | 410 |
     /// | All others | 500 |
     pub fn http_status(&self) -> u16 {
         match self {
             Self::NotFound(_) => 404,
             Self::Unauthorized(_) => 401,
-            Self::Forbidden(_) => 403,
+            Self::Forbidden(_) | Self::RoleRevoked(_) => 403,
             Self::Validation(_) => 400,
             Self::InvalidArgument(_) => 400,
             Self::Deserialization(_) => 400,
             Self::Timeout(_) => 504,
-            Self::RateLimitExceeded { .. } => 429,
+            Self::RateLimitExceeded { .. } | Self::QuotaExceeded(_) => 429,
             Self::JobCancelled(_) | Self::Conflict(_) => 409,
             Self::UnprocessableEntity(_) => 422,
             Self::ServiceUnavailable(_) => 503,
+            Self::PayloadTooLarge(_) | Self::ResultTooLarge(_) => 413,
+            Self::SubscriptionGapped(_) => 410,
             _ => 500,
         }
     }
@@ -458,5 +495,21 @@ mod tests {
         ] {
             assert_eq!(err.http_status(), 500, "expected 500 for {err:?}");
         }
+    }
+
+    #[test]
+    fn reserved_variants_have_stable_status_mappings() {
+        assert_eq!(ForgeError::RoleRevoked("x".into()).http_status(), 403);
+        assert_eq!(ForgeError::QuotaExceeded("x".into()).http_status(), 429);
+        assert_eq!(ForgeError::PayloadTooLarge("x".into()).http_status(), 413);
+        assert_eq!(ForgeError::ResultTooLarge("x".into()).http_status(), 413);
+        assert_eq!(
+            ForgeError::SubscriptionGapped("x".into()).http_status(),
+            410
+        );
+        assert_eq!(
+            ForgeError::ChannelPublishFailed("x".into()).http_status(),
+            500
+        );
     }
 }

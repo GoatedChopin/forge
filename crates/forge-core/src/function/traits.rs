@@ -8,6 +8,11 @@ use crate::error::Result;
 use crate::metadata::HandlerMetadata;
 
 /// Information about a registered function.
+///
+/// Constructed by the `#[query]` / `#[mutation]` macros — adding a field here
+/// is technically a breaking change for hand-written `ForgeQuery` / `ForgeMutation`
+/// impls, so any extension must ship a major bump or be staged through a
+/// builder. Macro-emitted impls track the field set automatically.
 #[derive(Debug, Clone)]
 pub struct FunctionInfo {
     /// Function name (used for routing).

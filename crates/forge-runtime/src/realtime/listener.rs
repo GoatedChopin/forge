@@ -5,6 +5,15 @@ use tokio::sync::{broadcast, watch};
 
 use forge_core::realtime::Change;
 
+// Reserved Forge-owned NOTIFY channels. Documented here so apps don't squat
+// on these names with their own LISTEN/NOTIFY traffic before the runtime
+// claims them.
+//
+// - `forge_changes`           — table change events (this listener)
+// - `forge_workflow_wakeup`   — workflow scheduler wakeups
+// - `forge_channels`          — RESERVED for ephemeral pub-sub fan-out
+// - `forge_auth_revocations`  — RESERVED for cluster-wide auth/role teardown
+
 /// Change listener configuration.
 #[derive(Debug, Clone)]
 pub struct ListenerConfig {
@@ -120,24 +129,26 @@ impl ChangeListener {
     }
 
     /// Parse a notification payload into a Change.
+    ///
+    /// Expected format: `v1:table:OP:row_id[:col1,col2,...]`. The leading
+    /// version tag lets future schema bumps coexist with v1 listeners during
+    /// a rolling cluster upgrade. Payloads without a recognized version tag
+    /// are dropped — they can't be safely interpreted by this build.
     fn parse_notification(&self, payload: &str) -> Option<Change> {
-        // Expected format: table:operation:row_id
-        // Example: projects:INSERT:550e8400-e29b-41d4-a716-446655440000
-        let parts: Vec<&str> = payload.split(':').collect();
+        let body = payload.strip_prefix("v1:")?;
+        let parts: Vec<&str> = body.split(':').collect();
 
         let table = parts.first()?;
         let operation = parts.get(1)?.parse().ok()?;
 
         let mut change = Change::new(table.to_string(), operation);
 
-        // Parse row ID if present
         if let Some(&row_id_str) = parts.get(2)
             && let Ok(row_id) = uuid::Uuid::parse_str(row_id_str)
         {
             change = change.with_row_id(row_id);
         }
 
-        // Parse changed columns if present
         if let Some(&col_str) = parts.get(3) {
             let columns: Vec<String> = col_str.split(',').map(|s| s.to_string()).collect();
             change = change.with_columns(columns);
@@ -170,7 +181,7 @@ mod tests {
         let pool = sqlx::PgPool::connect_lazy("postgres://localhost/test").unwrap();
         let listener = ChangeListener::new(pool, ListenerConfig::default());
 
-        let payload = "projects:INSERT:550e8400-e29b-41d4-a716-446655440000";
+        let payload = "v1:projects:INSERT:550e8400-e29b-41d4-a716-446655440000";
         let change = listener.parse_notification(payload).unwrap();
 
         assert_eq!(change.table, "projects");
@@ -183,7 +194,7 @@ mod tests {
         let pool = sqlx::PgPool::connect_lazy("postgres://localhost/test").unwrap();
         let listener = ChangeListener::new(pool, ListenerConfig::default());
 
-        let payload = "projects:UPDATE:550e8400-e29b-41d4-a716-446655440000:name,status";
+        let payload = "v1:projects:UPDATE:550e8400-e29b-41d4-a716-446655440000:name,status";
         let change = listener.parse_notification(payload).unwrap();
 
         assert_eq!(change.table, "projects");
@@ -199,5 +210,20 @@ mod tests {
         let payload = "invalid";
         let change = listener.parse_notification(payload);
         assert!(change.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_parse_notification_rejects_unversioned() {
+        // Drop pre-v1 payloads (or anything without a recognized version tag).
+        // A peer running a different Forge version may emit a tag we don't
+        // understand; better to drop than to misinterpret.
+        let pool = sqlx::PgPool::connect_lazy("postgres://localhost/test").unwrap();
+        let listener = ChangeListener::new(pool, ListenerConfig::default());
+
+        let payload = "projects:INSERT:550e8400-e29b-41d4-a716-446655440000";
+        assert!(listener.parse_notification(payload).is_none());
+
+        let payload = "v2:projects:INSERT:550e8400-e29b-41d4-a716-446655440000";
+        assert!(listener.parse_notification(payload).is_none());
     }
 }

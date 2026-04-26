@@ -327,6 +327,30 @@ pub fn validate_attr_keys(attr_str: &str, allowed: &[&str], macro_name: &str) ->
     Ok(())
 }
 
+/// Reject use of attribute keys that are reserved for future Forge releases.
+///
+/// These keys are accepted by the parser (so adding behavior later is non-breaking)
+/// but trigger a hard compile error when used today. Strict mode prevents apps from
+/// thinking a feature works that doesn't.
+pub fn reject_reserved_keys(
+    attr_str: &str,
+    reserved: &[&str],
+    macro_name: &str,
+) -> syn::Result<()> {
+    for key in extract_top_level_keys(attr_str) {
+        if reserved.contains(&key.as_str()) {
+            return Err(syn::Error::new(
+                proc_macro2::Span::call_site(),
+                format!(
+                    "Attribute `{key}` is reserved for a future Forge release and is not yet \
+                     implemented. Remove it from #[{macro_name}] until support lands."
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -451,5 +475,21 @@ mod tests {
         let attr = r#"completely_unrelated = 1"#;
         let err = validate_attr_keys(attr, &["cache", "timeout"], "query").unwrap_err();
         assert!(err.to_string().contains("Allowed:"), "{err}");
+    }
+
+    #[test]
+    fn reject_reserved_keys_passes_when_unused() {
+        let attr = r#"public, cache = "5m""#;
+        assert!(reject_reserved_keys(attr, &["debounce_ms", "max_rows"], "query").is_ok());
+    }
+
+    #[test]
+    fn reject_reserved_keys_errors_with_helpful_message() {
+        let attr = r#"public, debounce_ms = 50"#;
+        let err = reject_reserved_keys(attr, &["debounce_ms", "max_rows"], "query").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("debounce_ms"), "{msg}");
+        assert!(msg.contains("reserved"), "{msg}");
+        assert!(msg.contains("query"), "{msg}");
     }
 }

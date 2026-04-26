@@ -36,6 +36,10 @@ pub trait ForgeWebhook: crate::__sealed::Sealed + Send + Sync + 'static {
 }
 
 /// Webhook metadata.
+///
+/// Constructed by the `#[webhook]` macro. Adding a field is a breaking change
+/// for hand-written `ForgeWebhook` impls; stage extensions through a builder
+/// or major bump.
 #[derive(Debug, Clone)]
 pub struct WebhookInfo {
     /// Webhook name (used for identification).

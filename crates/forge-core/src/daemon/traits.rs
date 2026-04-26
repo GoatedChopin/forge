@@ -40,6 +40,10 @@ pub trait ForgeDaemon: crate::__sealed::Sealed + Send + Sync + 'static {
 }
 
 /// Daemon metadata.
+///
+/// Constructed by the `#[daemon]` macro. Adding a field is a breaking change
+/// for hand-written `ForgeDaemon` impls; stage extensions through a builder or
+/// major bump.
 #[derive(Debug, Clone)]
 pub struct DaemonInfo {
     /// Daemon name (used for identification and leader election).

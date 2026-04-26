@@ -39,6 +39,11 @@ use crate::realtime::RealtimeMessage;
 /// Maximum length for client subscription IDs to prevent memory bloat
 const MAX_CLIENT_SUB_ID_LEN: usize = 255;
 
+/// Retry-After hint sent on the SSE-at-capacity 503 response. Clients are
+/// expected to back off and retry after this many seconds.
+const SSE_AT_CAPACITY_RETRY_SECS: u64 = 5;
+const SSE_AT_CAPACITY_RETRY_SECS_STR: &str = "5";
+
 fn try_parse_session_id(session_id: &str) -> Option<SessionId> {
     uuid::Uuid::parse_str(session_id)
         .ok()
@@ -60,6 +65,7 @@ fn resolve_sse_auth_context(
     query_auth.unwrap_or_else(|| request_auth.clone())
 }
 
+#[allow(clippy::result_large_err)]
 fn authorize_session_access(
     session: &SseSessionData,
     session_secret: &str,
@@ -212,9 +218,14 @@ impl Drop for SessionCleanupGuard {
     }
 }
 
-/// SSE event payload sent to clients.
+/// SSE event payload sent to clients. Discriminated by `"type"` (snake_case).
+///
+/// `#[non_exhaustive]` so 1.0.x can add new variants without breaking Rust
+/// matchers. JSON consumers should already ignore unknown `type` values per
+/// the Forge wire-format contract.
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum SsePayload {
     /// Subscription data update.
     Update {
@@ -232,6 +243,20 @@ pub enum SsePayload {
         session_id: String,
         session_secret: String,
     },
+    /// Ephemeral pub-sub fan-out for `forge_channels`.
+    /// Wire format reserved for GA; behavior implementation lands in 1.0.x.
+    Channel {
+        channel: String,
+        payload: serde_json::Value,
+    },
+    /// Server detected a dropped or out-of-order delivery on `target` and is
+    /// signalling the client to resync via `last-event-id`.
+    /// Wire format reserved for GA; behavior implementation lands in 1.0.x.
+    Gap {
+        target: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        last_event_id: Option<String>,
+    },
 }
 
 /// Internal message type for SSE stream.
@@ -245,6 +270,17 @@ pub enum SseMessage {
         target: String,
         code: String,
         message: String,
+    },
+    /// Carries a Forge `forge_channels` pub-sub event to the SSE stream.
+    /// Implementation reserved; see [`SsePayload::Channel`].
+    Channel {
+        channel: String,
+        payload: serde_json::Value,
+    },
+    /// Tells the client a delivery gap was detected. See [`SsePayload::Gap`].
+    Gap {
+        target: String,
+        last_event_id: Option<String>,
     },
 }
 
@@ -285,11 +321,45 @@ pub struct SseWorkflowSubscribeRequest {
     pub workflow_id: String,
 }
 
-/// SSE error response.
+/// SSE error response. Wire shape mirrors `RpcError` so clients can parse
+/// failures from `/_api/events`, `/_api/subscribe`, and `/_api/rpc/*` with
+/// the same shape:
+///
+/// ```text
+/// { "code": "...", "message": "...", "retry_after_secs"?: u64, "details"?: any }
+/// ```
+///
+/// `#[non_exhaustive]` so additional fields (e.g. `quota`) can be added
+/// without a breaking change.
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 pub struct SseError {
     pub code: String,
     pub message: String,
+    /// Seconds to wait before retrying. Set on rate-limit and at-capacity responses.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_after_secs: Option<u64>,
+    /// Additional structured context (e.g. limit values, quota names).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<serde_json::Value>,
+}
+
+impl SseError {
+    /// Create a basic error with just code and message.
+    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+            retry_after_secs: None,
+            details: None,
+        }
+    }
+
+    /// Attach a retry hint (seconds).
+    pub fn with_retry_after(mut self, secs: u64) -> Self {
+        self.retry_after_secs = Some(secs);
+        self
+    }
 }
 
 /// SSE subscribe response.
@@ -321,10 +391,7 @@ fn subscribe_error(
         Json(SseSubscribeResponse {
             success: false,
             data: None,
-            error: Some(SseError {
-                code: code.into(),
-                message: message.into(),
-            }),
+            error: Some(SseError::new(code, message)),
         }),
     )
 }
@@ -339,10 +406,7 @@ fn unsubscribe_error(
         status,
         Json(SseUnsubscribeResponse {
             success: false,
-            error: Some(SseError {
-                code: code.into(),
-                message: message.into(),
-            }),
+            error: Some(SseError::new(code, message)),
         }),
     )
 }
@@ -353,11 +417,18 @@ pub async fn sse_handler(
     Extension(request_auth): Extension<AuthContext>,
     Query(query): Query<SseQuery>,
 ) -> impl IntoResponse {
-    // Check session limit
+    // Check session limit. Body matches the standard SseError shape so
+    // clients can parse capacity rejections the same way as rate limits.
     if !state.can_accept_session().await {
+        let body = SseError::new("SSE_AT_CAPACITY", "Server at maximum SSE session capacity")
+            .with_retry_after(SSE_AT_CAPACITY_RETRY_SECS);
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            "Server at capacity".to_string(),
+            [(
+                axum::http::header::RETRY_AFTER,
+                SSE_AT_CAPACITY_RETRY_SECS_STR,
+            )],
+            Json(body),
         )
             .into_response();
     }
@@ -488,6 +559,18 @@ pub async fn sse_handler(
                                         Event::default().event("error").data(json)
                                     })
                                 }
+                                SseMessage::Channel { channel, payload } => {
+                                    let data = SsePayload::Channel { channel, payload };
+                                    serde_json::to_string(&data).ok().map(|json| {
+                                        Event::default().event("channel").data(json)
+                                    })
+                                }
+                                SseMessage::Gap { target, last_event_id } => {
+                                    let data = SsePayload::Gap { target, last_event_id };
+                                    serde_json::to_string(&data).ok().map(|json| {
+                                        Event::default().event("gap").data(json)
+                                    })
+                                }
                             };
                             if let Some(evt) = event
                                 && event_tx.send(Ok(evt)).await.is_err()
@@ -587,6 +670,16 @@ fn convert_realtime_to_sse(msg: RealtimeMessage) -> Option<SseMessage> {
             target: id,
             code,
             message,
+        }),
+        RealtimeMessage::Channel { channel, payload } => {
+            Some(SseMessage::Channel { channel, payload })
+        }
+        RealtimeMessage::GapDetected {
+            client_sub_id,
+            last_event_id,
+        } => Some(SseMessage::Gap {
+            target: format!("sub:{client_sub_id}"),
+            last_event_id,
         }),
         // Ignore control messages
         RealtimeMessage::Subscribe { .. }
@@ -1064,5 +1157,41 @@ mod tests {
         let resolved = resolve_sse_auth_context(&request_auth, Some(query_auth.clone()));
 
         assert_eq!(resolved.principal_id(), query_auth.principal_id());
+    }
+
+    #[test]
+    fn channel_payload_locks_to_channel_and_payload_fields() {
+        // Wire format reserved for GA. Future implementation must keep
+        // the same field names so 1.0 clients keep parsing.
+        let payload = SsePayload::Channel {
+            channel: "room:lobby".to_string(),
+            payload: serde_json::json!({"text": "hi"}),
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(json.contains("\"type\":\"channel\""), "{json}");
+        assert!(json.contains("\"channel\":\"room:lobby\""), "{json}");
+        assert!(json.contains("\"payload\""), "{json}");
+    }
+
+    #[test]
+    fn gap_payload_omits_last_event_id_when_unset() {
+        let payload = SsePayload::Gap {
+            target: "sub:abc".to_string(),
+            last_event_id: None,
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(json.contains("\"type\":\"gap\""), "{json}");
+        assert!(json.contains("\"target\":\"sub:abc\""), "{json}");
+        assert!(!json.contains("last_event_id"), "{json}");
+    }
+
+    #[test]
+    fn sse_error_carries_retry_after_when_set() {
+        // Standardized 429/503 body must include retry_after_secs so
+        // clients can back off without parsing the Retry-After header.
+        let err = SseError::new("SSE_AT_CAPACITY", "at cap").with_retry_after(5);
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("\"code\":\"SSE_AT_CAPACITY\""), "{json}");
+        assert!(json.contains("\"retry_after_secs\":5"), "{json}");
     }
 }

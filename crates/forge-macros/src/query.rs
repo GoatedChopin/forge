@@ -9,7 +9,8 @@ use crate::sql_extractor::{
     sql_references_identity_scope,
 };
 use crate::utils::{
-    has_attr_flag, parse_attr_value, parse_duration_secs, to_pascal_case, validate_attr_keys,
+    has_attr_flag, parse_attr_value, parse_duration_secs, reject_reserved_keys, to_pascal_case,
+    validate_attr_keys,
 };
 
 const ALLOWED_QUERY_KEYS: &[&str] = &[
@@ -24,6 +25,24 @@ const ALLOWED_QUERY_KEYS: &[&str] = &[
     "rate_limit",
     "log",
     "tables",
+    // Reserved for future Forge releases. Parsed here so apps fail loudly
+    // (via `reject_reserved_keys` below) until behavior lands.
+    "debounce_ms",
+    "max_debounce_ms",
+    "reexecute_timeout",
+    "max_rows",
+    "max_bytes",
+];
+
+/// Attribute keys whose names are reserved for upcoming reactor and
+/// result-guardrail features. Using one today is a hard compile error
+/// to surface that the feature isn't actually wired up yet.
+const RESERVED_QUERY_KEYS: &[&str] = &[
+    "debounce_ms",
+    "max_debounce_ms",
+    "reexecute_timeout",
+    "max_rows",
+    "max_bytes",
 ];
 
 /// Expand the #[forge::query] attribute.
@@ -35,6 +54,10 @@ const ALLOWED_QUERY_KEYS: &[&str] = &[
 pub fn expand_query(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
     let attr_str = attr.to_string();
+
+    if let Err(e) = reject_reserved_keys(&attr_str, RESERVED_QUERY_KEYS, "query") {
+        return e.to_compile_error().into();
+    }
 
     if let Err(e) = validate_attr_keys(&attr_str, ALLOWED_QUERY_KEYS, "query") {
         return e.to_compile_error().into();

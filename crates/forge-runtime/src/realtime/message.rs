@@ -55,7 +55,11 @@ pub struct WorkflowStepData {
 }
 
 /// Message types for real-time communication.
+///
+/// `#[non_exhaustive]` so 1.0.x can add new variants without breaking
+/// downstream Rust matchers (forge-dioxus, custom integrations).
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum RealtimeMessage {
     Subscribe {
         id: String,
@@ -98,6 +102,19 @@ pub enum RealtimeMessage {
     },
     /// Sent to slow clients before disconnecting them.
     Lagging,
+    /// Ephemeral pub-sub fan-out (forge_channels). The variant is reserved
+    /// for GA; the publish/subscribe pipeline lands in 1.0.x.
+    Channel {
+        channel: String,
+        payload: serde_json::Value,
+    },
+    /// Server detected a dropped or out-of-order delivery for a subscription
+    /// and asks the client to resync via `last-event-id`. Reserved for GA;
+    /// emission rules land in 1.0.x.
+    GapDetected {
+        client_sub_id: String,
+        last_event_id: Option<String>,
+    },
 }
 
 /// Per-session state with backpressure tracking.
