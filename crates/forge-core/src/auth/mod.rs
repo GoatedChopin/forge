@@ -38,7 +38,11 @@
 //! - [`ClaimsBuilder`] - Builder for constructing claims (testing)
 
 mod claims;
+pub mod role_resolver;
 pub mod tokens;
 
 pub use claims::{Claims, ClaimsBuilder};
+pub use role_resolver::{
+    DefaultRoleResolver, RoleResolver, SharedRoleResolver, default_role_resolver,
+};
 pub use tokens::TokenPair;

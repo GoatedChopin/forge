@@ -13,6 +13,7 @@ pub struct SignatureConfig {
 
 /// Supported signature algorithms.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SignatureAlgorithm {
     /// HMAC-SHA256 (e.g., GitHub)
     HmacSha256,
@@ -60,6 +61,7 @@ impl SignatureAlgorithm {
 
 /// Source for extracting idempotency key.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum IdempotencySource {
     /// Extract from a header (e.g., "X-Request-Id").
     Header(&'static str),
@@ -87,6 +89,7 @@ impl IdempotencySource {
 
 /// Configuration for webhook idempotency.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct IdempotencyConfig {
     /// Source for the idempotency key.
     pub source: IdempotencySource,

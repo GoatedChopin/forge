@@ -22,6 +22,14 @@ pub const SYSTEM_MIGRATION_PREFIX: &str = "__forge_v";
 /// Creates all core tables for jobs, workflows, crons, observability, daemons, webhooks, etc.
 const V001_INITIAL: &str = include_str!("../../migrations/system/v001_initial.sql");
 
+/// System migration v002: Add owner_subject to forge_cron_runs.
+/// Mirrors forge_jobs.owner_subject for per-tenant audit trails.
+const V002_CRON_OWNER_SUBJECT: &str =
+    include_str!("../../migrations/system/v002_cron_owner_subject.sql");
+
+/// System migration v003: Add token_family column for refresh token chain reuse detection.
+const V003_TOKEN_FAMILIES: &str = include_str!("../../migrations/system/v003_token_families.sql");
+
 /// A system migration with a version number.
 #[derive(Debug, Clone)]
 pub struct SystemMigration {
@@ -49,11 +57,23 @@ impl SystemMigration {
 ///
 /// These are applied in order before any user migrations.
 pub fn get_system_migrations() -> Vec<SystemMigration> {
-    vec![SystemMigration {
-        version: 1,
-        sql: V001_INITIAL,
-        description: "Initial FORGE schema with jobs, workflows, crons, daemons, webhooks, and auth",
-    }]
+    vec![
+        SystemMigration {
+            version: 1,
+            sql: V001_INITIAL,
+            description: "Initial FORGE schema with jobs, workflows, crons, daemons, webhooks, and auth",
+        },
+        SystemMigration {
+            version: 2,
+            sql: V002_CRON_OWNER_SUBJECT,
+            description: "Add owner_subject to forge_cron_runs for per-tenant audit trails",
+        },
+        SystemMigration {
+            version: 3,
+            sql: V003_TOKEN_FAMILIES,
+            description: "Add token_family to forge_refresh_tokens for chain reuse detection",
+        },
+    ]
 }
 
 /// Get system migrations as Migration structs.
@@ -99,6 +119,8 @@ mod tests {
         assert!(!migrations.is_empty());
         assert_eq!(migrations[0].version, 1);
         assert_eq!(migrations[0].name(), "__forge_v001");
+        assert_eq!(migrations[1].version, 2);
+        assert_eq!(migrations[1].name(), "__forge_v002");
     }
 
     #[test]

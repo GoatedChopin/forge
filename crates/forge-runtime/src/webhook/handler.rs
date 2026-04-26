@@ -161,6 +161,8 @@ pub async fn webhook_handler(
                     None
                 }
             }
+            // Future IdempotencySource variants: skip key extraction.
+            _ => None,
         }
     } else {
         None
@@ -466,23 +468,35 @@ fn validate_stripe_webhooks(body: &[u8], secret: &str, signature_header: &str) -
     signed.push(b'.');
     signed.extend_from_slice(body);
 
-    let mut mac =
-        Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
-    mac.update(&signed);
-    let computed = encode_hex_inline(&mac.finalize().into_bytes());
-
-    signatures.iter().any(|sig| *sig == computed)
+    // Constant-time comparison: decode each candidate hex signature to raw
+    // bytes and use HMAC's `verify_slice`. Comparing hex strings directly
+    // short-circuits on the first mismatch and leaks per-byte timing.
+    for sig in signatures {
+        let Some(decoded) = decode_hex(sig) else {
+            continue;
+        };
+        let mut verifier = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
+            .expect("HMAC can take key of any size");
+        verifier.update(&signed);
+        if verifier.verify_slice(&decoded).is_ok() {
+            return true;
+        }
+    }
+    false
 }
 
 /// Validate a Shopify (HMAC-SHA256, base64-encoded) webhook signature.
 fn validate_hmac_sha256_base64(body: &[u8], secret: &str, signature: &str) -> bool {
+    // Decode the client-supplied base64 signature back to raw HMAC bytes and
+    // verify with a constant-time comparator. Comparing the base64 strings
+    // directly leaks per-byte timing on string equality.
+    let Ok(provided) = general_purpose::STANDARD.decode(signature) else {
+        return false;
+    };
     let mut mac =
         Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
     mac.update(body);
-    let computed = general_purpose::STANDARD.encode(mac.finalize().into_bytes());
-    // Constant-time comparison isn't critical here — the signature is already base64,
-    // so timing differences don't meaningfully leak key bits.
-    computed == signature
+    mac.verify_slice(&provided).is_ok()
 }
 
 /// Validate an Ed25519 asymmetric webhook signature.
@@ -514,16 +528,6 @@ fn validate_ed25519(body: &[u8], public_key_b64: &str, signature_b64: &str) -> b
     let signature = Ed25519Signature::from_bytes(&sig_array);
 
     verifying_key.verify(body, &signature).is_ok()
-}
-
-fn encode_hex_inline(bytes: &[u8]) -> String {
-    bytes
-        .iter()
-        .fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
-            use std::fmt::Write;
-            let _ = write!(s, "{b:02x}");
-            s
-        })
 }
 
 fn decode_hex(s: &str) -> Option<Vec<u8>> {

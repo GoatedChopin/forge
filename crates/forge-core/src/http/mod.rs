@@ -11,6 +11,7 @@ use reqwest::{IntoUrl, Method, Request, RequestBuilder, Response};
 
 /// Circuit breaker state for a single host.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct CircuitState {
     /// Current state of the circuit.
     pub state: CircuitStatus,
@@ -26,6 +27,7 @@ pub struct CircuitState {
 
 /// Circuit breaker status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CircuitStatus {
     /// Normal operation, requests pass through.
     Closed,
@@ -62,6 +64,13 @@ pub struct CircuitBreakerConfig {
     pub backoff_multiplier: f64,
     /// Whether the circuit breaker is enabled.
     pub enabled: bool,
+    /// Allow requests to private/loopback/link-local IP literals.
+    /// Defaults to `false` to block obvious SSRF targets like `127.0.0.1`
+    /// and the AWS/GCE metadata endpoint `169.254.169.254`. Flip to `true`
+    /// in development or when calling internal services on private CIDRs.
+    /// Note: this only inspects URL host literals; DNS-resolved hostnames
+    /// pointing at private IPs are not blocked.
+    pub allow_private: bool,
 }
 
 impl Default for CircuitBreakerConfig {
@@ -73,6 +82,7 @@ impl Default for CircuitBreakerConfig {
             max_backoff: Duration::from_secs(600), // 10 minutes
             backoff_multiplier: 1.5,
             enabled: true,
+            allow_private: false,
         }
     }
 }
@@ -141,6 +151,36 @@ impl CircuitBreakerClient {
             url.host_str().unwrap_or("unknown"),
             url.port().map(|p| format!(":{}", p)).unwrap_or_default()
         )
+    }
+
+    /// Returns true when the URL's host is a literal IP in a loopback,
+    /// private (RFC 1918 / ULA), link-local, or unspecified range. Only
+    /// inspects literal IP hosts: domain names that may resolve to private
+    /// ranges via DNS slip past this check.
+    fn url_targets_private_ip(url: &reqwest::Url) -> bool {
+        let Some(host) = url.host_str() else {
+            return false;
+        };
+        let trimmed = host.trim_start_matches('[').trim_end_matches(']');
+        let Ok(ip) = trimmed.parse::<std::net::IpAddr>() else {
+            return false;
+        };
+        match ip {
+            std::net::IpAddr::V4(v4) => {
+                v4.is_loopback()
+                    || v4.is_private()
+                    || v4.is_link_local()
+                    || v4.is_broadcast()
+                    || v4.is_unspecified()
+                    || v4.is_documentation()
+            }
+            std::net::IpAddr::V6(v6) => {
+                v6.is_loopback()
+                    || v6.is_unspecified()
+                    || (v6.segments()[0] & 0xffc0) == 0xfe80 // link-local fe80::/10
+                    || (v6.segments()[0] & 0xfe00) == 0xfc00 // ULA fc00::/7
+            }
+        }
     }
 
     /// Check if a request to the given host should be allowed.
@@ -267,6 +307,14 @@ impl CircuitBreakerClient {
 
     /// Execute a request with circuit breaker protection.
     pub async fn execute(&self, request: Request) -> Result<Response, CircuitBreakerError> {
+        // SSRF guard: refuse private/loopback/link-local IP literals unless
+        // the operator has opted in.
+        if !self.config.allow_private && Self::url_targets_private_ip(request.url()) {
+            return Err(CircuitBreakerError::PrivateHostBlocked(
+                request.url().host_str().unwrap_or("unknown").to_string(),
+            ));
+        }
+
         let host = Self::extract_host(request.url());
 
         // Check circuit state
@@ -348,6 +396,9 @@ impl CircuitBreakerClient {
 pub enum CircuitBreakerError {
     /// The circuit is open, request was not attempted.
     CircuitOpen(CircuitBreakerOpen),
+    /// Outbound request blocked because the URL host resolves to a
+    /// private/loopback/link-local IP and `allow_private` is false.
+    PrivateHostBlocked(String),
     /// The request failed.
     Request(reqwest::Error),
 }
@@ -356,6 +407,12 @@ impl std::fmt::Display for CircuitBreakerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CircuitBreakerError::CircuitOpen(e) => write!(f, "{}", e),
+            CircuitBreakerError::PrivateHostBlocked(host) => write!(
+                f,
+                "Outbound request blocked: '{}' resolves to a private IP. \
+                 Set `[http] allow_private = true` to enable.",
+                host
+            ),
             CircuitBreakerError::Request(e) => write!(f, "HTTP request failed: {}", e),
         }
     }
@@ -365,6 +422,7 @@ impl std::error::Error for CircuitBreakerError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             CircuitBreakerError::CircuitOpen(e) => Some(e),
+            CircuitBreakerError::PrivateHostBlocked(_) => None,
             CircuitBreakerError::Request(e) => Some(e),
         }
     }

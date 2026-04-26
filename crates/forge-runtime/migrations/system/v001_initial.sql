@@ -26,9 +26,13 @@ CREATE INDEX IF NOT EXISTS idx_forge_nodes_status_heartbeat
     WHERE status = 'active';
 
 -- Cluster: Leader election (UNLOGGED: transient state rebuilt on startup)
+-- `term` is a fencing token: every successful acquire increments it. Writes
+-- that originated from an older leader can be detected and silently rejected
+-- by including `WHERE term = $current_term` in their predicates.
 CREATE UNLOGGED TABLE IF NOT EXISTS forge_leaders (
     role VARCHAR(64) PRIMARY KEY,
     node_id UUID NOT NULL,
+    term BIGINT NOT NULL DEFAULT 0,
     acquired_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     lease_until TIMESTAMPTZ NOT NULL
 );

@@ -28,6 +28,12 @@ pub struct AuthConfig {
     pub issuer: Option<String>,
     /// Expected audience (aud claim).
     pub audience: Option<String>,
+    /// Clock-skew tolerance for `exp` / `nbf` validation, in seconds.
+    pub leeway_secs: u64,
+    /// Old HMAC secrets still accepted for validation (never signing). See `legacy_secrets` in forge.toml.
+    pub legacy_secrets: Vec<String>,
+    /// JWT spec claims that must be present. Derived from `required_claims` in forge.toml.
+    pub required_claims: Vec<String>,
     /// Skip signature verification (DEV MODE ONLY - NEVER USE IN PRODUCTION).
     /// This field is intentionally not public. Use `dev_mode()` constructor which
     /// includes a runtime guard against production use.
@@ -42,6 +48,9 @@ impl Default for AuthConfig {
             jwks_client: None,
             issuer: None,
             audience: None,
+            leeway_secs: 60,
+            legacy_secrets: Vec::new(),
+            required_claims: vec!["exp".into(), "sub".into()],
             skip_verification: false,
         }
     }
@@ -57,7 +66,7 @@ impl AuthConfig {
         let jwks_client = config
             .jwks_url
             .as_ref()
-            .map(|url| JwksClient::new(url.clone(), config.jwks_cache_ttl_secs).map(Arc::new))
+            .map(|url| JwksClient::new(url.clone(), config.jwks_cache_ttl_secs()).map(Arc::new))
             .transpose()?;
 
         Ok(Self {
@@ -66,6 +75,9 @@ impl AuthConfig {
             jwks_client,
             issuer: config.jwt_issuer.clone(),
             audience: config.jwt_audience.clone(),
+            leeway_secs: config.jwt_leeway_secs(),
+            legacy_secrets: config.legacy_secrets.clone(),
+            required_claims: config.required_claims.clone(),
             skip_verification: false,
         })
     }
@@ -100,6 +112,9 @@ impl AuthConfig {
             jwks_client: None,
             issuer: None,
             audience: None,
+            leeway_secs: 60,
+            legacy_secrets: Vec::new(),
+            required_claims: vec!["exp".into(), "sub".into()],
             skip_verification: true,
         }
     }
@@ -155,6 +170,15 @@ impl From<CoreJwtAlgorithm> for JwtAlgorithm {
             CoreJwtAlgorithm::RS256 => JwtAlgorithm::RS256,
             CoreJwtAlgorithm::RS384 => JwtAlgorithm::RS384,
             CoreJwtAlgorithm::RS512 => JwtAlgorithm::RS512,
+            // CoreJwtAlgorithm is #[non_exhaustive]; refuse to silently coerce
+            // a future variant to HS256, log and fall back conservatively.
+            _ => {
+                tracing::error!(
+                    "Unknown CoreJwtAlgorithm variant; falling back to HS256. \
+                     Update forge-runtime to support this algorithm."
+                );
+                JwtAlgorithm::HS256
+            }
         }
     }
 }
@@ -179,12 +203,13 @@ impl HmacTokenIssuer {
         if secret.is_empty() {
             return None;
         }
+        // Startup validation (ForgeConfig::validate) hard-fails on secrets < 32 bytes.
+        // The warn here is a last-resort signal when the issuer is created outside
+        // the normal startup path (e.g. integration tests with minimal configs).
         if secret.len() < 32 {
             tracing::warn!(
                 secret_len = secret.len(),
-                "JWT secret is shorter than 32 bytes. This weakens HMAC security \
-                 and may allow brute-force attacks. Use a cryptographically random \
-                 secret of at least 32 bytes (e.g. `openssl rand -base64 32`)."
+                "JWT secret is shorter than 32 bytes; startup validation should have caught this"
             );
         }
         Some(Self {
@@ -212,6 +237,8 @@ pub struct AuthMiddleware {
     config: Arc<AuthConfig>,
     /// Pre-computed HMAC decoding key (for performance).
     hmac_key: Option<DecodingKey>,
+    /// Pre-computed decoding keys for legacy HMAC secrets (rotation grace).
+    legacy_hmac_keys: Vec<DecodingKey>,
 }
 
 impl std::fmt::Debug for AuthMiddleware {
@@ -219,6 +246,7 @@ impl std::fmt::Debug for AuthMiddleware {
         f.debug_struct("AuthMiddleware")
             .field("config", &self.config)
             .field("hmac_key", &self.hmac_key.is_some())
+            .field("legacy_hmac_keys", &self.legacy_hmac_keys.len())
             .finish()
     }
 }
@@ -243,9 +271,21 @@ impl AuthMiddleware {
             None
         };
 
+        let legacy_hmac_keys = if config.is_hmac() && !config.skip_verification {
+            config
+                .legacy_secrets
+                .iter()
+                .filter(|s| !s.is_empty())
+                .map(|s| DecodingKey::from_secret(s.as_bytes()))
+                .collect()
+        } else {
+            Vec::new()
+        };
+
         Self {
             config: Arc::new(config),
             hmac_key,
+            legacy_hmac_keys,
         }
     }
 
@@ -273,13 +313,25 @@ impl AuthMiddleware {
         }
     }
 
-    /// Validate HMAC-signed token.
+    /// Validate HMAC-signed token. Falls back to legacy keys on signature failure.
     fn validate_hmac(&self, token: &str) -> Result<Claims, AuthError> {
         let key = self.hmac_key.as_ref().ok_or_else(|| {
             AuthError::InvalidToken("JWT secret not configured for HMAC".to_string())
         })?;
 
-        self.decode_and_validate(token, key)
+        match self.decode_and_validate(token, key) {
+            Ok(claims) => Ok(claims),
+            Err(AuthError::InvalidToken(_)) if !self.legacy_hmac_keys.is_empty() => {
+                // Primary key failed — try each legacy key (rotation grace window)
+                for legacy_key in &self.legacy_hmac_keys {
+                    if let Ok(claims) = self.decode_and_validate(token, legacy_key) {
+                        return Ok(claims);
+                    }
+                }
+                Err(AuthError::InvalidToken("Invalid signature".to_string()))
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Validate RSA-signed token using JWKS.
@@ -310,15 +362,35 @@ impl AuthMiddleware {
 
     /// Decode and validate token with the given key.
     fn decode_and_validate(&self, token: &str, key: &DecodingKey) -> Result<Claims, AuthError> {
+        // Defense-in-depth: pre-check the header `alg` against the configured
+        // algorithm before key selection. `jsonwebtoken` already enforces this
+        // inside `decode`, but failing earlier with a clearer error keeps the
+        // key-confusion class of attacks out of the validation path entirely.
+        let header = jsonwebtoken::decode_header(token)
+            .map_err(|e| AuthError::InvalidToken(format!("Invalid token header: {}", e)))?;
+        let expected: jsonwebtoken::Algorithm = self.config.algorithm.into();
+        if header.alg != expected {
+            return Err(AuthError::InvalidToken(format!(
+                "Token algorithm {:?} does not match configured {:?}",
+                header.alg, expected
+            )));
+        }
+
         let mut validation = Validation::new(self.config.algorithm.into());
 
         // Configure validation
         validation.validate_exp = true;
         validation.validate_nbf = true;
-        validation.leeway = 60; // 60 seconds clock skew tolerance
+        validation.leeway = self.config.leeway_secs;
 
-        // Require exp and sub claims
-        validation.set_required_spec_claims(&["exp", "sub"]);
+        // Require configured spec claims (defaults: exp, sub)
+        let required: Vec<&str> = self
+            .config
+            .required_claims
+            .iter()
+            .map(String::as_str)
+            .collect();
+        validation.set_required_spec_claims(&required);
 
         // Validate issuer if configured
         if let Some(ref issuer) = self.config.issuer {
@@ -467,24 +539,31 @@ pub async fn extract_auth_context_async(
 /// - UUID subjects: uses `authenticated()` with the parsed UUID
 /// - Non-UUID subjects: uses `authenticated_without_uuid()` and stores raw subject in claims
 pub fn build_auth_context_from_claims(claims: Claims) -> AuthContext {
+    // Capture exp before moving claims — needed for SSE session expiry checks.
+    let exp = claims.exp();
+
     // Try to parse subject as UUID first (before moving claims)
     let user_id = claims.user_id();
 
     // Build custom claims with raw subject included, filtering out reserved JWT claims
     let mut custom_claims = claims.sanitized_custom();
-    custom_claims.insert("sub".to_string(), serde_json::Value::String(claims.sub));
+    let sub = claims.sub().to_string();
+    let roles = claims.into_roles();
+    custom_claims.insert("sub".to_string(), serde_json::Value::String(sub));
 
-    match user_id {
+    let ctx = match user_id {
         Some(uuid) => {
             // Subject is a valid UUID
-            AuthContext::authenticated(uuid, claims.roles, custom_claims)
+            AuthContext::authenticated(uuid, roles, custom_claims)
         }
         None => {
             // Subject is not a UUID (e.g., Firebase uid, Clerk user_xxx, email)
             // Still authenticated, but user_id() will return None
-            AuthContext::authenticated_without_uuid(claims.roles, custom_claims)
+            AuthContext::authenticated_without_uuid(roles, custom_claims)
         }
-    }
+    };
+
+    ctx.with_token_exp(exp)
 }
 
 /// Authentication middleware function.
@@ -712,7 +791,7 @@ mod tests {
         let result = middleware.validate_token_async(&token).await;
         assert!(result.is_ok());
         let validated_claims = result.unwrap();
-        assert_eq!(validated_claims.sub, "test-user-id");
+        assert_eq!(validated_claims.sub(), "test-user-id");
     }
 
     #[tokio::test]
@@ -853,6 +932,7 @@ mod tests {
             .subject("clerk_user_123")
             .role("member")
             .claim("tenant_id", serde_json::json!("tenant-1"))
+            .unwrap()
             .build()
             .unwrap();
 
@@ -904,6 +984,53 @@ mod tests {
     async fn test_extract_auth_context_async_invalid_token_errors() {
         let middleware = AuthMiddleware::new(AuthConfig::with_secret("secret"));
         let result = extract_auth_context_async(Some("bad.token".to_string()), &middleware).await;
+        assert!(matches!(result, Err(AuthError::InvalidToken(_))));
+    }
+
+    #[tokio::test]
+    async fn test_legacy_secret_validates_token_signed_by_old_key() {
+        let old_secret = "old-secret-key-32-bytes-minimum!!";
+        let new_secret = "new-secret-key-32-bytes-minimum!!";
+
+        let config = AuthConfig {
+            jwt_secret: Some(new_secret.into()),
+            legacy_secrets: vec![old_secret.into()],
+            ..AuthConfig::with_secret(new_secret)
+        };
+        let middleware = AuthMiddleware::new(config);
+
+        let claims = create_test_claims(false);
+        let token_from_old_key = create_test_token(&claims, old_secret);
+
+        // Token signed with the old key must still validate during the grace period
+        let result = middleware.validate_token_async(&token_from_old_key).await;
+        assert!(
+            result.is_ok(),
+            "legacy-signed token should be accepted: {result:?}"
+        );
+
+        // Token signed with the new (active) key must also validate
+        let token_from_new_key = create_test_token(&claims, new_secret);
+        assert!(
+            middleware
+                .validate_token_async(&token_from_new_key)
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_legacy_secret_still_rejects_unknown_key() {
+        let config = AuthConfig {
+            legacy_secrets: vec!["known-legacy-secret-32bytes-pad!!".into()],
+            ..AuthConfig::with_secret("active-secret-key-32-bytes-pad!!")
+        };
+        let middleware = AuthMiddleware::new(config);
+
+        let claims = create_test_claims(false);
+        let token = create_test_token(&claims, "totally-unknown-secret-32bytes!!");
+
+        let result = middleware.validate_token_async(&token).await;
         assert!(matches!(result, Err(AuthError::InvalidToken(_))));
     }
 }

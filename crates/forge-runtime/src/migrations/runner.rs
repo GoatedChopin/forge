@@ -153,6 +153,21 @@ impl MigrationRunner {
 
         // Run built-in FORGE system migrations first (in version order)
         let system_migrations = super::builtin::get_system_migrations();
+
+        // Guard against running an older binary on top of a newer schema.
+        // If the database has a system migration version we don't know about,
+        // refuse to start instead of silently downgrading.
+        let max_known_version = system_migrations.iter().map(|m| m.version).max();
+        if let (Some(applied_max), Some(known_max)) = (max_applied_version, max_known_version)
+            && applied_max > known_max
+        {
+            return Err(ForgeError::Database(format!(
+                "Database is at system migration v{applied_max} but this binary only knows up to v{known_max}. \
+                 Refusing to start — running an older binary on a newer schema risks data loss. \
+                 Upgrade the binary or restore the database to a compatible version."
+            )));
+        }
+
         for sys_migration in system_migrations {
             // Skip if this version is already applied
             if let Some(max_ver) = max_applied_version

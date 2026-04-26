@@ -76,6 +76,10 @@ pub struct OAuthState {
     rate_limiter: OAuthRateLimiter,
     /// CSRF tokens: token -> expiry
     csrf_tokens: Arc<RwLock<HashMap<String, Instant>>>,
+    /// Whether `POST /_api/oauth/register` accepts unauthenticated callers.
+    /// Mirrors `mcp.allow_unauthenticated_dcr` from forge.toml. Defaults
+    /// to `false` so a fresh deployment is not an open client registry.
+    allow_unauthenticated_dcr: bool,
 }
 
 impl OAuthState {
@@ -89,6 +93,7 @@ impl OAuthState {
         auth_is_hmac: bool,
         project_name: String,
         jwt_secret: String,
+        allow_unauthenticated_dcr: bool,
     ) -> Self {
         Self {
             pool,
@@ -101,6 +106,7 @@ impl OAuthState {
             jwt_secret,
             rate_limiter: OAuthRateLimiter::default(),
             csrf_tokens: Arc::new(RwLock::new(HashMap::new())),
+            allow_unauthenticated_dcr,
         }
     }
 
@@ -199,6 +205,38 @@ pub async fn oauth_register(
     State(state): State<Arc<OAuthState>>,
     Json(req): Json<RegisterRequest>,
 ) -> Response {
+    // RFC 7591 Dynamic Client Registration. By default we require the caller
+    // to present a valid JWT, so a fresh deployment is not an open client
+    // registry. Operators that want public registration (e.g. for IDE
+    // integrations) flip `mcp.allow_unauthenticated_dcr = true` in forge.toml.
+    if !state.allow_unauthenticated_dcr {
+        let bearer = headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.strip_prefix("Bearer "))
+            .map(str::trim);
+        let authenticated = match bearer {
+            Some(token) if !token.is_empty() => state
+                .auth_middleware
+                .validate_token_async(token)
+                .await
+                .is_ok(),
+            _ => false,
+        };
+        if !authenticated {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({
+                    "error": "registration_not_supported",
+                    "error_description": "Dynamic client registration requires authentication. \
+                        Set `[mcp] allow_unauthenticated_dcr = true` in forge.toml to enable \
+                        anonymous registration."
+                })),
+            )
+                .into_response();
+        }
+    }
+
     let ip = client_ip(&headers);
     let rate_key = format!("oauth_register:{ip}");
     if !state
@@ -927,7 +965,7 @@ fn mcp_token_issuer(
         let claims = Claims::builder()
             .subject(uid)
             .roles(roles.iter().map(|s| s.to_string()).collect())
-            .claim("aud".to_string(), serde_json::json!(MCP_AUDIENCE))
+            .audience(MCP_AUDIENCE)
             .duration_secs(ttl)
             .build()
             .map_err(forge_core::ForgeError::Internal)?;
