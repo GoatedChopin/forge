@@ -83,6 +83,9 @@ pub struct CronRecord {
     pub completed_at: Option<DateTime<Utc>>,
     /// Error message if failed.
     pub error: Option<String>,
+    /// Subject (user/service) that triggered this run, for per-tenant audit.
+    /// Mirrors `forge_jobs.owner_subject`. NULL for system-scheduled runs.
+    pub owner_subject: Option<String>,
 }
 
 impl CronRecord {
@@ -102,6 +105,7 @@ impl CronRecord {
             started_at: None,
             completed_at: None,
             error: None,
+            owner_subject: None,
         }
     }
 }
@@ -292,6 +296,11 @@ impl CronRunner {
     /// Try to claim a cron run.
     ///
     /// Returns the run ID if claimed (or stale-reclaimed), otherwise None.
+    /// When a leader-election handle is configured, the INSERT is fenced on
+    /// the leader's current term: if a new leader has taken over since this
+    /// node last acquired the lock, the INSERT silently no-ops (rows_affected
+    /// = 0) and we don't execute. Single-node mode (no election handle) skips
+    /// the fence.
     async fn try_claim(
         &self,
         cron_name: &str,
@@ -302,11 +311,25 @@ impl CronRunner {
         let stale_threshold = chrono::Duration::from_std(self.config.run_stale_threshold)
             .unwrap_or(chrono::Duration::minutes(15));
 
+        // -1 disables the fence: query becomes `WHERE TRUE` for single-node setups.
+        let fence_term: i64 = self
+            .config
+            .leader_election
+            .as_ref()
+            .and_then(|e| e.current_term())
+            .unwrap_or(-1);
+
         // Insert new run, or reclaim stale running row if previous node crashed.
         let result = sqlx::query!(
             r#"
             INSERT INTO forge_cron_runs (id, cron_name, scheduled_time, status, node_id, started_at)
-            VALUES ($1, $2, $3, 'running', $4, NOW())
+            SELECT $1, $2, $3, 'running', $4, NOW()
+            WHERE ($6::bigint) = -1 OR EXISTS (
+                SELECT 1 FROM forge_leaders
+                WHERE role = 'scheduler'
+                  AND node_id = $4
+                  AND term = $6
+            )
             ON CONFLICT (cron_name, scheduled_time) DO UPDATE
             SET
                 id = EXCLUDED.id,
@@ -323,6 +346,7 @@ impl CronRunner {
             scheduled_time,
             self.config.node_id,
             stale_threshold.num_seconds() as f64,
+            fence_term,
         )
         .execute(&self.pool)
         .await

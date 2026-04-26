@@ -2,8 +2,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{ForgeError, Result};
 
+fn parse_duration_secs(s: &str, default_secs: u64) -> u64 {
+    crate::util::parse_duration(s)
+        .map(|d| d.as_secs())
+        .unwrap_or(default_secs)
+}
+
 /// Database configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct DatabaseConfig {
     /// PostgreSQL connection URL.
     #[serde(default)]
@@ -13,13 +20,13 @@ pub struct DatabaseConfig {
     #[serde(default = "default_pool_size")]
     pub pool_size: u32,
 
-    /// Pool checkout timeout in seconds.
+    /// Pool checkout timeout duration (e.g. "30s", "1m").
     #[serde(default = "default_pool_timeout")]
-    pub pool_timeout_secs: u64,
+    pub pool_timeout: String,
 
-    /// Statement timeout in seconds.
+    /// Statement timeout duration (e.g. "30s", "5m").
     #[serde(default = "default_statement_timeout")]
-    pub statement_timeout_secs: u64,
+    pub statement_timeout: String,
 
     /// Read replica URLs for scaling reads.
     #[serde(default)]
@@ -48,8 +55,8 @@ impl Default for DatabaseConfig {
         Self {
             url: String::new(),
             pool_size: default_pool_size(),
-            pool_timeout_secs: default_pool_timeout(),
-            statement_timeout_secs: default_statement_timeout(),
+            pool_timeout: default_pool_timeout(),
+            statement_timeout: default_statement_timeout(),
             replica_urls: Vec::new(),
             read_from_replica: false,
             min_pool_size: 0,
@@ -73,6 +80,16 @@ impl DatabaseConfig {
         &self.url
     }
 
+    /// Pool checkout timeout in seconds, parsed from the `pool_timeout` string.
+    pub fn pool_timeout_secs(&self) -> u64 {
+        parse_duration_secs(&self.pool_timeout, 30)
+    }
+
+    /// Statement timeout in seconds, parsed from the `statement_timeout` string.
+    pub fn statement_timeout_secs(&self) -> u64 {
+        parse_duration_secs(&self.statement_timeout, 30)
+    }
+
     /// Validate the database configuration.
     pub fn validate(&self) -> Result<()> {
         if self.url.is_empty() {
@@ -91,18 +108,19 @@ fn default_pool_size() -> u32 {
     50
 }
 
-fn default_pool_timeout() -> u64 {
-    30
+fn default_pool_timeout() -> String {
+    "30s".to_string()
 }
 
-fn default_statement_timeout() -> u64 {
-    30
+fn default_statement_timeout() -> String {
+    "30s".to_string()
 }
 
 use super::default_true;
 
 /// Pool isolation configuration for different workloads.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[non_exhaustive]
 pub struct PoolsConfig {
     /// Default pool for queries/mutations.
     #[serde(default)]
@@ -127,12 +145,12 @@ pub struct PoolConfig {
     /// Pool size.
     pub size: u32,
 
-    /// Checkout timeout in seconds.
+    /// Checkout timeout duration (e.g. "30s", "1m").
     #[serde(default = "default_pool_timeout")]
-    pub timeout_secs: u64,
+    pub timeout: String,
 
-    /// Statement timeout in seconds (optional override).
-    pub statement_timeout_secs: Option<u64>,
+    /// Statement timeout duration override (e.g. "30s", "5m").
+    pub statement_timeout: Option<String>,
 
     /// Minimum connections to keep alive.
     #[serde(default)]
@@ -141,6 +159,20 @@ pub struct PoolConfig {
     /// Run a health check query before handing out connections.
     #[serde(default = "default_true")]
     pub test_before_acquire: bool,
+}
+
+impl PoolConfig {
+    /// Checkout timeout in seconds, parsed from the `timeout` string.
+    pub fn timeout_secs(&self) -> u64 {
+        parse_duration_secs(&self.timeout, 30)
+    }
+
+    /// Statement timeout in seconds, parsed from the `statement_timeout` string.
+    pub fn statement_timeout_secs(&self) -> Option<u64> {
+        self.statement_timeout
+            .as_deref()
+            .map(|s| parse_duration_secs(s, 30))
+    }
 }
 
 #[cfg(test)]
@@ -152,7 +184,7 @@ mod tests {
     fn test_default_database_config() {
         let config = DatabaseConfig::default();
         assert_eq!(config.pool_size, 50);
-        assert_eq!(config.pool_timeout_secs, 30);
+        assert_eq!(config.pool_timeout_secs(), 30);
         assert!(config.url.is_empty());
     }
 

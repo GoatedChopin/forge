@@ -254,15 +254,29 @@ impl JobQueue {
     }
 
     /// Mark job as running.
-    pub async fn start(&self, job_id: Uuid) -> Result<(), sqlx::Error> {
+    /// Mark a claimed job as running. The `(worker_id, attempts)` tuple
+    /// fences the transition: stale-reclaim resets the row to `pending` and
+    /// a new worker gets a fresh `attempts`, so the original claimant's
+    /// `start()` returns `RowNotFound` and aborts before doing real work.
+    /// This delivers execute-time idempotency without a separate ledger.
+    pub async fn start(
+        &self,
+        job_id: Uuid,
+        worker_id: Uuid,
+        attempts: i32,
+    ) -> Result<(), sqlx::Error> {
         let result = sqlx::query!(
             r#"
             UPDATE forge_jobs
             SET status = 'running', started_at = NOW(), last_heartbeat = NOW()
             WHERE id = $1
-              AND status NOT IN ('cancel_requested', 'cancelled')
+              AND worker_id = $2
+              AND attempts = $3
+              AND status = 'claimed'
             "#,
             job_id,
+            worker_id,
+            attempts,
         )
         .execute(&self.pool)
         .await?;
@@ -822,7 +836,7 @@ mod integration_tests {
         queue.claim(worker_id, &[], 1).await.expect("claim");
 
         // Start
-        queue.start(job_id).await.expect("start");
+        queue.start(job_id, worker_id, 1).await.expect("start");
 
         // Complete
         queue
@@ -848,7 +862,7 @@ mod integration_tests {
         let job_id = queue.enqueue(job).await.expect("enqueue");
 
         queue.claim(worker_id, &[], 1).await.expect("claim");
-        queue.start(job_id).await.expect("start");
+        queue.start(job_id, worker_id, 1).await.expect("start");
 
         // Fail with retry delay
         queue
@@ -879,7 +893,7 @@ mod integration_tests {
         let job_id = queue.enqueue(job).await.expect("enqueue");
 
         queue.claim(worker_id, &[], 1).await.expect("claim");
-        queue.start(job_id).await.expect("start");
+        queue.start(job_id, worker_id, 1).await.expect("start");
 
         // Fail without retry (None delay) -> dead letter
         queue
@@ -1010,7 +1024,7 @@ mod integration_tests {
         let job = JobRecord::new("long_task", serde_json::json!({}), JobPriority::Normal, 3);
         let job_id = queue.enqueue(job).await.expect("enqueue");
         queue.claim(worker_id, &[], 1).await.expect("claim");
-        queue.start(job_id).await.expect("start");
+        queue.start(job_id, worker_id, 1).await.expect("start");
 
         // Heartbeat should not error
         queue.heartbeat(job_id).await.expect("heartbeat");
@@ -1027,7 +1041,7 @@ mod integration_tests {
         let job = JobRecord::new("export", serde_json::json!({}), JobPriority::Normal, 3);
         let job_id = queue.enqueue(job).await.expect("enqueue");
         queue.claim(worker_id, &[], 1).await.expect("claim");
-        queue.start(job_id).await.expect("start");
+        queue.start(job_id, worker_id, 1).await.expect("start");
 
         queue
             .update_progress(job_id, 50, "Processing...")

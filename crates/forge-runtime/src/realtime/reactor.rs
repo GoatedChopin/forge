@@ -29,6 +29,11 @@ pub struct ReactorConfig {
     pub max_concurrent_reexecutions: usize,
     /// Session cleanup interval in seconds.
     pub session_cleanup_interval_secs: u64,
+    /// Periodic resync sweep interval in seconds. PG silently drops
+    /// `LISTEN/NOTIFY` payloads when listeners are slow, leaving subscribers
+    /// stale. Re-evaluating every active group on this cadence recovers from
+    /// dropped notifications. `0` disables the sweep.
+    pub resync_interval_secs: u64,
 }
 
 impl Default for ReactorConfig {
@@ -41,6 +46,7 @@ impl Default for ReactorConfig {
             listener_restart_delay_ms: 1000,
             max_concurrent_reexecutions: 64,
             session_cleanup_interval_secs: 60,
+            resync_interval_secs: 60,
         }
     }
 }
@@ -81,6 +87,7 @@ pub struct Reactor {
     listener_restart_delay_ms: u64,
     max_concurrent_reexecutions: usize,
     session_cleanup_interval_secs: u64,
+    resync_interval_secs: u64,
 }
 
 impl Reactor {
@@ -117,6 +124,7 @@ impl Reactor {
             listener_restart_delay_ms: config.listener_restart_delay_ms,
             max_concurrent_reexecutions: config.max_concurrent_reexecutions,
             session_cleanup_interval_secs: config.session_cleanup_interval_secs,
+            resync_interval_secs: config.resync_interval_secs,
         }
     }
 
@@ -137,8 +145,17 @@ impl Reactor {
     }
 
     /// Register a new session.
-    pub fn register_session(&self, session_id: SessionId, sender: mpsc::Sender<RealtimeMessage>) {
-        self.session_server.register_connection(session_id, sender);
+    ///
+    /// `token_exp` is the JWT `exp` claim (Unix timestamp) from the session's
+    /// authentication token. Pass `None` for unauthenticated sessions.
+    pub fn register_session(
+        &self,
+        session_id: SessionId,
+        sender: mpsc::Sender<RealtimeMessage>,
+        token_exp: Option<i64>,
+    ) {
+        self.session_server
+            .register_connection(session_id, sender, token_exp);
         tracing::trace!(?session_id, "Session registered");
     }
 
@@ -378,8 +395,58 @@ impl Reactor {
             "Invalidating query groups"
         );
 
+        Self::reexecute_groups(
+            &invalidated_groups,
+            subscription_manager,
+            session_server,
+            registry,
+            db_pool,
+            max_concurrent,
+        )
+        .await;
+    }
+
+    /// Resync sweep: re-evaluate every active subscription group. Recovers
+    /// from `LISTEN/NOTIFY` payload drops where invalidation never fired.
+    /// Hash comparison inside `reexecute_groups` ensures we only push when
+    /// the result actually changed, so an idle resync is a no-op on the wire.
+    async fn resync_all_groups(
+        subscription_manager: &Arc<SubscriptionManager>,
+        session_server: &Arc<SessionServer>,
+        registry: &FunctionRegistry,
+        db_pool: &sqlx::PgPool,
+        max_concurrent: usize,
+    ) {
+        let group_ids = subscription_manager.all_group_ids();
+        if group_ids.is_empty() {
+            return;
+        }
+
+        tracing::debug!(count = group_ids.len(), "Resyncing all subscription groups");
+
+        Self::reexecute_groups(
+            &group_ids,
+            subscription_manager,
+            session_server,
+            registry,
+            db_pool,
+            max_concurrent,
+        )
+        .await;
+    }
+
+    /// Re-run the queries for `group_ids`, push to subscribers when the result
+    /// hash changes. Shared by invalidation flush and the periodic resync.
+    async fn reexecute_groups(
+        group_ids: &[forge_core::realtime::QueryGroupId],
+        subscription_manager: &Arc<SubscriptionManager>,
+        session_server: &Arc<SessionServer>,
+        registry: &FunctionRegistry,
+        db_pool: &sqlx::PgPool,
+        max_concurrent: usize,
+    ) {
         // Collect group data we need for re-execution
-        let groups_to_process: Vec<_> = invalidated_groups
+        let groups_to_process: Vec<_> = group_ids
             .iter()
             .filter_map(|gid| {
                 subscription_manager.get_group(*gid).map(|g| {
@@ -471,6 +538,7 @@ impl Reactor {
         let base_delay_ms = self.listener_restart_delay_ms;
         let max_concurrent = self.max_concurrent_reexecutions;
         let cleanup_secs = self.session_cleanup_interval_secs;
+        let resync_secs = self.resync_interval_secs;
 
         let mut change_rx = listener.subscribe();
 
@@ -495,6 +563,20 @@ impl Reactor {
             let mut cleanup_interval =
                 tokio::time::interval(std::time::Duration::from_secs(cleanup_secs));
             cleanup_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+            // `resync_secs == 0` disables the sweep. Use a far-future interval
+            // so the select! arm is well-typed but never fires.
+            let mut resync_interval = if resync_secs == 0 {
+                let mut i = tokio::time::interval(std::time::Duration::from_secs(u64::MAX / 2));
+                i.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                i
+            } else {
+                let mut i = tokio::time::interval(std::time::Duration::from_secs(resync_secs));
+                i.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                // Skip the immediate first tick so startup doesn't trigger a sweep.
+                i.tick().await;
+                i
+            };
 
             loop {
                 tokio::select! {
@@ -531,6 +613,15 @@ impl Reactor {
                     }
                     _ = cleanup_interval.tick() => {
                         session_server.cleanup_stale(std::time::Duration::from_secs(300));
+                    }
+                    _ = resync_interval.tick(), if resync_secs != 0 => {
+                        Self::resync_all_groups(
+                            &subscription_manager,
+                            &session_server,
+                            &registry,
+                            &db_pool,
+                            max_concurrent,
+                        ).await;
                     }
                     Some(error_msg) = listener_error_rx.recv() => {
                         if restart_count >= max_restarts {

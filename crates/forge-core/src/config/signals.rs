@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 /// retention_days = 90
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct SignalsConfig {
     /// Enable the signals pipeline (event ingestion, auto-capture, dashboards).
     #[serde(default = "default_true")]

@@ -47,11 +47,29 @@ impl JobExecutor {
             };
         }
 
-        // Mark job as running
-        if let Err(e) = self.queue.start(job.id).await {
+        // Mark job as running. start() fences on (worker_id, attempts), so a
+        // stale-reclaim race (this worker's claim was reassigned to another
+        // node after a heartbeat gap) returns RowNotFound and we abort before
+        // doing real work. The other worker's attempts counter will differ
+        // because claim() increments it, making the transition unambiguous.
+        let worker_id = match job.worker_id {
+            Some(id) => id,
+            None => {
+                return ExecutionResult::Failed {
+                    error: "Claimed job has no worker_id".to_string(),
+                    retryable: false,
+                };
+            }
+        };
+        if let Err(e) = self.queue.start(job.id, worker_id, job.attempts).await {
             if matches!(e, sqlx::Error::RowNotFound) {
+                tracing::warn!(
+                    job_id = %job.id,
+                    job_type = %job.job_type,
+                    "Job claim was lost (likely stale-reclaim race); skipping execution",
+                );
                 return ExecutionResult::Cancelled {
-                    reason: Self::cancellation_reason(job, "Job cancelled"),
+                    reason: Self::cancellation_reason(job, "Claim lost to another worker"),
                 };
             }
             return ExecutionResult::Failed {

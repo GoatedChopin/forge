@@ -386,13 +386,15 @@ pub async fn sse_handler(
     let auth_context = resolve_sse_auth_context(&request_auth, query_auth);
     let session_secret = uuid::Uuid::new_v4().to_string();
 
+    let token_exp = auth_context.token_exp();
+
     // Register session with reactor
     let reactor = state.reactor.clone();
     let cancel = cancel_token.clone();
 
     // Create a bridge channel for the reactor's message format
     let (rt_tx, mut rt_rx) = mpsc::channel(buffer_size);
-    reactor.register_session(session_id, rt_tx);
+    reactor.register_session(session_id, rt_tx, token_exp);
 
     // Store session data for subscription handlers
     {
