@@ -42,9 +42,10 @@ All subscription stores and hooks return a consistent state object to help you m
 
 ## Error Handling Logic
 
-- **Structured Errors**: Forge returns errors in a `{ code, message, details? }` format.
+- **Structured Errors**: Forge returns errors in a `{ code, message, retry_after_secs?, details? }` format. `retry_after_secs` is a top-level field, not nested under `details`.
 - **Control Flow**: Use the error `code` (e.g., `NOT_FOUND`, `RATE_LIMITED`) for programmatic logic and the `message` for user-facing display.
-- **Automatic Cooldowns**: Use `details.retry_after_secs` to implement UI-level cooldown timers for rate-limited operations.
+- **Boolean helpers**: Both `ForgeError` (TS) and `ForgeClientError` (Rust) expose `.is_rate_limited()`, `.is_unauthorized()`, and `.is_validation()` as shorthand for the most common code checks.
+- **Automatic Cooldowns**: Use `retry_after_secs` (top-level on the error object) to implement UI-level cooldown timers for rate-limited operations.
 - **Managed Retries**: The client library automatically handles SSE reconnection with exponential backoff. Do not implement custom retry loops for subscriptions.
 
 ## File Uploads

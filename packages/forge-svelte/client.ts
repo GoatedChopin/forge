@@ -16,10 +16,17 @@ export interface ForgeClientConfig {
   timeout?: number;
 }
 
+interface RpcErrorPayload {
+  code: string;
+  message: string;
+  retry_after_secs?: number;
+  details?: Record<string, unknown>;
+}
+
 interface RpcResponse<T = unknown> {
   success: boolean;
   data?: T;
-  error?: ForgeError;
+  error?: RpcErrorPayload;
 }
 
 interface SsePayload {
@@ -34,13 +41,20 @@ interface SsePayload {
 
 export class ForgeClientError extends Error {
   code: string;
+  retry_after_secs?: number;
   details?: Record<string, unknown>;
-  constructor(code: string, message: string, details?: Record<string, unknown>) {
+
+  constructor(code: string, message: string, retry_after_secs?: number, details?: Record<string, unknown>) {
     super(message);
     this.name = "ForgeClientError";
     this.code = code;
+    this.retry_after_secs = retry_after_secs;
     this.details = details;
   }
+
+  is_rate_limited(): boolean { return this.code === "RATE_LIMITED"; }
+  is_unauthorized(): boolean { return this.code === "UNAUTHORIZED"; }
+  is_validation(): boolean { return this.code === "VALIDATION_ERROR"; }
 }
 
 interface SubscriptionMeta {
@@ -285,9 +299,9 @@ export class ForgeClient {
     }
 
     if (response.status === 401 || response.status === 403) {
-      const error: ForgeError = { code: "UNAUTHORIZED", message: "Authentication failed" };
-      this.config.onAuthError?.(error);
-      throw new ForgeClientError(error.code, error.message);
+      const err = new ForgeClientError("UNAUTHORIZED", "Authentication failed");
+      this.config.onAuthError?.(err);
+      throw err;
     }
 
     const contentType = response.headers.get("content-type");
@@ -302,7 +316,7 @@ export class ForgeClient {
       if (error.code === "UNAUTHORIZED" || error.code === "FORBIDDEN") {
         this.config.onAuthError?.(error);
       }
-      throw new ForgeClientError(error.code, error.message);
+      throw new ForgeClientError(error.code, error.message, error.retry_after_secs, typeof error.details === 'object' && error.details !== null ? error.details as Record<string, unknown> : undefined);
     }
     return result.data as T;
   }
@@ -335,6 +349,7 @@ export class ForgeClient {
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
+      "Accept": "application/vnd.forge.v1+json",
       "x-forge-platform": "web",
     };
     if (token) headers["Authorization"] = `Bearer ${token}`;

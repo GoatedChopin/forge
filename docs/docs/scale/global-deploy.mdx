@@ -32,7 +32,7 @@ All cluster coordination happens through PostgreSQL. Nodes in different regions 
 | `replica_urls` | `string[]` | `[]` | Read replica URLs |
 | `read_from_replica` | `bool` | `false` | Route queries to replicas |
 | `pool_size` | `u32` | `50` | Primary pool size (replicas get half) |
-| `pool_timeout_secs` | `u64` | `30` | Connection acquire timeout |
+| `pool_timeout` | string | `"30s"` | Connection acquire timeout |
 | `pools.default` | config | none | Override primary pool size/timeout |
 | `pools.jobs` | config | none | Isolated pool for background work |
 | `pools.observability` | config | none | Isolated pool for metrics collection |
@@ -174,17 +174,17 @@ read_from_replica = true
 
 [database.pools.default]
 size = 30
-timeout_secs = 10
+timeout = "10s"
 
 [database.pools.jobs]
 size = 20
-timeout_secs = 60
-statement_timeout_secs = 300
+timeout = "1m"
+statement_timeout = "5m"
 
 [database.pools.analytics]
 size = 10
-timeout_secs = 120
-statement_timeout_secs = 600
+timeout = "2m"
+statement_timeout = "10m"
 ```
 
 When configured, background jobs, cron runners, daemon processes, and workflow executors all use the `jobs` pool. The `observability` pool handles internal metrics collection. The `analytics` pool is available via `db.analytics_pool()` for user code. A runaway analytics query cannot exhaust connections needed for user requests.
@@ -196,8 +196,8 @@ Nodes discover each other through the primary database:
 ```toml
 [cluster]
 discovery = "postgres"
-heartbeat_interval_secs = 5
-dead_threshold_secs = 15
+heartbeat_interval = "5s"
+dead_threshold = "15s"
 ```
 
 Each node registers in `forge_nodes` on startup:

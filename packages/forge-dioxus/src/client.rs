@@ -670,6 +670,7 @@ impl ForgeClient {
             let error = envelope.error.unwrap_or(ForgeError {
                 code: "UNKNOWN".to_string(),
                 message: "Unknown error".to_string(),
+                retry_after_secs: None,
                 details: None,
             });
             if error.code == "UNAUTHORIZED" || error.code == "FORBIDDEN" {
@@ -677,7 +678,7 @@ impl ForgeClient {
                     handler(error.clone());
                 }
             }
-            return Err(ForgeClientError::new(error.code, error.message, error.details));
+            return Err(ForgeClientError::from_forge_error(error));
         }
 
         let data = envelope.data.ok_or_else(|| {
@@ -810,6 +811,7 @@ mod platform {
     ) -> Result<RpcEnvelopeRaw, ForgeClientError> {
         let mut request = Request::post(url)
             .header("Content-Type", "application/json")
+            .header("Accept", "application/vnd.forge.v1+json")
             .header("x-forge-platform", platform_tag())
             .credentials(web_sys::RequestCredentials::Include);
         if let Some(token) = client.get_token() {
@@ -893,6 +895,7 @@ mod platform {
                     handler(crate::types::ForgeError {
                         code: "UNAUTHORIZED".into(),
                         message: "SSE authentication failed".into(),
+                        retry_after_secs: None,
                         details: None,
                     });
                 }
@@ -1024,6 +1027,7 @@ mod platform {
     ) -> Result<RpcEnvelopeRaw, ForgeClientError> {
         let mut request = Client::new()
             .post(url)
+            .header("Accept", "application/vnd.forge.v1+json")
             .header("x-forge-platform", platform_tag())
             .json(&body);
         if let Some(token) = client.get_token() {
@@ -1082,6 +1086,7 @@ mod platform {
                     handler(crate::types::ForgeError {
                         code: "UNAUTHORIZED".into(),
                         message: "SSE authentication failed".into(),
+                        retry_after_secs: None,
                         details: None,
                     });
                 }

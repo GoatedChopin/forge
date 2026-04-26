@@ -153,8 +153,9 @@ impl TestCommand {
 
         if !super::project_root::docker_available().await {
             anyhow::bail!(
-                "Docker is required for running frontend tests.\n\n\
-                Install Docker or set FORGE_TEST_URL to point to a running server."
+                "Docker not available - install Docker to spin up a test Postgres,\n\
+                or set FORGE_TEST_URL to point to a running server (and DATABASE_URL\n\
+                for backend testcontainers tests)."
             );
         }
 

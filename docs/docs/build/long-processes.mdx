@@ -60,8 +60,7 @@ The macro validates your code at compile time. Using `tokio::sleep()` with durat
 |-----------|------|---------|-------------|
 | `name` | `"string"` | fn name | Stable workflow identity. Two versions share the same name. |
 | `version` | `"string"` | `"v1"` | Freeform version label (`"2026-05"`, `"v2"`, `"1.0.0"`). Paired with `name` to form the unique definition key. |
-| `active` | flag | `true` | This version handles new runs. At most one active version per name. Default when neither flag is set. |
-| `deprecated` | flag | `false` | Keeps executing in-flight runs but rejects new starts. Cannot combine with `active`. |
+| `status` | `"active"` \| `"deprecated"` \| `"staging"` | `"active"` | `active`: handles new runs (at most one per name). `deprecated`: drains in-flight runs, rejects new starts. `staging`: registered but invisible to dispatch, useful for pre-deploy verification. |
 | `timeout` | `"duration"` | `"24h"` | Maximum workflow lifetime |
 | `public` | flag | `false` | Skip authentication |
 | `require_role("x")` | string | - | Require specific role |
@@ -314,22 +313,49 @@ pub async fn custom_workflow(ctx: &WorkflowContext, input: Input) -> Result<Outp
 Deploy workflow changes safely with versioning:
 
 ```rust
-// Old version continues running existing workflows
-#[forge::workflow(name = "user_signup", version = "v1", deprecated)]
+// Old version drains in-flight runs, rejects new starts
+#[forge::workflow(name = "user_signup", version = "v1", status = "deprecated")]
 pub async fn user_signup_v1(ctx: &WorkflowContext, user: User) -> Result<()> {
     // Original implementation
     Ok(())
 }
 
 // New version handles new workflows
-#[forge::workflow(name = "user_signup", version = "v2", active)]
+#[forge::workflow(name = "user_signup", version = "v2", status = "active")]
 pub async fn user_signup(ctx: &WorkflowContext, user: User) -> Result<()> {
     // Updated implementation with new steps
     Ok(())
 }
 ```
 
-The version and signature are recorded when a workflow is started. On resume, the runtime loads the handler matching the exact version and signature, so in-flight workflows always run against the code they started with. Mark old versions `deprecated` to prevent new starts while existing runs finish. Keep deprecated handlers deployed until all their in-flight runs complete.
+The version and signature are recorded when a workflow is started. On resume, the runtime loads the handler matching the exact version and signature, so in-flight workflows always run against the code they started with. Mark old versions `status = "deprecated"` to prevent new starts while existing runs finish. Keep deprecated handlers deployed until all their in-flight runs complete.
+
+#### Migrating a workflow safely
+
+The lifecycle is **deprecate → drain → remove**:
+
+1. Bump `version` and add the new handler. Mark the old one `status = "deprecated"` so it stops accepting new starts but keeps draining.
+2. Deploy. Both versions ship in the same binary. Existing runs of the old version keep going on the old code; new dispatches go to the new version.
+3. Wait until the old version has zero in-flight runs (query `forge_workflow_runs` filtering by `workflow_name`, `workflow_version`, and a non-terminal status).
+4. Delete the old handler code and redeploy.
+
+The runtime defends step 4: at boot it scans `forge_workflow_runs` for non-terminal runs whose `(name, version)` tuple is no longer in the registry. If any are found, it logs a warning per stranded group and flips `/_api/ready` to `503` with `drain_pending > 0`. Boot still succeeds, so the node stays up but the load balancer rotates traffic away.
+
+To unblock the runtime, an operator clears the stuck rows directly in Postgres:
+
+```sql
+UPDATE forge_workflow_runs
+SET status = 'retired_unresumable',
+    resolution_reason = 'drained for v1 removal'
+WHERE workflow_name = 'user_signup'
+  AND workflow_version = 'v1'
+  AND status NOT IN (
+    'completed', 'compensated', 'failed',
+    'retired_unresumable', 'cancelled_by_operator'
+  );
+```
+
+Use `cancelled_by_operator` if you want the row to read as a cancellation rather than a retirement. Within five seconds, the next `/_api/ready` probe re-runs the drain check and flips back to `200`. There is no admin HTTP route for this; the database is the operator interface.
 
 ## Context Methods
 

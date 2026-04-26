@@ -178,7 +178,7 @@ When the user navigates away or closes the tab, pending events are flushed via t
 
 ## Endpoints
 
-The server exposes four ingestion endpoints. These are added to `quiet_routes` internally so they don't generate their own telemetry noise.
+The server exposes four ingestion endpoints. These are added to `quiet_paths` internally so they don't generate their own telemetry noise.
 
 | Endpoint | Method | Purpose |
 | --- | --- | --- |
@@ -232,12 +232,47 @@ To enable in development, use the Forge OTEL-LGTM image in your `docker-compose.
 Signals are designed around GDPR compliance without cookie banners:
 
 - No cookies used for tracking; session IDs are in-memory only and server-managed
-- `localStorage` is used only to buffer unsent events so they survive reloads — never for identity
-- Visitor identity is a daily-rotating hash that resets at midnight UTC
-- With `anonymize_ip = true`, raw IP addresses are never stored
+- `localStorage` is used only to buffer unsent events so they survive reloads — never for identity. The client SDK checks DNT/GPC **before** restoring the persisted queue, so flipping DNT on after a session has buffered events drops the queue rather than flushing it
+- Visitor identity is a daily-rotating SHA-256 hash of `IP + UA + daily_salt`. The salt is derived from `auth.jwt_secret` and the current UTC date, so cross-day correlation is impossible without access to the secret. Rotate `auth.jwt_secret` to break correlation across deployments
+- With `anonymize_ip = true`, the raw IP is hashed into the visitor ID and then zeroed before storage; the `client_ip` column always ends up empty
 - `identify()` is opt-in and only links sessions you explicitly associate
-- The server short-circuits `/signal/view`, `/signal/event`, `/signal/user`, and `/signal/vital` for requests carrying `DNT: 1` or `Sec-GPC: 1`. The client SDKs disable themselves when the browser has set those signals. Crash reports (`/signal/report`) still land so production errors from DNT users don't disappear, but they carry no persistent identifier
+- The server short-circuits `/signal/view`, `/signal/event`, `/signal/user`, and `/signal/vital` for requests carrying `DNT: 1` or `Sec-GPC: 1`. The client SDKs disable themselves when the browser has set those signals. Crash reports (`/signal/report`) still land so production errors from DNT users don't disappear, but they carry no `visitor_id` and no `user_id`
 - Bot traffic is tagged but not filtered, so you retain full data for debugging
+
+### Data retention and right-to-delete
+
+Forge does not enforce a global retention period — you set one with
+`retention_days` (default `null`, no auto-drop). The session reaper closes
+sessions older than `session_timeout_mins`. Operators are responsible for:
+
+- Choosing a `retention_days` window that matches your privacy policy
+- Running ad-hoc deletes for right-to-delete requests. Two flows:
+  - **By visitor**: `DELETE FROM forge_signals_events WHERE visitor_id = $1; DELETE FROM forge_signals_sessions WHERE visitor_id = $1;`
+  - **By user**: `DELETE FROM forge_signals_events WHERE user_id = $1; DELETE FROM forge_signals_users WHERE user_id = $1; DELETE FROM forge_signals_sessions WHERE user_id = $1;`
+
+Visitor IDs rotate daily, so a request "delete me" without a `user_id`
+covers only the most recent calendar day for that browser fingerprint. If
+you need cross-day deletion you must either ask users to authenticate
+first (so we can scope by `user_id`) or accept that older daily-hashed
+identifiers can no longer be located back to the user.
+
+### Multi-tenant data
+
+`tenant_id` is captured on every event when the JWT carries one. Per-tenant
+queries scope by `WHERE tenant_id = $1`. There is **no automatic row-level
+security** on the signals tables: any query that omits the tenant filter
+will see all tenants' rows. If you operate signals on behalf of customers,
+either run a separate Forge deployment per tenant or wrap every query in
+a tenant-scoped layer.
+
+### GeoIP attribution
+
+The default build embeds the **DB-IP IP-to-Country Lite** database. If
+you ship a binary that uses the embedded data (i.e., you don't override
+`signals.geoip_db_path`), include the DB-IP attribution required by
+their CC BY 4.0 license: *"IP geolocation by [DB-IP](https://db-ip.com)"*.
+Setting `geoip_db_path` to a MaxMind MMDB file uses your own licensed
+data instead and removes the attribution requirement.
 
 ## Troubleshooting
 

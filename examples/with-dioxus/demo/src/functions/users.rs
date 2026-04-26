@@ -25,7 +25,7 @@ pub async fn get_users(ctx: &QueryContext) -> Result<Vec<User>> {
 }
 
 /// Get single user by ID
-#[forge::query(timeout = 10, public)]
+#[forge::query(timeout = "10s", public)]
 pub async fn get_user(ctx: &QueryContext, id: Uuid) -> Result<Option<User>> {
     sqlx::query_as!(
         User,
@@ -91,7 +91,7 @@ pub async fn create_user(
 }
 
 /// Update user with partial fields
-#[forge::mutation(timeout = 30, public)]
+#[forge::mutation(timeout = "30s", public)]
 pub async fn update_user(
     ctx: &MutationContext,
     id: Uuid,

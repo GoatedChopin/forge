@@ -1,7 +1,10 @@
 
+/** Wire-format error from the Forge RPC layer. */
 export interface ForgeError {
   code: string;
   message: string;
+  /** Seconds to wait before retrying. Present on RATE_LIMITED errors. */
+  retry_after_secs?: number;
   details?: Record<string, unknown>;
 }
 

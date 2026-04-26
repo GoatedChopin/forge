@@ -82,7 +82,7 @@ When the user says "fix it" / "can you fix it" after you've diagnosed a problem,
 - **Env**: `ctx.env_require()` / `ctx.env_or()`, never `std::env::var()`.
 - **HTTP**: `ctx.http()` for RPC, `ctx.raw_http()` when you need `bytes_stream()` or custom redirect policy.
 - **SQL**: `sqlx::query!()` / `query_as!()` bang-macros only. Run `forge migrate prepare` after schema or query changes — see Compile-Loop Hard Rules.
-- **Jobs/workflows**: dispatch only inside `#[forge::mutation(transactional)]`.
+- **Jobs/workflows**: dispatch only inside mutations (transactions are on by default). Never set `transactional = false` on a mutation that dispatches.
 - **Shared logic**: extract to `src/utils/` the moment two handlers need it.
 
 ## Reference Selection Guide
@@ -106,7 +106,7 @@ When the user says "fix it" / "can you fix it" after you've diagnosed a problem,
 - **Surgical diffs**: thin vertical slice per PR.
 - **Boundary validation**: validate at handler entry, return `ForgeError` variants (never `unwrap`/`expect`/`panic!`).
 - **Scope enforcement** (compile-time enforced by the macro): private queries must filter by `user_id` / `owner_id`. `ctx.user_id()` for the principal. Opt out with `#[query(unscoped)]` only for shared/admin data.
-- **Transactional dispatch** (compile-time enforced): `dispatch_job` and `start_workflow` belong inside `#[mutation(transactional)]`.
+- **Transactional dispatch** (compile-time enforced): `dispatch_job` and `start_workflow` require a transactional mutation. Since transactions are on by default, just don't set `transactional = false` on mutations that dispatch.
 - **System tables are off-limits** (`forge check` enforced): never `INSERT/UPDATE/DELETE` on `forge_*` tables. Use `dispatch_job`, `start_workflow`, `record_signal`.
 - **Migrations**: `-- @up` / `-- @down` markers. Enable reactivity with `SELECT forge_enable_reactivity('table_name');`. No `IF NOT EXISTS`.
 - **Not-found handling**: `fetch_optional().await?.ok_or_else(|| ForgeError::NotFound(format!(...)))`.

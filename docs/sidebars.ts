@@ -88,6 +88,7 @@ const sidebars: SidebarsConfig = {
         'reference/contexts',
         'reference/attributes',
         'reference/errors',
+        'reference/observability-catalog',
       ],
     },
   ],

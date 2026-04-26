@@ -40,7 +40,7 @@ pub async fn process_video(ctx: &JobContext, args: Args) -> Result<Res> {
 }
 ```
 
-- Always dispatch from a `transactional` mutation. The macro errors otherwise.
+- Always dispatch from a mutation. Transactions are on by default, so dispatch is safe unless you explicitly set `transactional = false` (which the macro rejects at compile time if you dispatch).
 - `idempotent(key = "args.field")` prevents duplicate processing.
 - Lease reclaim after 5 min without a heartbeat.
 - Persist progress context via `ctx.save(&state)` / `ctx.saved::<State>()?` so restarts resume gracefully.
@@ -76,7 +76,26 @@ pub async fn onboarding_wf(ctx: &WorkflowContext, user_id: Uuid) -> Result<()> {
 
 - Steps cached by **name** — renaming breaks resume.
 - Version bump required when step keys, wait keys, or data types change. Signature mismatch blocks runs and flips `/_api/ready` to 503.
+- Step names: string literals only, max 64 chars, `[a-zA-Z0-9_-]`. No format strings or runtime values.
+- Signature derivation is frozen at GA — FNV-1a 64-bit over: name, version, step keys (sorted), wait keys (sorted), timeout_secs, input type, output type. Never add fields without bumping version.
 - `ctx.sleep()` / `ctx.wait_for_event()` survive restarts. Never use `tokio::sleep`.
+
+### Migrating a workflow safely (deprecate → drain → remove)
+
+1. Bump `version`, mark old as `deprecated`, deploy. Both versions ship in the same binary; new dispatches go to the active version, in-flight runs of the old version keep going on the old code.
+2. Wait for in-flight runs of the old version to drain (query `forge_workflow_runs` filtering by name, version, and non-terminal status).
+3. Delete the old handler code and redeploy. If anything is still in-flight, the runtime detects it at boot, logs a warning, and flips `/_api/ready` to 503 with `drain_pending > 0`. Boot succeeds; LB rotates traffic away.
+4. Operator unblocks via direct PG (no admin HTTP route):
+
+```sql
+UPDATE forge_workflow_runs
+SET status = 'retired_unresumable', resolution_reason = '...'
+WHERE workflow_name = '...' AND workflow_version = '...'
+  AND status NOT IN ('completed','compensated','failed',
+                     'retired_unresumable','cancelled_by_operator');
+```
+
+Use `cancelled_by_operator` instead of `retired_unresumable` if the run should read as a cancellation. Within 5s the next `/_api/ready` flips back to 200.
 
 ## 2. Authentication and Authorization
 
@@ -97,6 +116,59 @@ Exchange codes on the server — never expose provider secrets to the browser.
 - `ctx.auth.require_role("admin")` — 403 if missing.
 - `ctx.user_id()?` — principal UUID.
 - Compile-time scope check fails the build when a private query doesn't filter by `user_id` / `owner_id` (opt out with `unscoped`).
+
+### RoleResolver — dynamic RBAC
+
+By default, `require_role` checks the flat `roles` list from the JWT. Register a `RoleResolver` to expand roles dynamically (hierarchy, group membership, remote permission service):
+
+```rust
+use forge_core::auth::{RoleResolver, AuthContext};
+
+struct HierarchyResolver;
+
+impl RoleResolver for HierarchyResolver {
+    fn resolve(&self, auth: &AuthContext) -> Vec<String> {
+        let mut roles = auth.roles().to_vec();
+        if roles.contains(&"admin".to_string()) {
+            roles.extend(["editor", "viewer"].map(String::from));
+        }
+        roles
+    }
+}
+
+Forge::builder()
+    .config(config)
+    .with_role_resolver(Arc::new(HierarchyResolver))
+    .auto_register()
+    .build()?
+    .run()
+    .await
+```
+
+The resolver is called once per `require_role` check, not cached between calls. Keep it cheap — cache remote lookups internally if needed.
+
+### Reserved JWT claim names
+
+`ClaimsBuilder::claim()` returns `Err` for reserved names: `sub`, `exp`, `iat`, `nbf`, `jti`, `iss`, `aud`, `roles`. These map to structural fields or have dedicated setters:
+
+```rust
+// Wrong — returns ForgeError::InvalidArgument at runtime
+ctx.issue_token_pair(
+    Claims::builder()
+        .user_id(id)
+        .claim("sub", json!("other"))?,  // errors here
+    ...
+).await?;
+
+// Right — use the typed setters
+Claims::builder()
+    .user_id(id)
+    .claim("org_id", json!("org-123"))?  // custom claims are fine
+    .audience("https://api.example.com")  // aud has its own setter
+    .build()?
+```
+
+The restriction exists to prevent duplicate-keyed tokens where structural fields and a flattened custom key serialize under the same JSON key — some validators read one while `ctx.claim()` reads the other.
 
 ## 3. Integrations
 
@@ -148,6 +220,8 @@ Forge::builder()
 
 - **Consistent reads**: `#[query(consistent)]` forces the primary when eventual consistency is unacceptable.
 - **Pool isolation**: queries use `default`; jobs use `jobs`; OTLP uses `observability`; signals use `analytics`. Size in `[database.pools.<name>]`.
-- **Observability**: enable OTLP in `forge.toml`; `x-correlation-id` propagates across RPC boundaries.
+- **Observability**: enable OTLP in `forge.toml`; `x-correlation-id` propagates across RPC boundaries. Full metric/span catalog: `docs/docs/reference/observability-catalog.mdx`.
 - **Workflow safety**: startup validates active versions against persisted signatures; run the binary before shipping or `/_api/ready` reports unhealthy.
 - **System tables**: `forge_jobs`, `forge_workflow_runs`, `forge_signals_events`, etc. are framework-owned. Use `ctx.dispatch_job()`, `ctx.start_workflow()`, `ctx.record_signal()`. `forge check` fails the build on manual writes.
+- **DB primary failover**: the LISTEN/NOTIFY connection (`ChangeListener`) is not auto-reconnected after a primary failover. Restart the process. Pool connections reconnect automatically — this is the exception.
+- **`forge_*` namespace**: reserved for framework tables. Never create application tables with this prefix.

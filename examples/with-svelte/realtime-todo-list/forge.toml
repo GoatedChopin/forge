@@ -8,7 +8,7 @@ name = "todo"
 [database]
 url = "${DATABASE_URL}"
 # pool_size = 50
-# statement_timeout_secs = 30
+# statement_timeout = "30s"
 # replica_urls = ["${DATABASE_REPLICA_URL}"]  # Read replica for scaling reads
 # read_from_replica = false
 
@@ -16,7 +16,7 @@ url = "${DATABASE_URL}"
 port = 9081
 # host = "0.0.0.0"
 cors_origins = ["http://localhost:9080", "http://127.0.0.1:9080"]
-# quiet_routes = ["/_api/health", "/_api/ready"]  # Routes excluded from traces/metrics/logs
+# quiet_paths = ["/_api/health", "/_api/ready"]  # Routes excluded from traces/metrics/logs
 
 [observability]
 enabled = ${FORGE_OTEL_ENABLED-false}

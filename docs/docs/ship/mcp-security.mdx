@@ -10,7 +10,7 @@ Use MCP with explicit exposure and strict transport settings:
 [mcp]
 enabled = true
 path = "/mcp"
-session_ttl_secs = 3600
+session_ttl = "1h"
 allowed_origins = ["https://your-app.example"]
 require_protocol_version_header = true
 ```
@@ -20,7 +20,7 @@ require_protocol_version_header = true
 1. Keep MCP disabled by default (`enabled = false`) in environments that do not need it.
 2. Restrict `allowed_origins` for browser-based clients.
 3. Require `MCP-Protocol-Version` header and reject unsupported versions.
-4. Use short `session_ttl_secs` to limit stale session reuse.
+4. Use short `session_ttl` to limit stale session reuse.
 5. Prefer private tools by default; use `public` only when necessary.
 6. Add `require_role("...")` for sensitive tools.
 7. Add `rate_limit(...)` and `timeout` to every external-facing tool.

@@ -10,11 +10,7 @@ async fn main() -> Result<()> {
     let config = ForgeConfig::from_file(&config_path)?;
 
     Forge::builder()
-        .register_mutation::<functions::RegisterMutation>()
-        .register_mutation::<functions::CreateCounterMutation>()
-        .register_mutation::<functions::IncrementMutation>()
-        .register_query::<functions::GetCounterQuery>()
-        .register_query::<functions::ListCountersQuery>()
+        .auto_register()
         .config(config)
         .build()?
         .run()

@@ -96,10 +96,10 @@ pub async fn export_users(ctx: &JobContext, input: ExportInput) -> Result<Export
 
 ### Dispatch from a Mutation
 
-To kick off a job from your API layer, dispatch it inside a transactional mutation. The job is enqueued atomically with any other database writes in the same transaction:
+To kick off a job from your API layer, dispatch it from a mutation. Transactions are on by default, so the job is enqueued atomically with any other database writes in the same transaction:
 
 ```rust
-#[forge::mutation(transactional, public)]
+#[forge::mutation(public)]
 pub async fn start_export(ctx: &MutationContext, input: ExportInput) -> Result<Uuid> {
     let job_id = ctx.dispatch_job::<ExportUsersJob>(&input).await?;
     Ok(job_id)

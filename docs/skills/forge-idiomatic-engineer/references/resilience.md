@@ -20,7 +20,7 @@ Assume every flow will be interrupted: tokens expire, entities vanish, networks 
 | Entity deleted during action | 404 with context (`format!("item {id}")`). | Remove from local state, toast the deletion. |
 | Concurrent update | `version` column → 409 on mismatch. | Show diff or force refresh. |
 | FK target deleted | Match `is_foreign_key_violation`, return `Validation` with context. | Inform which parent went missing. |
-| Pool exhaustion | Low `timeout_secs`, isolated pools per workload. | "System busy" toast. |
+| Pool exhaustion | Low `pool_timeout`, isolated pools per workload. | "System busy" toast. |
 | Read replica lag | `#[query(consistent)]` after a write. | Prefer the mutation's response body. |
 
 ## 3. SSE and Realtime
@@ -36,7 +36,7 @@ Assume every flow will be interrupted: tokens expire, entities vanish, networks 
 - `idempotent(key = "...")` on every dispatchable job.
 - Re-verify business preconditions at each workflow step — long runs outlive their invariants.
 - Every `wait_for_event` needs a timeout or it stalls forever.
-- Dispatch only inside `transactional` mutations. See [Patterns](./patterns.md#background-jobs).
+- Dispatch only from mutations (transactions are on by default). See [Patterns](./patterns.md#background-jobs).
 
 ## 5. Client Resilience
 
