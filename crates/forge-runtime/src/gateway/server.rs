@@ -34,7 +34,7 @@ use super::sse::{
     SseState, sse_handler, sse_job_subscribe_handler, sse_subscribe_handler,
     sse_unsubscribe_handler, sse_workflow_subscribe_handler,
 };
-use super::tls::{self, TlsListenConfig};
+use super::tls::{TlsListenConfig, bind_listener};
 use super::tracing::{REQUEST_ID_HEADER, SPAN_ID_HEADER, TRACE_ID_HEADER, TracingState};
 use crate::db::Database;
 use crate::function::FunctionRegistry;
@@ -518,14 +518,8 @@ impl GatewayServer {
             .map_err(|e| std::io::Error::other(format!("Failed to start reactor: {}", e)))?;
         tracing::info!("Reactor started for real-time updates");
 
-        match tls {
-            Some(cfg) => axum::serve(tls::bind(addr, &cfg).await?, service).await,
-            None => {
-                tracing::info!(addr = %addr, "Gateway listening (HTTP)");
-                let listener = tokio::net::TcpListener::bind(addr).await?;
-                axum::serve(listener, service).await
-            }
-        }
+        let listener = bind_listener(addr, tls.as_ref()).await?;
+        axum::serve(listener, service).await
     }
 }
 

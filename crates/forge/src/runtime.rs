@@ -38,7 +38,8 @@ use forge_runtime::daemon::{DaemonRegistry, DaemonRunner};
 use forge_runtime::db::Database;
 use forge_runtime::function::FunctionRegistry;
 use forge_runtime::gateway::{
-    AuthConfig, GatewayConfig as RuntimeGatewayConfig, GatewayServer, TlsListenConfig, bind_tls,
+    AuthConfig, GatewayConfig as RuntimeGatewayConfig, GatewayServer, TlsListenConfig,
+    bind_listener,
 };
 use forge_runtime::jobs::{JobDispatcher, JobQueue, JobRegistry, Worker, WorkerConfig};
 use forge_runtime::mcp::McpToolRegistry;
@@ -549,17 +550,11 @@ impl Forge {
 
         // Start HTTP gateway if gateway role
         if roles.contains(&NodeRole::Gateway) {
-            // ForgeConfig::validate has already rejected the half-set case,
-            // so zipping the two options is sufficient here.
-            let tls_cfg = &self.config.gateway.tls;
-            let tls = tls_cfg
-                .cert_path
-                .as_ref()
-                .zip(tls_cfg.key_path.as_ref())
-                .map(|(cert, key)| TlsListenConfig {
-                    cert_path: cert.clone(),
-                    key_path: key.clone(),
-                });
+            // `from_core` enforces the both-or-neither contract here too, so
+            // a programmatically constructed `ForgeConfig` that bypasses
+            // `validate()` still can't slip a half-set TLS config through.
+            let tls: Option<TlsListenConfig> =
+                TlsListenConfig::from_core(&self.config.gateway.tls)?;
 
             let gateway_config = RuntimeGatewayConfig {
                 port: self.config.gateway.port,
@@ -797,23 +792,14 @@ impl Forge {
 
             handles.push(tokio::spawn(async move {
                 tracing::debug!(addr = %addr, "Gateway server binding");
-                let result = match tls {
-                    Some(cfg) => match bind_tls(addr, &cfg).await {
-                        Ok(listener) => axum::serve(listener, router).await,
-                        Err(e) => {
-                            tracing::error!(error = %e, "Failed to bind TLS listener");
-                            return;
-                        }
-                    },
-                    None => {
-                        tracing::info!(addr = %addr, "Gateway listening (HTTP)");
-                        let listener = tokio::net::TcpListener::bind(addr)
-                            .await
-                            .expect("Failed to bind");
-                        axum::serve(listener, router).await
+                let listener = match bind_listener(addr, tls.as_ref()).await {
+                    Ok(l) => l,
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to bind gateway listener");
+                        return;
                     }
                 };
-                if let Err(e) = result {
+                if let Err(e) = axum::serve(listener, router).await {
                     tracing::error!("Gateway server error: {}", e);
                 }
             }));

@@ -234,6 +234,19 @@ impl CheckCommand {
             }
         }
 
+        // Strict-shape parse: catches half-set TLS, OAuth-without-secret,
+        // file-size-exceeds-body-size, and other cross-field invariants that
+        // the loose `toml::Value` walk above doesn't see. Without this,
+        // `forge check` would silently accept configs that startup later
+        // rejects.
+        match forge_core::config::ForgeConfig::parse_toml(&content) {
+            Ok(_) => result.pass("forge.toml passed strict validation"),
+            Err(e) => result.fail(
+                &format!("forge.toml validation failed: {}", e),
+                "Fix the configuration error reported above",
+            ),
+        }
+
         Ok(())
     }
 
