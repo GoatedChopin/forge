@@ -59,7 +59,15 @@ impl IntoResponse for RpcResponse {
                 .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
         };
 
-        (status, Json(self)).into_response()
+        let retry_after = self.error.as_ref().and_then(|e| e.retry_after_secs);
+
+        let mut response = (status, Json(self)).into_response();
+        if let Some(secs) = retry_after
+            && let Ok(val) = axum::http::HeaderValue::from_str(&secs.to_string())
+        {
+            response.headers_mut().insert("Retry-After", val);
+        }
+        response
     }
 }
 
@@ -163,8 +171,14 @@ fn code_to_status(code: &str) -> u16 {
         "FORBIDDEN" => 403,
         "VALIDATION_ERROR" | "INVALID_ARGUMENT" => 400,
         "TIMEOUT" => 504,
+        "REQUEST_TIMEOUT" => 408,
         "RATE_LIMITED" => 429,
-        "JOB_CANCELLED" => 409,
+        "JOB_CANCELLED" | "CONFLICT" => 409,
+        "UNPROCESSABLE_ENTITY" => 422,
+        "SERVICE_UNAVAILABLE" => 503,
+        "PAYLOAD_TOO_LARGE" | "RESULT_TOO_LARGE" => 413,
+        "SUBSCRIPTION_GAPPED" => 410,
+        "UNSUPPORTED_API_VERSION" => 406,
         _ => 500,
     }
 }
@@ -208,9 +222,13 @@ impl From<forge_core::error::ForgeError> for RpcError {
                 tracing::error!(error = %msg, "Job error");
                 Self::internal("Internal server error")
             }
+            E::Conflict(msg) => Self::new("CONFLICT", msg),
+            E::UnprocessableEntity(msg) => Self::new("UNPROCESSABLE_ENTITY", msg),
+            E::ServiceUnavailable(msg) => Self::new("SERVICE_UNAVAILABLE", msg),
+            E::PayloadTooLarge(msg) => Self::new("PAYLOAD_TOO_LARGE", msg),
+            E::ResultTooLarge(msg) => Self::new("RESULT_TOO_LARGE", msg),
+            E::SubscriptionGapped(msg) => Self::new("SUBSCRIPTION_GAPPED", msg),
             E::RateLimitExceeded { retry_after, .. } => Self::rate_limited(retry_after.as_secs()),
-            // ForgeError is #[non_exhaustive]; new variants land here until
-            // the runtime adds an explicit mapping.
             ref e => {
                 tracing::error!(error = %e, "Unmapped ForgeError variant");
                 Self::internal("Internal server error")

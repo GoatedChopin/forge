@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 /// enabled = true
 /// auto_capture = true
 /// diagnostics = true
-/// session_timeout_mins = 30
+/// session_timeout = 30
 /// retention_days = 90
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,9 +30,9 @@ pub struct SignalsConfig {
     #[serde(default = "default_true")]
     pub diagnostics: bool,
 
-    /// Inactivity timeout before closing a session (minutes).
-    #[serde(default = "default_session_timeout_mins")]
-    pub session_timeout_mins: u32,
+    /// Inactivity timeout before closing a session (e.g. "30m").
+    #[serde(default = "default_session_timeout")]
+    pub session_timeout: String,
 
     /// Days to retain event data before partition cleanup.
     #[serde(default = "default_retention_days")]
@@ -46,9 +46,9 @@ pub struct SignalsConfig {
     #[serde(default = "default_batch_size")]
     pub batch_size: usize,
 
-    /// Max milliseconds between flushes of the event buffer.
-    #[serde(default = "default_flush_interval_ms")]
-    pub flush_interval_ms: u64,
+    /// Max interval between flushes of the event buffer (e.g. "5s").
+    #[serde(default = "default_flush_interval")]
+    pub flush_interval: String,
 
     /// Internal mpsc channel capacity for event buffering.
     #[serde(default = "default_channel_capacity")]
@@ -75,11 +75,11 @@ impl Default for SignalsConfig {
             enabled: true,
             auto_capture: true,
             diagnostics: true,
-            session_timeout_mins: default_session_timeout_mins(),
+            session_timeout: default_session_timeout(),
             retention_days: default_retention_days(),
             anonymize_ip: false,
             batch_size: default_batch_size(),
-            flush_interval_ms: default_flush_interval_ms(),
+            flush_interval: default_flush_interval(),
             channel_capacity: default_channel_capacity(),
             excluded_functions: Vec::new(),
             bot_detection: true,
@@ -88,10 +88,24 @@ impl Default for SignalsConfig {
     }
 }
 
-use super::default_true;
+use super::{default_true, parse_duration_secs};
 
-fn default_session_timeout_mins() -> u32 {
-    30
+impl SignalsConfig {
+    /// Session timeout in minutes, parsed from duration string.
+    pub fn session_timeout_mins(&self) -> u32 {
+        let secs = parse_duration_secs(&self.session_timeout, 1800);
+        (secs / 60) as u32
+    }
+
+    /// Flush interval as a Duration, parsed from duration string.
+    pub fn flush_interval_duration(&self) -> std::time::Duration {
+        let secs = parse_duration_secs(&self.flush_interval, 5);
+        std::time::Duration::from_secs(secs)
+    }
+}
+
+fn default_session_timeout() -> String {
+    "30m".to_string()
 }
 
 fn default_retention_days() -> u32 {
@@ -102,8 +116,8 @@ fn default_batch_size() -> usize {
     100
 }
 
-fn default_flush_interval_ms() -> u64 {
-    5000
+fn default_flush_interval() -> String {
+    "5s".to_string()
 }
 
 fn default_channel_capacity() -> usize {
@@ -121,11 +135,11 @@ mod tests {
         assert!(config.enabled);
         assert!(config.auto_capture);
         assert!(config.diagnostics);
-        assert_eq!(config.session_timeout_mins, 30);
+        assert_eq!(config.session_timeout, "30m");
         assert_eq!(config.retention_days, 90);
         assert!(!config.anonymize_ip);
         assert_eq!(config.batch_size, 100);
-        assert_eq!(config.flush_interval_ms, 5000);
+        assert_eq!(config.flush_interval, "5s");
         assert!(config.excluded_functions.is_empty());
         assert!(config.bot_detection);
     }
@@ -145,11 +159,11 @@ mod tests {
             assert!(config.enabled);
             assert!(config.auto_capture);
             assert!(config.diagnostics);
-            assert_eq!(config.session_timeout_mins, 30);
+            assert_eq!(config.session_timeout, "30m");
             assert_eq!(config.retention_days, 90);
             assert!(!config.anonymize_ip);
             assert_eq!(config.batch_size, 100);
-            assert_eq!(config.flush_interval_ms, 5000);
+            assert_eq!(config.flush_interval, "5s");
             assert!(config.excluded_functions.is_empty());
             assert!(config.bot_detection);
         }
@@ -161,11 +175,11 @@ mod tests {
         assert!(!config.enabled);
         assert!(config.auto_capture);
         assert!(config.diagnostics);
-        assert_eq!(config.session_timeout_mins, 30);
+        assert_eq!(config.session_timeout, "30m");
         assert_eq!(config.retention_days, 90);
         assert!(!config.anonymize_ip);
         assert_eq!(config.batch_size, 100);
-        assert_eq!(config.flush_interval_ms, 5000);
+        assert_eq!(config.flush_interval, "5s");
         assert!(config.excluded_functions.is_empty());
         assert!(config.bot_detection);
     }
@@ -183,11 +197,11 @@ mod tests {
             enabled = false
             auto_capture = false
             diagnostics = false
-            session_timeout_mins = 60
+            session_timeout = "60m"
             retention_days = 30
             anonymize_ip = true
             batch_size = 500
-            flush_interval_ms = 10000
+            flush_interval = "10s"
             excluded_functions = ["ping"]
             bot_detection = false
         "#;
@@ -195,11 +209,11 @@ mod tests {
         assert!(!config.enabled);
         assert!(!config.auto_capture);
         assert!(!config.diagnostics);
-        assert_eq!(config.session_timeout_mins, 60);
+        assert_eq!(config.session_timeout, "60m");
         assert_eq!(config.retention_days, 30);
         assert!(config.anonymize_ip);
         assert_eq!(config.batch_size, 500);
-        assert_eq!(config.flush_interval_ms, 10000);
+        assert_eq!(config.flush_interval, "10s");
         assert_eq!(config.excluded_functions, vec!["ping"]);
         assert!(!config.bot_detection);
     }

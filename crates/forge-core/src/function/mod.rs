@@ -7,4 +7,4 @@ pub use context::{
     OutboxBuffer, PendingJob, PendingWorkflow, QueryContext, RequestMetadata, TokenIssuer,
 };
 pub use dispatch::{JobDispatch, WorkflowDispatch};
-pub use traits::{ForgeMutation, ForgeQuery, FunctionInfo, FunctionKind};
+pub use traits::{ForgeMutation, ForgeQuery, FunctionInfo, FunctionKind, LogLevel};

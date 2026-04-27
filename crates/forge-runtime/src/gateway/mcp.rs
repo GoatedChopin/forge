@@ -14,7 +14,6 @@ use axum::{Json, body::Body};
 use forge_core::config::McpConfig;
 use forge_core::function::{AuthContext, JobDispatch, RequestMetadata, WorkflowDispatch};
 use forge_core::mcp::McpToolContext;
-use forge_core::rate_limit::RateLimitKey;
 use futures_util::Stream;
 use serde_json::Value;
 use tokio::sync::RwLock;
@@ -599,10 +598,10 @@ async fn handle_tools_call(
         entry.info.rate_limit_requests,
         entry.info.rate_limit_per_secs,
     ) {
-        let key_type = entry
+        let key_type: forge_core::RateLimitKey = entry
             .info
             .rate_limit_key
-            .and_then(|k| k.parse::<RateLimitKey>().ok())
+            .and_then(|k| k.parse().ok())
             .unwrap_or_default();
 
         let config = forge_core::RateLimitConfig::new(requests, Duration::from_secs(per_secs))
@@ -648,13 +647,8 @@ async fn handle_tools_call(
         state.workflow_dispatcher.clone(),
     );
 
-    let result = if let Some(timeout_secs) = entry.info.timeout {
-        match tokio::time::timeout(
-            Duration::from_secs(timeout_secs),
-            (entry.handler)(&ctx, args),
-        )
-        .await
-        {
+    let result = if let Some(timeout_dur) = entry.info.timeout {
+        match tokio::time::timeout(timeout_dur, (entry.handler)(&ctx, args)).await {
             Ok(inner) => inner,
             Err(_) => {
                 return (

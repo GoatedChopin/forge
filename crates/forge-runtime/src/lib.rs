@@ -63,7 +63,7 @@ pub use cluster::{
 };
 pub use db::Database;
 pub use function::{FunctionExecutor, FunctionRegistry, FunctionRouter, RouteResult};
-pub use migrations::{MigrationExecutor, MigrationGenerator, SchemaDiff};
+pub use migrations::{MigrationGenerator, SchemaDiff};
 pub use observability::{
     TelemetryConfig, TelemetryError, build_env_filter, init_telemetry, shutdown_telemetry,
 };

@@ -184,6 +184,20 @@ pub fn webhook_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let _vis = &input.vis;
     let block = &input.block;
 
+    let payload_type = input
+        .sig
+        .inputs
+        .iter()
+        .nth(1)
+        .and_then(|arg| {
+            if let syn::FnArg::Typed(pat_type) = arg {
+                Some(pat_type.ty.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| syn::parse_quote!(serde_json::Value));
+
     let path = attrs.path.unwrap_or_else(|| "/webhooks".to_string());
     let allow_unsigned = attrs.allow_unsigned;
 
@@ -276,6 +290,8 @@ pub fn webhook_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
             impl forge::forge_core::__sealed::Sealed for #struct_name {}
 
             impl forge::forge_core::webhook::ForgeWebhook for #struct_name {
+                type Payload = #payload_type;
+
                 fn info() -> forge::forge_core::webhook::WebhookInfo {
                     forge::forge_core::webhook::WebhookInfo {
                         name: #rpc_name,
@@ -291,7 +307,7 @@ pub fn webhook_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
 
                 fn execute(
                     ctx: &forge::forge_core::webhook::WebhookContext,
-                    payload: serde_json::Value,
+                    payload: #payload_type,
                 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = forge::forge_core::Result<forge::forge_core::webhook::WebhookResult>> + Send + '_>> {
                     Box::pin(async move #block)
                 }

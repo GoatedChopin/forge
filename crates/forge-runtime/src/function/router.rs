@@ -8,7 +8,7 @@ use forge_core::{
     MutationContext, OutboxBuffer, PendingJob, PendingWorkflow, QueryContext, RequestMetadata,
     Result, SharedRoleResolver, WorkflowDispatch, default_role_resolver,
     job::JobStatus,
-    rate_limit::{RateLimitConfig, RateLimitKey, RateLimiterBackend},
+    rate_limit::{RateLimitConfig, RateLimiterBackend},
     workflow::WorkflowStatus,
 };
 use serde_json::Value;
@@ -322,19 +322,7 @@ impl FunctionRouter {
             _ => return Ok(()),
         };
 
-        // Build rate limit config
-        let key_str = info.rate_limit_key.unwrap_or("user");
-        let key_type: RateLimitKey = match key_str.parse() {
-            Ok(k) => k,
-            Err(_) => {
-                tracing::error!(
-                    function = %function_name,
-                    key = %key_str,
-                    "Invalid rate limit key, falling back to 'user'"
-                );
-                RateLimitKey::default()
-            }
-        };
+        let key_type = info.rate_limit_key.clone().unwrap_or_default();
 
         let config = RateLimitConfig::new(requests, Duration::from_secs(per_secs))
             .with_key(key_type.clone());

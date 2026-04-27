@@ -67,7 +67,7 @@ pub use env::{EnvAccess, EnvProvider, MockEnvProvider, RealEnvProvider};
 pub use error::{ForgeError, Result};
 pub use function::{
     AuthContext, AuthTokenTtl, DbConn, ForgeConn, ForgeDb, ForgeMutation, ForgeQuery, FunctionInfo,
-    FunctionKind, JobDispatch, JobInfoLookup, MutationContext, OutboxBuffer, PendingJob,
+    FunctionKind, JobDispatch, JobInfoLookup, LogLevel, MutationContext, OutboxBuffer, PendingJob,
     PendingWorkflow, QueryContext, RequestMetadata, TokenIssuer, WorkflowDispatch,
 };
 pub use http::{
@@ -81,7 +81,9 @@ pub use mcp::{
 };
 pub use metadata::{HandlerKind, HandlerMetadata};
 pub use pagination::{Cursor, Page, PageInfo};
-pub use rate_limit::{RateLimitConfig, RateLimitHeaders, RateLimitKey, RateLimitResult};
+pub use rate_limit::{
+    ParseRateLimitKeyError, RateLimitConfig, RateLimitHeaders, RateLimitKey, RateLimitResult,
+};
 pub use realtime::{
     AuthScope, BloomFilter, Change, ChangeOperation, Delta, QueryGroup, QueryGroupId, ReadSet,
     SessionId, SessionInfo, SessionStatus, Subscriber, SubscriberId, SubscriptionId,

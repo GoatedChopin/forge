@@ -8,6 +8,7 @@ fn parse_duration_secs(s: &str, default_secs: u64) -> u64 {
 
 /// Cluster configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ClusterConfig {
     /// Cluster name.
     #[serde(default = "default_cluster_name")]
@@ -47,6 +48,12 @@ impl Default for ClusterConfig {
 }
 
 impl ClusterConfig {
+    /// Return a copy with `dns_name` set.
+    pub fn with_dns_name(mut self, dns_name: String) -> Self {
+        self.dns_name = Some(dns_name);
+        self
+    }
+
     /// Heartbeat interval in seconds, parsed from the `heartbeat_interval` string.
     pub fn heartbeat_interval_secs(&self) -> u64 {
         parse_duration_secs(&self.heartbeat_interval, 5)

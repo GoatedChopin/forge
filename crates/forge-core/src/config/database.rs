@@ -146,6 +146,7 @@ pub struct PoolsConfig {
 
 /// Individual pool configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct PoolConfig {
     /// Pool size.
     pub size: u32,

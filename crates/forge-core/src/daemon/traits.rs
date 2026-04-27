@@ -108,19 +108,31 @@ impl DaemonStatus {
     }
 }
 
+/// Error returned when parsing an unknown daemon status string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseDaemonStatusError(pub String);
+
+impl std::fmt::Display for ParseDaemonStatusError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unknown daemon status: {:?}", self.0)
+    }
+}
+
+impl std::error::Error for ParseDaemonStatusError {}
+
 impl FromStr for DaemonStatus {
-    type Err = std::convert::Infallible;
+    type Err = ParseDaemonStatusError;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        Ok(match s {
-            "pending" => Self::Pending,
-            "acquiring" => Self::Acquiring,
-            "running" => Self::Running,
-            "stopped" => Self::Stopped,
-            "failed" => Self::Failed,
-            "restarting" => Self::Restarting,
-            _ => Self::Pending,
-        })
+        match s {
+            "pending" => Ok(Self::Pending),
+            "acquiring" => Ok(Self::Acquiring),
+            "running" => Ok(Self::Running),
+            "stopped" => Ok(Self::Stopped),
+            "failed" => Ok(Self::Failed),
+            "restarting" => Ok(Self::Restarting),
+            _ => Err(ParseDaemonStatusError(s.to_string())),
+        }
     }
 }
 

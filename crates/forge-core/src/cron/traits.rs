@@ -8,6 +8,9 @@ use crate::metadata::HandlerMetadata;
 
 /// Trait for cron job handlers.
 pub trait ForgeCron: crate::__sealed::Sealed + Send + Sync + 'static {
+    /// Reserved for future parameterized cron input.
+    type Args: serde::de::DeserializeOwned + Send + Sync + 'static;
+
     /// Get cron metadata.
     fn info() -> CronInfo;
 

@@ -936,6 +936,14 @@ mod platform {
             Ok(stream) => stream,
             Err(_) => return false,
         };
+        let gap_stream = match event_source.subscribe("gap") {
+            Ok(stream) => stream,
+            Err(_) => return false,
+        };
+        let _channel_stream = match event_source.subscribe("channel") {
+            Ok(stream) => stream,
+            Err(_) => return false,
+        };
 
         // Wait for the connected event
         let connected_event = match connected_stream.next().await {
@@ -966,7 +974,7 @@ mod platform {
             client.reregister_all().await;
         }
 
-        let mut events = stream::select(update_stream, error_stream);
+        let mut events = stream::select(stream::select(update_stream, error_stream), gap_stream);
         while let Some(event) = events.next().await {
             match event {
                 Ok((kind, message)) => {
@@ -981,11 +989,11 @@ mod platform {
                         continue;
                     };
 
-                    if kind == "update" {
+                    if kind == "update" || kind == "gap" {
                         if let Some(payload) = envelope.payload {
                             client.dispatch_event(&target, SseDispatch::Data(payload));
                         }
-                    } else {
+                    } else if kind == "error" {
                         let code = envelope.code.unwrap_or_else(|| "SSE_ERROR".to_string());
                         let message = envelope.message.unwrap_or_else(|| "Subscription error".to_string());
                         client.dispatch_event(&target, SseDispatch::Error { code, message });
@@ -1152,7 +1160,12 @@ mod platform {
         while let Some(event) = event_source.next().await {
             match event {
                 Ok(Event::Open) => {}
-                Ok(Event::Message(msg)) if msg.event == "update" || msg.event == "error" => {
+                Ok(Event::Message(msg))
+                    if msg.event == "update"
+                        || msg.event == "error"
+                        || msg.event == "gap"
+                        || msg.event == "channel" =>
+                {
                     let Ok(envelope) = serde_json::from_str::<SseEnvelopeRaw>(&msg.data) else {
                         continue;
                     };
@@ -1160,11 +1173,11 @@ mod platform {
                         continue;
                     };
 
-                    if msg.event == "update" {
+                    if msg.event == "update" || msg.event == "gap" {
                         if let Some(payload) = envelope.payload {
                             client.dispatch_event(&target, SseDispatch::Data(payload));
                         }
-                    } else {
+                    } else if msg.event == "error" {
                         let code = envelope.code.unwrap_or_else(|| "SSE_ERROR".to_string());
                         let message =
                             envelope.message.unwrap_or_else(|| "Subscription error".to_string());

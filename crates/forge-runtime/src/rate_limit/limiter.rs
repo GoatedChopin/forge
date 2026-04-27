@@ -83,10 +83,10 @@ impl StrictRateLimiter {
     ) -> String {
         match key_type {
             RateLimitKey::User => {
-                let user_id = auth
-                    .user_id()
-                    .map(|u| u.to_string())
-                    .unwrap_or_else(|| "anonymous".to_string());
+                let user_id = auth.user_id().map(|u| u.to_string()).unwrap_or_else(|| {
+                    let ip = request.client_ip().unwrap_or("unknown");
+                    format!("anon-{ip}")
+                });
                 format!("user:{}:{}", user_id, action_name)
             }
             RateLimitKey::Ip => {

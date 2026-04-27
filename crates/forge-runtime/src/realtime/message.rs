@@ -41,6 +41,7 @@ pub struct WorkflowData {
     pub status: String,
     #[serde(rename = "step")]
     pub current_step: Option<String>,
+    pub waiting_for: Option<String>,
     pub steps: Vec<WorkflowStepData>,
     pub output: Option<serde_json::Value>,
     pub error: Option<String>,

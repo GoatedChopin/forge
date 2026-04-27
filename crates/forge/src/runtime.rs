@@ -104,6 +104,7 @@ pub mod prelude {
     // Serde re-exports for user code (load-bearing for serde_json! macro etc.).
     pub use serde::{Deserialize, Serialize};
     pub use serde_json;
+    pub use serde_json::Value;
 
     /// Timestamp type alias for convenience.
     pub type Timestamp = DateTime<Utc>;
@@ -699,8 +700,7 @@ impl Forge {
                 max_connections: self.config.gateway.max_connections,
                 sse_max_sessions: self.config.realtime.sse_max_sessions,
                 request_timeout_secs: self.config.gateway.request_timeout_secs(),
-                cors_enabled: self.config.gateway.cors_enabled
-                    || !self.config.gateway.cors_origins.is_empty(),
+                cors_enabled: self.config.gateway.cors_enabled,
                 cors_origins: self.config.gateway.cors_origins.clone(),
                 auth: AuthConfig::from_forge_config(&self.config.auth)
                     .map_err(|e| ForgeError::Config(e.to_string()))?,
@@ -795,7 +795,7 @@ impl Forge {
                 let collector = forge_runtime::signals::SignalsCollector::spawn(
                     signals_pool.clone(),
                     self.config.signals.batch_size,
-                    std::time::Duration::from_millis(self.config.signals.flush_interval_ms),
+                    self.config.signals.flush_interval_duration(),
                     self.config.signals.channel_capacity,
                 );
                 // Explicit MMDB path means the operator wants city-level data.
@@ -818,7 +818,7 @@ impl Forge {
                 // Spawn session reaper
                 forge_runtime::signals::session::spawn_session_reaper(
                     signals_pool,
-                    self.config.signals.session_timeout_mins,
+                    self.config.signals.session_timeout_mins(),
                 );
 
                 tracing::info!("Signals enabled (analytics + diagnostics)");

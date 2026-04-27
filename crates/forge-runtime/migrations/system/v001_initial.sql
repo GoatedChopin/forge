@@ -811,7 +811,7 @@ BEGIN
             substring(rec.partition_name FROM 'forge_signals_events_(\d{4}_\d{2})'),
             'YYYY_MM'
         ) + interval '1 month' < cutoff THEN
-            EXECUTE format('DROP TABLE IF EXISTS %s', rec.partition_name);
+            EXECUTE format('DROP TABLE IF EXISTS %I', rec.partition_name);
             dropped := dropped + 1;
         END IF;
     END LOOP;

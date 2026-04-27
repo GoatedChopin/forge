@@ -444,11 +444,10 @@ pub async fn sse_handler(
             Ok(claims) => Some(super::auth::build_auth_context_from_claims(claims)),
             Err(e) => {
                 tracing::warn!("SSE token validation failed: {}", e);
-                return (
-                    StatusCode::UNAUTHORIZED,
-                    "Invalid authentication token".to_string(),
+                return super::response::RpcResponse::error(
+                    super::response::RpcError::unauthorized("Invalid authentication token"),
                 )
-                    .into_response();
+                .into_response();
             }
         }
     } else {

@@ -123,6 +123,14 @@ impl ForgeConfig {
             ));
         }
 
+        if !self.gateway.cors_enabled && !self.gateway.cors_origins.is_empty() {
+            return Err(ForgeError::Config(
+                "gateway.cors_origins is set but gateway.cors_enabled = false. \
+                 Set cors_enabled = true to activate CORS, or remove cors_origins."
+                    .into(),
+            ));
+        }
+
         if self.gateway.cors_enabled {
             if self.gateway.cors_origins.is_empty() {
                 return Err(ForgeError::Config(
@@ -541,7 +549,7 @@ pub struct FunctionConfig {
     #[serde(default = "default_function_timeout")]
     pub timeout: String,
 
-    /// Advisory memory limit per function execution (in bytes).
+    /// Advisory memory limit per function execution (e.g. "512mb", "1gb").
     ///
     /// This value is exposed as configuration metadata for orchestrators
     /// (e.g., Kubernetes resource requests) and observability dashboards.
@@ -549,7 +557,7 @@ pub struct FunctionConfig {
     /// per-function memory sandboxing. Use container-level limits for hard
     /// enforcement.
     #[serde(default = "default_memory_limit")]
-    pub memory_limit: usize,
+    pub memory_limit: String,
 }
 
 impl Default for FunctionConfig {
@@ -567,6 +575,16 @@ impl FunctionConfig {
     pub fn timeout_secs(&self) -> u64 {
         parse_duration_secs(&self.timeout, 30)
     }
+
+    /// Advisory memory limit in bytes, parsed from the size string.
+    pub fn memory_limit_bytes(&self) -> crate::Result<usize> {
+        crate::util::parse_size(&self.memory_limit).ok_or_else(|| {
+            crate::ForgeError::Config(format!(
+                "invalid function.memory_limit '{}'. Expected a size like '512mb', '1gb', or '536870912'",
+                self.memory_limit
+            ))
+        })
+    }
 }
 
 fn default_max_concurrent() -> usize {
@@ -577,8 +595,8 @@ fn default_function_timeout() -> String {
     "30s".to_string()
 }
 
-fn default_memory_limit() -> usize {
-    512 * 1024 * 1024 // 512 MiB
+fn default_memory_limit() -> String {
+    "512mb".to_string()
 }
 
 /// Worker configuration.
@@ -973,10 +991,10 @@ pub(crate) fn default_true() -> bool {
     true
 }
 
-/// Default trace sampling ratio. Conservative 10% for production-friendly
-/// storage and ingest costs. Bump to 1.0 in development to inspect every span.
+/// Default trace sampling ratio. 100% so every span is visible out of the box.
+/// Users can tune down for high-traffic production deployments.
 fn default_sampling_ratio() -> f64 {
-    0.1
+    1.0
 }
 
 fn default_metrics_interval() -> String {
@@ -1376,6 +1394,21 @@ pub struct RateLimit {
     /// Defaults to `"user"` when omitted.
     #[serde(default)]
     pub key: Option<String>,
+}
+
+impl RateLimit {
+    /// Parse the window duration into seconds.
+    pub fn per_secs(&self) -> u64 {
+        parse_duration_secs(&self.per, 60)
+    }
+
+    /// Resolve the bucket key, defaulting to `User`.
+    pub fn rate_limit_key(&self) -> crate::rate_limit::RateLimitKey {
+        self.key
+            .as_deref()
+            .and_then(|k| k.parse().ok())
+            .unwrap_or_default()
+    }
 }
 
 fn default_max_concurrent_reexecutions() -> usize {

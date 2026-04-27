@@ -30,13 +30,15 @@ interface RpcResponse<T = unknown> {
 }
 
 interface SsePayload {
-  type: "update" | "error" | "connected";
+  type: "update" | "error" | "connected" | "gap" | "channel";
   target?: string;
   payload?: unknown;
   code?: string;
   message?: string;
   session_id?: string;
   session_secret?: string;
+  channel?: string;
+  last_event_id?: string;
 }
 
 export class ForgeClientError extends Error {
@@ -202,6 +204,21 @@ export class ForgeClient {
             callback({ error: { code: data.code, message: data.message } });
           }
         }
+      });
+
+      this.addEventSourceListener("gap", (e) => {
+        if (currentConnectionId !== this.connectionId) return;
+        try {
+          const data = JSON.parse((e as MessageEvent).data) as SsePayload;
+          if (data.target) {
+            const callback = this.subscriptions.get(data.target);
+            if (callback) callback(undefined);
+          }
+        } catch { /* ignore malformed gap */ }
+      });
+
+      this.addEventSourceListener("channel", () => {
+        // Reserved for pub-sub fan-out; no-op until channel subscriptions are implemented.
       });
 
       this.eventSource.onerror = () => {

@@ -436,12 +436,37 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
     };
 
     let rate_limit_key = match &attrs.rate_limit_key {
-        Some(k) => quote! { Some(#k) },
+        Some(k) => {
+            let key_tokens = match k.as_str() {
+                "user" => quote! { forge::forge_core::rate_limit::RateLimitKey::User },
+                "ip" => quote! { forge::forge_core::rate_limit::RateLimitKey::Ip },
+                "tenant" => quote! { forge::forge_core::rate_limit::RateLimitKey::Tenant },
+                "user_action" => quote! { forge::forge_core::rate_limit::RateLimitKey::UserAction },
+                "global" => quote! { forge::forge_core::rate_limit::RateLimitKey::Global },
+                _ if k.starts_with("custom:") => {
+                    let claim = k.trim_start_matches("custom:");
+                    quote! { forge::forge_core::rate_limit::RateLimitKey::Custom(#claim.to_string()) }
+                }
+                _ => quote! { forge::forge_core::rate_limit::RateLimitKey::User },
+            };
+            quote! { Some(#key_tokens) }
+        }
         None => quote! { None },
     };
 
     let log_level = match &attrs.log_level {
-        Some(l) => quote! { Some(#l) },
+        Some(l) => {
+            let level_tokens = match l.as_str() {
+                "trace" => quote! { forge::forge_core::LogLevel::Trace },
+                "debug" => quote! { forge::forge_core::LogLevel::Debug },
+                "info" => quote! { forge::forge_core::LogLevel::Info },
+                "warn" => quote! { forge::forge_core::LogLevel::Warn },
+                "error" => quote! { forge::forge_core::LogLevel::Error },
+                "off" => quote! { forge::forge_core::LogLevel::Off },
+                _ => quote! { forge::forge_core::LogLevel::Trace },
+            };
+            quote! { Some(#level_tokens) }
+        }
         None => quote! { None },
     };
 

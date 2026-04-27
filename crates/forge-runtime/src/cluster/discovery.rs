@@ -128,10 +128,7 @@ async fn discover_kubernetes(
                 "Kubernetes discovery: constructed service DNS from environment"
             );
 
-            let k8s_config = ClusterConfig {
-                dns_name: Some(dns_name),
-                ..config.clone()
-            };
+            let k8s_config = config.clone().with_dns_name(dns_name);
             discover_dns(&k8s_config, default_port).await
         }
         Err(_) => Err(ForgeError::Config(
@@ -186,14 +183,12 @@ mod tests {
 
     #[test]
     fn test_static_discovery_parses_addresses() {
-        let config = ClusterConfig {
-            seed_nodes: vec![
-                "10.0.0.1:9081".to_string(),
-                "10.0.0.2:9081".to_string(),
-                "10.0.0.3".to_string(),
-            ],
-            ..Default::default()
-        };
+        let mut config = ClusterConfig::default();
+        config.seed_nodes = vec![
+            "10.0.0.1:9081".to_string(),
+            "10.0.0.2:9081".to_string(),
+            "10.0.0.3".to_string(),
+        ];
 
         let peers = discover_static(&config, 9081).unwrap();
         assert_eq!(peers.len(), 3);

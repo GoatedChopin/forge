@@ -54,7 +54,7 @@ pub struct McpToolInfo {
     pub description: Option<&'static str>,
     pub required_role: Option<&'static str>,
     pub is_public: bool,
-    pub timeout: Option<u64>,
+    pub timeout: Option<std::time::Duration>,
     pub rate_limit_requests: Option<u32>,
     pub rate_limit_per_secs: Option<u64>,
     pub rate_limit_key: Option<&'static str>,

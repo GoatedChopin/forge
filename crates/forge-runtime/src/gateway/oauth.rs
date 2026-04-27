@@ -489,7 +489,7 @@ pub async fn oauth_authorize_get(
         HeaderValue::from_static("frame-ancestors 'none'"),
     );
     // Set CSRF cookie (T1, T5)
-    let csrf_secure_flag = if is_https(&headers) { "; Secure" } else { "" };
+    let csrf_secure_flag = "; Secure";
     let cookie = format!(
         "forge_oauth_csrf={csrf_token}; Path=/_api/oauth/; HttpOnly; SameSite=Lax; Max-Age=600{csrf_secure_flag}"
     );
@@ -745,7 +745,7 @@ pub async fn oauth_authorize_post(
     let cookie_ttl = state.session_cookie_ttl_secs;
     let cookie_value =
         super::auth::sign_session_cookie(&user_id.to_string(), &state.jwt_secret, cookie_ttl);
-    let secure_flag = if is_https(&headers) { "; Secure" } else { "" };
+    let secure_flag = "; Secure";
     let session_cookie = format!(
         "forge_session={cookie_value}; Path=/_api/oauth/; HttpOnly; SameSite=Lax; Max-Age={cookie_ttl}{secure_flag}"
     );
@@ -975,14 +975,6 @@ fn mcp_token_issuer(
             .map_err(forge_core::ForgeError::Internal)?;
         issuer.sign(&claims)
     }
-}
-
-fn is_https(headers: &HeaderMap) -> bool {
-    headers
-        .get("x-forwarded-proto")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s == "https")
-        .unwrap_or(false)
 }
 
 fn token_error(error: &str, description: &str) -> Response {

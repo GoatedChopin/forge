@@ -39,11 +39,10 @@ pub struct FunctionInfo {
     pub rate_limit_requests: Option<u32>,
     /// Rate limit: time window in seconds.
     pub rate_limit_per_secs: Option<u64>,
-    /// Rate limit: bucket key type (user, ip, tenant, global).
-    pub rate_limit_key: Option<&'static str>,
-    /// Log level for access logging: "trace", "debug", "info", "warn", "error", "off".
-    /// Defaults to "trace" if not specified.
-    pub log_level: Option<&'static str>,
+    /// Rate limit: bucket key type.
+    pub rate_limit_key: Option<crate::rate_limit::RateLimitKey>,
+    /// Log level for access logging. Defaults to "debug" for queries, "info" for mutations.
+    pub log_level: Option<LogLevel>,
     /// Table dependencies extracted at compile time for reactive subscriptions.
     /// Empty slice means tables could not be determined (dynamic SQL).
     pub table_dependencies: &'static [&'static str],
@@ -69,6 +68,32 @@ pub struct FunctionInfo {
 pub enum FunctionKind {
     Query,
     Mutation,
+}
+
+/// Log level for per-function access logging.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum LogLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+    Off,
+}
+
+impl LogLevel {
+    /// Convert to the lowercase string representation.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Trace => "trace",
+            Self::Debug => "debug",
+            Self::Info => "info",
+            Self::Warn => "warn",
+            Self::Error => "error",
+            Self::Off => "off",
+        }
+    }
 }
 
 impl std::fmt::Display for FunctionKind {
@@ -161,8 +186,8 @@ mod tests {
             http_timeout: Some(Duration::from_secs(5)),
             rate_limit_requests: Some(100),
             rate_limit_per_secs: Some(60),
-            rate_limit_key: Some("user"),
-            log_level: Some("debug"),
+            rate_limit_key: Some(crate::rate_limit::RateLimitKey::User),
+            log_level: Some(LogLevel::Debug),
             table_dependencies: &["users"],
             selected_columns: &["id", "name", "email"],
             transactional: false,
@@ -175,7 +200,7 @@ mod tests {
         assert_eq!(info.cache_ttl, Some(300));
         assert_eq!(info.http_timeout, Some(Duration::from_secs(5)));
         assert_eq!(info.rate_limit_requests, Some(100));
-        assert_eq!(info.log_level, Some("debug"));
+        assert_eq!(info.log_level, Some(LogLevel::Debug));
         assert_eq!(info.table_dependencies, &["users"]);
     }
 }

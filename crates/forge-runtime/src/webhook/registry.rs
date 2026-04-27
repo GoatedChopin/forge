@@ -47,7 +47,13 @@ impl WebhookRegistry {
         let name = info.name.to_string();
         let path = info.path.to_string();
 
-        let handler: BoxedWebhookHandler = Arc::new(move |ctx, payload| W::execute(ctx, payload));
+        let handler: BoxedWebhookHandler = Arc::new(move |ctx, payload| {
+            Box::pin(async move {
+                let typed: W::Payload = serde_json::from_value(payload)
+                    .map_err(|e| forge_core::ForgeError::Deserialization(e.to_string()))?;
+                W::execute(ctx, typed).await
+            })
+        });
 
         self.by_path.insert(path, name.clone());
         self.webhooks

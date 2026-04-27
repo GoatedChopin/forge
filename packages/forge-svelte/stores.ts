@@ -336,7 +336,7 @@ export function createWorkflowStore<TArgs, TOutput>(
           workflowId: wfData.workflow_id as string,
           status: wfData.status as WorkflowState<TOutput>["status"],
           step: typeof wfData.step === "string" ? wfData.step : null,
-          waitingFor: null,
+          waitingFor: typeof wfData.waiting_for === "string" ? wfData.waiting_for : null,
           steps: rawSteps
             .filter((s): s is Record<string, unknown> => s && typeof s === "object")
             .filter((s) => typeof s.name === "string" && typeof s.status === "string")

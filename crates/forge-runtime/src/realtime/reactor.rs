@@ -935,7 +935,7 @@ impl Reactor {
     ) -> forge_core::Result<WorkflowData> {
         let row = sqlx::query!(
             r#"
-                SELECT status, current_step, output, error
+                SELECT status, current_step, waiting_for_event, output, error
                 FROM forge_workflow_runs WHERE id = $1
                 "#,
             workflow_id
@@ -980,6 +980,7 @@ impl Reactor {
             workflow_id: workflow_id.to_string(),
             status: row.status,
             current_step: row.current_step,
+            waiting_for: row.waiting_for_event,
             steps,
             output: row.output,
             error: row.error,

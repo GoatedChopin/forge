@@ -163,6 +163,8 @@ pub fn cron_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
             impl forge::forge_core::__sealed::Sealed for #struct_name {}
 
             impl forge::forge_core::cron::ForgeCron for #struct_name {
+                type Args = ();
+
                 fn info() -> forge::forge_core::cron::CronInfo {
                     forge::forge_core::cron::CronInfo {
                         name: #rpc_name,

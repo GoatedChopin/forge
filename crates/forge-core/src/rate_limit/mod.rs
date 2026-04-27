@@ -58,21 +58,37 @@ impl RateLimitKey {
     }
 }
 
+/// Error returned when parsing an unknown rate limit key string.
+#[derive(Debug, Clone)]
+pub struct ParseRateLimitKeyError(pub String);
+
+impl std::fmt::Display for ParseRateLimitKeyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "unknown rate limit key \"{}\". Expected one of: user, ip, tenant, user_action, global, custom:<name>",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for ParseRateLimitKeyError {}
+
 impl FromStr for RateLimitKey {
-    type Err = std::convert::Infallible;
+    type Err = ParseRateLimitKeyError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(match s {
-            "user" => Self::User,
-            "ip" => Self::Ip,
-            "tenant" => Self::Tenant,
-            "user_action" => Self::UserAction,
-            "global" => Self::Global,
+        match s {
+            "user" => Ok(Self::User),
+            "ip" => Ok(Self::Ip),
+            "tenant" => Ok(Self::Tenant),
+            "user_action" => Ok(Self::UserAction),
+            "global" => Ok(Self::Global),
             _ if s.starts_with("custom:") => {
-                Self::Custom(s.trim_start_matches("custom:").to_string())
+                Ok(Self::Custom(s.trim_start_matches("custom:").to_string()))
             }
-            _ => Self::User,
-        })
+            _ => Err(ParseRateLimitKeyError(s.to_string())),
+        }
     }
 }
 

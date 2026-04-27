@@ -16,6 +16,9 @@ use super::signature::{IdempotencyConfig, SignatureConfig};
 /// Webhooks are HTTP endpoints that receive external events (e.g., from Stripe, GitHub).
 /// They support signature validation, idempotency, and bypass authentication.
 pub trait ForgeWebhook: crate::__sealed::Sealed + Send + Sync + 'static {
+    /// Deserialized payload type. Use `serde_json::Value` for raw access.
+    type Payload: serde::de::DeserializeOwned + Send + Sync + 'static;
+
     /// Get webhook metadata.
     fn info() -> WebhookInfo;
 
@@ -28,10 +31,10 @@ pub trait ForgeWebhook: crate::__sealed::Sealed + Send + Sync + 'static {
     ///
     /// # Arguments
     /// * `ctx` - Webhook context with db, http, and dispatch capabilities
-    /// * `payload` - The raw JSON payload from the request body
+    /// * `payload` - The deserialized request body
     fn execute(
         ctx: &WebhookContext,
-        payload: Value,
+        payload: Self::Payload,
     ) -> Pin<Box<dyn Future<Output = Result<WebhookResult>> + Send + '_>>;
 }
 

@@ -297,7 +297,7 @@ impl FunctionExecutor {
     #[allow(clippy::too_many_arguments)]
     fn log_execution(
         &self,
-        log_level: &str,
+        log_level: forge_core::LogLevel,
         function_name: &str,
         kind: &str,
         input: &Value,
@@ -340,29 +340,29 @@ impl FunctionExecutor {
         }
 
         match log_level {
-            "off" => {}
-            "error" => log_fn!(error),
-            "warn" => log_fn!(warn),
-            "info" => log_fn!(info),
-            "debug" => log_fn!(debug),
+            forge_core::LogLevel::Off => {}
+            forge_core::LogLevel::Error => log_fn!(error),
+            forge_core::LogLevel::Warn => log_fn!(warn),
+            forge_core::LogLevel::Info => log_fn!(info),
+            forge_core::LogLevel::Debug => log_fn!(debug),
+            forge_core::LogLevel::Trace => log_fn!(trace),
             _ => log_fn!(trace),
         }
     }
 
     /// Mutations default to "info" because writes are worth tracking.
     /// Queries default to "debug" since they're high-volume.
-    fn get_function_log_level(&self, function_name: &str) -> &'static str {
+    fn get_function_log_level(&self, function_name: &str) -> forge_core::LogLevel {
         self.registry
             .get(function_name)
             .map(|entry| {
                 entry.info().log_level.unwrap_or(match entry.kind() {
-                    forge_core::FunctionKind::Mutation => "info",
-                    forge_core::FunctionKind::Query => "debug",
-                    // Future kinds default to "info" until a log_level is set.
-                    _ => "info",
+                    forge_core::FunctionKind::Mutation => forge_core::LogLevel::Info,
+                    forge_core::FunctionKind::Query => forge_core::LogLevel::Debug,
+                    _ => forge_core::LogLevel::Info,
                 })
             })
-            .unwrap_or("info")
+            .unwrap_or(forge_core::LogLevel::Info)
     }
 
     /// Get the timeout for a specific function.

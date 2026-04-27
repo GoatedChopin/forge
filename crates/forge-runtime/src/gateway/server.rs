@@ -5,7 +5,6 @@ use axum::{
     Extension, Json, Router,
     error_handling::HandleErrorLayer,
     extract::DefaultBodyLimit,
-    http::StatusCode,
     middleware,
     response::IntoResponse,
     routing::{get, post},
@@ -743,20 +742,12 @@ async fn readiness_handler(
 }
 
 async fn handle_middleware_error(err: BoxError) -> axum::response::Response {
-    let (status, code, message) = if err.is::<tower::timeout::error::Elapsed>() {
-        (StatusCode::REQUEST_TIMEOUT, "TIMEOUT", "Request timed out")
+    let rpc_err = if err.is::<tower::timeout::error::Elapsed>() {
+        RpcError::new("REQUEST_TIMEOUT", "Request timed out")
     } else {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "SERVICE_UNAVAILABLE",
-            "Server overloaded",
-        )
+        RpcError::new("SERVICE_UNAVAILABLE", "Server overloaded")
     };
-    (
-        status,
-        Json(RpcResponse::error(RpcError::new(code, message))),
-    )
-        .into_response()
+    RpcResponse::error(rpc_err).into_response()
 }
 
 fn set_tracing_headers(response: &mut axum::response::Response, trace_id: &str, request_id: &str) {
@@ -866,17 +857,14 @@ async fn api_version_middleware(
         let accept_str = accept.to_str().unwrap_or("");
         // Allow wildcard and explicit v1; reject anything else.
         if accept_str != "*/*" && !accept_str.is_empty() && !accept_str.contains(FORGE_API_V1) {
-            let body = axum::Json(serde_json::json!({
-                "success": false,
-                "error": {
-                    "code": "UNSUPPORTED_API_VERSION",
-                    "message": format!(
-                        "Unsupported Accept header '{}'. Use '{}' or omit the header.",
-                        accept_str, FORGE_API_V1
-                    )
-                }
-            }));
-            return (axum::http::StatusCode::NOT_ACCEPTABLE, body).into_response();
+            return RpcResponse::error(RpcError::new(
+                "UNSUPPORTED_API_VERSION",
+                format!(
+                    "Unsupported Accept header '{}'. Use '{}' or omit the header.",
+                    accept_str, FORGE_API_V1
+                ),
+            ))
+            .into_response();
         }
     }
     next.run(req).await

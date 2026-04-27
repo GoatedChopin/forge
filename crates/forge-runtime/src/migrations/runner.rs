@@ -237,13 +237,15 @@ impl MigrationRunner {
     }
 
     async fn ensure_migrations_table(&self) -> Result<()> {
-        // Create table if not exists
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS forge_migrations (
                 id SERIAL PRIMARY KEY,
+                version VARCHAR(255) NOT NULL DEFAULT '',
                 name VARCHAR(255) UNIQUE NOT NULL,
                 applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                checksum VARCHAR(64),
+                execution_time_ms INTEGER,
                 down_sql TEXT
             )
             "#,
@@ -268,8 +270,8 @@ impl MigrationRunner {
 
     async fn apply_migration(&self, migration: &Migration) -> Result<()> {
         info!("Applying migration: {}", migration.name);
+        let start = std::time::Instant::now();
 
-        // Split migration into individual statements, respecting dollar-quoted strings
         let statements = split_sql_statements(&migration.up_sql);
 
         for statement in statements {
@@ -296,12 +298,17 @@ impl MigrationRunner {
                 })?;
         }
 
-        // Record it as applied (with down_sql for potential rollback)
-        sqlx::query!(
-            "INSERT INTO forge_migrations (name, down_sql) VALUES ($1, $2)",
-            &migration.name,
-            migration.down_sql as _,
+        let elapsed = start.elapsed();
+        let checksum = crate::stable_hash::sha256_hex(migration.up_sql.as_bytes());
+
+        sqlx::query(
+            "INSERT INTO forge_migrations (version, name, checksum, execution_time_ms, down_sql) VALUES ($1, $2, $3, $4, $5)",
         )
+        .bind(&migration.name)
+        .bind(&migration.name)
+        .bind(&checksum)
+        .bind(elapsed.as_millis() as i32)
+        .bind(&migration.down_sql)
         .execute(&self.pool)
         .await
         .map_err(|e| {
@@ -412,19 +419,23 @@ impl MigrationRunner {
         let applied = self.get_applied_migrations().await?;
 
         let applied_list: Vec<AppliedMigration> = {
-            let rows = sqlx::query!(
-                "SELECT name, applied_at, down_sql FROM forge_migrations ORDER BY id ASC"
+            let rows = sqlx::query_as::<_, (String, chrono::DateTime<chrono::Utc>, Option<String>, Option<i32>, Option<String>)>(
+                "SELECT name, applied_at, checksum, execution_time_ms, down_sql FROM forge_migrations ORDER BY id ASC"
             )
             .fetch_all(&self.pool)
             .await
             .map_err(|e| ForgeError::Database(format!("Failed to get migrations: {}", e)))?;
 
             rows.into_iter()
-                .map(|row| AppliedMigration {
-                    name: row.name,
-                    applied_at: row.applied_at,
-                    has_down: row.down_sql.is_some(),
-                })
+                .map(
+                    |(name, applied_at, checksum, execution_time_ms, down_sql)| AppliedMigration {
+                        name,
+                        applied_at,
+                        checksum,
+                        execution_time_ms,
+                        has_down: down_sql.is_some(),
+                    },
+                )
                 .collect()
         };
 
@@ -446,6 +457,8 @@ impl MigrationRunner {
 pub struct AppliedMigration {
     pub name: String,
     pub applied_at: chrono::DateTime<chrono::Utc>,
+    pub checksum: Option<String>,
+    pub execution_time_ms: Option<i32>,
     pub has_down: bool,
 }
 

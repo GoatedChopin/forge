@@ -3,9 +3,9 @@ use std::sync::Arc;
 use axum::{
     body::Body,
     extract::{Request, State},
-    http::{StatusCode, header},
+    http::header,
     middleware::Next,
-    response::{IntoResponse, Json, Response},
+    response::{IntoResponse, Response},
 };
 use forge_core::auth::Claims;
 use forge_core::config::JwtAlgorithm as CoreJwtAlgorithm;
@@ -586,14 +586,10 @@ pub async fn auth_middleware(
             let (ip, ua) = extract_auth_diag(&req);
             tracing::warn!(error = %e, "Invalid authorization header");
             emit_auth_failure("invalid_header", &e.to_string(), req.uri().path(), ip, ua);
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({
-                    "success": false,
-                    "error": { "code": "UNAUTHORIZED", "message": "Invalid authorization header" }
-                })),
-            )
-                .into_response();
+            return super::response::RpcResponse::error(super::response::RpcError::unauthorized(
+                "Invalid authorization header",
+            ))
+            .into_response();
         }
     };
     tracing::trace!(
@@ -613,14 +609,10 @@ pub async fn auth_middleware(
             };
             tracing::warn!(error = %e, "Token validation failed");
             emit_auth_failure(reason, &e.to_string(), req.uri().path(), ip, ua);
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({
-                    "success": false,
-                    "error": { "code": "UNAUTHORIZED", "message": "Invalid authentication token" }
-                })),
-            )
-                .into_response();
+            return super::response::RpcResponse::error(super::response::RpcError::unauthorized(
+                "Invalid authentication token",
+            ))
+            .into_response();
         }
     };
     tracing::trace!(

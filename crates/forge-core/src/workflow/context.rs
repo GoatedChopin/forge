@@ -79,6 +79,7 @@ impl StepState {
 }
 
 /// Context available to workflow handlers.
+#[non_exhaustive]
 pub struct WorkflowContext {
     /// Workflow run ID.
     pub run_id: Uuid,

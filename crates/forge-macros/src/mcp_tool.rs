@@ -353,7 +353,7 @@ fn expand_mcp_tool_impl(input: ItemFn, attrs: McpToolAttrs) -> syn::Result<Token
     };
 
     let timeout = match attrs.timeout {
-        Some(t) => quote! { Some(#t) },
+        Some(t) => quote! { Some(std::time::Duration::from_secs(#t)) },
         None => quote! { None },
     };
 

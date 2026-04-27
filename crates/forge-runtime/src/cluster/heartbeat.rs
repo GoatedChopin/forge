@@ -296,11 +296,9 @@ mod tests {
 
     #[test]
     fn test_heartbeat_config_from_cluster_config() {
-        let cluster = ClusterConfig {
-            heartbeat_interval: "10s".to_string(),
-            dead_threshold: "30s".to_string(),
-            ..ClusterConfig::default()
-        };
+        let mut cluster = ClusterConfig::default();
+        cluster.heartbeat_interval = "10s".to_string();
+        cluster.dead_threshold = "30s".to_string();
 
         let config = HeartbeatConfig::from_cluster_config(&cluster);
         assert_eq!(config.interval, Duration::from_secs(10));

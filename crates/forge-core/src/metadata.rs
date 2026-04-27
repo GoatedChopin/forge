@@ -111,8 +111,8 @@ impl From<&crate::function::FunctionInfo> for HandlerMetadata {
             cache_ttl: info.cache_ttl,
             rate_limit_requests: info.rate_limit_requests,
             rate_limit_per_secs: info.rate_limit_per_secs,
-            rate_limit_key: info.rate_limit_key.map(str::to_string),
-            log_level: info.log_level.map(str::to_string),
+            rate_limit_key: info.rate_limit_key.as_ref().map(|k| k.as_str().to_string()),
+            log_level: info.log_level.map(|l| l.as_str().to_string()),
             table_dependencies: info
                 .table_dependencies
                 .iter()
@@ -294,7 +294,7 @@ impl From<&crate::mcp::McpToolInfo> for HandlerMetadata {
             description: info.description.map(str::to_string),
             is_public: info.is_public,
             required_role: info.required_role.map(str::to_string),
-            timeout: info.timeout.map(Duration::from_secs),
+            timeout: info.timeout,
             http_timeout: None,
             cache_ttl: None,
             rate_limit_requests: info.rate_limit_requests,
@@ -346,7 +346,7 @@ mod tests {
             http_timeout: None,
             rate_limit_requests: Some(100),
             rate_limit_per_secs: Some(60),
-            rate_limit_key: Some("user"),
+            rate_limit_key: Some(crate::rate_limit::RateLimitKey::User),
             log_level: None,
             table_dependencies: &["users"],
             selected_columns: &["id", "name"],
