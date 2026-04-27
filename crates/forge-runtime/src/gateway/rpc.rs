@@ -147,7 +147,7 @@ fn build_metadata(
     client_ip: Option<String>,
     headers: &HeaderMap,
 ) -> RequestMetadata {
-    RequestMetadata::build(
+    RequestMetadata::__build_internal(
         uuid::Uuid::parse_str(&tracing.request_id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
         tracing.trace_id,
         client_ip,
@@ -264,7 +264,7 @@ pub async fn rpc_batch_handler(
             )));
             continue;
         }
-        let metadata = RequestMetadata::build(
+        let metadata = RequestMetadata::__build_internal(
             uuid::Uuid::new_v4(),
             tracing.trace_id.clone(),
             client_ip.clone(),

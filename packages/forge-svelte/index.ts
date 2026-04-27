@@ -42,4 +42,5 @@ export type {
   WorkflowStatus,
   WorkflowStepState,
   WorkflowState,
+  ReactiveMutation,
 } from "./types.js";

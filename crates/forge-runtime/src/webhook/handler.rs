@@ -8,7 +8,7 @@ use axum::{
     body::Bytes,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
-    response::IntoResponse,
+    response::{IntoResponse, Response},
 };
 use base64::{
     Engine as _,
@@ -27,6 +27,7 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use super::registry::WebhookRegistry;
+use crate::gateway::RpcError;
 
 /// State for webhook handler.
 #[derive(Clone)]
@@ -68,7 +69,7 @@ pub async fn webhook_handler(
     Path(path): Path<String>,
     headers: HeaderMap,
     body: Bytes,
-) -> impl IntoResponse {
+) -> Response {
     let full_path = format!("/webhooks/{}", path);
     let request_id = Uuid::new_v4().to_string();
 
@@ -79,8 +80,9 @@ pub async fn webhook_handler(
             warn!(path = %full_path, "Webhook not found");
             return (
                 StatusCode::NOT_FOUND,
-                Json(json!({"error": "Webhook not found"})),
-            );
+                Json(RpcError::not_found("Webhook not found")),
+            )
+                .into_response();
         }
     };
 
@@ -99,8 +101,9 @@ pub async fn webhook_handler(
         );
         return (
             StatusCode::UNAUTHORIZED,
-            Json(json!({"error": "Webhook signature is required"})),
-        );
+            Json(RpcError::unauthorized("Webhook signature is required")),
+        )
+            .into_response();
     }
 
     // Validate signature if configured
@@ -115,8 +118,9 @@ pub async fn webhook_handler(
                 warn!(webhook = info.name, "Missing signature header");
                 return (
                     StatusCode::UNAUTHORIZED,
-                    Json(json!({"error": "Missing signature"})),
-                );
+                    Json(RpcError::unauthorized("Missing signature")),
+                )
+                    .into_response();
             }
         };
 
@@ -132,8 +136,9 @@ pub async fn webhook_handler(
                 );
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": "Webhook configuration error"})),
-                );
+                    Json(RpcError::internal("Webhook configuration error")),
+                )
+                    .into_response();
             }
         };
 
@@ -150,8 +155,9 @@ pub async fn webhook_handler(
             warn!(webhook = info.name, "Invalid signature");
             return (
                 StatusCode::UNAUTHORIZED,
-                Json(json!({"error": "Invalid signature"})),
-            );
+                Json(RpcError::unauthorized("Invalid signature")),
+            )
+                .into_response();
         }
     }
 
@@ -200,7 +206,8 @@ pub async fn webhook_handler(
                     idempotency_key = %key,
                     "Request already processed (idempotent)"
                 );
-                return (StatusCode::OK, Json(json!({"status": "already_processed"})));
+                return (StatusCode::OK, Json(json!({"status": "already_processed"})))
+                    .into_response();
             }
             Err(e) => {
                 // Fail closed: if idempotency is configured but the DB is unavailable,
@@ -208,8 +215,12 @@ pub async fn webhook_handler(
                 error!(webhook = info.name, error = %e, "Failed to claim idempotency key -- rejecting request");
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
-                    Json(json!({"error": "Service temporarily unavailable"})),
-                );
+                    Json(RpcError::new(
+                        "SERVICE_UNAVAILABLE",
+                        "Service temporarily unavailable",
+                    )),
+                )
+                    .into_response();
             }
         }
     }
@@ -231,8 +242,9 @@ pub async fn webhook_handler(
             warn!(webhook = info.name, error = %e, "Invalid JSON payload");
             return (
                 StatusCode::BAD_REQUEST,
-                Json(json!({"error": "Invalid JSON"})),
-            );
+                Json(RpcError::validation("Invalid JSON")),
+            )
+                .into_response();
         }
     };
 
@@ -287,7 +299,7 @@ pub async fn webhook_handler(
                 status.is_success(),
                 None,
             );
-            (status, Json(webhook_result.body()))
+            (status, Json(webhook_result.body())).into_response()
         }
         Ok(Err(e)) => {
             if idempotency_claimed
@@ -311,8 +323,13 @@ pub async fn webhook_handler(
             );
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Internal server error", "request_id": request_id})),
+                Json(RpcError::with_details(
+                    "INTERNAL_ERROR",
+                    "Internal server error",
+                    json!({ "request_id": request_id }),
+                )),
             )
+                .into_response()
         }
         Err(_) => {
             if idempotency_claimed
@@ -339,8 +356,9 @@ pub async fn webhook_handler(
             );
             (
                 StatusCode::GATEWAY_TIMEOUT,
-                Json(json!({"error": "Request timeout"})),
+                Json(RpcError::new("TIMEOUT", "Request timeout")),
             )
+                .into_response()
         }
     }
 }

@@ -84,7 +84,7 @@ pub async fn onboarding_wf(ctx: &WorkflowContext, user_id: Uuid) -> Result<()> {
 
 1. Bump `version`, mark old as `deprecated`, deploy. Both versions ship in the same binary; new dispatches go to the active version, in-flight runs of the old version keep going on the old code.
 2. Wait for in-flight runs of the old version to drain (query `forge_workflow_runs` filtering by name, version, and non-terminal status).
-3. Delete the old handler code and redeploy. If anything is still in-flight, the runtime detects it at boot, logs a warning, and flips `/_api/ready` to 503 with `drain_pending > 0`. Boot succeeds; LB rotates traffic away.
+3. Delete the old handler code and redeploy. If anything is still in-flight, the runtime detects it at boot, logs a warning, and flips `/_api/ready` to 503 with `workflows: false`. Boot succeeds; LB rotates traffic away. The drain count stays in logs (not in the public probe payload).
 4. Operator unblocks via direct PG (no admin HTTP route):
 
 ```sql

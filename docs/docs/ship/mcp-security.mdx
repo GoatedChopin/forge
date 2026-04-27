@@ -57,6 +57,7 @@ When `mcp.oauth = true`, Forge adds OAuth 2.1 Authorization Code + PKCE:
 - **Rate limits:** client registration (10/min per IP, 1000 client cap), login attempts (5 failures/min per IP).
 - **Clickjacking:** `X-Frame-Options: DENY` and CSP `frame-ancestors 'none'` on the authorize page.
 - **Code leakage:** `Referrer-Policy: no-referrer` on authorization redirects.
+- **HTTPS required for OAuth.** The `forge_session` cookie set during the authorize flow is always emitted with the `Secure` attribute. Browsers refuse to send `Secure` cookies over plain HTTP, so OAuth on a non-TLS gateway will fail at the cookie step. Terminate TLS at the gateway (or at a reverse proxy that forwards to it) and use `https://` redirect URIs in production. Local development on `http://localhost` is the only case browsers exempt — it works without TLS, but anything else does not.
 
 ## Error Policy
 

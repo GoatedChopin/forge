@@ -223,6 +223,7 @@ impl sqlx::Executor<'static> for ForgeDb {
 ///         .map_err(Into::into)
 /// }
 /// ```
+#[non_exhaustive]
 pub enum DbConn<'a> {
     /// Direct pool connection (queries, jobs, crons, daemons, webhooks, MCP).
     Pool(sqlx::PgPool),
@@ -409,7 +410,11 @@ impl<'c> sqlx::Executor<'c> for &'c mut ForgeConn<'_> {
 }
 
 /// A job buffered for dispatch after transaction commit.
+///
+/// This is internal runtime plumbing exposed only so test contexts can
+/// inspect what was buffered. Construction is owned by the framework.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct PendingJob {
     pub id: Uuid,
     pub job_type: String,
@@ -422,7 +427,11 @@ pub struct PendingJob {
 }
 
 /// A workflow buffered for dispatch after transaction commit.
+///
+/// This is internal runtime plumbing exposed only so test contexts can
+/// inspect what was buffered. Construction is owned by the framework.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct PendingWorkflow {
     pub id: Uuid,
     pub workflow_name: String,
@@ -436,10 +445,21 @@ pub struct PendingWorkflow {
 ///
 /// Entries are flushed to the database atomically after the mutation transaction commits.
 /// If the transaction rolls back, buffered dispatches are discarded.
+///
+/// This is internal runtime plumbing. Use [`OutboxBuffer::new`] for construction
+/// when needed (e.g. inside the runtime crate).
 #[derive(Default)]
+#[non_exhaustive]
 pub struct OutboxBuffer {
     pub jobs: Vec<PendingJob>,
     pub workflows: Vec<PendingWorkflow>,
+}
+
+impl OutboxBuffer {
+    /// Construct a new buffer holding the given pending dispatches.
+    pub fn new(jobs: Vec<PendingJob>, workflows: Vec<PendingWorkflow>) -> Self {
+        Self { jobs, workflows }
+    }
 }
 
 /// Authentication context available to all functions.
@@ -669,10 +689,14 @@ impl RequestMetadata {
         }
     }
 
-    /// Build request metadata from gateway-extracted parts. Intended for
-    /// framework internals; user code should use [`RequestMetadata::new`]
-    /// or [`RequestMetadata::with_trace_id`] and the fluent setters.
-    pub fn build(
+    /// Build request metadata from gateway-extracted parts.
+    ///
+    /// Hidden from docs because this is a framework-internal constructor used by
+    /// `forge-runtime` to assemble metadata from raw HTTP parts. User code should
+    /// use [`RequestMetadata::new`] or [`RequestMetadata::with_trace_id`] together
+    /// with the fluent setters.
+    #[doc(hidden)]
+    pub fn __build_internal(
         request_id: Uuid,
         trace_id: String,
         client_ip: Option<String>,
@@ -1029,8 +1053,16 @@ impl MutationContext {
         }
     }
 
-    /// Direct pool access for operations that cannot run inside a transaction.
-    pub fn pool(&self) -> &sqlx::PgPool {
+    /// Direct pool access that **bypasses the active transaction**.
+    ///
+    /// In a transactional mutation, this returns the raw [`sqlx::PgPool`] and
+    /// any queries run on it execute outside the transaction — so they will
+    /// not see uncommitted writes and will not be rolled back if the mutation
+    /// fails. Prefer [`MutationContext::conn`] or [`MutationContext::db`] for
+    /// anything that should participate in the transaction. Reach for this
+    /// only for operations that fundamentally cannot run inside a transaction
+    /// (e.g. `LISTEN`/`NOTIFY`, advisory locks, or background pool work).
+    pub fn bypass_pool(&self) -> &sqlx::PgPool {
         &self.db_pool
     }
 
@@ -1187,7 +1219,6 @@ impl MutationContext {
         crate::auth::tokens::rotate_refresh_token(
             &self.db_pool,
             old_refresh_token,
-            &["user"],
             access_ttl,
             refresh_ttl,
             move |uid, r, ttl| {
@@ -1241,7 +1272,7 @@ impl MutationContext {
             let job_id = pending.id;
             outbox
                 .lock()
-                .expect("outbox lock poisoned")
+                .unwrap_or_else(|p| p.into_inner())
                 .jobs
                 .push(pending);
             return Ok(job_id);
@@ -1284,7 +1315,7 @@ impl MutationContext {
             let job_id = pending.id;
             outbox
                 .lock()
-                .expect("outbox lock poisoned")
+                .unwrap_or_else(|p| p.into_inner())
                 .jobs
                 .push(pending);
             return Ok(job_id);
@@ -1346,7 +1377,7 @@ impl MutationContext {
             let workflow_id = pending.id;
             outbox
                 .lock()
-                .expect("outbox lock poisoned")
+                .unwrap_or_else(|p| p.into_inner())
                 .workflows
                 .push(pending);
             return Ok(workflow_id);

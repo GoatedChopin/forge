@@ -1,5 +1,6 @@
 use std::future::Future;
 use std::pin::Pin;
+use std::time::Duration;
 
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -27,11 +28,13 @@ pub struct FunctionInfo {
     pub is_public: bool,
     /// Cache TTL in seconds (for queries).
     pub cache_ttl: Option<u64>,
-    /// Timeout in seconds.
-    pub timeout: Option<u64>,
-    /// Default timeout in seconds for outbound HTTP requests made via the
-    /// circuit-breaker client. `None` means no request timeout is applied.
-    pub http_timeout: Option<u64>,
+    /// Execution timeout for the handler. `None` falls back to the runtime
+    /// default. Mirrors the `Duration`-typed timeout fields on Job/Cron/Workflow
+    /// info so consumers don't have to remember which kinds use seconds.
+    pub timeout: Option<Duration>,
+    /// Default timeout for outbound HTTP requests made via the circuit-breaker
+    /// client. `None` means no request timeout is applied.
+    pub http_timeout: Option<Duration>,
     /// Rate limit: requests per time window.
     pub rate_limit_requests: Option<u32>,
     /// Rate limit: time window in seconds.
@@ -154,8 +157,8 @@ mod tests {
             required_role: None,
             is_public: false,
             cache_ttl: Some(300),
-            timeout: Some(30),
-            http_timeout: Some(5),
+            timeout: Some(Duration::from_secs(30)),
+            http_timeout: Some(Duration::from_secs(5)),
             rate_limit_requests: Some(100),
             rate_limit_per_secs: Some(60),
             rate_limit_key: Some("user"),
@@ -170,7 +173,7 @@ mod tests {
         assert_eq!(info.name, "get_user");
         assert_eq!(info.kind, FunctionKind::Query);
         assert_eq!(info.cache_ttl, Some(300));
-        assert_eq!(info.http_timeout, Some(5));
+        assert_eq!(info.http_timeout, Some(Duration::from_secs(5)));
         assert_eq!(info.rate_limit_requests, Some(100));
         assert_eq!(info.log_level, Some("debug"));
         assert_eq!(info.table_dependencies, &["users"]);

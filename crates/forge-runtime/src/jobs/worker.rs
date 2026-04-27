@@ -89,20 +89,25 @@ impl Worker {
         // Semaphore to limit concurrent jobs
         let semaphore = Arc::new(tokio::sync::Semaphore::new(self.config.max_concurrent));
 
-        // Spawn stale and expired cleanup task
+        // Spawn stale and expired cleanup task. Tied to a Notify shared with
+        // shutdown so it exits cleanly with the worker — orphan cleanup tasks
+        // in a multi-node cluster would compete with live workers' jobs.
         let cleanup_queue = self.queue.clone();
         let cleanup_interval = self.config.stale_cleanup_interval;
         let stale_threshold = self.config.stale_threshold;
-        tokio::spawn(async move {
+        let shutdown_notify = Arc::new(tokio::sync::Notify::new());
+        let cleanup_shutdown = shutdown_notify.clone();
+        let cleanup_handle = tokio::spawn(async move {
             loop {
-                tokio::time::sleep(cleanup_interval).await;
+                tokio::select! {
+                    _ = cleanup_shutdown.notified() => break,
+                    _ = tokio::time::sleep(cleanup_interval) => {}
+                }
 
-                // Release stale jobs back to pending
                 if let Err(e) = cleanup_queue.release_stale(stale_threshold).await {
                     tracing::warn!(error = %e, "Failed to cleanup stale jobs");
                 }
 
-                // Delete expired job records
                 match cleanup_queue.cleanup_expired().await {
                     Ok(count) if count > 0 => {
                         tracing::debug!(count, "Cleaned up expired job records");
@@ -125,6 +130,8 @@ impl Worker {
             tokio::select! {
                 _ = shutdown_rx.recv() => {
                     tracing::debug!(worker_id = %self.id, "Worker shutting down");
+                    shutdown_notify.notify_waiters();
+                    let _ = cleanup_handle.await;
                     break;
                 }
                 _ = tokio::time::sleep(self.config.poll_interval) => {

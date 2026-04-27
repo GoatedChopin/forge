@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use console::style;
+use serde_json::json;
 use std::path::Path;
 use std::process::{Command as StdCommand, Stdio};
 use tokio::process::Command as TokioCommand;
@@ -17,7 +18,8 @@ pub enum CheckFormat {
     /// Human-readable output with colours (default).
     #[default]
     Human,
-    /// Machine-readable JSON: `{ "status": "ok"|"failed", "checks": [...] }`.
+    /// Machine-readable JSON: `{ "status": "ok"|"error", "checks": [...] }`
+    /// where each check has `{name, status: "ok"|"warn"|"error", error?}`.
     Json,
 }
 
@@ -108,7 +110,7 @@ impl CheckResult {
         self.errors.push(fix.to_string());
         self.entries.push(CheckEntry {
             name: msg.to_string(),
-            status: "failed",
+            status: "error",
             error: Some(fix.to_string()),
         });
         self.passed = false;
@@ -128,39 +130,23 @@ impl CheckResult {
     }
 
     fn print_json(&self) {
-        let status = if self.passed { "ok" } else { "failed" };
-        let checks: Vec<String> = self
+        let status = if self.passed { "ok" } else { "error" };
+        let checks: Vec<serde_json::Value> = self
             .entries
             .iter()
             .map(|e| {
-                let error_field = match &e.error {
-                    Some(err) => format!(r#","error":{}"#, json_str(err)),
-                    None => String::new(),
-                };
-                format!(
-                    r#"{{"name":{},"status":"{}"{}}}"#,
-                    json_str(&e.name),
-                    e.status,
-                    error_field
-                )
+                let mut obj = serde_json::Map::new();
+                obj.insert("name".to_string(), json!(e.name));
+                obj.insert("status".to_string(), json!(e.status));
+                if let Some(err) = &e.error {
+                    obj.insert("error".to_string(), json!(err));
+                }
+                serde_json::Value::Object(obj)
             })
             .collect();
-        println!(
-            r#"{{"status":"{}","checks":[{}]}}"#,
-            status,
-            checks.join(",")
-        );
+        let payload = json!({ "status": status, "checks": checks });
+        println!("{}", payload);
     }
-}
-
-fn json_str(s: &str) -> String {
-    let escaped = s
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
-        .replace('\t', "\\t");
-    format!("\"{}\"", escaped)
 }
 
 impl CheckCommand {
@@ -410,7 +396,10 @@ impl CheckCommand {
         } else {
             result.fail(
                 "forge dependency not found",
-                "Add forge = { version = \"0.0.3\", package = \"forgex\" } to [dependencies]",
+                &format!(
+                    "Add forge = {{ version = \"{}\", package = \"forgex\" }} to [dependencies]",
+                    env!("CARGO_PKG_VERSION")
+                ),
             );
         }
 
@@ -971,6 +960,17 @@ impl CheckCommand {
             forge_core::schema::SchemaRegistry::new()
         };
 
+        if let Err(errors) = forge_codegen::validate_registry(&registry) {
+            result.fail(
+                &format!(
+                    "Unsupported types in handler signatures ({} found)",
+                    errors.len()
+                ),
+                &errors.join("; "),
+            );
+            return Ok(());
+        }
+
         let has_schema = !registry.all_tables().is_empty()
             || !registry.all_enums().is_empty()
             || !registry.all_functions().is_empty();
@@ -1513,14 +1513,25 @@ mod tests {
         let mut result = CheckResult::new(CheckFormat::Json);
         result.pass("config ok");
         result.warn("missing file", "add file");
-        result.fail("bad setting", "fix setting");
-        // Verify the JSON string is well-formed by manual inspection.
-        // status should be "failed" since there's one failure.
+        result.fail("bad \"setting\"", "fix\nsetting");
         assert!(!result.passed);
         assert_eq!(result.entries.len(), 3);
         assert_eq!(result.entries[0].status, "ok");
         assert_eq!(result.entries[1].status, "warn");
-        assert_eq!(result.entries[2].status, "failed");
+        assert_eq!(result.entries[2].status, "error");
+        // Embedded quotes and newlines must round-trip through serde_json
+        // without producing invalid JSON.
+        let entry = &result.entries[2];
+        let value = serde_json::json!({
+            "name": entry.name,
+            "status": entry.status,
+            "error": entry.error,
+        });
+        let serialized = value.to_string();
+        let parsed: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(parsed["status"], "error");
+        assert_eq!(parsed["name"], "bad \"setting\"");
+        assert_eq!(parsed["error"], "fix\nsetting");
     }
 
     #[test]

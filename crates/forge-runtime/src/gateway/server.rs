@@ -134,23 +134,17 @@ pub struct HealthResponse {
 /// Public readiness probe payload.
 ///
 /// Intentionally minimal: load-balancer probes can call this without
-/// authentication and we don't want to leak internal load signals (e.g.
-/// the count of blocked workflow runs) to anonymous callers. Detailed
-/// per-subsystem state lives in tracing/metrics/dashboards.
+/// authentication and we don't want to leak internal deployment signals (queue
+/// depths, blocked-run counts, version skew) to anonymous callers. The
+/// `workflows` boolean folds in the blocked-run check; detailed per-subsystem
+/// state lives in tracing, metrics, and the operator dashboards.
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 pub struct ReadinessResponse {
     pub ready: bool,
     pub database: bool,
     pub reactor: bool,
     pub workflows: bool,
-    /// Count of non-terminal workflow runs whose `(name, version)` is missing
-    /// from the current binary's registry. Operators clear these via
-    /// `UPDATE forge_workflow_runs SET status = 'cancelled_by_operator'` (or
-    /// `'retired_unresumable'`) directly in PG. Reported as a number rather
-    /// than per-run details to match the anonymous-probe rationale that
-    /// keeps `workflows` boolean-only.
-    #[serde(default)]
-    pub drain_pending: usize,
     pub version: String,
 }
 
@@ -386,7 +380,17 @@ impl GatewayServer {
         // with credentials per the CORS spec, so we enumerate them.
         let cors = if self.config.cors_enabled {
             if self.config.cors_origins.iter().any(|o| o == "*") {
-                // Wildcard origin can't use credentials
+                // Wildcard origin can't use credentials. Loud at startup so
+                // operators don't ship `cors_origins = ["*"]` to production
+                // by accident — credentialed requests will silently fail
+                // (no `Access-Control-Allow-Credentials`) and there's no
+                // origin allowlist limiting cross-site abuse of the gateway.
+                tracing::warn!(
+                    "CORS wildcard (`cors_origins = [\"*\"]`) is enabled. \
+                     Credentialed requests will fail and any origin can \
+                     reach the gateway. Set explicit origins for \
+                     production deployments."
+                );
                 CorsLayer::new()
                     .allow_origin(Any)
                     .allow_methods(Any)
@@ -538,6 +542,7 @@ impl GatewayServer {
                     }),
                 anonymize_ip: self.signals_anonymize_ip,
                 geoip: self.signals_geoip.clone(),
+                rate_limiter: Arc::new(crate::signals::rate_limit::SignalRateLimiter::new()),
             });
             signals_router = Router::new()
                 .route(
@@ -709,7 +714,16 @@ async fn readiness_handler(
         }
     };
 
-    let ready = db_ok && reactor_ok && workflows_ok && drain_pending == 0;
+    let workflows_drain_clear = drain_pending == 0;
+    if !workflows_drain_clear {
+        tracing::warn!(
+            drain_pending,
+            "readiness probe failing: workflow runs blocked on missing (name, version) entries"
+        );
+    }
+
+    let workflows_ready = workflows_ok && workflows_drain_clear;
+    let ready = db_ok && reactor_ok && workflows_ready;
     let status_code = if ready {
         axum::http::StatusCode::OK
     } else {
@@ -722,8 +736,7 @@ async fn readiness_handler(
             ready,
             database: db_ok,
             reactor: reactor_ok,
-            workflows: workflows_ok,
-            drain_pending,
+            workflows: workflows_ready,
             version: env!("CARGO_PKG_VERSION").to_string(),
         }),
     )
@@ -816,6 +829,16 @@ async fn security_headers_middleware(
             axum::http::HeaderName::from_static("permissions-policy"),
             axum::http::HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
         );
+        // Forge `/_api/*` only ever returns JSON, SSE, or a small handful of
+        // static error/health pages — there is no HTML, script, image, or
+        // remote fetch surface. A `default-src 'none'` policy means any byte
+        // mistakenly executed as a document or script is blocked by the
+        // browser. `frame-ancestors 'none'` matches `X-Frame-Options: DENY`
+        // for legacy clients that ignore CSP.
+        headers.insert(
+            axum::http::header::CONTENT_SECURITY_POLICY,
+            axum::http::HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'"),
+        );
         if config.hsts {
             headers.insert(
                 axum::http::header::STRICT_TRANSPORT_SECURITY,
@@ -846,7 +869,7 @@ async fn api_version_middleware(
             let body = axum::Json(serde_json::json!({
                 "success": false,
                 "error": {
-                    "code": "unsupported_api_version",
+                    "code": "UNSUPPORTED_API_VERSION",
                     "message": format!(
                         "Unsupported Accept header '{}'. Use '{}' or omit the header.",
                         accept_str, FORGE_API_V1

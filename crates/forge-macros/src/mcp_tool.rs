@@ -408,23 +408,10 @@ fn expand_mcp_tool_impl(input: ItemFn, attrs: McpToolAttrs) -> syn::Result<Token
 
     let single_custom_args_type: Option<&Type> = if arg_params.len() == 1 {
         if let FnArg::Typed(pat_type) = &arg_params[0] {
-            if let Type::Path(type_path) = &*pat_type.ty {
-                if let Some(segment) = type_path.path.segments.last() {
-                    let type_name = segment.ident.to_string();
-                    if type_name.ends_with("Args")
-                        || type_name.contains("Args")
-                        || type_name.ends_with("Input")
-                        || type_name.contains("Input")
-                    {
-                        Some(&*pat_type.ty)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
+            if crate::utils::is_primitive_arg_type(&pat_type.ty) {
                 None
+            } else {
+                Some(&*pat_type.ty)
             }
         } else {
             None

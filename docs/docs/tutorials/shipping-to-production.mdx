@@ -150,7 +150,7 @@ Enable OpenTelemetry in `forge.toml`. Forge auto-instruments everything without 
 enabled = true
 otlp_endpoint = "http://otel-collector:4318"
 log_level = "info"
-sampling_ratio = 1.0    # sample every trace; lower in high-traffic production
+sampling_ratio = 1.0    # dev only: sample every trace. Default is 0.1 (10%); raise carefully in production.
 # enable_traces = true
 # enable_metrics = true
 # enable_logs = true

@@ -222,6 +222,10 @@ impl FromStr for JobStatus {
 }
 
 /// Retry configuration for jobs.
+///
+/// Constructed by the `#[job]` macro. Adding a field is a breaking change
+/// for hand-written `ForgeJob` impls; stage extensions through a builder
+/// or major bump.
 #[derive(Debug, Clone)]
 pub struct RetryConfig {
     /// Maximum number of retry attempts.
@@ -260,6 +264,7 @@ impl RetryConfig {
 
 /// Backoff strategy for retries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum BackoffStrategy {
     /// Same delay each time.
     Fixed,

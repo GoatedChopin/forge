@@ -636,13 +636,6 @@ pub async fn auth_middleware(
     let should_set_cookie =
         auth_context.is_authenticated() && middleware.config.jwt_secret.is_some();
 
-    let req_is_https = req
-        .headers()
-        .get("x-forwarded-proto")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s == "https")
-        .unwrap_or(false);
-
     // Skip cookie if one already exists (avoids resigning on every request)
     let has_session_cookie = req
         .headers()
@@ -664,9 +657,16 @@ pub async fn auth_middleware(
     {
         let cookie_ttl = middleware.config.session_cookie_ttl_secs;
         let cookie_value = sign_session_cookie(subject, secret, cookie_ttl);
-        let secure_flag = if req_is_https { "; Secure" } else { "" };
+        // Always emit `Secure`. We previously inferred TLS from
+        // `x-forwarded-proto`, but that header is trivially spoofable when the
+        // gateway is exposed without a trusted reverse proxy in front, so a
+        // plain-HTTP attacker on the same network could downgrade the cookie.
+        // OAuth session cookies are only meaningful over HTTPS in production —
+        // browsers refuse to send `Secure` cookies over HTTP, which surfaces
+        // misconfigured deployments as a clean failure rather than silently
+        // weakening the session.
         let cookie = format!(
-            "forge_session={cookie_value}; Path=/_api/oauth/; HttpOnly; SameSite=Lax; Max-Age={cookie_ttl}{secure_flag}"
+            "forge_session={cookie_value}; Path=/_api/oauth/; HttpOnly; SameSite=Lax; Secure; Max-Age={cookie_ttl}"
         );
         if let Ok(val) = axum::http::HeaderValue::from_str(&cookie) {
             response.headers_mut().append(header::SET_COOKIE, val);

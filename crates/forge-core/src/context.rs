@@ -87,8 +87,9 @@ impl HandlerContext for crate::function::QueryContext {
 impl HandlerContext for crate::function::MutationContext {
     fn db(&self) -> ForgeDb {
         // MutationContext::db() returns DbConn, not ForgeDb.
-        // For HandlerContext we expose the pool-backed ForgeDb view.
-        crate::function::ForgeDb::from_pool(self.pool())
+        // For HandlerContext we expose the pool-backed ForgeDb view, which
+        // intentionally bypasses the active transaction.
+        crate::function::ForgeDb::from_pool(self.bypass_pool())
     }
 
     fn db_conn(&self) -> DbConn<'_> {

@@ -73,7 +73,7 @@ sqlx::query_as!(User, "...", id).fetch_one(&mut conn).await?
 - `ctx.sleep()`, not `tokio::sleep` — only `ctx.sleep()` persists across restarts.
 - Step names are cache keys. Renaming breaks resume. Bump the workflow version instead.
 - Signature mismatch at startup blocks runs and flips `/_api/ready` to 503. Check for in-flight runs before removing an old version.
-- Removing a deprecated version's code while runs are still in-flight strands them: `/_api/ready` reports `drain_pending > 0` until an operator clears the rows directly in PG (`UPDATE forge_workflow_runs SET status = 'retired_unresumable' ...`). There's no admin HTTP route — the database is the operator interface.
+- Removing a deprecated version's code while runs are still in-flight strands them: `/_api/ready` reports `workflows: false` (with the per-group warning logged on the server) until an operator clears the rows directly in PG (`UPDATE forge_workflow_runs SET status = 'retired_unresumable' ...`). There's no admin HTTP route — the database is the operator interface, and the public probe deliberately omits the drain count so it can't be polled anonymously.
 - Always set a timeout on `wait_for_event` so stalls become observable.
 
 ## 6. Frontend
@@ -129,7 +129,13 @@ sqlx::query_as!(User, "...", id).fetch_one(&mut conn).await?
 - **Hand-rolled HMAC verification**: use the `WebhookSignature` constructors. See [API Reference](./api.md#signature-constructors).
 - **Provider SDKs for payments / AI / S3**: stay neutral — standard protocols (HMAC, S3 API, HTTP JSON) work everywhere. See [Recipes](./recipes.md).
 
-## 13. Svelte Reactive
+## 13. Number Precision Across the Wire
+
+- TypeScript / JavaScript represent every number as IEEE-754 double, so values above `Number.MAX_SAFE_INTEGER` (2^53 − 1, roughly 9e15) silently lose precision after `JSON.parse`. Forge codegen still maps Rust `i64` / `u64` to TS `number` to match the default serde JSON encoding.
+- For values that genuinely need 64-bit precision — Snowflake / Twitter-style IDs, large monotonic counters, microsecond timestamps — declare the field as `String` in Rust and convert at the boundary, or use `serde_with::DisplayFromStr`. Anything that fits in `i32` (under ±2.1e9) is safe to keep as `i32`.
+- `Instant` / `DateTime<Utc>` already serialise as RFC 3339 strings, so timestamps never hit this trap unless you explicitly model them as `i64`.
+
+## 14. Svelte Reactive
 
 - Don't wrap `listTodos$()` runes helpers in a `toReactive` adapter. They already manage lifecycle via `$effect` roots — wrapping reintroduces the leaks the rune form eliminates. See [Svelte](./frontend/svelte.md#using-svelte-5-runes).
 - Never create a store inside a `$derived`. Opens a new SSE subscription every recomputation.

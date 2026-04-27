@@ -50,42 +50,56 @@ pub fn parse_duration_secs(s: &str) -> Option<u64> {
 }
 
 /// Parse a duration string into a TokenStream representing std::time::Duration.
-/// Emits a `compile_error!` if the string has no recognized unit suffix.
+/// Emits a `compile_error!` if the string has no recognized unit suffix or if
+/// the numeric portion can't be parsed (e.g. `30sec` is rejected, not silently
+/// coerced to the default).
 pub fn parse_duration_tokens(s: &str, default_secs: u64) -> TokenStream {
     let s = s.trim();
-    if s.ends_with("ms") {
-        let n: u64 = s
-            .trim_end_matches("ms")
-            .parse()
-            .unwrap_or(default_secs * 1000);
-        quote! { std::time::Duration::from_millis(#n) }
-    } else if s.ends_with('s') {
-        let n: u64 = s.trim_end_matches('s').parse().unwrap_or(default_secs);
-        quote! { std::time::Duration::from_secs(#n) }
-    } else if s.ends_with('m') {
-        let n: u64 = s.trim_end_matches('m').parse().unwrap_or(default_secs / 60);
-        let secs = n * 60;
-        quote! { std::time::Duration::from_secs(#secs) }
-    } else if s.ends_with('h') {
-        let n: u64 = s
-            .trim_end_matches('h')
-            .parse()
-            .unwrap_or(default_secs / 3600);
-        let secs = n * 3600;
-        quote! { std::time::Duration::from_secs(#secs) }
-    } else if s.ends_with('d') {
-        let n: u64 = s
-            .trim_end_matches('d')
-            .parse()
-            .unwrap_or(default_secs / 86400);
-        let secs = n * 86400;
-        quote! { std::time::Duration::from_secs(#secs) }
-    } else {
+    let invalid = || {
         let msg = format!(
             "invalid duration \"{}\": use a suffix like \"30s\", \"5m\", or \"1h\"",
             s
         );
         quote! { compile_error!(#msg) }
+    };
+
+    if let Some(num) = s.strip_suffix("ms") {
+        match num.parse::<u64>() {
+            Ok(n) => quote! { std::time::Duration::from_millis(#n) },
+            Err(_) => invalid(),
+        }
+    } else if let Some(num) = s.strip_suffix('s') {
+        match num.parse::<u64>() {
+            Ok(n) => quote! { std::time::Duration::from_secs(#n) },
+            Err(_) => invalid(),
+        }
+    } else if let Some(num) = s.strip_suffix('m') {
+        match num.parse::<u64>() {
+            Ok(n) => {
+                let secs = n * 60;
+                quote! { std::time::Duration::from_secs(#secs) }
+            }
+            Err(_) => invalid(),
+        }
+    } else if let Some(num) = s.strip_suffix('h') {
+        match num.parse::<u64>() {
+            Ok(n) => {
+                let secs = n * 3600;
+                quote! { std::time::Duration::from_secs(#secs) }
+            }
+            Err(_) => invalid(),
+        }
+    } else if let Some(num) = s.strip_suffix('d') {
+        match num.parse::<u64>() {
+            Ok(n) => {
+                let secs = n * 86400;
+                quote! { std::time::Duration::from_secs(#secs) }
+            }
+            Err(_) => invalid(),
+        }
+    } else {
+        let _ = default_secs;
+        invalid()
     }
 }
 
@@ -171,6 +185,26 @@ pub fn find_attr_key(attr_str: &str, key: &str) -> Option<usize> {
     }
 
     None
+}
+
+/// Parse a `tables = ["foo", "bar"]` array attribute. Returns the trimmed,
+/// non-empty list of literals when the key is found and well-formed.
+pub fn parse_tables_attr(attr_str: &str) -> Option<Vec<String>> {
+    let key_start = find_attr_key(attr_str, "tables")?;
+    let bracket_start = attr_str[key_start..].find('[')?;
+    let remaining = &attr_str[key_start + bracket_start + 1..];
+    let bracket_end = remaining.find(']')?;
+    let tables_str = &remaining[..bracket_end];
+    let tables: Vec<String> = tables_str
+        .split(',')
+        .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if tables.is_empty() {
+        None
+    } else {
+        Some(tables)
+    }
 }
 
 /// Parse a named attribute value, supporting quoted strings or bare tokens.
@@ -325,6 +359,58 @@ pub fn validate_attr_keys(attr_str: &str, allowed: &[&str], macro_name: &str) ->
         return Err(syn::Error::new(proc_macro2::Span::call_site(), msg));
     }
     Ok(())
+}
+
+/// Returns true when the type's leaf path segment is a Rust primitive scalar,
+/// `String`, `&str`, or a standard collection wrapper that should not be
+/// passed through as a single args struct.
+///
+/// Used by query/mutation/mcp_tool macros to decide whether a single non-context
+/// argument should be passed through directly (custom struct) or wrapped into a
+/// generated args struct (primitive or collection of primitives).
+pub fn is_primitive_arg_type(ty: &syn::Type) -> bool {
+    use syn::Type;
+
+    // References to primitives like &str count as primitive.
+    if let Type::Reference(r) = ty {
+        return is_primitive_arg_type(&r.elem);
+    }
+
+    let Type::Path(type_path) = ty else {
+        return false;
+    };
+
+    let Some(segment) = type_path.path.segments.last() else {
+        return false;
+    };
+
+    let name = segment.ident.to_string();
+    matches!(
+        name.as_str(),
+        "i8" | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+            | "f32"
+            | "f64"
+            | "bool"
+            | "char"
+            | "String"
+            | "str"
+            | "Vec"
+            | "Option"
+            | "HashMap"
+            | "BTreeMap"
+            | "HashSet"
+            | "BTreeSet"
+    )
 }
 
 /// Reject use of attribute keys that are reserved for future Forge releases.

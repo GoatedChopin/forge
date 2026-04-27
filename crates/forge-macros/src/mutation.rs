@@ -4,8 +4,8 @@ use quote::quote;
 use syn::{FnArg, ItemFn, Pat, ReturnType, Type, parse_macro_input};
 
 use crate::utils::{
-    has_attr_flag, parse_attr_value, parse_duration_secs, parse_size_bytes, reject_reserved_keys,
-    to_pascal_case, validate_attr_keys,
+    has_attr_flag, parse_attr_value, parse_duration_secs, parse_size_bytes, parse_tables_attr,
+    reject_reserved_keys, to_pascal_case, validate_attr_keys,
 };
 
 const ALLOWED_MUTATION_KEYS: &[&str] = &[
@@ -245,43 +245,16 @@ fn parse_mutation_attrs(attr: TokenStream) -> Result<MutationAttrs, syn::Error> 
         }
     }
 
-    if let Some(log_start) = attr_str.find("log") {
-        // Make sure it's not part of another word
-        let before = if log_start > 0 {
-            attr_str.chars().nth(log_start - 1)
-        } else {
-            None
-        };
-        if (before.is_none() || !before.unwrap().is_alphanumeric())
-            && let Some(quote_start) = attr_str[log_start..].find('"')
-        {
-            let after_quote = &attr_str[log_start + quote_start + 1..];
-            if let Some(quote_end) = after_quote.find('"') {
-                let level = &after_quote[..quote_end];
-                attrs.log_level = Some(level.to_string());
-            }
-        }
+    if let Some(level) = parse_attr_value(&attr_str, "log") {
+        attrs.log_level = Some(level);
     }
 
     if let Some(size_str) = parse_attr_value(&attr_str, "max_size") {
         attrs.max_upload_size_bytes = parse_size_bytes(&size_str);
     }
 
-    if let Some(tables_start) = attr_str.find("tables")
-        && let Some(bracket_start) = attr_str[tables_start..].find('[')
-    {
-        let remaining = &attr_str[tables_start + bracket_start + 1..];
-        if let Some(bracket_end) = remaining.find(']') {
-            let tables_str = &remaining[..bracket_end];
-            let tables: Vec<String> = tables_str
-                .split(',')
-                .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
-            if !tables.is_empty() {
-                attrs.tables = Some(tables);
-            }
-        }
+    if let Some(tables) = parse_tables_attr(&attr_str) {
+        attrs.tables = Some(tables);
     }
 
     Ok(attrs)
@@ -440,9 +413,9 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
         }
     };
 
-    // Generate timeout option
+    // Generate timeout option as Duration so all handler Info structs agree.
     let timeout = match attrs.timeout {
-        Some(t) => quote! { Some(#t) },
+        Some(t) => quote! { Some(::std::time::Duration::from_secs(#t)) },
         None => quote! { None },
     };
     let http_timeout = timeout.clone();
@@ -485,29 +458,15 @@ fn expand_mutation_impl(input: ItemFn, attrs: MutationAttrs) -> syn::Result<Toke
     let transactional = attrs.transactional;
     let is_public = attrs.is_public;
 
-    // Check if we have a single custom args type (user-defined struct)
-    // In this case, use it directly instead of wrapping it
+    // A single non-primitive struct argument is passed through to the handler
+    // as the args type directly. Primitives and collections get wrapped in a
+    // generated #StructNameArgs struct so RPC payloads stay JSON-named.
     let single_custom_args_type: Option<&Type> = if arg_params.len() == 1 {
         if let FnArg::Typed(pat_type) = &arg_params[0] {
-            // Check if it's a custom type (not a primitive)
-            if let Type::Path(type_path) = &*pat_type.ty {
-                if let Some(segment) = type_path.path.segments.last() {
-                    // Use the user's type directly if it looks like a custom Args/Input struct
-                    let type_name = segment.ident.to_string();
-                    if type_name.ends_with("Args")
-                        || type_name.contains("Args")
-                        || type_name.ends_with("Input")
-                        || type_name.contains("Input")
-                    {
-                        Some(&*pat_type.ty)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
+            if crate::utils::is_primitive_arg_type(&pat_type.ty) {
                 None
+            } else {
+                Some(&*pat_type.ty)
             }
         } else {
             None

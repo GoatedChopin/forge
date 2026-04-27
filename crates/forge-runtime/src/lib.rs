@@ -24,6 +24,7 @@ pub mod function;
 pub mod migrations;
 pub mod observability;
 pub mod rate_limit;
+pub(crate) mod stable_hash;
 pub mod testing;
 
 // Optional subsystems

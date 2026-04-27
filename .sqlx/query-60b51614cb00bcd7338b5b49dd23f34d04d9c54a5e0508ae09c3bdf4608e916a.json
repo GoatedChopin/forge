@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "DELETE FROM forge_refresh_tokens WHERE token_hash = $1 AND expires_at > now() AND client_id IS NULL RETURNING user_id, token_family",
+  "query": "DELETE FROM forge_refresh_tokens WHERE token_hash = $1 AND expires_at > now() AND client_id IS NULL RETURNING user_id, token_family, roles",
   "describe": {
     "columns": [
       {
@@ -12,6 +12,11 @@
         "ordinal": 1,
         "name": "token_family",
         "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "roles",
+        "type_info": "TextArray"
       }
     ],
     "parameters": {
@@ -21,8 +26,9 @@
     },
     "nullable": [
       false,
+      false,
       false
     ]
   },
-  "hash": "acae2f5bf15424f1353682f21daf61501d0353deb4da5256627b05ae2d23ed52"
+  "hash": "60b51614cb00bcd7338b5b49dd23f34d04d9c54a5e0508ae09c3bdf4608e916a"
 }

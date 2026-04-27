@@ -488,9 +488,9 @@ pub struct NewCommand {
     #[arg(long)]
     pub no_lock: bool,
 
-    /// Skip interactive skill installer prompts. Only used in project mode.
-    #[arg(long)]
-    pub include_skill: bool,
+    /// Auto-accept skill installer prompts (non-interactive). Only used in project mode.
+    #[arg(short = 'y', long)]
+    pub yes: bool,
 }
 
 const NEW_AFTER_HELP: &str = r#"TEMPLATES:
@@ -562,7 +562,7 @@ impl NewCommand {
         if !self.no_lock {
             generate_cargo_lockfile(path, template.frontend)?;
         }
-        install_skill(path, self.include_skill).await?;
+        install_skill(path, self.yes).await?;
 
         if is_git_available() {
             init_git_repo(path)?;

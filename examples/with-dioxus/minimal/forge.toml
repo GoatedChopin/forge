@@ -14,8 +14,9 @@ url = "${DATABASE_URL}"
 
 [gateway]
 port = 9081
-# host = "0.0.0.0"
 cors_origins = ["http://localhost:9080", "http://127.0.0.1:9080"]
+# request_timeout = "30s"
+# max_body_size = "10mb"
 # quiet_paths = ["/_api/health", "/_api/ready"]  # Routes excluded from traces/metrics/logs
 
 [observability]
@@ -28,13 +29,14 @@ otlp_endpoint = "http://localhost:4318"
 # sampling_ratio = 1.0                      # trace sampling (0.0-1.0), lower = less storage
 
 # [function]
-# default_timeout = 30  # seconds
-# cache_enabled = true
+# max_concurrent = 100   # max in-flight RPCs
+# timeout = "30s"
+# memory_limit = "512mb"
 
 # [worker]
-# enabled = true
-# concurrency = 4       # max concurrent jobs
-# poll_interval = 1000  # milliseconds
+# max_concurrent_jobs = 4
+# job_timeout = "5m"
+# poll_interval = "1s"
 
 # [auth]
 # jwt_algorithm = "HS256"           # HS256, HS384, HS512, RS256, RS384, RS512
@@ -46,16 +48,15 @@ otlp_endpoint = "http://localhost:4318"
 # jwks_url = ""                     # Provider JWKS URLs: see auth reference docs
 
 # [rate_limit]
-# enabled = true
-# requests = 100
-# per = "1m"
-# key = "user"  # user, ip, tenant, user_action, global
+# mode = "local"            # local, distributed
+# max_local_buckets = 10000
 
 # [cluster]
-# enabled = true
+# name = "node-1"            # auto-generated if omitted
+# discovery = "static"       # static, dns
 # heartbeat_interval = "5s"
-# leader_election_timeout = "30s"
-# node_name = "node-1"  # Optional, auto-generated if not set
+# dead_threshold = "30s"
+# seed_nodes = ["node-2:9081", "node-3:9081"]
 
 # [node]
 # roles = ["gateway", "function", "worker", "scheduler"]

@@ -47,6 +47,7 @@ fn make_signals_state(pool: &PgPool) -> Arc<SignalsState> {
         server_secret: "test-secret".to_string(),
         anonymize_ip: false,
         geoip: None,
+        rate_limiter: Arc::new(crate::signals::rate_limit::SignalRateLimiter::new()),
     })
 }
 

@@ -371,13 +371,8 @@ impl Reactor {
     }
 
     fn compute_hash(data: &serde_json::Value) -> String {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
         let json = serde_json::to_string(data).unwrap_or_default();
-        let mut hasher = DefaultHasher::new();
-        json.hash(&mut hasher);
-        format!("{:x}", hasher.finish())
+        crate::stable_hash::sha256_hex(json.as_bytes())
     }
 
     /// Parallel group re-execution with bounded concurrency.
@@ -449,18 +444,31 @@ impl Reactor {
         db_pool: &sqlx::PgPool,
         max_concurrent: usize,
     ) {
-        // Collect group data we need for re-execution
+        // Collect group data we need for re-execution. Skip groups whose
+        // cached auth context has an expired JWT — re-running the query would
+        // either leak fresh data past an expired session or get torn down by
+        // `try_send_to_session`'s own expiry check anyway. Cheaper to filter
+        // here and let session eviction reclaim the subscription via the
+        // existing cleanup paths.
         let groups_to_process: Vec<_> = group_ids
             .iter()
             .filter_map(|gid| {
-                subscription_manager.get_group(*gid).map(|g| {
-                    (
-                        g.id,
-                        g.query_name.clone(),
-                        (*g.args).clone(),
-                        g.last_result_hash.clone(),
-                        g.auth_context.clone(),
-                    )
+                subscription_manager.get_group(*gid).and_then(|g| {
+                    if g.auth_context.token_is_expired() {
+                        tracing::debug!(
+                            group_id = ?g.id,
+                            "Skipping reactor re-execute: cached auth token expired"
+                        );
+                        None
+                    } else {
+                        Some((
+                            g.id,
+                            g.query_name.clone(),
+                            (*g.args).clone(),
+                            g.last_result_hash.clone(),
+                            g.auth_context.clone(),
+                        ))
+                    }
                 })
             })
             .collect();

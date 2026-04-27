@@ -434,6 +434,10 @@ CREATE TABLE IF NOT EXISTS forge_refresh_tokens (
     token_hash  TEXT NOT NULL UNIQUE,
     client_id   TEXT,
     token_family UUID NOT NULL DEFAULT gen_random_uuid(),
+    -- Roles snapshot at sign-in. Carried forward on rotation so refreshes
+    -- never silently downgrade or escalate; new roles take effect at next
+    -- sign-in, which matches the session-bounded security model.
+    roles       TEXT[] NOT NULL DEFAULT '{}',
     expires_at  TIMESTAMPTZ NOT NULL,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );

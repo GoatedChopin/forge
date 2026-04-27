@@ -173,9 +173,6 @@ impl FunctionRouter {
     ) -> Result<RouteResult> {
         if let Some(entry) = self.registry.get(function_name) {
             self.check_auth(entry.info(), &auth)?;
-            if !entry.info().is_public {
-                self.verify_user_exists(&auth).await?;
-            }
             self.check_rate_limit(entry.info(), function_name, &auth, &request)
                 .await?;
 
@@ -232,7 +229,7 @@ impl FunctionRouter {
                             ctx.set_token_issuer(issuer.clone());
                         }
                         ctx.set_token_ttl(self.token_ttl.clone());
-                        ctx.set_http_timeout(info.http_timeout.map(Duration::from_secs));
+                        ctx.set_http_timeout(info.http_timeout);
                         let result = handler(&ctx, args).await?;
                         Ok(RouteResult::Mutation(result))
                     }
@@ -287,26 +284,6 @@ impl FunctionRouter {
             auth,
             &self.role_resolver,
         )
-    }
-
-    /// Verify that the authenticated user still exists in the database.
-    /// Tokens remain valid after a user is deleted; this catches that case
-    /// and returns 401 so the frontend can clear the stale session.
-    async fn verify_user_exists(&self, auth: &AuthContext) -> Result<()> {
-        let user_id = match auth.user_id() {
-            Some(id) => id,
-            None => return Ok(()),
-        };
-        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)")
-            .bind(user_id)
-            .fetch_one(self.db.read_pool())
-            .await
-            .unwrap_or(false);
-
-        if !exists {
-            return Err(ForgeError::Unauthorized("User no longer exists".into()));
-        }
-        Ok(())
     }
 
     fn check_job_auth(&self, info: &forge_core::job::JobInfo, auth: &AuthContext) -> Result<()> {
@@ -388,23 +365,21 @@ impl FunctionRouter {
             claims.insert(k.clone(), v.clone());
         }
 
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-        roles.hash(&mut hasher);
-        serde_json::to_string(&claims)
-            .unwrap_or_default()
-            .hash(&mut hasher);
+        let claims_json = serde_json::to_string(&claims).unwrap_or_default();
+        let mut buf = String::with_capacity(64 + claims_json.len());
+        for role in &roles {
+            buf.push_str(role);
+            buf.push('\x1f');
+        }
+        buf.push('\x1e');
+        buf.push_str(&claims_json);
+        let scope = crate::stable_hash::stable_u64(buf.as_bytes());
 
         let principal = auth
             .principal_id()
             .unwrap_or_else(|| "authenticated".to_string());
 
-        Some(format!(
-            "subject:{principal}:scope:{:016x}",
-            hasher.finish()
-        ))
+        Some(format!("subject:{principal}:scope:{scope:016x}"))
     }
 
     /// Get the function kind by name.
@@ -450,7 +425,7 @@ impl FunctionRouter {
                 ctx.set_token_issuer(issuer.clone());
             }
             ctx.set_token_ttl(self.token_ttl.clone());
-            ctx.set_http_timeout(info.http_timeout.map(Duration::from_secs));
+            ctx.set_http_timeout(info.http_timeout);
 
             match handler(&ctx, args).await {
                 Ok(value) => {
@@ -463,10 +438,7 @@ impl FunctionRouter {
                             tracing::error!("Outbox mutex was poisoned, recovering");
                             poisoned.into_inner()
                         });
-                        OutboxBuffer {
-                            jobs: guard.jobs.clone(),
-                            workflows: guard.workflows.clone(),
-                        }
+                        OutboxBuffer::new(guard.jobs.clone(), guard.workflows.clone())
                     };
 
                     let mut tx = Arc::try_unwrap(tx_handle)

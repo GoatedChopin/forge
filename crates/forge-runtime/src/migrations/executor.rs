@@ -156,30 +156,23 @@ pub struct AppliedMigration {
     pub execution_time_ms: Option<i32>,
 }
 
-/// Calculate a SHA256 checksum of the migration content.
+/// Calculate a SHA-256 checksum of the migration content.
 fn calculate_checksum(content: &str) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    let mut hasher = DefaultHasher::new();
-    content.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
+    crate::stable_hash::sha256_hex(content.as_bytes())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_checksum() {
+    #[tokio::test]
+    async fn test_checksum() {
         let checksum = calculate_checksum("CREATE TABLE users (id UUID);");
-        assert_eq!(checksum.len(), 16);
+        assert_eq!(checksum.len(), 64);
 
-        // Same content should produce same checksum
         let checksum2 = calculate_checksum("CREATE TABLE users (id UUID);");
         assert_eq!(checksum, checksum2);
 
-        // Different content should produce different checksum
         let checksum3 = calculate_checksum("CREATE TABLE posts (id UUID);");
         assert_ne!(checksum, checksum3);
     }

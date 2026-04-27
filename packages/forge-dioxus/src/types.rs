@@ -153,7 +153,6 @@ pub enum JobStatus {
     DeadLetter,
     CancelRequested,
     Cancelled,
-    NotFound,
 }
 
 impl Default for JobStatus {
@@ -212,7 +211,11 @@ pub enum WorkflowStatus {
     Compensating,
     Compensated,
     Failed,
-    NotFound,
+    BlockedMissingVersion,
+    BlockedSignatureMismatch,
+    BlockedMissingHandler,
+    RetiredUnresumable,
+    CancelledByOperator,
 }
 
 impl Default for WorkflowStatus {
@@ -463,7 +466,14 @@ mod tests {
     #[test]
     fn job_and_workflow_status_serialize_in_snake_case() {
         assert_eq!(serde_json::to_string(&JobStatus::CancelRequested).unwrap(), "\"cancel_requested\"");
-        assert_eq!(serde_json::to_string(&WorkflowStatus::NotFound).unwrap(), "\"not_found\"");
+        assert_eq!(
+            serde_json::to_string(&WorkflowStatus::BlockedMissingVersion).unwrap(),
+            "\"blocked_missing_version\""
+        );
+        assert_eq!(
+            serde_json::to_string(&WorkflowStatus::CancelledByOperator).unwrap(),
+            "\"cancelled_by_operator\""
+        );
     }
 
     #[test]

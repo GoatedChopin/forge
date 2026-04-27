@@ -63,6 +63,18 @@ impl GenerateCommand {
         };
         eprintln!(" done");
 
+        if let Err(errors) = forge_codegen::validate_registry(&registry) {
+            eprintln!();
+            eprintln!("  {} Unsupported types in handler signatures:", ui::error());
+            for msg in &errors {
+                eprintln!("    - {}", msg);
+            }
+            return Err(anyhow::anyhow!(
+                "Cannot generate bindings: {} unsupported type(s) found",
+                errors.len()
+            ));
+        }
+
         let has_schema = !registry.all_tables().is_empty()
             || !registry.all_enums().is_empty()
             || !registry.all_functions().is_empty();

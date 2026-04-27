@@ -370,7 +370,7 @@ The lifecycle is **deprecate → drain → remove**:
 3. Wait until the old version has zero in-flight runs (query `forge_workflow_runs` filtering by `workflow_name`, `workflow_version`, and a non-terminal status).
 4. Delete the old handler code and redeploy.
 
-The runtime defends step 4: at boot it scans `forge_workflow_runs` for non-terminal runs whose `(name, version)` tuple is no longer in the registry. If any are found, it logs a warning per stranded group and flips `/_api/ready` to `503` with `drain_pending > 0`. Boot still succeeds, so the node stays up but the load balancer rotates traffic away.
+The runtime defends step 4: at boot it scans `forge_workflow_runs` for non-terminal runs whose `(name, version)` tuple is no longer in the registry. If any are found, it logs a warning per stranded group and flips `/_api/ready` to `503` with `workflows: false`. Boot still succeeds, so the node stays up but the load balancer rotates traffic away. The exact count is logged but not exposed on the public probe (the response stays minimal so unauthenticated probes don't leak deployment state).
 
 To unblock the runtime, an operator clears the stuck rows directly in Postgres:
 

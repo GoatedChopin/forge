@@ -321,7 +321,7 @@ Both back the same `RateLimiterBackend` trait, so SDK consumers can plug in thei
 
 ### Workflow Drain on Boot
 
-When you remove a deprecated workflow version's code and redeploy, the new binary won't have a handler for any in-flight runs of that version. The runtime detects this at boot, logs a warning per stranded `(name, version)` group, and flips `/_api/ready` to `503` with `drain_pending > 0`. Boot still succeeds; the node stays up but the load balancer rotates traffic away until the drain count returns to zero.
+When you remove a deprecated workflow version's code and redeploy, the new binary won't have a handler for any in-flight runs of that version. The runtime detects this at boot, logs a warning per stranded `(name, version)` group, and flips `/_api/ready` to `503` with `workflows: false` until the stranded runs clear. The exact drain count is intentionally absent from the public probe payload — load balancers don't need it, and an unauthenticated probe shouldn't leak deployment state. Read the warning logs or query `forge_workflow_runs` directly when investigating.
 
 Operators clear stuck runs directly in Postgres (no admin HTTP surface):
 

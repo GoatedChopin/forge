@@ -9,6 +9,10 @@ use crate::error::{ForgeError, Result};
 use crate::metadata::HandlerMetadata;
 
 /// Icon metadata exposed for an MCP tool.
+///
+/// Constructed by the `#[mcp_tool]` macro (or by the runtime when emitting
+/// `tools/list`). Adding a field is breaking for hand-written `ForgeMcpTool`
+/// impls; stage extensions through a major bump.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct McpToolIcon {
     pub src: &'static str,
@@ -21,6 +25,9 @@ pub struct McpToolIcon {
 }
 
 /// Tool behavior annotations exposed to clients.
+///
+/// Constructed by the `#[mcp_tool]` macro. Adding a field is breaking for
+/// hand-written `ForgeMcpTool` impls; stage extensions through a major bump.
 #[derive(Debug, Clone, Copy, Serialize, Default)]
 pub struct McpToolAnnotations {
     #[serde(skip_serializing_if = "Option::is_none")]

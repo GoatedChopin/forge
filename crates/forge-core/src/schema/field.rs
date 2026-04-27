@@ -40,19 +40,6 @@ impl FieldDef {
             doc: None,
         }
     }
-
-    pub fn to_typescript(&self) -> String {
-        let (ts_type, optional) = if self.nullable {
-            let inner_type = match &self.rust_type {
-                super::types::RustType::Option(inner) => inner.to_typescript(),
-                other => other.to_typescript(),
-            };
-            (inner_type, "?")
-        } else {
-            (self.rust_type.to_typescript(), "")
-        };
-        format!("  {}{}: {};", self.name, optional, ts_type)
-    }
 }
 
 use crate::util::to_snake_case;

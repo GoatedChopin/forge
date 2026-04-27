@@ -370,7 +370,6 @@ impl FunctionExecutor {
         self.registry
             .get(function_name)
             .and_then(|entry| entry.info().timeout)
-            .map(Duration::from_secs)
             .unwrap_or(self.default_timeout)
     }
 

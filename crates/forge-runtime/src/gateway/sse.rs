@@ -762,14 +762,33 @@ pub async fn sse_subscribe_handler(
 
     match result {
         Ok((subscription_id, data)) => {
-            // Store the subscription mapping
+            // Store the subscription mapping. The session may have been evicted
+            // while `reactor.subscribe` was running (long-running query, slow
+            // auth check); if so the subscription is now orphaned in the
+            // reactor and session_server, so we have to unsubscribe before
+            // returning. We also re-check the per-session subscription limit:
+            // concurrent subscribe calls can each pass the pre-call limit
+            // check, so the post-call check is the actual enforcement point.
             let mut sessions = state.sessions.write().await;
             match sessions.get_mut(&session_id) {
                 Some(session) => {
+                    if session.subscriptions.len() >= state.config.max_subscriptions_per_session {
+                        drop(sessions);
+                        state.reactor.unsubscribe(subscription_id);
+                        return subscribe_error(
+                            StatusCode::TOO_MANY_REQUESTS,
+                            "TOO_MANY_SUBSCRIPTIONS",
+                            format!(
+                                "Session has reached the maximum of {} subscriptions",
+                                state.config.max_subscriptions_per_session
+                            ),
+                        );
+                    }
                     session.subscriptions.insert(request.id, subscription_id);
                 }
                 None => {
-                    // Session was removed between read and write lock
+                    drop(sessions);
+                    state.reactor.unsubscribe(subscription_id);
                     return subscribe_error(
                         StatusCode::NOT_FOUND,
                         "SESSION_NOT_FOUND",

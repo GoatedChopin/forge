@@ -37,6 +37,7 @@ pub trait ForgeWorkflow: crate::__sealed::Sealed + Send + Sync + 'static {
 /// `Deprecated` versions are kept alive only to drain in-flight runs.
 /// `Staging` versions accept no new runs and are skipped during drain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum WorkflowDefStatus {
     /// This version accepts new runs (at most one per workflow name).
     #[default]

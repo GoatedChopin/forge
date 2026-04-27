@@ -16,6 +16,7 @@ const ALLOWED_WORKFLOW_KEYS: &[&str] = &[
     "public",
     "active",
     "deprecated",
+    "status",
     "require_role",
 ];
 
@@ -181,7 +182,7 @@ impl Default for WorkflowAttrs {
     }
 }
 
-fn parse_workflow_attrs(attr: TokenStream) -> WorkflowAttrs {
+fn parse_workflow_attrs(attr: TokenStream) -> Result<WorkflowAttrs, syn::Error> {
     let mut result = WorkflowAttrs::default();
     let attr_str = attr.to_string();
 
@@ -202,17 +203,43 @@ fn parse_workflow_attrs(attr: TokenStream) -> WorkflowAttrs {
     }
 
     // status = "active" | "deprecated" | "staging"
+    let has_status_value = parse_attr_value(&attr_str, "status").is_some();
     if let Some(s) = parse_attr_value(&attr_str, "status") {
         match s.as_str() {
             "active" => result.status = WorkflowStatus::Active,
             "deprecated" => result.status = WorkflowStatus::Deprecated,
             "staging" => result.status = WorkflowStatus::Staging,
-            _ => {} // validated later at the expansion site
+            other => {
+                return Err(syn::Error::new(
+                    proc_macro2::Span::call_site(),
+                    format!(
+                        "invalid workflow status \"{other}\": expected one of \"active\", \"deprecated\", \"staging\""
+                    ),
+                ));
+            }
         }
-    } else if has_attr_flag(&attr_str, "active") {
-        result.status = WorkflowStatus::Active;
-    } else if has_attr_flag(&attr_str, "deprecated") {
-        result.status = WorkflowStatus::Deprecated;
+    }
+
+    let active_flag = has_attr_flag(&attr_str, "active");
+    let deprecated_flag = has_attr_flag(&attr_str, "deprecated");
+    if has_status_value && (active_flag || deprecated_flag) {
+        return Err(syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "use either `status = \"...\"` or the legacy `active`/`deprecated` flag, not both",
+        ));
+    }
+    if active_flag && deprecated_flag {
+        return Err(syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "workflow cannot be both `active` and `deprecated`",
+        ));
+    }
+    if !has_status_value {
+        if active_flag {
+            result.status = WorkflowStatus::Active;
+        } else if deprecated_flag {
+            result.status = WorkflowStatus::Deprecated;
+        }
     }
 
     if let Some(role_start) = attr_str.find("require_role")
@@ -225,7 +252,7 @@ fn parse_workflow_attrs(attr: TokenStream) -> WorkflowAttrs {
         }
     }
 
-    result
+    Ok(result)
 }
 
 /// Extract step and wait keys from the workflow function body for signature derivation.
@@ -334,9 +361,10 @@ pub fn workflow_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
         return e.to_compile_error().into();
     }
 
-    let attrs = parse_workflow_attrs(attr);
-
-    // No invalid combination check needed — WorkflowStatus is an enum, mutually exclusive by design.
+    let attrs = match parse_workflow_attrs(attr) {
+        Ok(attrs) => attrs,
+        Err(e) => return e.to_compile_error().into(),
+    };
 
     let fn_name = &input.sig.ident;
     let fn_name_str = fn_name.to_string();

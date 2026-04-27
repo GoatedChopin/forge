@@ -973,8 +973,10 @@ pub(crate) fn default_true() -> bool {
     true
 }
 
+/// Default trace sampling ratio. Conservative 10% for production-friendly
+/// storage and ingest costs. Bump to 1.0 in development to inspect every span.
 fn default_sampling_ratio() -> f64 {
-    1.0
+    0.1
 }
 
 fn default_metrics_interval() -> String {
@@ -1254,6 +1256,7 @@ pub enum RateLimitMode {
 
 /// `[rate_limit]` configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RateLimitSettings {
     /// Rate-limiter mode. Defaults to `hybrid`.
     #[serde(default)]

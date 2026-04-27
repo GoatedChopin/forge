@@ -136,14 +136,16 @@ async fn issue_token_in_family(
     let refresh_hash = hash_token(&refresh_raw);
     let expires_at = chrono::Utc::now() + chrono::Duration::days(refresh_token_ttl_days);
 
+    let roles_owned: Vec<String> = roles.iter().map(|s| s.to_string()).collect();
     sqlx::query!(
-        "INSERT INTO forge_refresh_tokens (user_id, token_hash, client_id, expires_at, token_family) \
-         VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO forge_refresh_tokens (user_id, token_hash, client_id, expires_at, token_family, roles) \
+         VALUES ($1, $2, $3, $4, $5, $6)",
         user_id,
         &refresh_hash,
         client_id,
         expires_at,
         family,
+        &roles_owned,
     )
     .execute(pool)
     .await
@@ -156,10 +158,13 @@ async fn issue_token_in_family(
 }
 
 /// Rotate a refresh token: validate expiry, delete the old one, issue a new pair.
+///
+/// Roles are carried forward from the old token row — the rotated token has
+/// the exact same role set as the original sign-in. New role grants only take
+/// effect at next sign-in.
 pub async fn rotate_refresh_token(
     pool: &sqlx::PgPool,
     old_refresh_token: &str,
-    roles: &[&str],
     access_token_ttl_secs: i64,
     refresh_token_ttl_days: i64,
     issue_access_fn: impl FnOnce(Uuid, &[&str], i64) -> Result<String>,
@@ -167,7 +172,6 @@ pub async fn rotate_refresh_token(
     rotate_refresh_token_with_client(
         pool,
         old_refresh_token,
-        roles,
         access_token_ttl_secs,
         refresh_token_ttl_days,
         None,
@@ -179,7 +183,8 @@ pub async fn rotate_refresh_token(
 /// Rotate a refresh token with OAuth client binding validation.
 ///
 /// When `client_id` is `Some`, the token must be bound to that client.
-/// The new token is issued in the same family as the old one.
+/// The new token is issued in the same family as the old one and inherits
+/// its roles.
 ///
 /// ## Chain reuse detection
 ///
@@ -191,7 +196,6 @@ pub async fn rotate_refresh_token(
 pub async fn rotate_refresh_token_with_client(
     pool: &sqlx::PgPool,
     old_refresh_token: &str,
-    roles: &[&str],
     access_token_ttl_secs: i64,
     refresh_token_ttl_days: i64,
     client_id: Option<&str>,
@@ -199,8 +203,8 @@ pub async fn rotate_refresh_token_with_client(
 ) -> Result<TokenPair> {
     let hash = hash_token(old_refresh_token);
 
-    // Atomically delete the token if valid, returning the family so the new
-    // token is issued in the same chain.
+    // Atomically delete the token if valid, returning the family + roles so
+    // the new token is issued in the same chain with the same role set.
     //
     // When client_id is provided, require exact match. When omitted, only
     // allow rotation of tokens that were NOT bound to any client (prevents
@@ -208,13 +212,14 @@ pub async fn rotate_refresh_token_with_client(
     struct TokenRow {
         user_id: Uuid,
         token_family: Uuid,
+        roles: Vec<String>,
     }
 
     let row = if let Some(cid) = client_id {
         sqlx::query!(
             "DELETE FROM forge_refresh_tokens \
              WHERE token_hash = $1 AND expires_at > now() AND client_id = $2 \
-             RETURNING user_id, token_family",
+             RETURNING user_id, token_family, roles",
             hash,
             cid
         )
@@ -224,13 +229,14 @@ pub async fn rotate_refresh_token_with_client(
             r.map(|r| TokenRow {
                 user_id: r.user_id,
                 token_family: r.token_family,
+                roles: r.roles,
             })
         })
     } else {
         sqlx::query!(
             "DELETE FROM forge_refresh_tokens \
              WHERE token_hash = $1 AND expires_at > now() AND client_id IS NULL \
-             RETURNING user_id, token_family",
+             RETURNING user_id, token_family, roles",
             hash
         )
         .fetch_optional(pool)
@@ -239,6 +245,7 @@ pub async fn rotate_refresh_token_with_client(
             r.map(|r| TokenRow {
                 user_id: r.user_id,
                 token_family: r.token_family,
+                roles: r.roles,
             })
         })
     }
@@ -246,10 +253,11 @@ pub async fn rotate_refresh_token_with_client(
 
     match row {
         Some(token) => {
+            let roles_refs: Vec<&str> = token.roles.iter().map(String::as_str).collect();
             issue_token_in_family(
                 pool,
                 token.user_id,
-                roles,
+                &roles_refs,
                 access_token_ttl_secs,
                 refresh_token_ttl_days,
                 client_id,

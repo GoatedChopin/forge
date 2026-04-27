@@ -30,6 +30,7 @@ use uuid::Uuid;
 use super::bot;
 use super::collector::SignalsCollector;
 use super::device;
+use super::rate_limit::SignalRateLimiter;
 use super::session;
 use super::visitor;
 
@@ -58,6 +59,29 @@ pub struct SignalsState {
     pub anonymize_ip: bool,
     /// Optional GeoIP resolver for country code lookups from client IP.
     pub geoip: Option<super::geoip::GeoIpResolver>,
+    /// Per-IP fixed-window limiter shared across all signal endpoints.
+    pub rate_limiter: Arc<SignalRateLimiter>,
+}
+
+/// Resolve the client IP from request extras for rate limiting. Falls back
+/// to header parsing for cases where the resolve_client_ip middleware did
+/// not run (tests, edge configurations).
+fn resolve_rate_limit_ip(
+    resolved_ip: &Option<axum::Extension<crate::gateway::ResolvedClientIp>>,
+    headers: &HeaderMap,
+) -> Option<String> {
+    resolved_ip
+        .as_ref()
+        .and_then(|r| r.0.0.clone())
+        .or_else(|| extract_client_ip(headers))
+}
+
+/// Build a 429 response when the per-IP signal quota is exhausted.
+fn rate_limited_response() -> Json<SignalResponse> {
+    Json(SignalResponse {
+        ok: false,
+        session_id: None,
+    })
 }
 
 /// POST /signal/event -- batch custom events.
@@ -75,10 +99,11 @@ pub async fn event_handler(
         });
     }
     if batch.events.len() > MAX_BATCH_SIZE {
-        return Json(SignalResponse {
-            ok: false,
-            session_id: None,
-        });
+        return rate_limited_response();
+    }
+    let limiter_ip = resolve_rate_limit_ip(&resolved_ip, &headers);
+    if !state.rate_limiter.check(limiter_ip.as_deref()) {
+        return rate_limited_response();
     }
 
     let ctx = extract_request_ctx(
@@ -163,6 +188,10 @@ pub async fn view_handler(
             ok: true,
             session_id: None,
         });
+    }
+    let limiter_ip = resolve_rate_limit_ip(&resolved_ip, &headers);
+    if !state.rate_limiter.check(limiter_ip.as_deref()) {
+        return rate_limited_response();
     }
     let ctx = extract_request_ctx(
         &headers,
@@ -259,6 +288,10 @@ pub async fn user_handler(
             session_id: None,
         });
     }
+    let limiter_ip = resolve_rate_limit_ip(&resolved_ip, &headers);
+    if !state.rate_limiter.check(limiter_ip.as_deref()) {
+        return rate_limited_response();
+    }
     let user_id = Uuid::parse_str(&payload.user_id).ok().or_else(|| {
         warn!(raw_id = %payload.user_id, "identify called with non-UUID user_id, ignoring");
         None
@@ -350,10 +383,11 @@ pub async fn report_handler(
     Json(report): Json<DiagnosticReport>,
 ) -> impl IntoResponse {
     if report.errors.len() > MAX_BATCH_SIZE {
-        return Json(SignalResponse {
-            ok: false,
-            session_id: None,
-        });
+        return rate_limited_response();
+    }
+    let limiter_ip = resolve_rate_limit_ip(&resolved_ip, &headers);
+    if !state.rate_limiter.check(limiter_ip.as_deref()) {
+        return rate_limited_response();
     }
 
     let ctx = extract_request_ctx(
@@ -445,10 +479,11 @@ pub async fn vital_handler(
         });
     }
     if batch.vitals.len() > MAX_BATCH_SIZE {
-        return Json(SignalResponse {
-            ok: false,
-            session_id: None,
-        });
+        return rate_limited_response();
+    }
+    let limiter_ip = resolve_rate_limit_ip(&resolved_ip, &headers);
+    if !state.rate_limiter.check(limiter_ip.as_deref()) {
+        return rate_limited_response();
     }
 
     let ctx = extract_request_ctx(

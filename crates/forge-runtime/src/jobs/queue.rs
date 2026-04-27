@@ -480,11 +480,16 @@ impl JobQueue {
             }
         }
 
-        let terminal_statuses = [
+        // Statuses where this call should be a no-op. Includes the four
+        // hard-terminal states plus `cancel_requested`: once a graceful cancel
+        // is in flight the worker (or `release_stale`) finalizes the job, and a
+        // second cancel must not race that by force-flipping to `cancelled`.
+        let noop_statuses = [
             JobStatus::Completed.as_str(),
             JobStatus::Failed.as_str(),
             JobStatus::DeadLetter.as_str(),
             JobStatus::Cancelled.as_str(),
+            JobStatus::CancelRequested.as_str(),
         ];
 
         if status == JobStatus::Running.as_str() {
@@ -507,7 +512,7 @@ impl JobQueue {
             return Ok(updated.rows_affected() > 0);
         }
 
-        if terminal_statuses.contains(&status.as_str()) {
+        if noop_statuses.contains(&status.as_str()) {
             return Ok(false);
         }
 
@@ -563,12 +568,38 @@ impl JobQueue {
         Ok(())
     }
 
-    /// Release stale jobs back to pending.
+    /// Release stale jobs back to pending — or finalize them as cancelled if a
+    /// cancellation was already in flight.
+    ///
+    /// Jobs with `cancel_requested_at` set are not re-queued: the worker either
+    /// already saw the cancel signal (in which case it'll write `cancelled`
+    /// itself) or died mid-cancel (in which case re-queuing would silently drop
+    /// the cancellation and double-fire any side effects). The latter case is
+    /// finalized to `cancelled` here so the job exits its lifecycle cleanly.
     pub async fn release_stale(
         &self,
         stale_threshold: chrono::Duration,
     ) -> Result<u64, sqlx::Error> {
-        let result = sqlx::query!(
+        let secs = stale_threshold.num_seconds() as f64;
+
+        let finalized = sqlx::query!(
+            r#"
+            UPDATE forge_jobs
+            SET
+                status = 'cancelled',
+                cancelled_at = NOW(),
+                cancel_reason = COALESCE(cancel_reason, 'worker died mid-cancel')
+            WHERE
+                cancel_requested_at IS NOT NULL
+                AND status IN ('claimed', 'running', 'cancel_requested')
+                AND COALESCE(last_heartbeat, started_at, claimed_at) < NOW() - make_interval(secs => $1)
+            "#,
+            secs,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        let reset = sqlx::query!(
             r#"
             UPDATE forge_jobs
             SET
@@ -578,21 +609,24 @@ impl JobQueue {
                 started_at = NULL,
                 last_heartbeat = NULL
             WHERE
-                (
-                    status = 'claimed'
-                    AND claimed_at < NOW() - make_interval(secs => $1)
-                )
-                OR (
-                    status = 'running'
-                    AND COALESCE(last_heartbeat, started_at, claimed_at) < NOW() - make_interval(secs => $1)
+                cancel_requested_at IS NULL
+                AND (
+                    (
+                        status = 'claimed'
+                        AND claimed_at < NOW() - make_interval(secs => $1)
+                    )
+                    OR (
+                        status = 'running'
+                        AND COALESCE(last_heartbeat, started_at, claimed_at) < NOW() - make_interval(secs => $1)
+                    )
                 )
             "#,
-            stale_threshold.num_seconds() as f64,
+            secs,
         )
         .execute(&self.pool)
         .await?;
 
-        Ok(result.rows_affected())
+        Ok(finalized.rows_affected() + reset.rows_affected())
     }
 
     /// Delete expired job records.

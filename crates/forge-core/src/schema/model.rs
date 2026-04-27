@@ -67,17 +67,6 @@ impl TableDef {
         }
     }
 
-    /// Generate TypeScript interface.
-    pub fn to_typescript_interface(&self) -> String {
-        let fields: Vec<String> = self.fields.iter().map(|f| f.to_typescript()).collect();
-
-        format!(
-            "export interface {} {{\n{}\n}}",
-            self.struct_name,
-            fields.join("\n")
-        )
-    }
-
     /// Get the fully qualified table name.
     pub fn qualified_name(&self) -> String {
         match &self.schema {
@@ -215,18 +204,6 @@ mod tests {
         table.fields.push(FieldDef::new("id", RustType::Uuid));
         table.fields.push(FieldDef::new("email", RustType::String));
         assert_eq!(table.fields.len(), 2);
-    }
-
-    #[test]
-    fn test_table_to_typescript() {
-        let mut table = TableDef::new("users", "User");
-        table.fields.push(FieldDef::new("id", RustType::Uuid));
-        table.fields.push(FieldDef::new("email", RustType::String));
-
-        let ts = table.to_typescript_interface();
-        assert!(ts.contains("export interface User"));
-        assert!(ts.contains("id: string"));
-        assert!(ts.contains("email: string"));
     }
 
     #[test]

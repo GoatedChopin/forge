@@ -35,8 +35,7 @@ export type JobStatus =
   | "failed"
   | "dead_letter"
   | "cancel_requested"
-  | "cancelled"
-  | "not_found";
+  | "cancelled";
 
 export interface JobState<TOutput = unknown> {
   jobId: string;
@@ -55,7 +54,11 @@ export type WorkflowStatus =
   | "compensating"
   | "compensated"
   | "failed"
-  | "not_found";
+  | "blocked_missing_version"
+  | "blocked_signature_mismatch"
+  | "blocked_missing_handler"
+  | "retired_unresumable"
+  | "cancelled_by_operator";
 
 export interface WorkflowStepState {
   name: string;
@@ -71,4 +74,15 @@ export interface WorkflowState<TOutput = unknown> {
   steps: WorkflowStepState[];
   output: TOutput | null;
   error: string | null;
+}
+
+/**
+ * Reactive wrapper around a one-shot mutation call. Mirrors the shape produced
+ * by the generated `toReactiveMutation()` helper so user components can type
+ * their `mutationFn$()` results without reaching into the generated module.
+ */
+export interface ReactiveMutation<TArgs, TResult> {
+  mutate: (args: TArgs) => Promise<TResult>;
+  pending: boolean;
+  error: ForgeError | null;
 }

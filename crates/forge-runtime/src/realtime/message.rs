@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
 use std::time::Duration;
 
 use dashmap::DashMap;
@@ -122,7 +122,13 @@ struct SessionEntry {
     sender: mpsc::Sender<RealtimeMessage>,
     subscriptions: Vec<SubscriptionId>,
     connected_at: chrono::DateTime<chrono::Utc>,
-    last_active: chrono::DateTime<chrono::Utc>,
+    /// Unix timestamp (seconds) of the last successful push to this session.
+    /// Stored atomically so `try_send_to_session` (which holds a shared
+    /// reference via `DashMap::get`) can refresh it without re-acquiring an
+    /// exclusive lock. `cleanup_stale` reads this to evict sessions that have
+    /// gone quiet — without the bump, eviction would key off connection age
+    /// alone and tear down healthy long-lived sessions.
+    last_active: AtomicI64,
     /// Consecutive failed try_send attempts. Resets on success.
     consecutive_drops: AtomicU32,
     /// JWT expiry as Unix timestamp. `None` for unauthenticated (anonymous) sessions.
@@ -176,7 +182,7 @@ impl SessionServer {
             sender,
             subscriptions: Vec::new(),
             connected_at: now,
-            last_active: now,
+            last_active: AtomicI64::new(now.timestamp()),
             consecutive_drops: AtomicU32::new(0),
             token_exp,
         };
@@ -258,6 +264,8 @@ impl SessionServer {
         match conn.sender.try_send(message) {
             Ok(()) => {
                 conn.consecutive_drops.store(0, Ordering::Relaxed);
+                conn.last_active
+                    .store(chrono::Utc::now().timestamp(), Ordering::Relaxed);
                 Ok(())
             }
             Err(mpsc::error::TrySendError::Full(_)) => {
@@ -348,13 +356,14 @@ impl SessionServer {
 
     /// Cleanup stale connections.
     pub fn cleanup_stale(&self, max_idle: Duration) {
-        let cutoff = chrono::Utc::now()
-            - chrono::Duration::from_std(max_idle).unwrap_or(chrono::TimeDelta::MAX);
+        let cutoff_ts = (chrono::Utc::now()
+            - chrono::Duration::from_std(max_idle).unwrap_or(chrono::TimeDelta::MAX))
+        .timestamp();
 
         let stale: Vec<(SessionId, chrono::DateTime<chrono::Utc>)> = self
             .connections
             .iter()
-            .filter(|entry| entry.last_active < cutoff)
+            .filter(|entry| entry.last_active.load(Ordering::Relaxed) < cutoff_ts)
             .map(|entry| (*entry.key(), entry.connected_at))
             .collect();
 

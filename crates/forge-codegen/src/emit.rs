@@ -29,6 +29,13 @@ pub fn ts_type(rust_type: &RustType, pos: Position) -> String {
         | RustType::LocalDate
         | RustType::LocalTime => "string".into(),
 
+        // NOTE: `i64` exceeds JavaScript's safe-integer range (2^53). Emit as
+        // `number` to match the JSON wire format produced by serde, and warn
+        // users to pick `String` (or apply `serde_with::DisplayFromStr`) for
+        // values that genuinely need full 64-bit precision (large IDs, big
+        // counters). Switching to `string` everywhere would silently corrupt
+        // every existing handler signature, so we leave the choice with the
+        // application author and document the trap in `frontend.md`.
         RustType::I32 | RustType::I64 | RustType::F32 | RustType::F64 => "number".into(),
 
         RustType::Bool => "boolean".into(),
@@ -41,7 +48,13 @@ pub fn ts_type(rust_type: &RustType, pos: Position) -> String {
         },
 
         RustType::Option(inner) => format!("{} | null", ts_type(inner, pos)),
-        RustType::Vec(inner) => format!("{}[]", ts_type(inner, pos)),
+        // `Option<T>` renders with " | null", which without parens would parse
+        // as `T | (null[])` inside an array. Use `Array<...>` to keep the union
+        // unambiguous on the element type.
+        RustType::Vec(inner) => match inner.as_ref() {
+            RustType::Option(_) => format!("Array<{}>", ts_type(inner, pos)),
+            _ => format!("{}[]", ts_type(inner, pos)),
+        },
 
         RustType::Custom(name) => ts_custom(name, pos),
     }
@@ -425,11 +438,10 @@ mod tests {
         assert_eq!(ts_type(&ty, Position::Arg), "string[] | null");
         assert_eq!(dioxus_type(&ty), "Option<Vec<String>>");
 
-        // Vec<Option<i32>> => TS: "number | null[]"
-        // Note: the current emitter doesn't parenthesize union types inside arrays.
-        // This is a known limitation but matches existing behavior.
+        // Vec<Option<i32>> emits Array<...> form so the union binds to the
+        // element type (avoids the `number | (null[])` precedence trap).
         let ty2 = RustType::Vec(Box::new(RustType::Option(Box::new(RustType::I32))));
-        assert_eq!(ts_type(&ty2, Position::Arg), "number | null[]");
+        assert_eq!(ts_type(&ty2, Position::Arg), "Array<number | null>");
         assert_eq!(dioxus_type(&ty2), "Vec<Option<i32>>");
     }
 

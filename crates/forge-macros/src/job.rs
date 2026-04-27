@@ -3,7 +3,8 @@ use quote::{format_ident, quote};
 use syn::{ItemFn, parse_macro_input};
 
 use crate::utils::{
-    has_attr_flag, parse_attr_value, parse_duration_tokens, to_pascal_case, validate_attr_keys,
+    has_attr_flag, parse_attr_value, parse_duration_tokens, reject_reserved_keys, to_pascal_case,
+    validate_attr_keys,
 };
 
 const ALLOWED_JOB_KEYS: &[&str] = &[
@@ -21,7 +22,17 @@ const ALLOWED_JOB_KEYS: &[&str] = &[
     "require_role",
     "ttl",
     "retry",
+    // Reserved for future Forge releases. Parsed here so apps fail loudly
+    // (via `reject_reserved_keys` below) until the underlying behavior lands.
+    "unique_key",
+    "concurrency_key",
+    "concurrency_limit",
 ];
+
+/// Attribute keys whose names are reserved for upcoming job-deduplication and
+/// per-key concurrency support. Using one today is a hard compile error so
+/// apps don't think a feature works that doesn't.
+const RESERVED_JOB_KEYS: &[&str] = &["unique_key", "concurrency_key", "concurrency_limit"];
 
 #[derive(Debug, Default)]
 struct JobAttrs {
@@ -297,6 +308,10 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
 pub fn job_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
     let attr_str = attr.to_string();
+
+    if let Err(e) = reject_reserved_keys(&attr_str, RESERVED_JOB_KEYS, "job") {
+        return e.to_compile_error().into();
+    }
 
     if let Err(e) = validate_attr_keys(&attr_str, ALLOWED_JOB_KEYS, "job") {
         return e.to_compile_error().into();

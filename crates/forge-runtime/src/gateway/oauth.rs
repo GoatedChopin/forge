@@ -937,7 +937,6 @@ async fn handle_refresh(state: &OAuthState, req: &TokenRequest) -> Response {
     let pair = forge_core::auth::tokens::rotate_refresh_token_with_client(
         &state.pool,
         refresh_token,
-        &["user"],
         access_ttl,
         refresh_ttl,
         client_id,

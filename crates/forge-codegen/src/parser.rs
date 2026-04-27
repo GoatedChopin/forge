@@ -57,6 +57,64 @@ pub fn parse_project(src_dir: &Path) -> Result<SchemaRegistry, Error> {
     Ok(registry)
 }
 
+/// Validate every function in the registry uses types the binding emitters
+/// support. Surfaces platform-dependent types like `usize`/`isize` and
+/// unsupported integer widths up front instead of letting them fall through to
+/// silently-lossy `number` mappings on the frontend.
+pub fn validate_registry(registry: &SchemaRegistry) -> Result<(), Vec<String>> {
+    let mut errors = Vec::new();
+    for func in registry.all_functions() {
+        for arg in &func.args {
+            collect_unsupported(&arg.rust_type, &func.name, Some(&arg.name), &mut errors);
+        }
+        collect_unsupported(&func.return_type, &func.name, None, &mut errors);
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
+}
+
+fn collect_unsupported(
+    ty: &RustType,
+    func_name: &str,
+    arg_name: Option<&str>,
+    errors: &mut Vec<String>,
+) {
+    match ty {
+        RustType::Option(inner) | RustType::Vec(inner) => {
+            collect_unsupported(inner, func_name, arg_name, errors);
+        }
+        RustType::Custom(name) => {
+            if let Some(reason) = unsupported_type_reason(name) {
+                let location = match arg_name {
+                    Some(arg) => format!("{}.{}", func_name, arg),
+                    None => format!("{}() return type", func_name),
+                };
+                errors.push(format!("{}: {}", location, reason));
+            }
+        }
+        _ => {}
+    }
+}
+
+fn unsupported_type_reason(name: &str) -> Option<String> {
+    match name {
+        "usize" | "isize" => Some(format!(
+            "`{}` is platform-dependent and not portable across the wire. \
+             Use `i32`, `i64`, or `u32` instead.",
+            name
+        )),
+        "u8" | "u16" | "u32" | "u64" | "u128" | "i8" | "i16" | "i128" => Some(format!(
+            "`{}` is not supported in handler signatures. \
+             Use `i32` or `i64` (signed integers) for portability.",
+            name
+        )),
+        _ => None,
+    }
+}
+
 /// Scan a source directory and return every `(kind, name)` pair that appears in more
 /// than one file. The returned map is keyed by `"kind:name"` with a list of file paths
 /// as the value.

@@ -4,6 +4,47 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
+use sha2::{Digest, Sha256};
+
+/// `Hasher` adapter that funnels writes into a SHA-256 digest. Used to keep
+/// cache keys deterministic across rolling deploys; the standard library
+/// `DefaultHasher` is explicitly not stable across Rust versions.
+struct Sha256Hasher(Sha256);
+
+impl Sha256Hasher {
+    fn new() -> Self {
+        Self(Sha256::new())
+    }
+
+    fn finish_u64(self) -> u64 {
+        let digest = self.0.finalize();
+        let mut buf = [0u8; 8];
+        // SHA-256 always yields 32 bytes; `get` keeps clippy::indexing_slicing happy.
+        if let Some(prefix) = digest.get(..8) {
+            buf.copy_from_slice(prefix);
+        }
+        u64::from_be_bytes(buf)
+    }
+}
+
+impl Hasher for Sha256Hasher {
+    fn write(&mut self, bytes: &[u8]) {
+        self.0.update(bytes);
+    }
+
+    fn finish(&self) -> u64 {
+        // `Hasher::finish` requires a non-consuming signature, but SHA-256 is
+        // not free to clone. Cache callers use `finish_u64` after dropping the
+        // hasher; this fallback exists only to satisfy the trait.
+        let digest = self.0.clone().finalize();
+        let mut buf = [0u8; 8];
+        // SHA-256 always yields 32 bytes, but `get` keeps clippy happy.
+        if let Some(prefix) = digest.get(..8) {
+            buf.copy_from_slice(prefix);
+        }
+        u64::from_be_bytes(buf)
+    }
+}
 
 /// A simple in-memory cache for query results.
 pub struct QueryCache {
@@ -158,15 +199,15 @@ impl Default for QueryCache {
 }
 
 fn hash_value(value: &Value) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut hasher = Sha256Hasher::new();
     hash_value_recursive(value, &mut hasher);
-    hasher.finish()
+    hasher.finish_u64()
 }
 
 fn hash_str(value: &str) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut hasher = Sha256Hasher::new();
     value.hash(&mut hasher);
-    hasher.finish()
+    hasher.finish_u64()
 }
 
 fn hash_value_recursive<H: Hasher>(value: &Value, hasher: &mut H) {
