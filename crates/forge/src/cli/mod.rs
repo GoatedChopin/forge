@@ -1,15 +1,21 @@
 mod check;
+mod doctor;
+mod env;
 mod frontend_codegen;
 mod frontend_target;
 mod generate;
+mod handler_scaffold;
 mod migrate;
 mod new;
+mod project_root;
 mod template;
 mod template_catalog;
 mod test;
 mod ui;
 
 pub use check::CheckCommand;
+pub use doctor::DoctorCommand;
+pub use env::EnvCommand;
 pub use generate::GenerateCommand;
 pub use migrate::MigrateCommand;
 pub use new::NewCommand;
@@ -71,6 +77,12 @@ pub enum Commands {
 
     /// Manage database migrations
     Migrate(MigrateCommand),
+
+    /// Diagnose your dev environment
+    Doctor(DoctorCommand),
+
+    /// Print shell-init snippets (eval "$(forge env)")
+    Env(EnvCommand),
 }
 
 impl Cli {
@@ -82,6 +94,8 @@ impl Cli {
             Commands::Test(cmd) => cmd.execute().await,
             Commands::Generate(cmd) => cmd.execute().await,
             Commands::Migrate(cmd) => cmd.execute().await,
+            Commands::Doctor(cmd) => cmd.execute().await,
+            Commands::Env(cmd) => cmd.execute().await,
         }
     }
 }
@@ -103,9 +117,17 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_requires_template_for_new() {
+    fn test_cli_parse_new_handler() {
+        let cli = Cli::try_parse_from(["forge", "new", "query", "list_invoices"]);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_cli_parse_new_bare_arg() {
+        // `forge new my-app` parses; runtime decides handler vs project mode
+        // and surfaces a friendlier error than clap's required-arg complaint.
         let cli = Cli::try_parse_from(["forge", "new", "my-app"]);
-        assert!(cli.is_err());
+        assert!(cli.is_ok());
     }
 
     #[test]

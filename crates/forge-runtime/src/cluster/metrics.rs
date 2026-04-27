@@ -1,28 +1,35 @@
+//! Cluster metrics. With `otel` feature: real OpenTelemetry instruments.
+//! Without: no-op stubs so call sites don't need cfg gates everywhere.
+
+#[cfg(feature = "otel")]
 use opentelemetry::{
     KeyValue, global,
     metrics::{Counter, Gauge, Histogram},
 };
+#[cfg(feature = "otel")]
 use std::sync::OnceLock;
 
+#[cfg(feature = "otel")]
 const METER_NAME: &str = "forge.cluster";
 
+#[cfg(feature = "otel")]
 static CLUSTER_METRICS: OnceLock<ClusterMetrics> = OnceLock::new();
 
+#[cfg(feature = "otel")]
 pub struct ClusterMetrics {
-    // Heartbeat metrics
     heartbeat_latency: Histogram<f64>,
     nodes_active: Gauge<i64>,
     nodes_dead: Gauge<i64>,
-
-    // Leader election metrics
     leader_election_attempts: Counter<u64>,
     is_leader: Gauge<i64>,
-
-    // Reactor metrics
+    // Reactor metrics — only consumed when gateway/realtime is on.
+    #[allow(dead_code)]
     notifications_processed: Counter<u64>,
+    #[allow(dead_code)]
     notification_latency: Histogram<f64>,
 }
 
+#[cfg(feature = "otel")]
 impl ClusterMetrics {
     fn new() -> Self {
         let meter = global::meter(METER_NAME);
@@ -76,19 +83,23 @@ impl ClusterMetrics {
     }
 }
 
+#[cfg(feature = "otel")]
 fn metrics() -> &'static ClusterMetrics {
     CLUSTER_METRICS.get_or_init(ClusterMetrics::new)
 }
 
+#[cfg(feature = "otel")]
 pub fn record_heartbeat_latency(latency_secs: f64) {
     metrics().heartbeat_latency.record(latency_secs, &[]);
 }
 
+#[cfg(feature = "otel")]
 pub fn set_node_counts(active: i64, dead: i64) {
     metrics().nodes_active.record(active, &[]);
     metrics().nodes_dead.record(dead, &[]);
 }
 
+#[cfg(feature = "otel")]
 pub fn record_leader_election_attempt(role: &str, acquired: bool) {
     metrics().leader_election_attempts.add(
         1,
@@ -99,6 +110,7 @@ pub fn record_leader_election_attempt(role: &str, acquired: bool) {
     );
 }
 
+#[cfg(feature = "otel")]
 pub fn set_is_leader(role: &str, is_leader: bool) {
     metrics().is_leader.record(
         if is_leader { 1 } else { 0 },
@@ -106,12 +118,45 @@ pub fn set_is_leader(role: &str, is_leader: bool) {
     );
 }
 
+// Reactor metrics — only called from `realtime` (gateway-side).
+#[cfg(feature = "otel")]
+#[allow(dead_code)]
 pub fn record_notification_processed(table: &str) {
     metrics()
         .notifications_processed
         .add(1, &[KeyValue::new("table", table.to_string())]);
 }
 
+#[cfg(feature = "otel")]
+#[allow(dead_code)]
 pub fn record_notification_latency(latency_secs: f64) {
     metrics().notification_latency.record(latency_secs, &[]);
 }
+
+// --- No-op stubs when otel is disabled ---
+
+#[cfg(not(feature = "otel"))]
+#[inline]
+pub fn record_heartbeat_latency(_latency_secs: f64) {}
+
+#[cfg(not(feature = "otel"))]
+#[inline]
+pub fn set_node_counts(_active: i64, _dead: i64) {}
+
+#[cfg(not(feature = "otel"))]
+#[inline]
+pub fn record_leader_election_attempt(_role: &str, _acquired: bool) {}
+
+#[cfg(not(feature = "otel"))]
+#[inline]
+pub fn set_is_leader(_role: &str, _is_leader: bool) {}
+
+#[cfg(not(feature = "otel"))]
+#[inline]
+#[allow(dead_code)]
+pub fn record_notification_processed(_table: &str) {}
+
+#[cfg(not(feature = "otel"))]
+#[inline]
+#[allow(dead_code)]
+pub fn record_notification_latency(_latency_secs: f64) {}

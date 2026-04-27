@@ -461,26 +461,34 @@ fn init_git_repo(dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Create a new FORGE project.
+/// Create a new FORGE project — or scaffold a new handler inside an existing one.
+///
+/// Two modes, distinguished by the first positional arg:
+///   * `forge new <project-name> --template <id>` → scaffold a new project
+///   * `forge new <kind> <name>` where kind ∈ query|mutation|job|cron|workflow|daemon|webhook|mcp_tool|model|enum
 #[derive(Parser)]
 #[command(after_help = NEW_AFTER_HELP)]
 pub struct NewCommand {
-    /// Project name.
+    /// Project name OR a handler kind (`query`, `mutation`, `job`, ...).
     pub name: String,
 
-    /// Template id (for example: with-svelte/minimal).
-    #[arg(long)]
-    pub template: String,
+    /// Handler name (only used when `name` is a handler kind).
+    #[arg(value_name = "HANDLER_NAME")]
+    pub handler_name: Option<String>,
 
-    /// Output directory (defaults to project name).
+    /// Template id (for example: with-svelte/minimal). Only used in project mode.
+    #[arg(long)]
+    pub template: Option<String>,
+
+    /// Output directory (defaults to project name). Only used in project mode.
     #[arg(short, long)]
     pub output: Option<String>,
 
-    /// Skip generating Cargo.lock before initial commit.
+    /// Skip generating Cargo.lock before initial commit. Only used in project mode.
     #[arg(long)]
     pub no_lock: bool,
 
-    /// Skip interactive skill installer prompts.
+    /// Skip interactive skill installer prompts. Only used in project mode.
     #[arg(long)]
     pub include_skill: bool,
 }
@@ -493,21 +501,48 @@ const NEW_AFTER_HELP: &str = r#"TEMPLATES:
   with-dioxus/demo
   with-dioxus/realtime-todo-list
 
+HANDLER KINDS:
+  query mutation job cron workflow daemon webhook mcp_tool model enum
+
 EXAMPLES:
   forge new my-app --template with-svelte/minimal
-  forge new my-app --template with-dioxus/realtime-todo-list"#;
+  forge new query list_invoices
+  forge new mutation create_invoice
+  forge new model Invoice"#;
 
 impl NewCommand {
     /// Execute the new project command.
     pub async fn execute(self) -> Result<()> {
+        // Handler mode: first arg matches a handler kind, no `--template`, second positional present.
+        if self.template.is_none()
+            && let Some(kind) = super::handler_scaffold::HandlerKind::from_str(&self.name)
+        {
+            let Some(handler_name) = self.handler_name.as_deref() else {
+                anyhow::bail!(
+                    "Missing handler name.\nUsage: forge new {} <name>",
+                    kind.label()
+                );
+            };
+            return super::handler_scaffold::scaffold_handler(kind, handler_name).await;
+        }
+
+        // Project mode requires --template.
+        let template_id = self.template.as_deref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Missing --template.\n\nUsage:\n  \
+                 forge new <project-name> --template <id>      (scaffold a new project)\n  \
+                 forge new <kind> <handler-name>               (scaffold a handler in this project)"
+            )
+        })?;
+
         ui::section("Create FORGE Project");
         println!("  {} Generating project files...", ui::tool());
 
-        if !supported_template_ids().contains(&self.template.as_str()) {
-            return Err(invalid_template_error(&self.template));
+        if !supported_template_ids().contains(&template_id) {
+            return Err(invalid_template_error(template_id));
         }
 
-        let template = load_template_definition(&self.template)?;
+        let template = load_template_definition(template_id)?;
 
         let project_name = extract_project_name(&self.name);
         let project_dir = self.output.as_ref().unwrap_or(&self.name);
@@ -864,6 +899,45 @@ mod tests {
                     "{template_id}: workspace forge-svelte volume not removed"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn test_all_templates_rewrite_env_example_postgres_db() {
+        for template_id in supported_template_ids() {
+            let dir = tempdir().unwrap();
+            let path = dir.path().join("my-app");
+            fs::create_dir_all(&path).unwrap();
+
+            let template = load_template_definition(template_id).unwrap();
+            create_project_from_template(&path, "my-app", &template).unwrap();
+
+            let env_example = fs::read_to_string(path.join(".env.example")).unwrap();
+            assert!(
+                env_example.contains("POSTGRES_DB=my_app"),
+                "{template_id}: .env.example POSTGRES_DB not rewritten to project_db_name\n{env_example}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_dioxus_templates_rewrite_frontend_manifest_name() {
+        for template_id in supported_template_ids() {
+            if !template_id.starts_with("with-dioxus/") {
+                continue;
+            }
+            let dir = tempdir().unwrap();
+            let path = dir.path().join("my-app");
+            fs::create_dir_all(&path).unwrap();
+
+            let template = load_template_definition(template_id).unwrap();
+            create_project_from_template(&path, "my-app", &template).unwrap();
+
+            let dioxus_toml = fs::read_to_string(path.join("frontend/Dioxus.toml")).unwrap();
+            assert!(
+                dioxus_toml.contains("name = \"my-app-frontend\""),
+                "{template_id}: frontend/Dioxus.toml name not rewritten to frontend_package_name\n{dioxus_toml}"
+            );
         }
     }
 

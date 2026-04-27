@@ -6,6 +6,7 @@ rewrite_paths = [
   "Cargo.toml",
   "forge.toml",
   ".env",
+  ".env.example",
   "docker-compose.yml",
   "Dockerfile",
   "README.md",
@@ -49,7 +50,7 @@ files = ["Cargo.toml", "forge.toml"]
 [[replacement]]
 from = "POSTGRES_DB=forge_dioxus_minimal_template"
 to = "POSTGRES_DB={{project_db_name}}"
-files = [".env"]
+files = [".env", ".env.example"]
 
 [[replacement]]
 from = "postgres://postgres:forge@db:5432/forge_dioxus_minimal_template"
@@ -75,6 +76,11 @@ files = ["README.md"]
 from = "\"minimal\""
 to = "\"{{project_slug}}\""
 files = ["frontend/src/main.rs", "frontend/src/layout.rs", "frontend/src/pages/home.rs", "frontend/tests/home.spec.ts"]
+
+[[replacement]]
+from = 'name = "minimal-frontend"'
+to = 'name = "{{frontend_package_name}}"'
+files = ["frontend/Dioxus.toml"]
 
 [[replacement]]
 from = 'title = "minimal"'

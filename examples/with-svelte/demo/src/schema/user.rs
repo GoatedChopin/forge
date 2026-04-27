@@ -10,8 +10,9 @@ use forge::prelude::*;
     serde::Serialize,
     serde::Deserialize,
     sqlx::Type,
-    schemars::JsonSchema,
+    forge::schemars::JsonSchema,
 )]
+#[schemars(crate = "forge::schemars")]
 #[serde(rename_all = "snake_case")]
 #[sqlx(type_name = "user_role", rename_all = "lowercase")]
 pub enum UserRole {
@@ -71,7 +72,8 @@ pub struct DemoStats {
     pub computed_at: Timestamp,
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, forge::schemars::JsonSchema)]
+#[schemars(crate = "forge::schemars")]
 pub struct McpUserInfo {
     pub id: Uuid,
     pub email: String,

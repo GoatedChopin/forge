@@ -399,6 +399,7 @@ fn expand_mcp_tool_impl(input: ItemFn, attrs: McpToolAttrs) -> syn::Result<Token
         (
             quote! {
                 #[derive(Debug, Clone, serde::Deserialize, forge::forge_core::schemars::JsonSchema)]
+                #[schemars(crate = "forge::forge_core::schemars")]
                 #vis struct #args_struct_name {}
 
                 #vis struct #struct_name;
@@ -419,6 +420,7 @@ fn expand_mcp_tool_impl(input: ItemFn, attrs: McpToolAttrs) -> syn::Result<Token
         (
             quote! {
                 #[derive(Debug, Clone, serde::Deserialize, forge::forge_core::schemars::JsonSchema)]
+                #[schemars(crate = "forge::forge_core::schemars")]
                 #vis struct #args_struct_name {
                     #(#args_fields),*
                 }

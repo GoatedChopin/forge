@@ -6,6 +6,8 @@ This reference provides a comprehensive guide to Forge macros, context types, co
 
 Forge handlers are defined using Rust macros that generate necessary structs and registration logic.
 
+> Scaffold a new handler with `forge new <kind> <name>` (e.g. `forge new query list_invoices`). It writes the file with sane defaults, appends `pub mod <name>;` to `src/functions/mod.rs`, and inserts `mod functions;` in `src/main.rs` if missing. Kinds: `query`, `mutation`, `job`, `cron`, `workflow`, `daemon`, `webhook`, `mcp_tool`, `model`, `enum`.
+
 ### `#[forge::query]`
 Defines a read-only operation. The macro generates a `{PascalCase}Query` struct and implements the `ForgeQuery` trait. All private queries must explicitly filter results by the current user or owner unless the `unscoped` attribute is used.
 
@@ -316,3 +318,35 @@ Forge uses structured error variants to ensure consistent error handling across 
 - **Source Code**: Editable logic resides in `src/functions/`, `src/schema/`, and `src/utils/`.
 - **Generated Code**: **MANDATE:** Never edit generated files. See [Pitfalls](./pitfalls.md#1-generated-code).
 - **Migrations**: Create new SQL files in `migrations/`. Always include `-- @up` and `-- @down` markers. Do not use `IF NOT EXISTS` clauses; migrations should be deterministic.
+
+## Cargo Features
+
+Subsystems are feature-gated; default is `full`. Opt out with `default-features = false` and pick a preset.
+
+| Feature | Bundles | Pulls (extra crates) |
+|---|---|---|
+| `gateway` | HTTP RPC + SSE + OAuth + MCP + webhooks + signals | axum, tower, tower-http, jsonwebtoken, bcrypt, ed25519 |
+| `jobs` | PG-backed queue + worker | — |
+| `workflows` | Durable workflow executor | — |
+| `cron` | Cron scheduler | — |
+| `daemons` | Long-running daemon runner | — |
+| `geoip` | IP→country + MaxMind reader (req. `gateway`) | db_ip (build-time download — breaks air-gapped CI), maxminddb |
+| `otel` | OpenTelemetry trace/metric/log exporters | opentelemetry ×6, reqwest-otlp |
+
+Presets: `full` = all (default) · `worker` = jobs+workflows+cron+daemons+otel (no HTTP) · `api` = gateway+otel (no workers) · `minimal` = gateway only.
+
+```toml
+forge = { version = "0.9", default-features = false, features = ["worker"] }
+```
+
+`#[forge::job/cron/workflow/daemon/webhook/mcp_tool]` without the matching feature errors at the generated `forge::Auto{Job,Cron,Workflow,Daemon,Webhook,McpTool}` reference. Without `otel`, observability call sites (`record_*`) become no-op stubs and `tracing-subscriber` still logs to stderr.
+
+## Build Profiles
+
+| Profile | LTO | codegen-units | Use for |
+|---|---|---|---|
+| `dev` | off | 256 | Iteration (line-only debug, deps stripped) |
+| `release` | full | 1 | Production |
+| `release-fast` | off | 16 | Smoke tests / ad-hoc benchmarks (skips ~30-90s LTO link) |
+
+Linker tuning (env): `RUSTFLAGS="-C link-arg=-fuse-ld=mold"` (Linux) / `=lld` (macOS); `RUSTC_WRAPPER=sccache` for cross-build cache.

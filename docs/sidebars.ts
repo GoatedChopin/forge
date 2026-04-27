@@ -73,6 +73,7 @@ const sidebars: SidebarsConfig = {
       collapsed: true,
       items: [
         'scale/performance',
+        'scale/binary-size',
         'scale/multiple-nodes',
         'scale/worker-pools',
         'scale/global-deploy',

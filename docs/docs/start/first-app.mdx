@@ -16,6 +16,18 @@ cargo install forgex
 
 Requires Docker (with Compose v2).
 
+After install, wire shell completions and the `SQLX_OFFLINE=true` env var with one line in your shell rc file:
+
+```bash
+# bash / zsh
+eval "$(forge env)"
+
+# fish
+eval (forge env)
+```
+
+`forge env` auto-detects your shell. Pass `--shell bash|zsh|fish` to override.
+
 ## Create and Run
 
 ```bash

@@ -20,9 +20,12 @@ use tower_http::cors::{Any, CorsLayer};
 use forge_core::cluster::NodeId;
 use forge_core::config::McpConfig;
 use forge_core::function::{JobDispatch, WorkflowDispatch};
+#[cfg(feature = "otel")]
 use opentelemetry::global;
+#[cfg(feature = "otel")]
 use opentelemetry::propagation::Extractor;
 use tracing::Instrument;
+#[cfg(feature = "otel")]
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use super::auth::{AuthConfig, AuthMiddleware, HmacTokenIssuer, auth_middleware};
@@ -607,8 +610,10 @@ fn set_tracing_headers(response: &mut axum::response::Response, trace_id: &str, 
 }
 
 /// Extracts W3C traceparent context from HTTP headers.
+#[cfg(feature = "otel")]
 struct HeaderExtractor<'a>(&'a axum::http::HeaderMap);
 
+#[cfg(feature = "otel")]
 impl<'a> Extractor for HeaderExtractor<'a> {
     fn get(&self, key: &str) -> Option<&str> {
         self.0.get(key).and_then(|v| v.to_str().ok())
@@ -631,7 +636,9 @@ async fn tracing_middleware(
 ) -> axum::response::Response {
     let headers = req.headers();
 
-    // Extract W3C traceparent from incoming headers for distributed tracing
+    // Extract W3C traceparent from incoming headers for distributed tracing.
+    // Without `otel`, there's no propagator and no parent context to extract.
+    #[cfg(feature = "otel")]
     let parent_cx =
         global::get_text_map_propagator(|propagator| propagator.extract(&HeaderExtractor(headers)));
 
@@ -687,7 +694,8 @@ async fn tracing_middleware(
     );
 
     // Link this span to the incoming distributed trace context so
-    // fn.execute and all downstream spans share the caller's trace ID
+    // fn.execute and all downstream spans share the caller's trace ID.
+    #[cfg(feature = "otel")]
     span.set_parent(parent_cx);
 
     let mut response = next.run(req).instrument(span.clone()).await;
