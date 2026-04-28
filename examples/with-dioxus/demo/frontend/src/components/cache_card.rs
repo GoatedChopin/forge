@@ -39,7 +39,7 @@ pub fn CacheCard() -> Element {
                 match forge::get_demo_stats(&client).await {
                     Ok(stats) => {
                         let elapsed = now_ms() - start;
-                        signals.track("cache_fetch", json!({"response_ms": elapsed, "cache_hit": elapsed < 100.0, "fetch_number": fetch_count() + 1}));
+                        signals.track_with_properties("cache_fetch", json!({"response_ms": elapsed, "cache_hit": elapsed < 100.0, "fetch_number": fetch_count() + 1}));
                         data.set(Some(stats));
                         response_ms.set(Some(elapsed));
                         fetch_count.set(fetch_count() + 1);

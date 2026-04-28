@@ -61,12 +61,13 @@ struct SseManager {
 const MAX_RECONNECT_ATTEMPTS: u32 = 10;
 
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct ForgeClientConfig {
-    pub url: String,
-    pub get_token: Option<TokenProvider>,
-    pub refresh_token: Option<RefreshTokenProvider>,
-    pub on_auth_error: Option<AuthErrorHandler>,
-    pub on_mutation_error: Option<MutationErrorHandler>,
+    url: String,
+    get_token: Option<TokenProvider>,
+    refresh_token: Option<RefreshTokenProvider>,
+    on_auth_error: Option<AuthErrorHandler>,
+    on_mutation_error: Option<MutationErrorHandler>,
     pub(crate) connection_state: Option<Signal<ConnectionState>>,
 }
 

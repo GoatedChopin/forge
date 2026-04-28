@@ -29,7 +29,7 @@ trap cleanup EXIT
 mkdir -p "$ARTIFACT_DIR"
 
 echo "=== Scaffold ==="
-"$FORGE" new "test-$SLUG" --template "$TEMPLATE" --output "$DIR" --no-lock --include-skill
+"$FORGE" new "test-$SLUG" --template "$TEMPLATE" --output "$DIR" --no-lock -y
 
 # Patch Dioxus frontend to use local forge-dioxus source
 if [ -f "$DIR/frontend/Cargo.toml" ] && grep -q 'forge-dioxus' "$DIR/frontend/Cargo.toml"; then

@@ -5,12 +5,12 @@ use serde_json::json;
 use sha2::Sha256;
 
 use super::{format_time, generate_key};
-use crate::forge::use_get_webhook_events_live;
+use crate::forge::use_get_webhook_events_subscription;
 
 #[component]
 pub fn WebhookCard(api_url: String) -> Element {
     let signals = use_signals();
-    let state = use_get_webhook_events_live();
+    let state = use_get_webhook_events_subscription();
     let events = state.data.clone().unwrap_or_default();
 
     let mut idempotency_key = use_signal(generate_key);
@@ -32,7 +32,7 @@ pub fn WebhookCard(api_url: String) -> Element {
                     onclick: {
                         let signals = signals.clone();
                         move |_| {
-                            signals.track("webhook_key_generated", json!({}));
+                            signals.track("webhook_key_generated");
                             idempotency_key.set(generate_key());
                             key_used.set(false);
                             webhook_error.set(None);
@@ -53,11 +53,11 @@ pub fn WebhookCard(api_url: String) -> Element {
                             spawn(async move {
                                 match trigger_webhook(&api_url, &key).await {
                                     Ok(()) => {
-                                        signals.track("webhook_sent", json!({"idempotency_key": &key}));
+                                        signals.track_with_properties("webhook_sent", json!({"idempotency_key": &key}));
                                         key_used.set(true);
                                     }
                                     Err(msg) => {
-                                        signals.track("webhook_error", json!({}));
+                                        signals.track("webhook_error");
                                         webhook_error.set(Some(msg));
                                     }
                                 }

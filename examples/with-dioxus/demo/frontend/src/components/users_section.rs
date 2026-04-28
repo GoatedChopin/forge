@@ -4,7 +4,7 @@ use serde_json::json;
 
 use crate::forge::{
     CreateUserParams, DeleteUserParams, UpdateUserParams, User, use_create_user, use_delete_user,
-    use_get_users_live, use_update_user,
+    use_get_users_subscription, use_update_user,
 };
 
 #[component]
@@ -13,7 +13,7 @@ pub fn UsersSection(selected_user: Signal<Option<User>>) -> Element {
     let update_user = use_update_user();
     let delete_user = use_delete_user();
     let signals = use_signals();
-    let state = use_get_users_live();
+    let state = use_get_users_subscription();
     let users = state.data.clone().unwrap_or_default();
 
     let mut name = use_signal(String::new);
@@ -44,12 +44,12 @@ pub fn UsersSection(selected_user: Signal<Option<User>>) -> Element {
             spawn(async move {
                 match create_user.call(CreateUserParams::new(e, n.clone())).await {
                     Ok(_) => {
-                        signals.track("user_created", json!({"name": &n}));
+                        signals.track_with_properties("user_created", json!({"name": &n}));
                         name.set(String::new());
                         email.set(String::new());
                     }
                     Err(err) => {
-                        signals.track("user_create_error", json!({}));
+                        signals.track("user_create_error");
                         crud_error.set(Some(err.message));
                     }
                 }
@@ -122,11 +122,11 @@ pub fn UsersSection(selected_user: Signal<Option<User>>) -> Element {
                                                             )
                                                             .await {
                                                                 Ok(_) => {
-                                                                    signals.track("user_updated", json!({}));
+                                                                    signals.track("user_updated");
                                                                     editing_user_id.set(None);
                                                                 }
                                                                 Err(err) => {
-                                                                    signals.track("user_update_error", json!({}));
+                                                                    signals.track("user_update_error");
                                                                     crud_error.set(Some(err.message));
                                                                 }
                                                             }
@@ -153,7 +153,7 @@ pub fn UsersSection(selected_user: Signal<Option<User>>) -> Element {
                                                         let user = user.clone();
                                                         let signals = signals.clone();
                                                         move |_| {
-                                                            signals.track("user_edit_start", json!({"user_id": &user.id}));
+                                                            signals.track_with_properties("user_edit_start", json!({"user_id": &user.id}));
                                                             selected_user.set(Some(user.clone()));
                                                             editing_user_id.set(Some(user.id.clone()));
                                                             edit_name.set(user.name.clone());
@@ -186,13 +186,13 @@ pub fn UsersSection(selected_user: Signal<Option<User>>) -> Element {
                                                                     spawn(async move {
                                                                         match delete_user.call(DeleteUserParams::new(uid.clone())).await {
                                                                             Ok(_) => {
-                                                                                signals.track("user_deleted", json!({"user_id": &uid}));
+                                                                                signals.track_with_properties("user_deleted", json!({"user_id": &uid}));
                                                                                 if selected_user().as_ref().is_some_and(|s| s.id == uid) {
                                                                                     selected_user.set(None);
                                                                                 }
                                                                             }
                                                                             Err(err) => {
-                                                                                signals.track("user_delete_error", json!({}));
+                                                                                signals.track("user_delete_error");
                                                                                 crud_error.set(Some(err.message));
                                                                             }
                                                                         }

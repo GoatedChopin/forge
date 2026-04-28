@@ -44,7 +44,7 @@ pub fn AuthCard() -> Element {
             spawn(async move {
                 loading.set(true);
                 auth_error.set(None);
-                signals.track("auth_attempt", json!({"mode": is_register}));
+                signals.track_with_properties("auth_attempt", json!({"mode": is_register}));
 
                 let result: Result<AuthResponse, _> = if is_register {
                     register_mut
@@ -56,7 +56,7 @@ pub fn AuthCard() -> Element {
 
                 match result {
                     Ok(res) => {
-                        signals.track("auth_success", json!({"mode": is_register}));
+                        signals.track_with_properties("auth_success", json!({"mode": is_register}));
                         signals
                             .identify(
                                 &res.user.id,
@@ -77,7 +77,7 @@ pub fn AuthCard() -> Element {
                         refresh_count.set(0);
                     }
                     Err(e) => {
-                        signals.track(
+                        signals.track_with_properties(
                             "auth_error",
                             json!({"mode": is_register, "error": &e.message}),
                         );
@@ -101,7 +101,7 @@ pub fn AuthCard() -> Element {
                     auth_error.set(None);
                     match refresh_mut.call(RefreshInput::new(&rt)).await {
                         Ok(pair) => {
-                            signals.track("token_refresh", json!({"count": refresh_count() + 1}));
+                            signals.track_with_properties("token_refresh", json!({"count": refresh_count() + 1}));
                             let claims = parse_jwt_claims(&pair.access_token);
                             token_claims.set(Some(claims));
                             auth.update_tokens(
@@ -111,7 +111,7 @@ pub fn AuthCard() -> Element {
                             refresh_count.set(refresh_count() + 1);
                         }
                         Err(e) => {
-                            signals.track("token_refresh_error", json!({}));
+                            signals.track("token_refresh_error");
                             auth_error.set(Some(e.message));
                         }
                     }
@@ -123,7 +123,7 @@ pub fn AuthCard() -> Element {
     let handle_logout = {
         let signals = signals.clone();
         move |_: MouseEvent| {
-            signals.track("logout", json!({}));
+            signals.track("logout");
             auth.logout();
             auth_user.set(None);
             token_claims.set(None);
@@ -195,7 +195,7 @@ pub fn AuthCard() -> Element {
                         onclick: {
                             let signals = signals.clone();
                             move |_| {
-                                signals.track("auth_tab_switch", json!({"tab": "login"}));
+                                signals.track_with_properties("auth_tab_switch", json!({"tab": "login"}));
                                 mode.set("login".into());
                             }
                         },
@@ -206,7 +206,7 @@ pub fn AuthCard() -> Element {
                         onclick: {
                             let signals = signals.clone();
                             move |_| {
-                                signals.track("auth_tab_switch", json!({"tab": "register"}));
+                                signals.track_with_properties("auth_tab_switch", json!({"tab": "register"}));
                                 mode.set("register".into());
                             }
                         },

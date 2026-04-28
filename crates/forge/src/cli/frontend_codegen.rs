@@ -85,6 +85,19 @@ fn generate_types(output_dir: &Path, force: bool) -> Result<()> {
 
 // Common types (re-exported from @forge-rs/svelte for convenience)
 export type { ForgeError, QueryResult, SubscriptionResult } from "@forge-rs/svelte";
+
+export type Cursor = string;
+
+export interface PageInfo {
+  has_next_page: boolean;
+  end_cursor?: Cursor;
+  total_count?: number;
+}
+
+export interface Page<T> {
+  items: T[];
+  page_info: PageInfo;
+}
 "#;
 
     fs::write(file_path, content)?;

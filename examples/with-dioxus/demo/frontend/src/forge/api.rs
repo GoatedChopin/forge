@@ -26,7 +26,7 @@ pub fn use_get_demo_stats() -> QueryState<DemoStats> {
     use_forge_query("get_demo_stats", ())
 }
 
-pub fn use_get_demo_stats_live() -> SubscriptionState<DemoStats> {
+pub fn use_get_demo_stats_subscription() -> SubscriptionState<DemoStats> {
     use_forge_subscription("get_demo_stats", ())
 }
 pub async fn get_iss_location(
@@ -39,7 +39,7 @@ pub fn use_get_iss_location() -> QueryState<Option<IssLocation>> {
     use_forge_query("get_iss_location", ())
 }
 
-pub fn use_get_iss_location_live() -> SubscriptionState<Option<IssLocation>> {
+pub fn use_get_iss_location_subscription() -> SubscriptionState<Option<IssLocation>> {
     use_forge_subscription("get_iss_location", ())
 }
 pub async fn get_trades(client: &ForgeClient) -> Result<Vec<Trade>, ForgeClientError> {
@@ -50,7 +50,7 @@ pub fn use_get_trades() -> QueryState<Vec<Trade>> {
     use_forge_query("get_trades", ())
 }
 
-pub fn use_get_trades_live() -> SubscriptionState<Vec<Trade>> {
+pub fn use_get_trades_subscription() -> SubscriptionState<Vec<Trade>> {
     use_forge_subscription("get_trades", ())
 }
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -74,7 +74,7 @@ pub fn use_get_user(args: GetUserParams) -> QueryState<Option<User>> {
     use_forge_query("get_user", args)
 }
 
-pub fn use_get_user_live(args: GetUserParams) -> SubscriptionState<Option<User>> {
+pub fn use_get_user_subscription(args: GetUserParams) -> SubscriptionState<Option<User>> {
     use_forge_subscription("get_user", args)
 }
 pub async fn get_users(client: &ForgeClient) -> Result<Vec<User>, ForgeClientError> {
@@ -85,7 +85,7 @@ pub fn use_get_users() -> QueryState<Vec<User>> {
     use_forge_query("get_users", ())
 }
 
-pub fn use_get_users_live() -> SubscriptionState<Vec<User>> {
+pub fn use_get_users_subscription() -> SubscriptionState<Vec<User>> {
     use_forge_subscription("get_users", ())
 }
 pub async fn get_webhook_events(
@@ -98,7 +98,7 @@ pub fn use_get_webhook_events() -> QueryState<Vec<WebhookEvent>> {
     use_forge_query("get_webhook_events", ())
 }
 
-pub fn use_get_webhook_events_live() -> SubscriptionState<Vec<WebhookEvent>> {
+pub fn use_get_webhook_events_subscription() -> SubscriptionState<Vec<WebhookEvent>> {
     use_forge_subscription("get_webhook_events", ())
 }
 pub async fn confirm_verification(
