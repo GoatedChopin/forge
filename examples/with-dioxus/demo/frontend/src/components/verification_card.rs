@@ -15,7 +15,7 @@ pub fn VerificationCard(selected_user: Signal<Option<User>>) -> Element {
     let start = {
         let signals = signals.clone();
         move |_| {
-            signals.track("workflow_started", json!({"type": "verification"}));
+            signals.track_with_properties("workflow_started", json!({"type": "verification"}));
             let nonce = run_request().as_ref().map(|(n, _, _)| n + 1).unwrap_or(1);
             let (account_id, email) = match selected_user() {
                 Some(u) => (u.id.clone(), u.email.clone()),
@@ -64,7 +64,7 @@ fn VerificationRun(
             if *confirm_sent.read() {
                 return;
             }
-            signals.track("workflow_confirmed", json!({}));
+            signals.track("workflow_confirmed");
             confirm_sent.set(true);
             let wf_id = workflow_id.clone();
             let client = client.clone();

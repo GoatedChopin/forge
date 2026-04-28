@@ -1,10 +1,10 @@
 use dioxus::prelude::*;
 
-use crate::forge::use_get_trades_live;
+use crate::forge::use_get_trades_subscription;
 
 #[component]
 pub fn TradesCard() -> Element {
-    let state = use_get_trades_live();
+    let state = use_get_trades_subscription();
     let trades = state.data.clone().unwrap_or_default();
 
     rsx! {

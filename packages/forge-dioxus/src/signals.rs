@@ -7,8 +7,8 @@
 //!
 //! ```rust,ignore
 //! let signals = use_signals();
-//! signals.track("button_clicked", json!({"id": "signup"}));
-//! signals.capture_error("Something went wrong", json!({}));
+//! signals.track_with_properties("button_clicked", json!({"id": "signup"}));
+//! signals.capture_error("Something went wrong", None);
 //! ```
 
 use std::cell::RefCell;
@@ -224,6 +224,48 @@ pub struct ForgeSignals {
     inner: Rc<RefCell<SignalsInner>>,
 }
 
+/// Error value accepted by [`ForgeSignals::capture_error`].
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct SignalError {
+    message: String,
+    stack: Option<String>,
+}
+
+impl SignalError {
+    /// Create a signal error from a message and optional stack trace.
+    pub fn new(message: impl Into<String>, stack: Option<String>) -> Self {
+        Self {
+            message: message.into(),
+            stack,
+        }
+    }
+
+    /// Create a signal error from a Rust error value.
+    pub fn from_error(error: &(dyn std::error::Error + '_)) -> Self {
+        Self::new(error.to_string(), None)
+    }
+}
+
+impl From<&str> for SignalError {
+    fn from(value: &str) -> Self {
+        Self::new(value, None)
+    }
+}
+
+impl From<String> for SignalError {
+    fn from(value: String) -> Self {
+        Self::new(value, None)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl From<js_sys::Error> for SignalError {
+    fn from(value: js_sys::Error) -> Self {
+        Self::new(value.message().as_string().unwrap_or_default(), None)
+    }
+}
+
 impl ForgeSignals {
     /// Create a new signals instance tied to a ForgeClient.
     pub fn new(client: ForgeClient, mut config: SignalsConfig) -> Self {
@@ -259,7 +301,7 @@ impl ForgeSignals {
         if let Some(r) = rating {
             props.insert("rating".to_string(), Value::String(r.to_string()));
         }
-        self.track(&format!("webvital.{name}"), Value::Object(props));
+        self.track_with_properties(&format!("webvital.{name}"), Value::Object(props));
     }
 
     #[must_use]
@@ -274,8 +316,17 @@ impl ForgeSignals {
         inner.config.enabled && inner.config.auto_network_events
     }
 
-    /// Track a custom event.
-    pub fn track(&self, event: &str, properties: Value) {
+    /// Track a custom event with no custom properties.
+    pub fn track(&self, event: &str) {
+        self.enqueue_track(event, None);
+    }
+
+    /// Track a custom event with arbitrary JSON properties.
+    pub fn track_with_properties(&self, event: &str, properties: Value) {
+        self.enqueue_track(event, Some(properties));
+    }
+
+    fn enqueue_track(&self, event: &str, properties: Option<Value>) {
         let inner = self.inner.borrow();
         if !inner.config.enabled { return; }
         drop(inner);
@@ -283,7 +334,7 @@ impl ForgeSignals {
         let correlation_id = self.inner.borrow().last_correlation_id.clone();
         let payload = SignalEventPayload {
             event: event.to_string(),
-            properties: Some(properties),
+            properties,
             correlation_id,
             timestamp: Some(now_iso()),
         };
@@ -338,7 +389,20 @@ impl ForgeSignals {
     }
 
     /// Capture a frontend error with optional context.
-    pub async fn capture_error(&self, message: &str, context: Value) {
+    pub fn capture_error(&self, error: impl Into<SignalError>, context: Option<Value>) {
+        let error = error.into();
+        let this = self.clone();
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(async move {
+            this.report_error(error, context).await;
+        });
+        #[cfg(not(target_arch = "wasm32"))]
+        spawn(async move {
+            this.report_error(error, context).await;
+        });
+    }
+
+    async fn report_error(&self, error: SignalError, context: Option<Value>) {
         let (url, session_id, correlation_id, breadcrumbs, page_url) = {
             let inner = self.inner.borrow();
             if !inner.config.enabled { return; }
@@ -353,9 +417,9 @@ impl ForgeSignals {
 
         let body = DiagnosticPayload {
             errors: vec![ErrorPayload {
-                message: message.to_string(),
-                stack: None,
-                context: Some(context),
+                message: error.message,
+                stack: error.stack,
+                context,
                 correlation_id,
                 breadcrumbs,
                 page_url,
@@ -703,7 +767,7 @@ pub(crate) fn setup_auto_capture(signals: ForgeSignals) {
                         let msg = e.message();
                         if msg.is_empty() { return; }
                         let signals = signals.clone();
-                        spawn_local(async move { signals.capture_error(&msg, json!({})).await; });
+                        spawn_local(async move { signals.capture_error(msg, None); });
                     });
                     let _ = window.add_event_listener_with_callback(
                         "error",
@@ -720,7 +784,7 @@ pub(crate) fn setup_auto_capture(signals: ForgeSignals) {
                             let reason = e.reason();
                             let msg = reason.as_string().unwrap_or_else(|| "Unhandled promise rejection".to_string());
                             let signals = signals.clone();
-                            spawn_local(async move { signals.capture_error(&msg, json!({})).await; });
+                            spawn_local(async move { signals.capture_error(msg, None); });
                         },
                     );
                     let _ = window.add_event_listener_with_callback(
@@ -767,7 +831,7 @@ pub(crate) fn setup_auto_capture(signals: ForgeSignals) {
             if signals.auto_network_events() {
                 let online_signals = signals.clone();
                 let online = Closure::<dyn Fn()>::new(move || {
-                    online_signals.track("network.online", json!({}));
+                    online_signals.track("network.online");
                     let online_signals2 = online_signals.clone();
                     spawn_local(async move { online_signals2.flush().await; });
                 });
@@ -779,7 +843,7 @@ pub(crate) fn setup_auto_capture(signals: ForgeSignals) {
 
                 let offline_signals = signals.clone();
                 let offline = Closure::<dyn Fn()>::new(move || {
-                    offline_signals.track("network.offline", json!({}));
+                    offline_signals.track("network.offline");
                 });
                 let _ = window.add_event_listener_with_callback(
                     "offline",

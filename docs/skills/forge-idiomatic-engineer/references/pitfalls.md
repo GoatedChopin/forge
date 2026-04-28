@@ -96,7 +96,7 @@ sqlx::query_as!(User, "...", id).fetch_one(&mut conn).await?
 
 ## 8. Error Shape
 
-- **`retry_after_secs` is top-level**, not under `details`. `error.details?.retry_after_secs` is always `undefined` — check `error.retry_after_secs` directly. The full wire shape is `{ code, message, retry_after_secs?, details? }`.
+- **Rate-limit retry delays are top-level**, not under `details`. In Svelte, `error.details?.retry_after_secs` is always `undefined` — check `error.retryAfterSecs` directly. In Dioxus, check `error.retry_after_secs`. The wire shape is `{ code, message, retry_after_secs?, details? }`.
 - Match errors by `code` string (`"RATE_LIMITED"`, `"NOT_FOUND"`, `"UNAUTHORIZED"`) on the frontend, not by message text.
 
 ## 9. Custom Routes and Uploads

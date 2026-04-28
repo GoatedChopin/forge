@@ -350,7 +350,7 @@ The canonical status mapping lives on `ForgeError::http_status() -> u16`. Downst
 | `InvalidArgument` | 400 | `INVALID_ARGUMENT` | Caller-supplied argument is semantically invalid. |
 | `Deserialization` | 400 | `INVALID_ARGUMENT` | Request body could not be parsed; details are hidden from clients. |
 | `Timeout` | 504 | `TIMEOUT` | Operation exceeded its allotted time. |
-| `RateLimitExceeded` | 429 | `RATE_LIMITED` | Too many requests from the same identity. Includes `retry_after_secs` in the details object. |
+| `RateLimitExceeded` | 429 | `RATE_LIMITED` | Too many requests from the same identity. Includes top-level `retry_after_secs` on the wire. |
 | `JobCancelled` | 409 | `JOB_CANCELLED` | Job was cancelled before it could complete. |
 | `Internal` / all others | 500 | `INTERNAL_ERROR` | Server-side error; details never leak to clients. |
 

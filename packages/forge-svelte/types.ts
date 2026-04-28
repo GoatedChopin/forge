@@ -4,8 +4,11 @@ export interface ForgeError {
   code: string;
   message: string;
   /** Seconds to wait before retrying. Present on RATE_LIMITED errors. */
-  retry_after_secs?: number;
+  retryAfterSecs?: number;
   details?: Record<string, unknown>;
+  isRateLimited(): boolean;
+  isUnauthorized(): boolean;
+  isValidation(): boolean;
 }
 
 export interface QueryResult<T> {

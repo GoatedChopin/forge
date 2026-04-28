@@ -19,6 +19,7 @@ struct StoredAuth {
 }
 
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum ForgeAuthState {
     Unauthenticated,
     Authenticated {

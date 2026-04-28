@@ -41,22 +41,22 @@ interface SsePayload {
   last_event_id?: string;
 }
 
-export class ForgeClientError extends Error {
+export class ForgeClientError extends Error implements ForgeError {
   code: string;
-  retry_after_secs?: number;
+  retryAfterSecs?: number;
   details?: Record<string, unknown>;
 
-  constructor(code: string, message: string, retry_after_secs?: number, details?: Record<string, unknown>) {
+  constructor(code: string, message: string, retryAfterSecs?: number, details?: Record<string, unknown>) {
     super(message);
     this.name = "ForgeClientError";
     this.code = code;
-    this.retry_after_secs = retry_after_secs;
+    this.retryAfterSecs = retryAfterSecs;
     this.details = details;
   }
 
-  is_rate_limited(): boolean { return this.code === "RATE_LIMITED"; }
-  is_unauthorized(): boolean { return this.code === "UNAUTHORIZED"; }
-  is_validation(): boolean { return this.code === "VALIDATION_ERROR"; }
+  isRateLimited(): boolean { return this.code === "RATE_LIMITED"; }
+  isUnauthorized(): boolean { return this.code === "UNAUTHORIZED"; }
+  isValidation(): boolean { return this.code === "VALIDATION_ERROR"; }
 }
 
 interface SubscriptionMeta {
@@ -232,7 +232,7 @@ export class ForgeClient {
         this.setConnectionState("disconnected");
 
         if (isClosed && token) {
-          this.config.onAuthError?.({ code: "UNAUTHORIZED", message: "SSE authentication failed" });
+          this.config.onAuthError?.(new ForgeClientError("UNAUTHORIZED", "SSE authentication failed"));
         } else {
           this.scheduleReconnect();
         }
@@ -330,10 +330,11 @@ export class ForgeClient {
     const result: RpcResponse<T> = await response.json();
     if (!result.success || result.error) {
       const error = result.error || { code: "UNKNOWN", message: "Unknown error" };
+      const clientError = new ForgeClientError(error.code, error.message, error.retry_after_secs, typeof error.details === 'object' && error.details !== null ? error.details as Record<string, unknown> : undefined);
       if (error.code === "UNAUTHORIZED" || error.code === "FORBIDDEN") {
-        this.config.onAuthError?.(error);
+        this.config.onAuthError?.(clientError);
       }
-      throw new ForgeClientError(error.code, error.message, error.retry_after_secs, typeof error.details === 'object' && error.details !== null ? error.details as Record<string, unknown> : undefined);
+      throw clientError;
     }
     return result.data as T;
   }
@@ -457,10 +458,11 @@ export class ForgeClient {
     const result = await response.json();
     if (!result.success) {
       const code = result.error?.code ?? "SUBSCRIPTION_FAILED";
+      const error = new ForgeClientError(code, result.error?.message ?? "Failed to register subscription");
       if (code === "UNAUTHORIZED" || code === "FORBIDDEN") {
-        this.config.onAuthError?.({ code, message: result.error?.message ?? "Authentication failed" });
+        this.config.onAuthError?.(error);
       }
-      throw new ForgeClientError(code, result.error?.message ?? "Failed to register subscription");
+      throw error;
     }
     return result;
   }
