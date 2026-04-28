@@ -410,6 +410,7 @@ pub fn is_primitive_arg_type(ty: &syn::Type) -> bool {
             | "BTreeMap"
             | "HashSet"
             | "BTreeSet"
+            | "Uuid"
     )
 }
 

@@ -69,6 +69,15 @@ fn ts_custom(name: &str, pos: Position) -> String {
             Position::Arg => "Uint8Array".into(),
         },
 
+        "Uuid" | "uuid::Uuid" | "DateTime<Utc>" | "NaiveDate" | "NaiveDateTime" | "Instant"
+        | "LocalDate" | "LocalTime" | "Timestamp" => "string".into(),
+
+        "i32" | "i64" | "u32" | "u64" | "f32" | "f64" | "usize" | "isize" => "number".into(),
+
+        "bool" => "boolean".into(),
+
+        "Value" | "serde_json::Value" => "unknown".into(),
+
         // Unparsed generic types that leaked through as Custom.
         _ if name.starts_with("Vec<") => {
             let inner = name
@@ -90,7 +99,7 @@ fn ts_custom(name: &str, pos: Position) -> String {
                 .and_then(|s| s.strip_suffix('>'))
                 .unwrap_or("unknown");
             format!(
-                "{{ items: {}[], page_info: PageInfo }}",
+                "Page<{}>",
                 ts_type(&RustType::Custom(inner.to_string()), pos)
             )
         }
@@ -152,6 +161,11 @@ fn dioxus_custom(name: &str) -> String {
         "Uuid" | "uuid::Uuid" => "String".into(),
         "DateTime<Utc>" | "NaiveDate" | "NaiveDateTime" | "Instant" | "LocalDate" | "LocalTime"
         | "Timestamp" => "String".into(),
+        "i32" | "u32" | "usize" | "isize" => "i64".into(),
+        "i64" | "u64" => "i64".into(),
+        "f32" => "f32".into(),
+        "f64" => "f64".into(),
+        "bool" => "bool".into(),
         "Value" | "serde_json::Value" => "JsonValue".into(),
         "Bytes" => "Vec<u8>".into(),
         "Upload" => "ForgeUpload".into(),
@@ -376,7 +390,7 @@ mod tests {
         );
         assert_eq!(
             ts_type(&RustType::Custom("Page<User>".into()), Position::Arg),
-            "{ items: User[], page_info: PageInfo }"
+            "Page<User>"
         );
         assert_eq!(dioxus_type(&RustType::Custom("Cursor".into())), "String");
         assert_eq!(

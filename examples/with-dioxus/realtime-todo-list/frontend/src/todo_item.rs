@@ -22,12 +22,12 @@ pub fn TodoItem(todo: Todo, mut error: Signal<Option<String>>) -> Element {
             let id = id.clone();
             let signals = signals.clone();
             spawn(async move {
-                signals.track("todo_toggled", json!({"id": &id, "completed": !completed}));
+                signals.track_with_properties("todo_toggled", json!({"id": &id, "completed": !completed}));
                 if let Err(err) = update_todo
                     .call(UpdateTodoInput::new(id).completed(!completed))
                     .await
                 {
-                    signals.track("todo_toggle_error", json!({"error": &err.message}));
+                    signals.track_with_properties("todo_toggle_error", json!({"error": &err.message}));
                     error.set(Some(err.message));
                 }
             });
@@ -40,9 +40,9 @@ pub fn TodoItem(todo: Todo, mut error: Signal<Option<String>>) -> Element {
         let id = id.clone();
         let signals = signals.clone();
         spawn(async move {
-            signals.track("todo_deleted", json!({"id": &id}));
+            signals.track_with_properties("todo_deleted", json!({"id": &id}));
             if let Err(err) = delete_todo.call(DeleteTodoParams::new(id)).await {
-                signals.track("todo_delete_error", json!({"error": &err.message}));
+                signals.track_with_properties("todo_delete_error", json!({"error": &err.message}));
                 error.set(Some(err.message));
             }
         });

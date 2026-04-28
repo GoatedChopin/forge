@@ -387,53 +387,114 @@ fn strip_up_markers(sql: &str) -> String {
         .to_string()
 }
 
-/// Split SQL into individual statements, respecting dollar-quoted strings.
-/// This handles PL/pgSQL functions that contain semicolons inside $$ delimiters.
+/// Split SQL into individual statements, respecting dollar-quoted strings,
+/// line comments, block comments, and string literals.
 fn split_sql_statements(sql: &str) -> Vec<String> {
     let mut statements = Vec::new();
     let mut current = String::new();
     let mut in_dollar_quote = false;
     let mut dollar_tag = String::new();
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
+    let mut in_string_literal = false;
     let mut chars = sql.chars().peekable();
 
     while let Some(c) = chars.next() {
         current.push(c);
 
-        // Check for dollar-quoting start/end
-        if c == '$' {
-            // Look for a dollar-quote tag like $$ or $tag$
-            let mut potential_tag = String::from("$");
+        if in_line_comment {
+            if c == '\n' {
+                in_line_comment = false;
+            }
+            continue;
+        }
 
-            // Collect characters until we hit another $ or non-identifier char
+        if in_block_comment {
+            if c == '*' && chars.peek() == Some(&'/') {
+                current.push(chars.next().expect("peeked char"));
+                in_block_comment = false;
+            }
+            continue;
+        }
+
+        if in_string_literal {
+            if c == '\'' {
+                if chars.peek() == Some(&'\'') {
+                    current.push(chars.next().expect("peeked char"));
+                } else {
+                    in_string_literal = false;
+                }
+            }
+            continue;
+        }
+
+        if in_dollar_quote {
+            if c == '$' {
+                let mut potential_tag = String::from("$");
+                while let Some(&next_c) = chars.peek() {
+                    if next_c == '$' {
+                        potential_tag.push(chars.next().expect("peeked char"));
+                        current.push('$');
+                        break;
+                    } else if next_c.is_alphanumeric() || next_c == '_' {
+                        let ch = chars.next().expect("peeked char");
+                        potential_tag.push(ch);
+                        current.push(ch);
+                    } else {
+                        break;
+                    }
+                }
+                if potential_tag.len() >= 2
+                    && potential_tag.ends_with('$')
+                    && potential_tag == dollar_tag
+                {
+                    in_dollar_quote = false;
+                    dollar_tag.clear();
+                }
+            }
+            continue;
+        }
+
+        if c == '-' && chars.peek() == Some(&'-') {
+            current.push(chars.next().expect("peeked char"));
+            in_line_comment = true;
+            continue;
+        }
+
+        if c == '/' && chars.peek() == Some(&'*') {
+            current.push(chars.next().expect("peeked char"));
+            in_block_comment = true;
+            continue;
+        }
+
+        if c == '\'' {
+            in_string_literal = true;
+            continue;
+        }
+
+        if c == '$' {
+            let mut potential_tag = String::from("$");
             while let Some(&next_c) = chars.peek() {
                 if next_c == '$' {
-                    potential_tag.push(chars.next().unwrap());
+                    potential_tag.push(chars.next().expect("peeked char"));
                     current.push('$');
                     break;
                 } else if next_c.is_alphanumeric() || next_c == '_' {
-                    potential_tag.push(chars.next().unwrap());
-                    current.push(potential_tag.chars().last().unwrap());
+                    let ch = chars.next().expect("peeked char");
+                    potential_tag.push(ch);
+                    current.push(ch);
                 } else {
                     break;
                 }
             }
-
-            // Check if this is a valid dollar-quote delimiter (ends with $)
             if potential_tag.len() >= 2 && potential_tag.ends_with('$') {
-                if in_dollar_quote && potential_tag == dollar_tag {
-                    // End of dollar-quoted string
-                    in_dollar_quote = false;
-                    dollar_tag.clear();
-                } else if !in_dollar_quote {
-                    // Start of dollar-quoted string
-                    in_dollar_quote = true;
-                    dollar_tag = potential_tag;
-                }
+                in_dollar_quote = true;
+                dollar_tag = potential_tag;
             }
+            continue;
         }
 
-        // Split on semicolon only if not inside a dollar-quoted string
-        if c == ';' && !in_dollar_quote {
+        if c == ';' {
             let stmt = current.trim().trim_end_matches(';').trim().to_string();
             if !stmt.is_empty() {
                 statements.push(stmt);
@@ -442,7 +503,6 @@ fn split_sql_statements(sql: &str) -> Vec<String> {
         }
     }
 
-    // Don't forget the last statement (might not end with ;)
     let stmt = current.trim().trim_end_matches(';').trim().to_string();
     if !stmt.is_empty() {
         statements.push(stmt);
@@ -529,6 +589,29 @@ mod tests {
         let stmts = split_sql_statements("; ; SELECT 1; ;");
         assert_eq!(stmts.len(), 1);
         assert_eq!(stmts[0], "SELECT 1");
+    }
+
+    #[test]
+    fn split_ignores_semicolons_in_line_comments() {
+        let sql = "CREATE TABLE t (\n    id INT,\n    -- this; has a semicolon\n    name TEXT\n);\nSELECT 1;";
+        let stmts = split_sql_statements(sql);
+        assert_eq!(stmts.len(), 2);
+        assert!(stmts[0].contains("name TEXT"));
+    }
+
+    #[test]
+    fn split_ignores_semicolons_in_block_comments() {
+        let sql = "CREATE TABLE t (id INT /* ; */ );\nSELECT 1;";
+        let stmts = split_sql_statements(sql);
+        assert_eq!(stmts.len(), 2);
+    }
+
+    #[test]
+    fn split_ignores_semicolons_in_string_literals() {
+        let sql = "INSERT INTO t VALUES ('a;b');\nSELECT 1;";
+        let stmts = split_sql_statements(sql);
+        assert_eq!(stmts.len(), 2);
+        assert!(stmts[0].contains("'a;b'"));
     }
 
     // --- parse_up_sql ---

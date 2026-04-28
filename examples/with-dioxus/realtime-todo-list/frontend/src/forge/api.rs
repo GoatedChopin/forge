@@ -26,7 +26,7 @@ pub fn use_list_todos() -> QueryState<Vec<Todo>> {
     use_forge_query("list_todos", ())
 }
 
-pub fn use_list_todos_live() -> SubscriptionState<Vec<Todo>> {
+pub fn use_list_todos_subscription() -> SubscriptionState<Vec<Todo>> {
     use_forge_subscription("list_todos", ())
 }
 pub async fn create_todo(

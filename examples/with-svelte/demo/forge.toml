@@ -14,6 +14,7 @@ url = "${DATABASE_URL}"
 
 [gateway]
 port = 9081
+cors_enabled = true
 cors_origins = ["http://localhost:9080", "http://127.0.0.1:9080"]
 # request_timeout = "30s"
 # max_body_size = "10mb"

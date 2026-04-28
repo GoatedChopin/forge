@@ -21,5 +21,5 @@ pub use types::{
     Mutation, OptimisticMutation, QueryState, StreamEvent, SubscriptionState, TokenPair,
     WorkflowExecutionState, WorkflowState, WorkflowStatus, WorkflowStepState,
 };
-pub use signals::{ForgeSignals, SignalsConfig, use_signals};
+pub use signals::{ForgeSignals, SignalError, SignalsConfig, use_signals};
 pub use upload::ForgeUpload;

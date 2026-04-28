@@ -1,40 +1,93 @@
+/// File upload value used by generated mutation clients.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct ForgeUpload {
+    source: UploadSource,
+    file_name: Option<String>,
+    content_type: Option<String>,
+}
 
 #[cfg(target_arch = "wasm32")]
 #[derive(Debug, Clone)]
-pub enum ForgeUpload {
+enum UploadSource {
     File(web_sys::File),
-    Blob {
-        blob: web_sys::Blob,
-        file_name: Option<String>,
-    },
+    Blob(web_sys::Blob),
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone)]
+enum UploadSource {
+    Bytes(Vec<u8>),
+}
+
+impl ForgeUpload {
+    /// Override the uploaded file name.
+    #[must_use]
+    pub fn with_file_name(mut self, file_name: impl Into<String>) -> Self {
+        self.file_name = Some(file_name.into());
+        self
+    }
+
+    /// Override the uploaded content type.
+    #[must_use]
+    pub fn with_content_type(mut self, content_type: impl Into<String>) -> Self {
+        self.content_type = Some(content_type.into());
+        self
+    }
+
+    /// Return the configured upload file name.
+    #[must_use]
+    pub fn file_name(&self) -> Option<&str> {
+        self.file_name.as_deref()
+    }
+
+    /// Return the configured upload content type.
+    #[must_use]
+    pub fn content_type(&self) -> Option<&str> {
+        self.content_type.as_deref()
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
 impl ForgeUpload {
+    /// Create an upload from a browser `File`.
+    pub fn from_file(file: web_sys::File) -> Self {
+        let file_name = Some(file.name());
+        Self {
+            source: UploadSource::File(file),
+            file_name,
+            content_type: None,
+        }
+    }
+
+    /// Create an upload from a browser `Blob`.
     pub fn from_blob(blob: web_sys::Blob) -> Self {
-        Self::Blob {
-            blob,
+        Self {
+            source: UploadSource::Blob(blob),
             file_name: None,
+            content_type: None,
         }
     }
 
+    /// Create a named upload from a browser `Blob`.
     pub fn from_blob_with_name(blob: web_sys::Blob, file_name: impl Into<String>) -> Self {
-        Self::Blob {
-            blob,
-            file_name: Some(file_name.into()),
-        }
+        Self::from_blob(blob).with_file_name(file_name)
     }
 
-    pub(crate) fn append_to_form(
+    /// Append this upload to browser multipart form data.
+    pub fn append_to_form(
         &self,
         form: &web_sys::FormData,
         field_name: &str,
     ) -> Result<(), crate::ForgeClientError> {
-        match self {
-            Self::File(file) => form
-                .append_with_blob_and_filename(field_name, file, &file.name())
-                .map_err(|_| crate::ForgeClientError::new("UPLOAD_FAILED", "Failed to append file", None)),
-            Self::Blob { blob, file_name } => match file_name {
+        match &self.source {
+            UploadSource::File(file) => {
+                let default_name = file.name();
+                let file_name = self.file_name.as_deref().unwrap_or(default_name.as_str());
+                form.append_with_blob_and_filename(field_name, file, file_name)
+                    .map_err(|_| crate::ForgeClientError::new("UPLOAD_FAILED", "Failed to append file", None))
+            }
+            UploadSource::Blob(blob) => match &self.file_name {
                 Some(file_name) => form
                     .append_with_blob_and_filename(field_name, blob, file_name)
                     .map_err(|_| crate::ForgeClientError::new("UPLOAD_FAILED", "Failed to append blob", None)),
@@ -49,7 +102,7 @@ impl ForgeUpload {
 #[cfg(target_arch = "wasm32")]
 impl From<web_sys::File> for ForgeUpload {
     fn from(value: web_sys::File) -> Self {
-        Self::File(value)
+        Self::from_file(value)
     }
 }
 
@@ -61,41 +114,27 @@ impl From<web_sys::Blob> for ForgeUpload {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[derive(Debug, Clone)]
-pub struct ForgeUpload {
-    bytes: Vec<u8>,
-    file_name: Option<String>,
-    content_type: Option<String>,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 impl ForgeUpload {
+    /// Create an upload from raw bytes.
     pub fn from_bytes(bytes: impl Into<Vec<u8>>) -> Self {
         Self {
-            bytes: bytes.into(),
+            source: UploadSource::Bytes(bytes.into()),
             file_name: None,
             content_type: None,
         }
     }
 
+    /// Create a named upload from raw bytes.
     pub fn from_bytes_with_name(
         bytes: impl Into<Vec<u8>>,
         file_name: impl Into<String>,
     ) -> Self {
-        Self {
-            bytes: bytes.into(),
-            file_name: Some(file_name.into()),
-            content_type: None,
-        }
-    }
-
-    pub fn with_content_type(mut self, content_type: impl Into<String>) -> Self {
-        self.content_type = Some(content_type.into());
-        self
+        Self::from_bytes(bytes).with_file_name(file_name)
     }
 
     pub fn into_part(self) -> Result<reqwest::multipart::Part, crate::ForgeClientError> {
-        let mut part = reqwest::multipart::Part::bytes(self.bytes);
+        let UploadSource::Bytes(bytes) = self.source;
+        let mut part = reqwest::multipart::Part::bytes(bytes);
         if let Some(file_name) = self.file_name {
             part = part.file_name(file_name);
         }

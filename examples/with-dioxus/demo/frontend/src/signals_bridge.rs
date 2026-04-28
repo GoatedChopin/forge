@@ -62,7 +62,12 @@ fn install_window_bridge(signals: forge_dioxus::ForgeSignals) {
         Closure::<dyn Fn(wasm_bindgen::JsValue, wasm_bindgen::JsValue)>::new(
             move |event: wasm_bindgen::JsValue, props: wasm_bindgen::JsValue| {
                 let name = event.as_string().unwrap_or_default();
-                signals.track(&name, js_to_value(&props));
+                let properties = js_to_value(&props);
+                if properties.as_object().is_some_and(|o| !o.is_empty()) {
+                    signals.track_with_properties(&name, properties);
+                } else {
+                    signals.track(&name);
+                }
             },
         )
     };
@@ -124,10 +129,12 @@ fn install_window_bridge(signals: forge_dioxus::ForgeSignals) {
                         obj.insert("stack".to_string(), serde_json::Value::String(stack));
                     }
                 }
-                let signals = signals.clone();
-                spawn_local(async move {
-                    signals.capture_error(&message, ctx_val).await;
-                });
+                let context = if ctx_val.is_object() && ctx_val.as_object().is_some_and(|o| !o.is_empty()) {
+                    Some(ctx_val)
+                } else {
+                    None
+                };
+                signals.capture_error(&*message, context);
             },
         )
     };
