@@ -3,12 +3,35 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{FnArg, ItemFn, Pat, ReturnType, Type, parse_macro_input};
 
-use crate::utils::{has_attr_flag, parse_duration_secs, to_pascal_case};
+use crate::utils::{has_attr_flag, parse_duration_secs, to_pascal_case, validate_attr_keys};
+
+const ALLOWED_MCP_TOOL_KEYS: &[&str] = &[
+    "public",
+    "read_only",
+    "destructive",
+    "idempotent",
+    "open_world",
+    "require_role",
+    "name",
+    "title",
+    "description",
+    "timeout",
+    "rate_limit",
+];
 
 /// Expand the #[forge::mcp_tool] attribute.
 pub fn expand_mcp_tool(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
-    let attrs = parse_mcp_tool_attrs(attr);
+    let attr_str = attr.to_string();
+
+    if let Err(e) = validate_attr_keys(&attr_str, ALLOWED_MCP_TOOL_KEYS, "mcp_tool") {
+        return e.to_compile_error().into();
+    }
+
+    let attrs = match parse_mcp_tool_attrs(attr) {
+        Ok(a) => a,
+        Err(e) => return e.to_compile_error().into(),
+    };
 
     expand_mcp_tool_impl(input, attrs)
         .unwrap_or_else(|e| e.to_compile_error())
@@ -32,7 +55,7 @@ struct McpToolAttrs {
     open_world_hint: Option<bool>,
 }
 
-fn parse_mcp_tool_attrs(attr: TokenStream) -> McpToolAttrs {
+fn parse_mcp_tool_attrs(attr: TokenStream) -> syn::Result<McpToolAttrs> {
     let mut attrs = McpToolAttrs::default();
     let attr_str = attr.to_string();
 
@@ -104,13 +127,15 @@ fn parse_mcp_tool_attrs(attr: TokenStream) -> McpToolAttrs {
     {
         let remaining = &attr_str[timeout_start + eq_pos + 1..];
         let trimmed = remaining.trim();
-        if let Ok(secs) = trimmed
+        let raw = trimmed
             .split(&[',', ')'])
             .next()
             .unwrap_or("")
             .trim()
-            .parse::<u64>()
-        {
+            .trim_matches('"');
+        if let Some(secs) = crate::utils::parse_duration_secs(raw) {
+            attrs.timeout = Some(secs);
+        } else if let Ok(secs) = raw.parse::<u64>() {
             attrs.timeout = Some(secs);
         }
     }
@@ -153,13 +178,23 @@ fn parse_mcp_tool_attrs(attr: TokenStream) -> McpToolAttrs {
                 let after_quote = &rl_content[key_start + quote_start + 1..];
                 if let Some(quote_end) = after_quote.find('"') {
                     let key = &after_quote[..quote_end];
+                    if !["user", "ip", "tenant", "global"].contains(&key)
+                        && !key.starts_with("custom(")
+                    {
+                        return Err(syn::Error::new(
+                            proc_macro2::Span::call_site(),
+                            format!(
+                                "invalid rate_limit key \"{key}\". Valid keys: \"user\", \"ip\", \"tenant\", \"global\", or \"custom(...)\"."
+                            ),
+                        ));
+                    }
                     attrs.rate_limit_key = Some(key.to_string());
                 }
             }
         }
     }
 
-    attrs
+    Ok(attrs)
 }
 
 fn validate_tool_name(name: &str) -> syn::Result<()> {
@@ -202,6 +237,10 @@ fn expand_mcp_tool_impl(input: ItemFn, attrs: McpToolAttrs) -> syn::Result<Token
     validate_tool_name(&fn_name_str)?;
 
     let fn_name_value = fn_name.to_string();
+    let module_name = syn::Ident::new(
+        &format!("__forge_handler_{}", fn_name_value),
+        fn_name.span(),
+    );
     let struct_name = syn::Ident::new(
         &format!("{}McpTool", to_pascal_case(tool_type_stem(&fn_name_value))),
         fn_name.span(),
@@ -314,7 +353,7 @@ fn expand_mcp_tool_impl(input: ItemFn, attrs: McpToolAttrs) -> syn::Result<Token
     };
 
     let timeout = match attrs.timeout {
-        Some(t) => quote! { Some(#t) },
+        Some(t) => quote! { Some(std::time::Duration::from_secs(#t)) },
         None => quote! { None },
     };
 
@@ -369,23 +408,10 @@ fn expand_mcp_tool_impl(input: ItemFn, attrs: McpToolAttrs) -> syn::Result<Token
 
     let single_custom_args_type: Option<&Type> = if arg_params.len() == 1 {
         if let FnArg::Typed(pat_type) = &arg_params[0] {
-            if let Type::Path(type_path) = &*pat_type.ty {
-                if let Some(segment) = type_path.path.segments.last() {
-                    let type_name = segment.ident.to_string();
-                    if type_name.ends_with("Args")
-                        || type_name.contains("Args")
-                        || type_name.ends_with("Input")
-                        || type_name.contains("Input")
-                    {
-                        Some(&*pat_type.ty)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
+            if crate::utils::is_primitive_arg_type(&pat_type.ty) {
                 None
+            } else {
+                Some(&*pat_type.ty)
             }
         } else {
             None
@@ -394,26 +420,23 @@ fn expand_mcp_tool_impl(input: ItemFn, attrs: McpToolAttrs) -> syn::Result<Token
         None
     };
 
-    let (args_struct, args_type, execute_call) = if arg_params.is_empty() {
+    let (module_struct_defs, args_type, execute_call) = if arg_params.is_empty() {
         let args_struct_name = syn::Ident::new(&format!("{}Args", struct_name), fn_name.span());
         (
             quote! {
                 #[derive(Debug, Clone, serde::Deserialize, forge::forge_core::schemars::JsonSchema)]
                 #[schemars(crate = "forge::forge_core::schemars")]
-                #vis struct #args_struct_name {}
-
-                #vis struct #struct_name;
+                pub struct #args_struct_name {}
+                pub struct #struct_name;
             },
             quote! { #args_struct_name },
-            quote! { #fn_name(ctx).await },
+            quote! { super::#fn_name(ctx).await },
         )
     } else if let Some(user_args_type) = single_custom_args_type {
         (
-            quote! {
-                #vis struct #struct_name;
-            },
+            quote! { pub struct #struct_name; },
             quote! { #user_args_type },
-            quote! { #fn_name(ctx, args).await },
+            quote! { super::#fn_name(ctx, args).await },
         )
     } else {
         let args_struct_name = syn::Ident::new(&format!("{}Args", struct_name), fn_name.span());
@@ -421,14 +444,13 @@ fn expand_mcp_tool_impl(input: ItemFn, attrs: McpToolAttrs) -> syn::Result<Token
             quote! {
                 #[derive(Debug, Clone, serde::Deserialize, forge::forge_core::schemars::JsonSchema)]
                 #[schemars(crate = "forge::forge_core::schemars")]
-                #vis struct #args_struct_name {
+                pub struct #args_struct_name {
                     #(#args_fields),*
                 }
-
-                #vis struct #struct_name;
+                pub struct #struct_name;
             },
             quote! { #args_struct_name },
-            quote! { #fn_name(ctx, #(args.#arg_names),*).await },
+            quote! { super::#fn_name(ctx, #(args.#arg_names),*).await },
         )
     };
 
@@ -457,49 +479,57 @@ fn expand_mcp_tool_impl(input: ItemFn, attrs: McpToolAttrs) -> syn::Result<Token
     };
 
     Ok(quote! {
-        #args_struct
-
         #inner_fn
 
-        impl forge::forge_core::ForgeMcpTool for #struct_name {
-            type Args = #args_type;
-            type Output = #output_type;
+        #[doc(hidden)]
+        #[allow(non_snake_case)]
+        mod #module_name {
+            use super::*;
 
-            fn info() -> forge::forge_core::McpToolInfo {
-                forge::forge_core::McpToolInfo {
-                    name: #fn_name_str,
-                    title: #title,
-                    description: #description,
-                    required_role: #required_role,
-                    is_public: #is_public,
-                    timeout: #timeout,
-                    rate_limit_requests: #rate_limit_requests,
-                    rate_limit_per_secs: #rate_limit_per_secs,
-                    rate_limit_key: #rate_limit_key,
-                    annotations: forge::forge_core::McpToolAnnotations {
+            #module_struct_defs
+
+            impl forge::forge_core::__sealed::Sealed for #struct_name {}
+
+            impl forge::forge_core::ForgeMcpTool for #struct_name {
+                type Args = #args_type;
+                type Output = #output_type;
+
+                fn info() -> forge::forge_core::McpToolInfo {
+                    forge::forge_core::McpToolInfo {
+                        name: #fn_name_str,
                         title: #title,
-                        read_only_hint: #read_only_hint,
-                        destructive_hint: #destructive_hint,
-                        idempotent_hint: #idempotent_hint,
-                        open_world_hint: #open_world_hint,
-                    },
-                    icons: &[],
+                        description: #description,
+                        required_role: #required_role,
+                        is_public: #is_public,
+                        timeout: #timeout,
+                        rate_limit_requests: #rate_limit_requests,
+                        rate_limit_per_secs: #rate_limit_per_secs,
+                        rate_limit_key: #rate_limit_key,
+                        annotations: forge::forge_core::McpToolAnnotations {
+                            title: #title,
+                            read_only_hint: #read_only_hint,
+                            destructive_hint: #destructive_hint,
+                            idempotent_hint: #idempotent_hint,
+                            open_world_hint: #open_world_hint,
+                        },
+                        icons: &[],
+                    }
+                }
+
+                fn execute(
+                    ctx: &forge::forge_core::McpToolContext,
+                    args: Self::Args,
+                ) -> std::pin::Pin<Box<dyn std::future::Future<Output = forge::forge_core::Result<Self::Output>> + Send + '_>> {
+                    Box::pin(async move {
+                        #execute_call
+                    })
                 }
             }
 
-            fn execute(
-                ctx: &forge::forge_core::McpToolContext,
-                args: Self::Args,
-            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = forge::forge_core::Result<Self::Output>> + Send + '_>> {
-                Box::pin(async move {
-                    #execute_call
-                })
-            }
+            forge::inventory::submit!(forge::AutoMcpTool(|registry| {
+                registry.register::<#struct_name>();
+            }));
         }
-
-        forge::inventory::submit!(forge::AutoMcpTool(|registry| {
-            registry.register::<#struct_name>();
-        }));
     })
 }
 

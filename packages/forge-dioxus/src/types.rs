@@ -9,18 +9,32 @@ use serde::{Deserialize, Serialize};
 
 use crate::ForgeClient;
 
+/// Wire-format error from the Forge RPC layer.
+/// Shape: `{ code, message, retry_after_secs?, details? }`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ForgeError {
     pub code: String,
     pub message: String,
+    /// Seconds to wait before retrying. Set for `RATE_LIMITED` errors.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_after_secs: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub details: Option<serde_json::Value>,
+}
+
+impl ForgeError {
+    pub fn is_rate_limited(&self) -> bool { self.code == "RATE_LIMITED" }
+    pub fn is_unauthorized(&self) -> bool { self.code == "UNAUTHORIZED" }
+    pub fn is_validation(&self) -> bool { self.code == "VALIDATION_ERROR" }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ForgeClientError {
     pub code: String,
     pub message: String,
+    /// Seconds to wait before retrying. Set for `RATE_LIMITED` errors.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_after_secs: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub details: Option<serde_json::Value>,
 }
@@ -34,15 +48,40 @@ impl ForgeClientError {
         Self {
             code: code.into(),
             message: message.into(),
+            retry_after_secs: None,
             details,
         }
     }
+
+    pub(crate) fn from_forge_error(e: ForgeError) -> Self {
+        Self {
+            code: e.code,
+            message: e.message,
+            retry_after_secs: e.retry_after_secs,
+            details: e.details,
+        }
+    }
+
+    pub fn is_rate_limited(&self) -> bool { self.code == "RATE_LIMITED" }
+    pub fn is_unauthorized(&self) -> bool { self.code == "UNAUTHORIZED" }
+    pub fn is_validation(&self) -> bool { self.code == "VALIDATION_ERROR" }
 
     pub fn as_forge_error(&self) -> ForgeError {
         ForgeError {
             code: self.code.clone(),
             message: self.message.clone(),
+            retry_after_secs: self.retry_after_secs,
             details: self.details.clone(),
+        }
+    }
+
+    /// Build a rate-limited error with the retry delay.
+    pub fn rate_limited(retry_after_secs: u64) -> Self {
+        Self {
+            code: "RATE_LIMITED".into(),
+            message: "Rate limit exceeded".into(),
+            retry_after_secs: Some(retry_after_secs),
+            details: None,
         }
     }
 }
@@ -114,7 +153,6 @@ pub enum JobStatus {
     DeadLetter,
     CancelRequested,
     Cancelled,
-    NotFound,
 }
 
 impl Default for JobStatus {
@@ -173,7 +211,11 @@ pub enum WorkflowStatus {
     Compensating,
     Compensated,
     Failed,
-    NotFound,
+    BlockedMissingVersion,
+    BlockedSignatureMismatch,
+    BlockedMissingHandler,
+    RetiredUnresumable,
+    CancelledByOperator,
 }
 
 impl Default for WorkflowStatus {
@@ -404,6 +446,7 @@ mod tests {
             ForgeError {
                 code: "VALIDATION".into(),
                 message: "Name is required".into(),
+                retry_after_secs: None,
                 details: Some(json!({"field": "name"})),
             }
         );
@@ -423,7 +466,14 @@ mod tests {
     #[test]
     fn job_and_workflow_status_serialize_in_snake_case() {
         assert_eq!(serde_json::to_string(&JobStatus::CancelRequested).unwrap(), "\"cancel_requested\"");
-        assert_eq!(serde_json::to_string(&WorkflowStatus::NotFound).unwrap(), "\"not_found\"");
+        assert_eq!(
+            serde_json::to_string(&WorkflowStatus::BlockedMissingVersion).unwrap(),
+            "\"blocked_missing_version\""
+        );
+        assert_eq!(
+            serde_json::to_string(&WorkflowStatus::CancelledByOperator).unwrap(),
+            "\"cancelled_by_operator\""
+        );
     }
 
     #[test]

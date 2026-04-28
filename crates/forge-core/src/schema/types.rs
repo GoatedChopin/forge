@@ -162,60 +162,6 @@ impl RustType {
     pub fn is_nullable(&self) -> bool {
         matches!(self, RustType::Option(_))
     }
-
-    /// Generate TypeScript type.
-    pub fn to_typescript(&self) -> String {
-        match self {
-            RustType::String => "string".to_string(),
-            RustType::Uuid => "string".to_string(),
-            RustType::I32 | RustType::I64 => "number".to_string(),
-            RustType::F32 | RustType::F64 => "number".to_string(),
-            RustType::Bool => "boolean".to_string(),
-            RustType::Instant | RustType::LocalDate | RustType::LocalTime => "string".to_string(),
-            RustType::Upload => "File | Blob".to_string(),
-            RustType::Json => "unknown".to_string(),
-            RustType::Bytes => "Uint8Array".to_string(),
-            RustType::Option(inner) => format!("{} | null", inner.to_typescript()),
-            RustType::Vec(inner) => format!("{}[]", inner.to_typescript()),
-            RustType::Custom(name) => match name.as_str() {
-                "Uuid" | "uuid::Uuid" => "string".to_string(),
-                "usize" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128" | "i8" | "i16"
-                | "i128" => "number".to_string(),
-                "Timestamp" | "NaiveDate" | "NaiveDateTime" | "NaiveTime" | "Instant"
-                | "LocalDate" | "LocalTime" => "string".to_string(),
-                "Upload" => "File | Blob".to_string(),
-                "Bytes" => "Uint8Array".to_string(),
-                dt if dt.starts_with("DateTime<") => "string".to_string(),
-                opt if opt.starts_with("Option<") => {
-                    if let Some(inner) = opt
-                        .strip_prefix("Option<")
-                        .and_then(|s| s.strip_suffix('>'))
-                    {
-                        format!(
-                            "{} | null",
-                            RustType::Custom(inner.to_string()).to_typescript()
-                        )
-                    } else {
-                        "unknown | null".to_string()
-                    }
-                }
-                vec if vec.starts_with("Vec<") => {
-                    if let Some(inner) = vec.strip_prefix("Vec<").and_then(|s| s.strip_suffix('>'))
-                    {
-                        format!("{}[]", RustType::Custom(inner.to_string()).to_typescript())
-                    } else {
-                        "unknown[]".to_string()
-                    }
-                }
-                hm if hm.starts_with("HashMap<")
-                    || hm.starts_with("std::collections::HashMap<") =>
-                {
-                    "Record<string, unknown>".to_string()
-                }
-                _ => name.clone(),
-            },
-        }
-    }
 }
 
 #[cfg(test)]
@@ -249,15 +195,5 @@ mod tests {
         assert_eq!(RustType::String.to_sql_type(), SqlType::Varchar(None));
         assert_eq!(RustType::Uuid.to_sql_type(), SqlType::Uuid);
         assert_eq!(RustType::I64.to_sql_type(), SqlType::BigInt);
-    }
-
-    #[test]
-    fn test_rust_type_to_typescript() {
-        assert_eq!(RustType::String.to_typescript(), "string");
-        assert_eq!(RustType::I32.to_typescript(), "number");
-        assert_eq!(
-            RustType::Option(Box::new(RustType::String)).to_typescript(),
-            "string | null"
-        );
     }
 }

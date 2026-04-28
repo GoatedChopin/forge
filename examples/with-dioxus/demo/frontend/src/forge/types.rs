@@ -108,13 +108,13 @@ impl ExportInput {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExportOutput {
-    pub count: usize,
+    pub count: i64,
     pub data: String,
     pub format: String,
 }
 
 impl ExportOutput {
-    pub fn new(count: usize, data: impl Into<String>, format: impl Into<String>) -> Self {
+    pub fn new(count: i64, data: impl Into<String>, format: impl Into<String>) -> Self {
         Self {
             count: count,
             data: data.into(),

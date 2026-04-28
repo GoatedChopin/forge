@@ -14,10 +14,12 @@ pub fn expand_model(attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 fn expand_model_impl(
-    _attr: TokenStream2,
+    attr: TokenStream2,
     input: DeriveInput,
     _original_tokens: TokenStream2,
 ) -> syn::Result<TokenStream2> {
+    let attr_str = attr.to_string();
+    crate::utils::validate_attr_keys(&attr_str, &[], "model")?;
     let struct_name = &input.ident;
     let vis = &input.vis;
     let table_name = get_table_name(&input)?;

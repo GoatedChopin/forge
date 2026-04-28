@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 /// RPC response for function calls.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RpcResponse {
     /// Whether the call succeeded.
     pub success: bool,
@@ -58,29 +59,53 @@ impl IntoResponse for RpcResponse {
                 .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
         };
 
-        (status, Json(self)).into_response()
+        let retry_after = self.error.as_ref().and_then(|e| e.retry_after_secs);
+
+        let mut response = (status, Json(self)).into_response();
+        if let Some(secs) = retry_after
+            && let Ok(val) = axum::http::HeaderValue::from_str(&secs.to_string())
+        {
+            response.headers_mut().insert("Retry-After", val);
+        }
+        response
     }
 }
 
 /// RPC error information.
+///
+/// Wire shape: `{ code, message, retry_after_secs?, details? }`.
+/// All frontend clients (SvelteKit, Dioxus) deserialize into this same shape.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct RpcError {
-    /// Error code.
+    /// Error code (e.g. `"NOT_FOUND"`, `"RATE_LIMITED"`).
     pub code: String,
     /// Human-readable error message.
     pub message: String,
+    /// Seconds to wait before retrying. Set for `RATE_LIMITED` errors.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_after_secs: Option<u64>,
     /// Additional error details.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<serde_json::Value>,
+    // Not sent to clients; drives IntoResponse status selection.
+    #[serde(skip)]
+    http_status: u16,
 }
 
 impl RpcError {
-    /// Create a new error.
+    /// Create a new error. HTTP status is inferred from `code` via the standard mapping;
+    /// prefer the typed constructors (`not_found`, `unauthorized`, etc.) or
+    /// `From<ForgeError>` when the status must be exact.
     pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
+        let code = code.into();
+        let http_status = code_to_status(&code);
         Self {
-            code: code.into(),
+            code,
             message: message.into(),
+            retry_after_secs: None,
             details: None,
+            http_status,
         }
     }
 
@@ -90,26 +115,25 @@ impl RpcError {
         message: impl Into<String>,
         details: serde_json::Value,
     ) -> Self {
+        let mut e = Self::new(code, message);
+        e.details = Some(details);
+        e
+    }
+
+    /// Create a rate-limit error with the retry delay promoted to the top level.
+    pub fn rate_limited(retry_after_secs: u64) -> Self {
         Self {
-            code: code.into(),
-            message: message.into(),
-            details: Some(details),
+            code: "RATE_LIMITED".into(),
+            message: "Rate limit exceeded".into(),
+            retry_after_secs: Some(retry_after_secs),
+            details: None,
+            http_status: 429,
         }
     }
 
-    /// Get HTTP status code for this error.
+    /// Returns the HTTP status code for this error.
     pub fn status_code(&self) -> StatusCode {
-        match self.code.as_str() {
-            "NOT_FOUND" => StatusCode::NOT_FOUND,
-            "UNAUTHORIZED" => StatusCode::UNAUTHORIZED,
-            "FORBIDDEN" => StatusCode::FORBIDDEN,
-            "VALIDATION_ERROR" => StatusCode::BAD_REQUEST,
-            "INVALID_ARGUMENT" => StatusCode::BAD_REQUEST,
-            "TIMEOUT" => StatusCode::GATEWAY_TIMEOUT,
-            "RATE_LIMITED" => StatusCode::TOO_MANY_REQUESTS,
-            "JOB_CANCELLED" => StatusCode::CONFLICT,
-            _ => StatusCode::INTERNAL_SERVER_ERROR,
-        }
+        StatusCode::from_u16(self.http_status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
     }
 
     /// Create a not found error.
@@ -138,52 +162,81 @@ impl RpcError {
     }
 }
 
+// Fallback for manually-constructed RpcError values (e.g. RpcError::new("NOT_FOUND", ...))
+// that don't go through From<ForgeError>. Must stay in sync with ForgeError::http_status().
+fn code_to_status(code: &str) -> u16 {
+    match code {
+        "NOT_FOUND" => 404,
+        "UNAUTHORIZED" => 401,
+        "FORBIDDEN" => 403,
+        "VALIDATION_ERROR" | "INVALID_ARGUMENT" => 400,
+        "TIMEOUT" => 504,
+        "REQUEST_TIMEOUT" => 408,
+        "RATE_LIMITED" => 429,
+        "JOB_CANCELLED" | "CONFLICT" => 409,
+        "UNPROCESSABLE_ENTITY" => 422,
+        "SERVICE_UNAVAILABLE" => 503,
+        "PAYLOAD_TOO_LARGE" | "RESULT_TOO_LARGE" => 413,
+        "SUBSCRIPTION_GAPPED" => 410,
+        "UNSUPPORTED_API_VERSION" => 406,
+        _ => 500,
+    }
+}
+
 impl From<forge_core::error::ForgeError> for RpcError {
     fn from(err: forge_core::error::ForgeError) -> Self {
-        match err {
-            forge_core::error::ForgeError::NotFound(msg) => Self::not_found(msg),
-            forge_core::error::ForgeError::Unauthorized(msg) => Self::unauthorized(msg),
-            forge_core::error::ForgeError::Forbidden(msg) => Self::forbidden(msg),
-            forge_core::error::ForgeError::Validation(msg) => Self::validation(msg),
-            forge_core::error::ForgeError::InvalidArgument(msg) => {
-                Self::new("INVALID_ARGUMENT", msg)
-            }
-            forge_core::error::ForgeError::Timeout(msg) => Self::new("TIMEOUT", msg),
-            forge_core::error::ForgeError::JobCancelled(msg) => Self::new("JOB_CANCELLED", msg),
-            forge_core::error::ForgeError::Deserialization(msg) => {
+        use forge_core::error::ForgeError as E;
+
+        // Capture before the match consumes `err`; status lives on RpcError so
+        // IntoResponse doesn't need to re-derive it from the string code.
+        let http_status = err.http_status();
+
+        let mut rpc = match err {
+            E::NotFound(msg) => Self::not_found(msg),
+            E::Unauthorized(msg) => Self::unauthorized(msg),
+            E::Forbidden(msg) => Self::forbidden(msg),
+            E::Validation(msg) => Self::validation(msg),
+            E::InvalidArgument(msg) => Self::new("INVALID_ARGUMENT", msg),
+            E::Timeout(msg) => Self::new("TIMEOUT", msg),
+            E::JobCancelled(msg) => Self::new("JOB_CANCELLED", msg),
+            E::Deserialization(msg) => {
                 tracing::warn!(error = %msg, "Deserialization error in RPC handler");
                 Self::new("INVALID_ARGUMENT", "Invalid input format")
             }
-            ref e @ forge_core::error::ForgeError::Database(_)
-            | ref e @ forge_core::error::ForgeError::Sql(_) => {
+            ref e @ E::Database(_) | ref e @ E::Sql(_) => {
                 tracing::error!(error = %e, "Database error in RPC handler");
                 Self::internal("Internal server error")
             }
-            ref e @ (forge_core::error::ForgeError::Internal(_)
-            | forge_core::error::ForgeError::Serialization(_)
-            | forge_core::error::ForgeError::Function(_)
-            | forge_core::error::ForgeError::Config(_)
-            | forge_core::error::ForgeError::Io(_)
-            | forge_core::error::ForgeError::Cluster(_)
-            | forge_core::error::ForgeError::InvalidState(_)
-            | forge_core::error::ForgeError::WorkflowSuspended) => {
+            ref e @ (E::Internal(_)
+            | E::Serialization(_)
+            | E::Function(_)
+            | E::Config(_)
+            | E::Io(_)
+            | E::Cluster(_)
+            | E::InvalidState(_)
+            | E::WorkflowSuspended) => {
                 tracing::error!(error = %e, "Internal error in RPC handler");
                 Self::internal("Internal server error")
             }
-            forge_core::error::ForgeError::Job(msg) => {
+            E::Job(ref msg) => {
                 tracing::error!(error = %msg, "Job error");
                 Self::internal("Internal server error")
             }
-            forge_core::error::ForgeError::RateLimitExceeded { retry_after, .. } => {
-                Self::with_details(
-                    "RATE_LIMITED",
-                    "Rate limit exceeded",
-                    serde_json::json!({
-                        "retry_after_secs": retry_after.as_secs(),
-                    }),
-                )
+            E::Conflict(msg) => Self::new("CONFLICT", msg),
+            E::UnprocessableEntity(msg) => Self::new("UNPROCESSABLE_ENTITY", msg),
+            E::ServiceUnavailable(msg) => Self::new("SERVICE_UNAVAILABLE", msg),
+            E::PayloadTooLarge(msg) => Self::new("PAYLOAD_TOO_LARGE", msg),
+            E::ResultTooLarge(msg) => Self::new("RESULT_TOO_LARGE", msg),
+            E::SubscriptionGapped(msg) => Self::new("SUBSCRIPTION_GAPPED", msg),
+            E::RateLimitExceeded { retry_after, .. } => Self::rate_limited(retry_after.as_secs()),
+            ref e => {
+                tracing::error!(error = %e, "Unmapped ForgeError variant");
+                Self::internal("Internal server error")
             }
-        }
+        };
+
+        rpc.http_status = http_status;
+        rpc
     }
 }
 
@@ -286,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn forge_rate_limit_maps_to_429_with_details() {
+    fn forge_rate_limit_maps_to_429_with_retry_after() {
         let rpc: RpcError = forge_core::ForgeError::RateLimitExceeded {
             retry_after: std::time::Duration::from_secs(60),
             limit: 100,
@@ -295,8 +348,7 @@ mod tests {
         .into();
         assert_eq!(rpc.code, "RATE_LIMITED");
         assert_eq!(rpc.status_code(), StatusCode::TOO_MANY_REQUESTS);
-        assert!(rpc.details.is_some());
-        assert_eq!(rpc.details.unwrap()["retry_after_secs"], 60);
+        assert_eq!(rpc.retry_after_secs, Some(60));
     }
 
     #[test]

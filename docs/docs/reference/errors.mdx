@@ -46,7 +46,7 @@ Err(ForgeError::NotFound("User not found".to_string()))
 | `limit` | `u32` | Configured request limit |
 | `remaining` | `u32` | Tokens remaining (0 when exceeded) |
 
-The HTTP response serializes only `retry_after_secs` in the `details` object. The `limit` and `remaining` fields are available in Rust but not included in the JSON response.
+The HTTP response serializes only top-level `retry_after_secs`. The Svelte client exposes it as `retryAfterSecs`; Dioxus keeps the Rust field name `retry_after_secs`. The `limit` and `remaining` fields are available in Rust but not included in the JSON response.
 
 ## HTTP Response Format
 
@@ -86,7 +86,11 @@ Generated client includes error types:
 export interface ForgeError {
   code: string;
   message: string;
+  retryAfterSecs?: number;
   details?: unknown;
+  isRateLimited(): boolean;
+  isUnauthorized(): boolean;
+  isValidation(): boolean;
 }
 ```
 
@@ -309,8 +313,8 @@ Handle on the frontend:
 try {
   await expensiveQuery();
 } catch (e) {
-  if (e instanceof ForgeClientError && e.code === 'RATE_LIMITED') {
-    const retryAfter = e.details?.retry_after_secs ?? 60;
+  if (e instanceof ForgeClientError && e.isRateLimited()) {
+    const retryAfter = e.retryAfterSecs ?? 60;
     showMessage(`Rate limited. Try again in ${retryAfter} seconds`);
   }
 }
@@ -381,7 +385,7 @@ size = 30
 
 [database.pools.analytics]
 size = 10
-statement_timeout_secs = 600
+statement_timeout = "10m"
 ```
 
 #### "Unauthorized: Token expired"
@@ -412,7 +416,7 @@ onAuthError: (error) => {
 
 ```typescript
 if (error.code === 'RATE_LIMITED') {
-  await sleep(error.details.retry_after_secs * 1000);
+  await sleep((error.retryAfterSecs ?? 1) * 1000);
   return retry();
 }
 ```

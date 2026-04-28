@@ -39,6 +39,7 @@ fn make_signals_state(pool: &PgPool) -> Arc<SignalsState> {
         Arc::new(pool.clone()),
         1, // batch_size=1 for immediate flush
         Duration::from_millis(50),
+        10_000,
     );
     Arc::new(SignalsState {
         collector,
@@ -46,6 +47,7 @@ fn make_signals_state(pool: &PgPool) -> Arc<SignalsState> {
         server_secret: "test-secret".to_string(),
         anonymize_ip: false,
         geoip: None,
+        rate_limiter: Arc::new(crate::signals::rate_limit::SignalRateLimiter::new()),
     })
 }
 
@@ -483,6 +485,7 @@ async fn test_collector_single_event_flush() {
         Arc::new(pool.clone()),
         1, // flush on every event
         Duration::from_secs(60),
+        10_000,
     );
 
     collector.try_send(make_test_event());
@@ -508,6 +511,7 @@ async fn test_collector_batch_trigger() {
         Arc::new(pool.clone()),
         5, // flush at 5 events
         Duration::from_secs(60),
+        10_000,
     );
 
     for i in 0..5 {
@@ -539,6 +543,7 @@ async fn test_collector_timer_trigger() {
         Arc::new(pool.clone()),
         100,                        // high batch size so it won't trigger
         Duration::from_millis(100), // but short timer
+        10_000,
     );
 
     for i in 0..3 {
@@ -572,6 +577,7 @@ async fn test_collector_drop_flushes_remaining() {
             Arc::new(pool.clone()),
             100,                     // won't trigger batch
             Duration::from_secs(60), // won't trigger timer
+            10_000,
         );
 
         for i in 0..3 {
@@ -619,10 +625,15 @@ async fn test_event_handler_roundtrip() {
         }),
     };
 
-    let response =
-        endpoints::event_handler(State(state.clone()), None, make_headers(), Json(batch))
-            .await
-            .into_response();
+    let response = endpoints::event_handler(
+        State(state.clone()),
+        None,
+        None,
+        make_headers(),
+        Json(batch),
+    )
+    .await
+    .into_response();
 
     let body: serde_json::Value = axum::body::to_bytes(response.into_body(), 1024)
         .await
@@ -674,10 +685,15 @@ async fn test_view_handler_with_utm() {
         correlation_id: None,
     };
 
-    let response =
-        endpoints::view_handler(State(state.clone()), None, make_headers(), Json(payload))
-            .await
-            .into_response();
+    let response = endpoints::view_handler(
+        State(state.clone()),
+        None,
+        None,
+        make_headers(),
+        Json(payload),
+    )
+    .await
+    .into_response();
 
     let body: serde_json::Value = axum::body::to_bytes(response.into_body(), 1024)
         .await
@@ -728,10 +744,15 @@ async fn test_report_handler_stores_errors() {
         ],
     };
 
-    let response =
-        endpoints::report_handler(State(state.clone()), None, make_headers(), Json(report))
-            .await
-            .into_response();
+    let response = endpoints::report_handler(
+        State(state.clone()),
+        None,
+        None,
+        make_headers(),
+        Json(report),
+    )
+    .await
+    .into_response();
 
     let body: serde_json::Value = axum::body::to_bytes(response.into_body(), 1024)
         .await
@@ -772,10 +793,15 @@ async fn test_user_handler_rejects_invalid_uuid() {
         traits: serde_json::json!({}),
     };
 
-    let response =
-        endpoints::user_handler(State(state.clone()), None, make_headers(), Json(payload))
-            .await
-            .into_response();
+    let response = endpoints::user_handler(
+        State(state.clone()),
+        None,
+        None,
+        make_headers(),
+        Json(payload),
+    )
+    .await
+    .into_response();
 
     let body: serde_json::Value = axum::body::to_bytes(response.into_body(), 1024)
         .await
@@ -805,6 +831,7 @@ async fn test_event_handler_populates_device_fields() {
 
     endpoints::event_handler(
         State(state.clone()),
+        None,
         None,
         make_headers_with_platform("desktop-macos"),
         Json(batch),

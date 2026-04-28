@@ -13,12 +13,13 @@ Defines a read-only operation. The macro generates a `{PascalCase}Query` struct 
 
 | Attribute | Description and Rationale |
 |---|---|
+| `name = "x"` | Overrides the default wire name (derived from the function name). |
 | `public` | Disables authentication requirements for the query. |
 | `consistent` | Forces the query to read from the primary database to ensure data consistency after a recent write. |
 | `require_role("x")` | Returns a 403 Forbidden error if the user lacks the specified role. |
 | `cache = "30s"` | Enables a per-identity cache with the specified TTL to reduce database load. |
-| `timeout = 30` | Sets the maximum execution time in seconds. This also sets the default timeout for `ctx.http()`. |
-| `rate_limit(...)` | Configures rate limiting based on `requests`, `per` duration, and a specified `key` (e.g., user, IP, or global). |
+| `timeout = "30s"` | Sets the maximum execution time. Accepts duration strings: `"30s"`, `"5m"`, `"1h"`. |
+| `rate_limit(requests = N, per = "1m", key = "user")` | Configures rate limiting. `key` values: `"user"`, `"ip"`, `"global"`, `"custom:claim_name"`. |
 | `log = "info"` | Sets the log level for handler execution. |
 | `unscoped` | Skips mandatory scope enforcement checks at compile time. |
 | `tables = [...]` | Manually specifies table dependencies to trigger reactive cache invalidation. |
@@ -28,12 +29,13 @@ Defines a data-modifying operation. The macro generates a `{PascalCase}Mutation`
 
 | Attribute | Description and Rationale |
 |---|---|
+| `name = "x"` | Overrides the default wire name (derived from the function name). |
 | `public` | Allows unauthenticated access to the mutation. |
 | `require_role("x")` | Restricts access to users with the specified role. |
-| `transactional` | Wraps the entire operation in a PostgreSQL transaction. This is required if you use `dispatch_job()` or `start_workflow()`. |
-| `timeout = 30` | Sets the handler timeout in seconds. |
+| `transactional` | Wraps the entire operation in a PostgreSQL transaction. **Default: on.** Opt out with `transactional = false` for high-throughput writes that don't need atomicity. Cannot be disabled when using `dispatch_job()` or `start_workflow()`. |
+| `timeout = "30s"` | Sets the handler timeout. Accepts duration strings: `"30s"`, `"5m"`, `"1h"`. |
 | `max_size = "200mb"` | Defines the maximum allowable request body size for this mutation. |
-| `rate_limit(...)` | Configures rate limiting for the mutation. |
+| `rate_limit(requests = N, per = "1m", key = "user")` | Configures rate limiting. `key` values: `"user"`, `"ip"`, `"global"`, `"custom:claim_name"`. |
 | `unscoped` | Disables compile-time scope validation. |
 
 ### `#[forge::job]`
@@ -55,6 +57,7 @@ Defines a task that runs on a recurring schedule. Execution is guaranteed to hap
 
 | Attribute | Description and Rationale |
 |---|---|
+| `name = "x"` | Overrides the default registry name (derived from the function name). |
 | `timezone = "UTC"` | Sets the schedule's timezone. |
 | `group = "default"` | Groups crons for concurrency management. |
 | `timeout = "1h"` | Sets the maximum allowed execution time. |
@@ -67,8 +70,9 @@ Defines a durable, multi-step business process. Workflows are versioned to ensur
 |---|---|
 | `name = "x"` | Provides a logical ID shared across different versions of the workflow. |
 | `version = "..."` | A unique version string. Changes to steps require a version bump. |
-| `active` | Marks this version as the one responsible for handling new workflow runs. |
-| `deprecated` | Marks the version as inactive; it will only finish existing runs. |
+| `status = "active"` | Lifecycle status. Values: `"active"` (default, accepts new runs), `"deprecated"` (finishes existing runs only), `"staging"` (registered but never elected as the active version). |
+| `active` | Shorthand flag equivalent to `status = "active"`. |
+| `deprecated` | Shorthand flag equivalent to `status = "deprecated"`. |
 | `timeout = "24h"` | Sets the maximum time a workflow run is allowed to execute. |
 
 ### `#[forge::webhook]`
@@ -76,6 +80,7 @@ Defines an HTTP endpoint for receiving events from external services. The handle
 
 | Attribute | Description and Rationale |
 |---|---|
+| `name = "x"` | Overrides the default registry name (derived from the function name). |
 | `path = "/webhooks/stripe"` | The URL path this webhook listens on. Must start with `/`. |
 | `signature = WebhookSignature::...` | Configures signature verification. Omitting this attribute causes the handler to reject all requests unless `allow_unsigned` is set. |
 | `allow_unsigned` | Accept requests with no signature. Only use this during local development or for sources that cannot sign requests. |
@@ -163,7 +168,11 @@ These are the options most likely to cause silent runtime failures when missing.
 # REQUIRED if issue_token_pair() is used. Missing these causes a panic at startup.
 access_token_ttl = "15m"
 refresh_token_ttl = "7d"
-jwt_secret = "${JWT_SECRET}"
+jwt_secret = "${JWT_SECRET}"   # must be ≥ 32 bytes; startup fails otherwise when auth is active
+jwt_audience = "https://api.example.com"  # required by default (audience_required = true)
+# audience_required = false    # set during migration if clients don't send aud yet
+# required_claims = ["exp", "sub"]         # default; add "aud" for claim-level enforcement too
+# legacy_secrets = ["${OLD_JWT_SECRET}"]   # accepted for validation only; rotate by removing after one TTL
 
 [database]
 url = "${DATABASE_URL}"
@@ -172,14 +181,29 @@ max_connections = 20          # default pool size
 [gateway]
 max_body_size = "20mb"        # total multipart body cap (default)
 max_file_size = "10mb"        # per-file cap when mutation has no max_size (default)
+# cors_enabled = true requires cors_origins to be non-empty. Mixing "*" with concrete origins fails at startup.
 
 [worker]
 concurrency = 10              # parallel job slots per node
 
+[rate_limit]
+mode = "hybrid"               # "hybrid" (default, per-node DashMap for user/ip) or "strict" (PG counter every check, cluster-correct)
+
+[realtime]
+# All fields are optional; production-safe defaults shown.
+debounce_quiet_window = "50ms"       # coalesce window for change notifications
+debounce_max_wait = "200ms"          # max wait before forcing a flush
+max_concurrent_reexecutions = 64     # parallel query re-runs during invalidation
+resync_interval = "60s"              # periodic sweep to recover dropped NOTIFYs; "0s" disables
+postgres_change_buffer_size = 1024   # broadcast channel buffer for raw PG change events
+subscription_max_per_session = 100   # max subscriptions a single SSE client may hold
+change_tracking_row_threshold = 200  # switches from row-level to table-level tracking above this
+sse_max_sessions = 10000             # max concurrent SSE sessions across all clients
+
 [observability]
 # Optional. Enables OTLP trace/metric export.
 otlp_endpoint = "${FORGE_OTEL_ENDPOINT-http://localhost:4318}"    # any ${VAR-default} interpolation works
-metrics_interval_secs = 15    # metrics export period
+metrics_interval = "15s"      # metrics export period
 
 [signals]
 enabled = true                # master switch; set false to disable analytics
@@ -266,6 +290,37 @@ builder.custom_routes(|pool| {
 - Handlers read `Extension<AuthContext>` to access the authenticated user. Unauthenticated requests still arrive with an unauthenticated context — check `auth.user_id()` if login is required.
 - Avoid paths that conflict with built-ins: `/health`, `/ready`, `/rpc`, `/rpc/*`, `/events`, `/subscribe`, `/unsubscribe`, `/subscribe-job`, `/subscribe-workflow`, `/signal/*`, `/webhooks/*`, `/mcp`, `/oauth/*`. Conflicts panic at startup.
 
+## API Versioning
+
+RPC routes require the header `Accept: application/vnd.forge.v1+json`. Omitting the header is allowed (treated as v1). Any other value returns HTTP 406 with error code `unsupported_api_version`. Generated clients send this header automatically.
+
+## RoleResolver
+
+`RoleResolver` is a pluggable trait for dynamic RBAC. Implement it to expand or remap roles beyond the `roles` JWT claim (e.g. hierarchy expansion, DB lookups, tenant-scoped permissions).
+
+```rust
+struct HierarchyResolver;
+
+impl RoleResolver for HierarchyResolver {
+    fn resolve(&self, auth: &AuthContext) -> Vec<String> {
+        let mut roles = auth.roles().to_vec();
+        if roles.contains(&"admin".to_string()) {
+            roles.extend(["editor", "viewer"].map(String::from));
+        }
+        roles
+    }
+}
+
+// Register on the builder:
+Forge::builder()
+    .with_role_resolver(Arc::new(HierarchyResolver))
+    .build()?
+    .run()
+    .await
+```
+
+The resolver is called once per `require_role` check. Cache expensive lookups internally. Without a custom resolver, the default returns `auth.roles()` as-is.
+
 ## Duration Formats
 Time durations can be expressed as `500ms`, `30s`, `5m`, `2h`, `7d`, or a bare number representing seconds. Note that `query`, `mutation`, and `mcp_tool` timeout attributes specifically require a bare `u64` integer representing seconds.
 
@@ -294,15 +349,20 @@ Each handler type receives a specific context object providing access to framewo
 
 Forge uses structured error variants to ensure consistent error handling across the stack and proper HTTP status code mapping.
 
+The canonical status mapping lives on `ForgeError::http_status() -> u16`. Downstream consumers (outside forge-runtime) can call this without depending on the gateway layer.
+
 | Variant | HTTP Code | Internal Code | Rationale |
 |---|---|---|---|
 | `NotFound` | 404 | `NOT_FOUND` | Resource does not exist. |
 | `Unauthorized` | 401 | `UNAUTHORIZED` | Authentication is missing or invalid. |
 | `Forbidden` | 403 | `FORBIDDEN` | User lacks permission for the operation. |
 | `Validation` | 400 | `VALIDATION_ERROR` | Request data is malformed or invalid. |
+| `InvalidArgument` | 400 | `INVALID_ARGUMENT` | Caller-supplied argument is semantically invalid. |
+| `Deserialization` | 400 | `INVALID_ARGUMENT` | Request body could not be parsed; details are hidden from clients. |
 | `Timeout` | 504 | `TIMEOUT` | Operation exceeded its allotted time. |
-| `RateLimitExceeded` | 429 | `RATE_LIMITED` | Too many requests from the same identity. |
-| `Internal` | 500 | `INTERNAL_ERROR` | Unhandled server-side error. |
+| `RateLimitExceeded` | 429 | `RATE_LIMITED` | Too many requests from the same identity. Includes top-level `retry_after_secs` on the wire. |
+| `JobCancelled` | 409 | `JOB_CANCELLED` | Job was cancelled before it could complete. |
+| `Internal` / all others | 500 | `INTERNAL_ERROR` | Server-side error; details never leak to clients. |
 
 ## CLI Command Reference
 
@@ -350,3 +410,23 @@ forge = { version = "0.9", default-features = false, features = ["worker"] }
 | `release-fast` | off | 16 | Smoke tests / ad-hoc benchmarks (skips ~30-90s LTO link) |
 
 Linker tuning (env): `RUSTFLAGS="-C link-arg=-fuse-ld=mold"` (Linux) / `=lld` (macOS); `RUSTC_WRAPPER=sccache` for cross-build cache.
+
+## Observability Surface (Frozen at GA)
+
+Full catalog at `docs/docs/reference/observability-catalog.mdx`. Key points for code generation and integrations:
+
+**Stable metric names** (meter `forge-runtime` unless noted):
+- `http_requests_total` / `http_request_duration_seconds` — dims: `method`, `path`, `status`
+- `fn.executions_total` / `fn.duration_seconds` — dims: `function`, `kind`, `status`
+- `job_executions_total` / `job_duration_seconds` — dims: `job_type`, `status`
+- `db.client.operation.duration` — dims: `db.system`, `db.operation.name` (meter: `forge.db`)
+
+**Stable span names**: `http.request`, `fn.execute`, `db.query`, `db.transaction`, `job.execute`, `cron.tick`, `cron.execute`, `daemon.lifecycle`, `daemon.execute`.
+
+**Workflow signature (frozen)**: FNV-1a 64-bit hash of: name → version → step keys (sorted) → wait keys (sorted) → timeout_secs (u64 LE) → input type string → output type string. Never add fields to this derivation.
+
+**Step name rules**: string literals only, max 64 chars, `[a-zA-Z0-9_-]`.
+
+**`forge_*` reserved**: do not create application tables with this prefix.
+
+**Config substitution**: `${VAR-default}` uses default only when var is *unset*. `VAR=""` (set to empty) expands to empty, not the default. `${VAR}` with no default and no env var preserves the literal `${VAR}` in the TOML (parse error likely).

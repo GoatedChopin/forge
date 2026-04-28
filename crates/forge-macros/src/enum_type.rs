@@ -5,15 +5,18 @@ use syn::{Data, DeriveInput, parse_macro_input};
 
 /// Expand the #[forge::forge_enum] macro.
 pub fn expand_enum(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let attr2: TokenStream2 = attr.into();
     let input = parse_macro_input!(item as DeriveInput);
 
-    match expand_enum_impl(attr.into(), input) {
+    match expand_enum_impl(attr2, input) {
         Ok(tokens) => tokens.into(),
         Err(err) => err.to_compile_error().into(),
     }
 }
 
-fn expand_enum_impl(_attr: TokenStream2, input: DeriveInput) -> syn::Result<TokenStream2> {
+fn expand_enum_impl(attr: TokenStream2, input: DeriveInput) -> syn::Result<TokenStream2> {
+    let attr_str = attr.to_string();
+    crate::utils::validate_attr_keys(&attr_str, &[], "forge_enum")?;
     let enum_name = &input.ident;
     let vis = &input.vis;
     let sql_name = to_snake_case(&enum_name.to_string());

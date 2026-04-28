@@ -1,10 +1,15 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use chrono::{DateTime, Utc};
+use forge_core::ForgeError;
 use forge_core::workflow::{ForgeWorkflow, WorkflowContext, WorkflowInfo};
 use serde_json::Value;
+use sqlx::PgPool;
+use uuid::Uuid;
 
 /// Normalize args for deserialization.
 /// - Converts `null` to `{}` so both unit `()` and empty structs deserialize correctly.
@@ -103,7 +108,7 @@ impl WorkflowRegistry {
         let entry = WorkflowEntry::new::<W>();
         let info = &entry.info;
 
-        if info.is_active {
+        if info.is_active() {
             self.active_versions
                 .insert(info.name.to_string(), info.version.to_string());
         }
@@ -200,6 +205,76 @@ impl WorkflowRegistry {
     pub fn definitions(&self) -> Vec<&WorkflowInfo> {
         self.entries.values().map(|e| &e.info).collect()
     }
+
+    /// Find non-terminal workflow runs whose `(name, version)` is no longer
+    /// in this binary's registry. These are stranded — the operator must
+    /// either redeploy with the missing handler or terminate the runs in
+    /// PG with `UPDATE forge_workflow_runs SET status = 'cancelled_by_operator'`
+    /// (or `'retired_unresumable'`) before the runtime can become ready again.
+    pub async fn drain_check(&self, pool: &PgPool) -> forge_core::Result<Vec<DrainEntry>> {
+        let registered: HashSet<(String, String)> = self
+            .entries
+            .keys()
+            .map(|k| (k.name.clone(), k.version.clone()))
+            .collect();
+
+        // Pull aggregate stats for every non-terminal (name, version) tuple.
+        let rows = sqlx::query!(
+            r#"
+            SELECT
+                workflow_name AS "workflow_name!",
+                workflow_version AS "workflow_version!",
+                COUNT(*) AS "in_flight_count!",
+                MIN(started_at) AS "oldest_started_at!",
+                (ARRAY_AGG(id ORDER BY started_at ASC))[:10] AS "sample_run_ids!: Vec<Uuid>"
+            FROM forge_workflow_runs
+            WHERE status NOT IN (
+                'completed',
+                'compensated',
+                'failed',
+                'retired_unresumable',
+                'cancelled_by_operator'
+            )
+            GROUP BY workflow_name, workflow_version
+            "#
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|e| ForgeError::Database(e.to_string()))?;
+
+        let mut stranded = Vec::new();
+        for row in rows {
+            let key = (row.workflow_name.clone(), row.workflow_version.clone());
+            if registered.contains(&key) {
+                continue;
+            }
+            stranded.push(DrainEntry {
+                workflow_name: row.workflow_name,
+                workflow_version: row.workflow_version,
+                in_flight_count: row.in_flight_count as u64,
+                oldest_started_at: row.oldest_started_at,
+                sample_run_ids: row.sample_run_ids,
+            });
+        }
+
+        Ok(stranded)
+    }
+}
+
+/// One stranded `(workflow_name, workflow_version)` group surfaced by
+/// [`WorkflowRegistry::drain_check`].
+#[derive(Debug, Clone)]
+pub struct DrainEntry {
+    /// Workflow name as persisted on the run.
+    pub workflow_name: String,
+    /// Version as persisted on the run.
+    pub workflow_version: String,
+    /// How many non-terminal runs reference this `(name, version)`.
+    pub in_flight_count: u64,
+    /// Start time of the oldest non-terminal run in this group.
+    pub oldest_started_at: DateTime<Utc>,
+    /// Up to 10 representative run IDs for operators to inspect.
+    pub sample_run_ids: Vec<Uuid>,
 }
 
 /// Reason a workflow run cannot be resumed.

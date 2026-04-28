@@ -4,6 +4,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use crate::error::Result;
+use crate::metadata::HandlerMetadata;
 
 use super::context::DaemonContext;
 
@@ -12,9 +13,14 @@ use super::context::DaemonContext;
 /// Daemons are long-running singleton tasks that run continuously in the background.
 /// They support leader election (only one instance in cluster), automatic restart
 /// on panic, and graceful shutdown.
-pub trait ForgeDaemon: Send + Sync + 'static {
+pub trait ForgeDaemon: crate::__sealed::Sealed + Send + Sync + 'static {
     /// Get daemon metadata.
     fn info() -> DaemonInfo;
+
+    /// Unified metadata for uniform consumers (observability, admin, codegen).
+    fn metadata() -> HandlerMetadata {
+        HandlerMetadata::from(&Self::info())
+    }
 
     /// Execute the daemon.
     ///
@@ -34,6 +40,10 @@ pub trait ForgeDaemon: Send + Sync + 'static {
 }
 
 /// Daemon metadata.
+///
+/// Constructed by the `#[daemon]` macro. Adding a field is a breaking change
+/// for hand-written `ForgeDaemon` impls; stage extensions through a builder or
+/// major bump.
 #[derive(Debug, Clone)]
 pub struct DaemonInfo {
     /// Daemon name (used for identification and leader election).
@@ -68,6 +78,7 @@ impl Default for DaemonInfo {
 
 /// Daemon status in the cluster.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DaemonStatus {
     /// Waiting to start (startup delay).
     Pending,
@@ -97,19 +108,31 @@ impl DaemonStatus {
     }
 }
 
+/// Error returned when parsing an unknown daemon status string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseDaemonStatusError(pub String);
+
+impl std::fmt::Display for ParseDaemonStatusError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unknown daemon status: {:?}", self.0)
+    }
+}
+
+impl std::error::Error for ParseDaemonStatusError {}
+
 impl FromStr for DaemonStatus {
-    type Err = std::convert::Infallible;
+    type Err = ParseDaemonStatusError;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        Ok(match s {
-            "pending" => Self::Pending,
-            "acquiring" => Self::Acquiring,
-            "running" => Self::Running,
-            "stopped" => Self::Stopped,
-            "failed" => Self::Failed,
-            "restarting" => Self::Restarting,
-            _ => Self::Pending,
-        })
+        match s {
+            "pending" => Ok(Self::Pending),
+            "acquiring" => Ok(Self::Acquiring),
+            "running" => Ok(Self::Running),
+            "stopped" => Ok(Self::Stopped),
+            "failed" => Ok(Self::Failed),
+            "restarting" => Ok(Self::Restarting),
+            _ => Err(ParseDaemonStatusError(s.to_string())),
+        }
     }
 }
 

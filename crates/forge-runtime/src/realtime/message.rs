@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
 use std::time::Duration;
 
 use dashmap::DashMap;
@@ -16,7 +16,7 @@ pub struct RealtimeConfig {
 impl Default for RealtimeConfig {
     fn default() -> Self {
         Self {
-            max_subscriptions_per_session: 50,
+            max_subscriptions_per_session: 100,
         }
     }
 }
@@ -41,6 +41,7 @@ pub struct WorkflowData {
     pub status: String,
     #[serde(rename = "step")]
     pub current_step: Option<String>,
+    pub waiting_for: Option<String>,
     pub steps: Vec<WorkflowStepData>,
     pub output: Option<serde_json::Value>,
     pub error: Option<String>,
@@ -55,7 +56,11 @@ pub struct WorkflowStepData {
 }
 
 /// Message types for real-time communication.
+///
+/// `#[non_exhaustive]` so 1.0.x can add new variants without breaking
+/// downstream Rust matchers (forge-dioxus, custom integrations).
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum RealtimeMessage {
     Subscribe {
         id: String,
@@ -98,6 +103,19 @@ pub enum RealtimeMessage {
     },
     /// Sent to slow clients before disconnecting them.
     Lagging,
+    /// Ephemeral pub-sub fan-out (forge_channels). The variant is reserved
+    /// for GA; the publish/subscribe pipeline lands in 1.0.x.
+    Channel {
+        channel: String,
+        payload: serde_json::Value,
+    },
+    /// Server detected a dropped or out-of-order delivery for a subscription
+    /// and asks the client to resync via `last-event-id`. Reserved for GA;
+    /// emission rules land in 1.0.x.
+    GapDetected {
+        client_sub_id: String,
+        last_event_id: Option<String>,
+    },
 }
 
 /// Per-session state with backpressure tracking.
@@ -105,9 +123,17 @@ struct SessionEntry {
     sender: mpsc::Sender<RealtimeMessage>,
     subscriptions: Vec<SubscriptionId>,
     connected_at: chrono::DateTime<chrono::Utc>,
-    last_active: chrono::DateTime<chrono::Utc>,
+    /// Unix timestamp (seconds) of the last successful push to this session.
+    /// Stored atomically so `try_send_to_session` (which holds a shared
+    /// reference via `DashMap::get`) can refresh it without re-acquiring an
+    /// exclusive lock. `cleanup_stale` reads this to evict sessions that have
+    /// gone quiet — without the bump, eviction would key off connection age
+    /// alone and tear down healthy long-lived sessions.
+    last_active: AtomicI64,
     /// Consecutive failed try_send attempts. Resets on success.
     consecutive_drops: AtomicU32,
+    /// JWT expiry as Unix timestamp. `None` for unauthenticated (anonymous) sessions.
+    token_exp: Option<i64>,
 }
 
 /// Maximum consecutive drops before evicting a slow client.
@@ -142,18 +168,24 @@ impl SessionServer {
     }
 
     /// Register a new connection.
+    ///
+    /// `token_exp` is the JWT `exp` claim (Unix timestamp). Pass `None` for
+    /// unauthenticated sessions. Events will not be pushed to sessions whose
+    /// token has expired.
     pub fn register_connection(
         &self,
         session_id: SessionId,
         sender: mpsc::Sender<RealtimeMessage>,
+        token_exp: Option<i64>,
     ) {
         let now = chrono::Utc::now();
         let entry = SessionEntry {
             sender,
             subscriptions: Vec::new(),
             connected_at: now,
-            last_active: now,
+            last_active: AtomicI64::new(now.timestamp()),
             consecutive_drops: AtomicU32::new(0),
+            token_exp,
         };
         self.connections.insert(session_id, entry);
     }
@@ -207,6 +239,9 @@ impl SessionServer {
     }
 
     /// Non-blocking send with backpressure. Returns false if client was evicted.
+    ///
+    /// Before pushing, checks whether the session's JWT has expired. Expired
+    /// sessions are evicted immediately so the client reconnects with a fresh token.
     pub fn try_send_to_session(
         &self,
         session_id: SessionId,
@@ -217,9 +252,21 @@ impl SessionServer {
             .get(&session_id)
             .ok_or(SendError::SessionNotFound)?;
 
+        if let Some(exp) = conn.token_exp {
+            let now = chrono::Utc::now().timestamp();
+            if exp < now {
+                drop(conn);
+                tracing::debug!(%session_id, "Evicting SSE session with expired token");
+                self.evict_session(session_id);
+                return Err(SendError::TokenExpired);
+            }
+        }
+
         match conn.sender.try_send(message) {
             Ok(()) => {
                 conn.consecutive_drops.store(0, Ordering::Relaxed);
+                conn.last_active
+                    .store(chrono::Utc::now().timestamp(), Ordering::Relaxed);
                 Ok(())
             }
             Err(mpsc::error::TrySendError::Full(_)) => {
@@ -310,13 +357,14 @@ impl SessionServer {
 
     /// Cleanup stale connections.
     pub fn cleanup_stale(&self, max_idle: Duration) {
-        let cutoff = chrono::Utc::now()
-            - chrono::Duration::from_std(max_idle).unwrap_or(chrono::TimeDelta::MAX);
+        let cutoff_ts = (chrono::Utc::now()
+            - chrono::Duration::from_std(max_idle).unwrap_or(chrono::TimeDelta::MAX))
+        .timestamp();
 
         let stale: Vec<(SessionId, chrono::DateTime<chrono::Utc>)> = self
             .connections
             .iter()
-            .filter(|entry| entry.last_active < cutoff)
+            .filter(|entry| entry.last_active.load(Ordering::Relaxed) < cutoff_ts)
             .map(|entry| (*entry.key(), entry.connected_at))
             .collect();
 
@@ -343,6 +391,8 @@ pub enum SendError {
     Full,
     Closed,
     Evicted,
+    /// Session's JWT has expired; the session was evicted.
+    TokenExpired,
 }
 
 /// Session server statistics.
@@ -361,7 +411,7 @@ mod tests {
     #[test]
     fn test_realtime_config_default() {
         let config = RealtimeConfig::default();
-        assert_eq!(config.max_subscriptions_per_session, 50);
+        assert_eq!(config.max_subscriptions_per_session, 100);
     }
 
     #[test]
@@ -381,7 +431,7 @@ mod tests {
         let session_id = SessionId::new();
         let (tx, _rx) = mpsc::channel(100);
 
-        server.register_connection(session_id, tx);
+        server.register_connection(session_id, tx, None);
         assert_eq!(server.connection_count(), 1);
 
         let removed = server.remove_connection(session_id);
@@ -397,7 +447,7 @@ mod tests {
         let subscription_id = SubscriptionId::new();
         let (tx, _rx) = mpsc::channel(100);
 
-        server.register_connection(session_id, tx);
+        server.register_connection(session_id, tx, None);
         server
             .add_subscription(session_id, subscription_id)
             .unwrap();
@@ -418,7 +468,7 @@ mod tests {
         let session_id = SessionId::new();
         let (tx, _rx) = mpsc::channel(100);
 
-        server.register_connection(session_id, tx);
+        server.register_connection(session_id, tx, None);
 
         server
             .add_subscription(session_id, SubscriptionId::new())
@@ -439,7 +489,7 @@ mod tests {
         // Tiny buffer to trigger backpressure
         let (tx, _rx) = mpsc::channel(1);
 
-        server.register_connection(session_id, tx);
+        server.register_connection(session_id, tx, None);
 
         // First send should succeed
         let result = server.try_send_to_session(session_id, RealtimeMessage::Ping);
@@ -457,7 +507,7 @@ mod tests {
         let session_id = SessionId::new();
         let (tx, _rx) = mpsc::channel(100);
 
-        server.register_connection(session_id, tx);
+        server.register_connection(session_id, tx, None);
         server
             .add_subscription(session_id, SubscriptionId::new())
             .unwrap();
@@ -469,5 +519,40 @@ mod tests {
         assert_eq!(stats.connections, 1);
         assert_eq!(stats.subscriptions, 2);
         assert_eq!(stats.node_id, node_id);
+    }
+
+    #[test]
+    fn expired_token_session_is_evicted_on_push() {
+        let node_id = NodeId::new();
+        let server = SessionServer::new(node_id, RealtimeConfig::default());
+        let session_id = SessionId::new();
+        let (tx, _rx) = mpsc::channel(100);
+
+        // Register with an already-expired token (exp = 1 second into Unix epoch)
+        server.register_connection(session_id, tx, Some(1));
+        assert_eq!(server.connection_count(), 1);
+
+        let result = server.try_send_to_session(session_id, RealtimeMessage::Ping);
+
+        assert!(matches!(result, Err(SendError::TokenExpired)));
+        // Session evicted — no longer tracked
+        assert_eq!(server.connection_count(), 0);
+    }
+
+    #[test]
+    fn valid_token_session_is_not_evicted() {
+        let node_id = NodeId::new();
+        let server = SessionServer::new(node_id, RealtimeConfig::default());
+        let session_id = SessionId::new();
+        let (tx, _rx) = mpsc::channel(100);
+
+        // Token that expires an hour from now
+        let future_exp = chrono::Utc::now().timestamp() + 3600;
+        server.register_connection(session_id, tx, Some(future_exp));
+
+        let result = server.try_send_to_session(session_id, RealtimeMessage::Ping);
+
+        assert!(result.is_ok());
+        assert_eq!(server.connection_count(), 1);
     }
 }

@@ -47,11 +47,29 @@ impl JobExecutor {
             };
         }
 
-        // Mark job as running
-        if let Err(e) = self.queue.start(job.id).await {
+        // Mark job as running. start() fences on (worker_id, attempts), so a
+        // stale-reclaim race (this worker's claim was reassigned to another
+        // node after a heartbeat gap) returns RowNotFound and we abort before
+        // doing real work. The other worker's attempts counter will differ
+        // because claim() increments it, making the transition unambiguous.
+        let worker_id = match job.worker_id {
+            Some(id) => id,
+            None => {
+                return ExecutionResult::Failed {
+                    error: "Claimed job has no worker_id".to_string(),
+                    retryable: false,
+                };
+            }
+        };
+        if let Err(e) = self.queue.start(job.id, worker_id, job.attempts).await {
             if matches!(e, sqlx::Error::RowNotFound) {
+                tracing::warn!(
+                    job_id = %job.id,
+                    job_type = %job.job_type,
+                    "Job claim was lost (likely stale-reclaim race); skipping execution",
+                );
                 return ExecutionResult::Cancelled {
-                    reason: Self::cancellation_reason(job, "Job cancelled"),
+                    reason: Self::cancellation_reason(job, "Claim lost to another worker"),
                 };
             }
             return ExecutionResult::Failed {
@@ -144,6 +162,11 @@ impl JobExecutor {
                 // Job completed successfully
                 if let Err(e) = self.queue.complete(job.id, output.clone(), ttl).await {
                     tracing::debug!(job_id = %job.id, error = %e, "Failed to mark job as complete");
+                }
+                // Flush buffered sub-job and workflow dispatches
+                let pending = ctx.take_pending_dispatches().await;
+                if let Err(e) = self.flush_pending_dispatches(&pending, &job.job_type).await {
+                    tracing::error!(job_id = %job.id, error = %e, "Failed to flush pending dispatches from job");
                 }
                 crate::signals::emit_server_execution(
                     &job.job_type,
@@ -262,6 +285,71 @@ impl JobExecutor {
         reason: &str,
     ) -> forge_core::Result<()> {
         (entry.compensation)(ctx, input.clone(), reason).await
+    }
+
+    async fn flush_pending_dispatches(
+        &self,
+        pending: &forge_core::function::OutboxBuffer,
+        parent_job_type: &str,
+    ) -> forge_core::Result<()> {
+        for pj in &pending.jobs {
+            let mut record = JobRecord::new(
+                pj.job_type.clone(),
+                pj.args.clone(),
+                forge_core::job::JobPriority::from_i32(pj.priority),
+                pj.max_attempts,
+            )
+            .with_owner_subject(pj.owner_subject.clone());
+            record.id = pj.id;
+            record.job_context = pj.context.clone();
+            if let Some(cap) = &pj.worker_capability {
+                record = record.with_capability(cap.as_str());
+            }
+            if let Err(e) = self.queue.enqueue(record).await {
+                tracing::error!(
+                    parent_job_type = parent_job_type,
+                    child_job_type = %pj.job_type,
+                    error = %e,
+                    "Failed to flush sub-job dispatch"
+                );
+                return Err(forge_core::ForgeError::Job(format!(
+                    "Failed to dispatch sub-job '{}': {e}",
+                    pj.job_type
+                )));
+            }
+        }
+        for pw in &pending.workflows {
+            let run_id = pw.id;
+            // Runtime query: this path is rare (job-spawned workflows) and the
+            // table schema is internal, so skipping compile-time validation is acceptable.
+            let result = sqlx::query(
+                "INSERT INTO forge_workflow_runs \
+                 (id, workflow_name, workflow_version, workflow_signature, \
+                  input, status, owner_subject, created_at) \
+                 VALUES ($1, $2, $3, $4, $5, 'created', $6, NOW())",
+            )
+            .bind(run_id)
+            .bind(&pw.workflow_name)
+            .bind(&pw.workflow_version)
+            .bind(&pw.workflow_signature)
+            .bind(&pw.input)
+            .bind(&pw.owner_subject)
+            .execute(&self.db_pool)
+            .await;
+            if let Err(e) = result {
+                tracing::error!(
+                    parent_job_type = parent_job_type,
+                    workflow_name = %pw.workflow_name,
+                    error = %e,
+                    "Failed to flush workflow dispatch from job"
+                );
+                return Err(forge_core::ForgeError::Job(format!(
+                    "Failed to start workflow '{}': {e}",
+                    pw.workflow_name
+                )));
+            }
+        }
+        Ok(())
     }
 
     fn cancellation_reason(job: &JobRecord, fallback: &str) -> String {

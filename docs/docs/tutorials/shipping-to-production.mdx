@@ -87,14 +87,14 @@ name = "my-app"
 [database]
 url = "${DATABASE_URL}"
 pool_size = 50
-statement_timeout_secs = 30
+statement_timeout = "30s"
 # replica_urls = ["${DATABASE_REPLICA_URL}"]
 # read_from_replica = true
 
 [gateway]
 port = 8080
 cors_origins = ["https://myapp.com"]
-quiet_routes = ["/_api/health", "/_api/ready"]
+quiet_paths = ["/_api/health", "/_api/ready"]
 
 [auth]
 jwt_algorithm = "HS256"
@@ -102,7 +102,7 @@ jwt_secret = "${JWT_SECRET}"
 
 [worker]
 max_concurrent_jobs = 20
-poll_interval_ms = 100
+poll_interval = "100ms"
 
 [observability]
 enabled = true
@@ -150,7 +150,7 @@ Enable OpenTelemetry in `forge.toml`. Forge auto-instruments everything without 
 enabled = true
 otlp_endpoint = "http://otel-collector:4318"
 log_level = "info"
-sampling_ratio = 1.0    # sample every trace; lower in high-traffic production
+sampling_ratio = 1.0    # dev only: sample every trace. Default is 0.1 (10%); raise carefully in production.
 # enable_traces = true
 # enable_metrics = true
 # enable_logs = true
@@ -188,7 +188,7 @@ Health check endpoints generate a lot of telemetry noise. Exclude them:
 
 ```toml
 [gateway]
-quiet_routes = ["/_api/health", "/_api/ready"]
+quiet_paths = ["/_api/health", "/_api/ready"]
 ```
 
 Console logs always work regardless of the `enabled` flag. The flag only controls OTLP export.
@@ -221,8 +221,8 @@ Deploy the same binary to multiple servers. Nodes discover each other through Po
 ```toml
 [cluster]
 discovery = "postgres"
-heartbeat_interval_secs = 5
-dead_threshold_secs = 15
+heartbeat_interval = "5s"
+dead_threshold = "15s"
 
 [node]
 roles = ["gateway", "function", "worker", "scheduler"]
@@ -282,7 +282,7 @@ worker_capabilities = ["gpu"]
 
 [worker]
 max_concurrent_jobs = 4   # limited by GPU memory
-job_timeout_secs = 7200   # 2 hours for training jobs
+job_timeout = "2h"   # 2 hours for training jobs
 ```
 
 Jobs without a `worker_capability` run on any worker. Workers with multiple capabilities claim jobs targeting any of them. Each capability pool operates independently, so a surge in GPU jobs does not starve media processing.

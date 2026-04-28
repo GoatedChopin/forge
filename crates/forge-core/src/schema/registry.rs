@@ -168,17 +168,6 @@ impl EnumDef {
             values.join(",\n    ")
         )
     }
-
-    /// Generate TypeScript union type.
-    pub fn to_typescript(&self) -> String {
-        let values: Vec<String> = self
-            .variants
-            .iter()
-            .map(|v| format!("'{}'", v.sql_value))
-            .collect();
-
-        format!("export type {} = {};", self.name, values.join(" | "))
-    }
 }
 
 /// Enum variant definition.
@@ -244,9 +233,5 @@ mod tests {
         assert!(sql.contains("CREATE TYPE project_status AS ENUM"));
         assert!(sql.contains("'draft'"));
         assert!(sql.contains("'active'"));
-
-        let ts = enum_def.to_typescript();
-        assert!(ts.contains("export type ProjectStatus"));
-        assert!(ts.contains("'draft'"));
     }
 }

@@ -168,6 +168,21 @@ impl axum::serve::Listener for GatewayListener {
     }
 }
 
+// Local newtype around `SocketAddr` so the orphan rule lets us implement
+// `axum::extract::connect_info::Connected` on it for our `GatewayListener`.
+// Threaded through `into_make_service_with_connect_info::<PeerAddr>()` so
+// `trusted_proxies` extraction works behind both plain TCP and TLS.
+#[derive(Debug, Clone, Copy)]
+pub struct PeerAddr(pub SocketAddr);
+
+impl axum::extract::connect_info::Connected<axum::serve::IncomingStream<'_, GatewayListener>>
+    for PeerAddr
+{
+    fn connect_info(stream: axum::serve::IncomingStream<'_, GatewayListener>) -> Self {
+        PeerAddr(*stream.remote_addr())
+    }
+}
+
 static CRYPTO_PROVIDER_INIT: Once = Once::new();
 
 /// Install the `ring` default crypto provider for rustls, exactly once.

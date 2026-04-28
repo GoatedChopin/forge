@@ -10,6 +10,7 @@ use crate::function::{JobDispatch, WorkflowDispatch};
 use crate::http::CircuitBreakerClient;
 
 /// Context available to daemon handlers.
+#[non_exhaustive]
 pub struct DaemonContext {
     /// Daemon name.
     pub daemon_name: String,

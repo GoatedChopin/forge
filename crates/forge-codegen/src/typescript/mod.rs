@@ -72,8 +72,8 @@ export function toReactiveMutation<TArgs, TResult>(
       } catch (e) {
         const err =
           e instanceof ForgeClientError
-            ? { code: e.code, message: e.message, details: e.details }
-            : { code: "UNKNOWN", message: String(e) };
+            ? e
+            : new ForgeClientError("UNKNOWN", String(e));
         state.error = err;
         throw e;
       } finally {

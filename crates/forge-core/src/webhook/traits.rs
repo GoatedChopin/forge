@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::Result;
+use crate::metadata::HandlerMetadata;
 
 use super::context::WebhookContext;
 use super::signature::{IdempotencyConfig, SignatureConfig};
@@ -14,26 +15,40 @@ use super::signature::{IdempotencyConfig, SignatureConfig};
 ///
 /// Webhooks are HTTP endpoints that receive external events (e.g., from Stripe, GitHub).
 /// They support signature validation, idempotency, and bypass authentication.
-pub trait ForgeWebhook: Send + Sync + 'static {
+pub trait ForgeWebhook: crate::__sealed::Sealed + Send + Sync + 'static {
+    /// Deserialized payload type. Use `serde_json::Value` for raw access.
+    type Payload: serde::de::DeserializeOwned + Send + Sync + 'static;
+
     /// Get webhook metadata.
     fn info() -> WebhookInfo;
+
+    /// Unified metadata for uniform consumers (observability, admin, codegen).
+    fn metadata() -> HandlerMetadata {
+        HandlerMetadata::from(&Self::info())
+    }
 
     /// Execute the webhook handler.
     ///
     /// # Arguments
     /// * `ctx` - Webhook context with db, http, and dispatch capabilities
-    /// * `payload` - The raw JSON payload from the request body
+    /// * `payload` - The deserialized request body
     fn execute(
         ctx: &WebhookContext,
-        payload: Value,
+        payload: Self::Payload,
     ) -> Pin<Box<dyn Future<Output = Result<WebhookResult>> + Send + '_>>;
 }
 
 /// Webhook metadata.
+///
+/// Constructed by the `#[webhook]` macro. Adding a field is a breaking change
+/// for hand-written `ForgeWebhook` impls; stage extensions through a builder
+/// or major bump.
 #[derive(Debug, Clone)]
 pub struct WebhookInfo {
     /// Webhook name (used for identification).
     pub name: &'static str,
+    /// Human-readable description of the webhook's purpose.
+    pub description: Option<&'static str>,
     /// URL path for the webhook (e.g., "/webhooks/stripe").
     pub path: &'static str,
     /// Signature validation configuration.
@@ -54,6 +69,7 @@ impl Default for WebhookInfo {
     fn default() -> Self {
         Self {
             name: "",
+            description: None,
             path: "",
             signature: None,
             allow_unsigned: false,
@@ -67,6 +83,7 @@ impl Default for WebhookInfo {
 /// Result returned by webhook handlers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "status")]
+#[non_exhaustive]
 pub enum WebhookResult {
     /// Request processed successfully (HTTP 200).
     #[serde(rename = "ok")]

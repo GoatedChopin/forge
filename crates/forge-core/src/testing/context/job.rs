@@ -9,6 +9,8 @@ use std::sync::{Arc, RwLock};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use serde::Serialize;
+
 use super::super::mock_http::{MockHttp, MockRequest, MockResponse};
 use super::build_test_auth;
 use crate::Result;
@@ -69,6 +71,10 @@ pub struct TestJobContext {
     saved_data: Arc<RwLock<serde_json::Value>>,
     /// Whether cancellation has been requested.
     cancel_requested: Arc<AtomicBool>,
+    /// Dispatched sub-jobs (for assertion).
+    dispatched_jobs: Arc<RwLock<Vec<(String, serde_json::Value, Uuid)>>>,
+    /// Started workflows (for assertion).
+    started_workflows: Arc<RwLock<Vec<(String, serde_json::Value, Uuid)>>>,
 }
 
 impl TestJobContext {
@@ -166,6 +172,40 @@ impl TestJobContext {
     /// `check_cancelled()` returns an error.
     pub fn request_cancellation(&self) {
         self.cancel_requested.store(true, Ordering::SeqCst);
+    }
+
+    /// Buffer a sub-job dispatch (mirrors `JobContext::dispatch_job`).
+    pub fn dispatch_job<T: Serialize>(&self, job_type: &str, args: &T) -> Result<Uuid> {
+        let id = Uuid::new_v4();
+        let json = serde_json::to_value(args)
+            .map_err(|e| crate::ForgeError::Serialization(e.to_string()))?;
+        self.dispatched_jobs
+            .write()
+            .unwrap()
+            .push((job_type.to_string(), json, id));
+        Ok(id)
+    }
+
+    /// Buffer a workflow start (mirrors `JobContext::start_workflow`).
+    pub fn start_workflow<T: Serialize>(&self, workflow_name: &str, args: &T) -> Result<Uuid> {
+        let id = Uuid::new_v4();
+        let json = serde_json::to_value(args)
+            .map_err(|e| crate::ForgeError::Serialization(e.to_string()))?;
+        self.started_workflows
+            .write()
+            .unwrap()
+            .push((workflow_name.to_string(), json, id));
+        Ok(id)
+    }
+
+    /// Get all dispatched sub-jobs for assertions.
+    pub fn dispatched_jobs(&self) -> Vec<(String, serde_json::Value, Uuid)> {
+        self.dispatched_jobs.read().unwrap().clone()
+    }
+
+    /// Get all started workflows for assertions.
+    pub fn started_workflows(&self) -> Vec<(String, serde_json::Value, Uuid)> {
+        self.started_workflows.read().unwrap().clone()
     }
 
     /// Get the mock env provider for verification.
@@ -312,6 +352,8 @@ impl TestJobContextBuilder {
             env_provider: Arc::new(MockEnvProvider::with_vars(self.env_vars)),
             saved_data: Arc::new(RwLock::new(crate::job::empty_saved_data())),
             cancel_requested: Arc::new(AtomicBool::new(self.cancel_requested)),
+            dispatched_jobs: Arc::new(RwLock::new(Vec::new())),
+            started_workflows: Arc::new(RwLock::new(Vec::new())),
         }
     }
 }

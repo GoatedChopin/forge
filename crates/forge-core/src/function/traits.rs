@@ -1,12 +1,19 @@
 use std::future::Future;
 use std::pin::Pin;
+use std::time::Duration;
 
 use serde::{Serialize, de::DeserializeOwned};
 
 use super::context::{MutationContext, QueryContext};
 use crate::error::Result;
+use crate::metadata::HandlerMetadata;
 
 /// Information about a registered function.
+///
+/// Constructed by the `#[query]` / `#[mutation]` macros — adding a field here
+/// is technically a breaking change for hand-written `ForgeQuery` / `ForgeMutation`
+/// impls, so any extension must ship a major bump or be staged through a
+/// builder. Macro-emitted impls track the field set automatically.
 #[derive(Debug, Clone)]
 pub struct FunctionInfo {
     /// Function name (used for routing).
@@ -21,20 +28,21 @@ pub struct FunctionInfo {
     pub is_public: bool,
     /// Cache TTL in seconds (for queries).
     pub cache_ttl: Option<u64>,
-    /// Timeout in seconds.
-    pub timeout: Option<u64>,
-    /// Default timeout in seconds for outbound HTTP requests made via the
-    /// circuit-breaker client. `None` means no request timeout is applied.
-    pub http_timeout: Option<u64>,
+    /// Execution timeout for the handler. `None` falls back to the runtime
+    /// default. Mirrors the `Duration`-typed timeout fields on Job/Cron/Workflow
+    /// info so consumers don't have to remember which kinds use seconds.
+    pub timeout: Option<Duration>,
+    /// Default timeout for outbound HTTP requests made via the circuit-breaker
+    /// client. `None` means no request timeout is applied.
+    pub http_timeout: Option<Duration>,
     /// Rate limit: requests per time window.
     pub rate_limit_requests: Option<u32>,
     /// Rate limit: time window in seconds.
     pub rate_limit_per_secs: Option<u64>,
-    /// Rate limit: bucket key type (user, ip, tenant, global).
-    pub rate_limit_key: Option<&'static str>,
-    /// Log level for access logging: "trace", "debug", "info", "warn", "error", "off".
-    /// Defaults to "trace" if not specified.
-    pub log_level: Option<&'static str>,
+    /// Rate limit: bucket key type.
+    pub rate_limit_key: Option<crate::rate_limit::RateLimitKey>,
+    /// Log level for access logging. Defaults to "debug" for queries, "info" for mutations.
+    pub log_level: Option<LogLevel>,
     /// Table dependencies extracted at compile time for reactive subscriptions.
     /// Empty slice means tables could not be determined (dynamic SQL).
     pub table_dependencies: &'static [&'static str],
@@ -56,9 +64,36 @@ pub struct FunctionInfo {
 
 /// The kind of function.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum FunctionKind {
     Query,
     Mutation,
+}
+
+/// Log level for per-function access logging.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum LogLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+    Off,
+}
+
+impl LogLevel {
+    /// Convert to the lowercase string representation.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Trace => "trace",
+            Self::Debug => "debug",
+            Self::Info => "info",
+            Self::Warn => "warn",
+            Self::Error => "error",
+            Self::Off => "off",
+        }
+    }
 }
 
 impl std::fmt::Display for FunctionKind {
@@ -78,7 +113,7 @@ impl std::fmt::Display for FunctionKind {
 /// - Can be subscribed to for real-time updates
 /// - Should be deterministic (same inputs → same outputs)
 /// - Should not have side effects
-pub trait ForgeQuery: Send + Sync + 'static {
+pub trait ForgeQuery: crate::__sealed::Sealed + Send + Sync + 'static {
     /// The input arguments type.
     type Args: DeserializeOwned + Serialize + Send + Sync;
     /// The output type.
@@ -86,6 +121,11 @@ pub trait ForgeQuery: Send + Sync + 'static {
 
     /// Function metadata.
     fn info() -> FunctionInfo;
+
+    /// Unified metadata for uniform consumers (observability, admin, codegen).
+    fn metadata() -> HandlerMetadata {
+        HandlerMetadata::from(&Self::info())
+    }
 
     /// Execute the query.
     fn execute(
@@ -101,7 +141,7 @@ pub trait ForgeQuery: Send + Sync + 'static {
 /// - Can read and write to the database
 /// - Should NOT call external APIs (use Actions)
 /// - Are atomic: all changes commit or none do
-pub trait ForgeMutation: Send + Sync + 'static {
+pub trait ForgeMutation: crate::__sealed::Sealed + Send + Sync + 'static {
     /// The input arguments type.
     type Args: DeserializeOwned + Serialize + Send + Sync;
     /// The output type.
@@ -109,6 +149,11 @@ pub trait ForgeMutation: Send + Sync + 'static {
 
     /// Function metadata.
     fn info() -> FunctionInfo;
+
+    /// Unified metadata for uniform consumers (observability, admin, codegen).
+    fn metadata() -> HandlerMetadata {
+        HandlerMetadata::from(&Self::info())
+    }
 
     /// Execute the mutation within a transaction.
     fn execute(
@@ -137,12 +182,12 @@ mod tests {
             required_role: None,
             is_public: false,
             cache_ttl: Some(300),
-            timeout: Some(30),
-            http_timeout: Some(5),
+            timeout: Some(Duration::from_secs(30)),
+            http_timeout: Some(Duration::from_secs(5)),
             rate_limit_requests: Some(100),
             rate_limit_per_secs: Some(60),
-            rate_limit_key: Some("user"),
-            log_level: Some("debug"),
+            rate_limit_key: Some(crate::rate_limit::RateLimitKey::User),
+            log_level: Some(LogLevel::Debug),
             table_dependencies: &["users"],
             selected_columns: &["id", "name", "email"],
             transactional: false,
@@ -153,9 +198,9 @@ mod tests {
         assert_eq!(info.name, "get_user");
         assert_eq!(info.kind, FunctionKind::Query);
         assert_eq!(info.cache_ttl, Some(300));
-        assert_eq!(info.http_timeout, Some(5));
+        assert_eq!(info.http_timeout, Some(Duration::from_secs(5)));
         assert_eq!(info.rate_limit_requests, Some(100));
-        assert_eq!(info.log_level, Some("debug"));
+        assert_eq!(info.log_level, Some(LogLevel::Debug));
         assert_eq!(info.table_dependencies, &["users"]);
     }
 }

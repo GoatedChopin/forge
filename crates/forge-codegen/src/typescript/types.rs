@@ -3,9 +3,32 @@
 //! Generates `types.ts` with interfaces for models/DTOs and
 //! union types for enums.
 
-use forge_core::schema::SchemaRegistry;
+use forge_core::schema::{EnumDef, FieldDef, RustType, SchemaRegistry};
 
 use crate::Error;
+use crate::emit::{Position, ts_type};
+
+fn render_field(field: &FieldDef) -> String {
+    let (rendered, optional) = if field.nullable {
+        let inner = match &field.rust_type {
+            RustType::Option(inner) => ts_type(inner, Position::Arg),
+            other => ts_type(other, Position::Arg),
+        };
+        (inner, "?")
+    } else {
+        (ts_type(&field.rust_type, Position::Arg), "")
+    };
+    format!("  {}{}: {};", field.name, optional, rendered)
+}
+
+fn render_enum(enum_def: &EnumDef) -> String {
+    let values: Vec<String> = enum_def
+        .variants
+        .iter()
+        .map(|v| format!("'{}'", v.sql_value))
+        .collect();
+    format!("export type {} = {};", enum_def.name, values.join(" | "))
+}
 
 /// Well-known built-in types that may be referenced by generated API bindings
 /// but aren't part of the user's schema registry.
@@ -27,11 +50,15 @@ pub fn generate(registry: &SchemaRegistry, referenced_types: &[String]) -> Resul
     for table in tables {
         output.push_str(&format!("export interface {} {{\n", table.struct_name));
         for field in &table.fields {
-            output.push_str(&field.to_typescript());
+            output.push_str(&render_field(field));
             output.push('\n');
         }
         output.push_str("}\n\n");
     }
+
+    output.push_str(
+        "export type Cursor = string;\n\nexport interface PageInfo {\n  has_next_page: boolean;\n  end_cursor?: Cursor;\n  total_count?: number;\n}\n\nexport interface Page<T> {\n  items: T[];\n  page_info: PageInfo;\n}\n\n",
+    );
 
     // Emit built-in types that are referenced by API bindings but not in the registry.
     for (name, definition) in BUILTIN_TYPES {
@@ -45,7 +72,7 @@ pub fn generate(registry: &SchemaRegistry, referenced_types: &[String]) -> Resul
     enums.sort_by(|a, b| a.name.cmp(&b.name));
 
     for enum_def in enums {
-        output.push_str(&enum_def.to_typescript());
+        output.push_str(&render_enum(&enum_def));
         output.push_str("\n\n");
     }
 

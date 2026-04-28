@@ -22,5 +22,5 @@ pub mod parser;
 pub mod typescript;
 
 pub use dioxus::DioxusGenerator;
-pub use parser::parse_project;
+pub use parser::{find_duplicate_handlers, parse_project, validate_registry};
 pub use typescript::{Error, GenerateOptions, RUNES_SVELTE_TS, TypeScriptGenerator};

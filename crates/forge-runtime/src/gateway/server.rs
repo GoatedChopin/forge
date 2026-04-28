@@ -5,7 +5,6 @@ use axum::{
     Extension, Json, Router,
     error_handling::HandleErrorLayer,
     extract::DefaultBodyLimit,
-    http::StatusCode,
     middleware,
     response::IntoResponse,
     routing::{get, post},
@@ -71,7 +70,7 @@ pub struct GatewayConfig {
     /// MCP configuration.
     pub mcp: McpConfig,
     /// Routes excluded from request logs, metrics, and traces.
-    pub quiet_routes: Vec<String>,
+    pub quiet_paths: Vec<String>,
     /// Token TTL configuration for refresh token management.
     pub token_ttl: forge_core::AuthTokenTtl,
     /// Project name (displayed on OAuth consent page).
@@ -83,6 +82,18 @@ pub struct GatewayConfig {
     pub max_file_size_bytes: usize,
     /// Optional TLS configuration. When `None`, the gateway serves plain HTTP.
     pub tls: Option<TlsListenConfig>,
+    /// Maximum requests in a single RPC batch call.
+    pub max_rpc_batch_size: usize,
+    /// Maximum file fields in a single multipart upload.
+    pub max_multipart_fields: usize,
+    /// Reactor, invalidation, listener, and SSE knobs. Defaults match production.
+    pub reactor_config: ReactorConfig,
+    /// Add standard security headers to all responses.
+    pub security_headers: bool,
+    /// Enable HTTP Strict Transport Security header.
+    pub hsts: bool,
+    /// Parsed trusted proxy CIDR ranges for IP extraction.
+    pub trusted_proxies: Vec<ipnet::IpNet>,
 }
 
 impl Default for GatewayConfig {
@@ -96,15 +107,25 @@ impl Default for GatewayConfig {
             cors_origins: Vec::new(),
             auth: AuthConfig::default(),
             mcp: McpConfig::default(),
-            quiet_routes: Vec::new(),
+            quiet_paths: Vec::new(),
             token_ttl: forge_core::AuthTokenTtl::default(),
             project_name: "forge-app".to_string(),
             max_body_size_bytes: DEFAULT_MAX_MULTIPART_BODY_SIZE,
             max_file_size_bytes: DEFAULT_MAX_FILE_SIZE,
             tls: None,
+            max_rpc_batch_size: 100,
+            max_multipart_fields: 20,
+            reactor_config: ReactorConfig::default(),
+            security_headers: true,
+            hsts: false,
+            trusted_proxies: Vec::new(),
         }
     }
 }
+
+/// Parsed trusted proxy networks, shared across middleware and handlers.
+#[derive(Debug, Clone)]
+pub struct TrustedProxies(pub Arc<Vec<ipnet::IpNet>>);
 
 /// Health check response.
 #[derive(Debug, Serialize)]
@@ -113,15 +134,20 @@ pub struct HealthResponse {
     pub version: String,
 }
 
-/// Readiness check response.
+/// Public readiness probe payload.
+///
+/// Intentionally minimal: load-balancer probes can call this without
+/// authentication and we don't want to leak internal deployment signals (queue
+/// depths, blocked-run counts, version skew) to anonymous callers. The
+/// `workflows` boolean folds in the blocked-run check; detailed per-subsystem
+/// state lives in tracing, metrics, and the operator dashboards.
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 pub struct ReadinessResponse {
     pub ready: bool,
     pub database: bool,
     pub reactor: bool,
     pub workflows: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub blocked_workflow_runs: Option<i64>,
     pub version: String,
 }
 
@@ -130,6 +156,10 @@ pub struct ReadinessResponse {
 pub struct ReadinessState {
     db_pool: sqlx::PgPool,
     reactor: Arc<Reactor>,
+    #[cfg(feature = "workflows")]
+    workflow_readiness: Option<Arc<crate::workflow::WorkflowReadiness>>,
+    #[cfg(feature = "workflows")]
+    workflow_registry: Option<Arc<crate::workflow::WorkflowRegistry>>,
 }
 
 /// Gateway HTTP server.
@@ -146,6 +176,12 @@ pub struct GatewayServer {
     signals_anonymize_ip: bool,
     signals_geoip: Option<crate::signals::geoip::GeoIpResolver>,
     custom_routes: Option<Router>,
+    rate_limiter: Option<Arc<dyn forge_core::rate_limit::RateLimiterBackend>>,
+    role_resolver: Option<forge_core::SharedRoleResolver>,
+    #[cfg(feature = "workflows")]
+    workflow_readiness: Option<Arc<crate::workflow::WorkflowReadiness>>,
+    #[cfg(feature = "workflows")]
+    workflow_registry: Option<Arc<crate::workflow::WorkflowRegistry>>,
 }
 
 impl GatewayServer {
@@ -156,7 +192,7 @@ impl GatewayServer {
             node_id,
             db.primary().clone(),
             registry.clone(),
-            ReactorConfig::default(),
+            config.reactor_config.clone(),
         ));
 
         let token_ttl = config.token_ttl.clone();
@@ -173,7 +209,44 @@ impl GatewayServer {
             signals_anonymize_ip: false,
             signals_geoip: None,
             custom_routes: None,
+            rate_limiter: None,
+            role_resolver: None,
+            #[cfg(feature = "workflows")]
+            workflow_readiness: None,
+            #[cfg(feature = "workflows")]
+            workflow_registry: None,
         }
+    }
+
+    /// Override the default rate limiter backend.
+    pub fn with_rate_limiter(
+        mut self,
+        rate_limiter: Arc<dyn forge_core::rate_limit::RateLimiterBackend>,
+    ) -> Self {
+        self.rate_limiter = Some(rate_limiter);
+        self
+    }
+
+    /// Set a custom role resolver for RBAC extension.
+    ///
+    /// See [`forge_core::RoleResolver`] for the trait contract.
+    pub fn with_role_resolver(mut self, resolver: forge_core::SharedRoleResolver) -> Self {
+        self.role_resolver = Some(resolver);
+        self
+    }
+
+    /// Wire the shared workflow readiness handle. Must be set when
+    /// the runtime registers workflows so the readiness probe can detect
+    /// stranded runs from removed `(name, version)` tuples.
+    #[cfg(feature = "workflows")]
+    pub fn with_workflow_readiness(
+        mut self,
+        registry: Arc<crate::workflow::WorkflowRegistry>,
+        readiness: Arc<crate::workflow::WorkflowReadiness>,
+    ) -> Self {
+        self.workflow_registry = Some(registry);
+        self.workflow_readiness = Some(readiness);
+        self
     }
 
     /// Set the job dispatcher.
@@ -258,6 +331,8 @@ impl GatewayServer {
             self.config.auth.is_hmac(),
             self.config.project_name.clone(),
             jwt_secret,
+            self.config.auth.session_cookie_ttl_secs,
+            self.config.mcp.allow_unauthenticated_dcr,
         ));
 
         let router = Router::new()
@@ -285,6 +360,13 @@ impl GatewayServer {
             token_issuer,
         );
         rpc.set_token_ttl(self.token_ttl.clone());
+        rpc.set_max_batch_size(self.config.max_rpc_batch_size);
+        if let Some(rate_limiter) = &self.rate_limiter {
+            rpc.set_rate_limiter(rate_limiter.clone());
+        }
+        if let Some(resolver) = &self.role_resolver {
+            rpc.set_role_resolver(resolver.clone());
+        }
         if let Some(collector) = &self.signals_collector {
             let secret = self.config.auth.jwt_secret.clone().unwrap_or_else(|| {
                 tracing::warn!(
@@ -306,7 +388,17 @@ impl GatewayServer {
         // with credentials per the CORS spec, so we enumerate them.
         let cors = if self.config.cors_enabled {
             if self.config.cors_origins.iter().any(|o| o == "*") {
-                // Wildcard origin can't use credentials
+                // Wildcard origin can't use credentials. Loud at startup so
+                // operators don't ship `cors_origins = ["*"]` to production
+                // by accident — credentialed requests will silently fail
+                // (no `Access-Control-Allow-Credentials`) and there's no
+                // origin allowlist limiting cross-site abuse of the gateway.
+                tracing::warn!(
+                    "CORS wildcard (`cors_origins = [\"*\"]`) is enabled. \
+                     Credentialed requests will fail and any origin can \
+                     reach the gateway. Set explicit origins for \
+                     production deployments."
+                );
                 CorsLayer::new()
                     .allow_origin(Any)
                     .allow_methods(Any)
@@ -351,6 +443,11 @@ impl GatewayServer {
             auth_middleware_state.clone(),
             super::sse::SseConfig {
                 max_sessions: self.config.sse_max_sessions,
+                max_subscriptions_per_session: self
+                    .config
+                    .reactor_config
+                    .realtime
+                    .max_subscriptions_per_session,
                 ..Default::default()
             },
         ));
@@ -359,6 +456,10 @@ impl GatewayServer {
         let readiness_state = Arc::new(ReadinessState {
             db_pool: self.db.primary().clone(),
             reactor: self.reactor.clone(),
+            #[cfg(feature = "workflows")]
+            workflow_readiness: self.workflow_readiness.clone(),
+            #[cfg(feature = "workflows")]
+            workflow_registry: self.workflow_registry.clone(),
         });
 
         // Build the main router with middleware
@@ -392,6 +493,7 @@ impl GatewayServer {
         let mp_config = MultipartConfig {
             max_body_size_bytes: self.config.max_body_size_bytes,
             max_file_size_bytes: self.config.max_file_size_bytes,
+            max_upload_fields: self.config.max_multipart_fields,
         };
         let multipart_router = Router::new()
             .route("/rpc/{function}/upload", post(rpc_multipart_handler))
@@ -448,6 +550,7 @@ impl GatewayServer {
                     }),
                 anonymize_ip: self.signals_anonymize_ip,
                 geoip: self.signals_geoip.clone(),
+                rate_limiter: Arc::new(crate::signals::rate_limit::SignalRateLimiter::new()),
             });
             signals_router = Router::new()
                 .route(
@@ -483,6 +586,15 @@ impl GatewayServer {
             main_router = main_router.merge(custom.clone());
         }
 
+        // Security headers config
+        let security_config = Arc::new(SecurityHeadersConfig {
+            enabled: self.config.security_headers,
+            hsts: self.config.hsts,
+        });
+
+        // Trusted proxies for client IP resolution
+        let trusted_proxies = TrustedProxies(Arc::new(self.config.trusted_proxies.clone()));
+
         // Build middleware stack
         let service_builder = ServiceBuilder::new()
             .layer(HandleErrorLayer::new(handle_middleware_error))
@@ -492,11 +604,20 @@ impl GatewayServer {
             )))
             .layer(cors.clone())
             .layer(middleware::from_fn_with_state(
+                security_config,
+                security_headers_middleware,
+            ))
+            .layer(middleware::from_fn(api_version_middleware))
+            .layer(middleware::from_fn_with_state(
+                trusted_proxies,
+                resolve_client_ip_middleware,
+            ))
+            .layer(middleware::from_fn_with_state(
                 auth_middleware_state,
                 auth_middleware,
             ))
             .layer(middleware::from_fn_with_state(
-                Arc::new(self.config.quiet_routes.clone()),
+                Arc::new(self.config.quiet_paths.clone()),
                 tracing_middleware,
             ));
 
@@ -513,13 +634,17 @@ impl GatewayServer {
     pub async fn run(self) -> Result<(), std::io::Error> {
         let addr = self.addr();
         let tls = self.config.tls.clone();
-        let service = self.router().into_make_service();
+        let service = self
+            .router()
+            .into_make_service_with_connect_info::<super::PeerAddr>();
 
         self.reactor
             .start()
             .await
             .map_err(|e| std::io::Error::other(format!("Failed to start reactor: {}", e)))?;
         tracing::info!("Reactor started for real-time updates");
+
+        tracing::info!("Gateway server listening on {}", addr);
 
         let listener = bind_listener(addr, tls.as_ref()).await?;
         axum::serve(listener, service).await
@@ -548,22 +673,63 @@ async fn readiness_handler(
     let reactor_stats = state.reactor.stats().await;
     let reactor_ok = reactor_stats.listener_running;
 
-    // Check for blocked workflow runs (strict mode: unhealthy if any runs are blocked)
-    let (workflows_ok, blocked_count) = if db_ok {
-        match sqlx::query_scalar!(
+    // Check for blocked workflow runs (strict mode: unhealthy if any runs are blocked).
+    // The count is intentionally not exposed in the response — it would let
+    // anonymous callers probe for internal load. We log it so operators see
+    // the detail in tracing/metrics.
+    let workflows_ok =
+        if db_ok {
+            match sqlx::query_scalar!(
             r#"SELECT COUNT(*) as "count!" FROM forge_workflow_runs WHERE status LIKE 'blocked_%'"#,
         )
         .fetch_one(&state.db_pool)
         .await
         {
-            Ok(count) => (count == 0, if count > 0 { Some(count) } else { None }),
-            Err(_) => (true, None), // if query fails, don't block on this check
+            Ok(count) => {
+                if count > 0 {
+                    tracing::warn!(blocked_workflow_runs = count, "Blocked workflow runs present");
+                }
+                count == 0
+            }
+            Err(_) => true, // if query fails, don't block on this check
         }
-    } else {
-        (true, None)
+        } else {
+            true
+        };
+
+    // Check for stranded workflow runs whose (name, version) is no longer
+    // in this binary's registry. Refresh the cached count if it has aged
+    // out, otherwise reuse it to avoid hammering PG on hot probe paths.
+    let drain_pending = {
+        #[cfg(feature = "workflows")]
+        {
+            match (&state.workflow_registry, &state.workflow_readiness) {
+                (Some(registry), Some(readiness)) if db_ok => {
+                    if let Err(e) = readiness.refresh_if_stale(registry, &state.db_pool).await {
+                        tracing::warn!(error = %e, "drain check refresh failed");
+                    }
+                    readiness.drain_pending()
+                }
+                (_, Some(readiness)) => readiness.drain_pending(),
+                _ => 0,
+            }
+        }
+        #[cfg(not(feature = "workflows"))]
+        {
+            0usize
+        }
     };
 
-    let ready = db_ok && reactor_ok && workflows_ok;
+    let workflows_drain_clear = drain_pending == 0;
+    if !workflows_drain_clear {
+        tracing::warn!(
+            drain_pending,
+            "readiness probe failing: workflow runs blocked on missing (name, version) entries"
+        );
+    }
+
+    let workflows_ready = workflows_ok && workflows_drain_clear;
+    let ready = db_ok && reactor_ok && workflows_ready;
     let status_code = if ready {
         axum::http::StatusCode::OK
     } else {
@@ -576,28 +742,19 @@ async fn readiness_handler(
             ready,
             database: db_ok,
             reactor: reactor_ok,
-            workflows: workflows_ok,
-            blocked_workflow_runs: blocked_count,
+            workflows: workflows_ready,
             version: env!("CARGO_PKG_VERSION").to_string(),
         }),
     )
 }
 
 async fn handle_middleware_error(err: BoxError) -> axum::response::Response {
-    let (status, code, message) = if err.is::<tower::timeout::error::Elapsed>() {
-        (StatusCode::REQUEST_TIMEOUT, "TIMEOUT", "Request timed out")
+    let rpc_err = if err.is::<tower::timeout::error::Elapsed>() {
+        RpcError::new("REQUEST_TIMEOUT", "Request timed out")
     } else {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "SERVICE_UNAVAILABLE",
-            "Server overloaded",
-        )
+        RpcError::new("SERVICE_UNAVAILABLE", "Server overloaded")
     };
-    (
-        status,
-        Json(RpcResponse::error(RpcError::new(code, message))),
-    )
-        .into_response()
+    RpcResponse::error(rpc_err).into_response()
 }
 
 fn set_tracing_headers(response: &mut axum::response::Response, trace_id: &str, request_id: &str) {
@@ -624,13 +781,109 @@ impl<'a> Extractor for HeaderExtractor<'a> {
     }
 }
 
+/// Resolve the real client IP using trusted proxy configuration and inject
+/// it as `Extension<ResolvedClientIp>` for downstream handlers.
+async fn resolve_client_ip_middleware(
+    axum::extract::State(trusted): axum::extract::State<TrustedProxies>,
+    mut req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let peer_ip = req
+        .extensions()
+        .get::<axum::extract::connect_info::ConnectInfo<super::PeerAddr>>()
+        .map(|ci| ci.0.0.ip());
+    let ip = super::resolve_client_ip(req.headers(), peer_ip, &trusted.0);
+    req.extensions_mut().insert(super::ResolvedClientIp(ip));
+    next.run(req).await
+}
+
+#[derive(Debug, Clone)]
+struct SecurityHeadersConfig {
+    enabled: bool,
+    hsts: bool,
+}
+
+async fn security_headers_middleware(
+    axum::extract::State(config): axum::extract::State<Arc<SecurityHeadersConfig>>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let mut response = next.run(req).await;
+    if config.enabled {
+        let headers = response.headers_mut();
+        headers.insert(
+            axum::http::header::X_CONTENT_TYPE_OPTIONS,
+            axum::http::HeaderValue::from_static("nosniff"),
+        );
+        headers.insert(
+            axum::http::header::X_FRAME_OPTIONS,
+            axum::http::HeaderValue::from_static("DENY"),
+        );
+        headers.insert(
+            axum::http::header::REFERRER_POLICY,
+            axum::http::HeaderValue::from_static("strict-origin-when-cross-origin"),
+        );
+        headers.insert(
+            axum::http::HeaderName::from_static("permissions-policy"),
+            axum::http::HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
+        );
+        // Forge `/_api/*` only ever returns JSON, SSE, or a small handful of
+        // static error/health pages — there is no HTML, script, image, or
+        // remote fetch surface. A `default-src 'none'` policy means any byte
+        // mistakenly executed as a document or script is blocked by the
+        // browser. `frame-ancestors 'none'` matches `X-Frame-Options: DENY`
+        // for legacy clients that ignore CSP.
+        headers.insert(
+            axum::http::header::CONTENT_SECURITY_POLICY,
+            axum::http::HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'"),
+        );
+        if config.hsts {
+            headers.insert(
+                axum::http::header::STRICT_TRANSPORT_SECURITY,
+                axum::http::HeaderValue::from_static("max-age=63072000; includeSubDomains"),
+            );
+        }
+    }
+    response
+}
+
+/// The only wire version currently supported.
+const FORGE_API_V1: &str = "application/vnd.forge.v1+json";
+
+/// Validates the `Accept` header for RPC routes.
+///
+/// Clients should send `Accept: application/vnd.forge.v1+json`. Omitting the
+/// header is accepted (defaults to v1). Any other value returns 406 so that
+/// future versions can be introduced without ambiguity.
+async fn api_version_middleware(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let is_rpc = req.uri().path().starts_with("/rpc");
+    if is_rpc && let Some(accept) = req.headers().get(axum::http::header::ACCEPT) {
+        let accept_str = accept.to_str().unwrap_or("");
+        // Allow wildcard and explicit v1; reject anything else.
+        if accept_str != "*/*" && !accept_str.is_empty() && !accept_str.contains(FORGE_API_V1) {
+            return RpcResponse::error(RpcError::new(
+                "UNSUPPORTED_API_VERSION",
+                format!(
+                    "Unsupported Accept header '{}'. Use '{}' or omit the header.",
+                    accept_str, FORGE_API_V1
+                ),
+            ))
+            .into_response();
+        }
+    }
+    next.run(req).await
+}
+
 /// Wraps each request in a span with HTTP semantics and OpenTelemetry
 /// context propagation. Incoming `traceparent` headers are extracted so
 /// that spans join the caller's distributed trace.
 /// Quiet routes skip spans, logs, and metrics to avoid noise from
 /// probes or high-frequency internal endpoints.
 async fn tracing_middleware(
-    axum::extract::State(quiet_routes): axum::extract::State<Arc<Vec<String>>>,
+    axum::extract::State(quiet_paths): axum::extract::State<Arc<Vec<String>>>,
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
@@ -676,7 +929,7 @@ async fn tracing_middleware(
     // Config uses full paths (/_api/health) but axum strips the prefix
     // for nested routers, so the middleware sees /health not /_api/health.
     let full_path = format!("/_api{}", path);
-    let is_quiet = quiet_routes.iter().any(|r| *r == full_path || *r == path);
+    let is_quiet = quiet_paths.iter().any(|r| *r == full_path || *r == path);
 
     if is_quiet {
         let mut response = next.run(req).await;

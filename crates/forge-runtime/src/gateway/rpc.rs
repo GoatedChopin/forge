@@ -20,6 +20,8 @@ use crate::function::{FunctionExecutor, FunctionRegistry};
 pub struct RpcHandler {
     /// Function executor.
     executor: Arc<FunctionExecutor>,
+    /// Maximum requests in a single batch call.
+    max_batch_size: usize,
 }
 
 impl RpcHandler {
@@ -28,6 +30,7 @@ impl RpcHandler {
         let executor = FunctionExecutor::new(Arc::new(registry), db);
         Self {
             executor: Arc::new(executor),
+            max_batch_size: 100,
         }
     }
 
@@ -58,13 +61,36 @@ impl RpcHandler {
         );
         Self {
             executor: Arc::new(executor),
+            max_batch_size: 100,
         }
+    }
+
+    /// Set the maximum batch size for RPC batch requests.
+    pub fn set_max_batch_size(&mut self, max: usize) {
+        self.max_batch_size = max;
     }
 
     /// Set the token TTL config. Must be called before any requests are handled.
     pub fn set_token_ttl(&mut self, ttl: forge_core::AuthTokenTtl) {
         if let Some(executor) = Arc::get_mut(&mut self.executor) {
             executor.set_token_ttl(ttl);
+        }
+    }
+
+    /// Replace the rate-limiter backend. Call before handling requests.
+    pub fn set_rate_limiter(
+        &mut self,
+        rate_limiter: Arc<dyn forge_core::rate_limit::RateLimiterBackend>,
+    ) {
+        if let Some(executor) = Arc::get_mut(&mut self.executor) {
+            executor.set_rate_limiter(rate_limiter);
+        }
+    }
+
+    /// Set a custom role resolver. Call before handling requests.
+    pub fn set_role_resolver(&mut self, resolver: forge_core::SharedRoleResolver) {
+        if let Some(executor) = Arc::get_mut(&mut self.executor) {
+            executor.set_role_resolver(resolver);
         }
     }
 
@@ -98,14 +124,14 @@ impl RpcHandler {
             .await
         {
             Ok(exec_result) => RpcResponse::success(exec_result.result)
-                .with_request_id(metadata.request_id.to_string()),
+                .with_request_id(metadata.request_id().to_string()),
             Err(e) => RpcResponse::error(RpcError::from(e))
-                .with_request_id(metadata.request_id.to_string()),
+                .with_request_id(metadata.request_id().to_string()),
         }
     }
 }
 
-use super::extract_client_ip;
+use super::ResolvedClientIp;
 
 /// Extract user agent from headers.
 fn extract_user_agent(headers: &HeaderMap) -> Option<String> {
@@ -115,17 +141,19 @@ fn extract_user_agent(headers: &HeaderMap) -> Option<String> {
         .map(String::from)
 }
 
-/// Build request metadata from tracing state and headers.
-fn build_metadata(tracing: TracingState, headers: &HeaderMap) -> RequestMetadata {
-    RequestMetadata {
-        request_id: uuid::Uuid::parse_str(&tracing.request_id)
-            .unwrap_or_else(|_| uuid::Uuid::new_v4()),
-        trace_id: tracing.trace_id,
-        client_ip: extract_client_ip(headers),
-        user_agent: extract_user_agent(headers),
-        correlation_id: extract_correlation_id(headers),
-        timestamp: chrono::Utc::now(),
-    }
+/// Build request metadata from tracing state, resolved IP, and headers.
+fn build_metadata(
+    tracing: TracingState,
+    client_ip: Option<String>,
+    headers: &HeaderMap,
+) -> RequestMetadata {
+    RequestMetadata::__build_internal(
+        uuid::Uuid::parse_str(&tracing.request_id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
+        tracing.trace_id,
+        client_ip,
+        extract_user_agent(headers),
+        extract_correlation_id(headers),
+    )
 }
 
 /// Extract the correlation ID from the x-correlation-id header.
@@ -142,6 +170,7 @@ pub async fn rpc_handler(
     State(handler): State<Arc<RpcHandler>>,
     Extension(auth): Extension<AuthContext>,
     Extension(tracing): Extension<TracingState>,
+    Extension(resolved_ip): Extension<ResolvedClientIp>,
     headers: HeaderMap,
     Json(request): Json<RpcRequest>,
 ) -> RpcResponse {
@@ -151,7 +180,11 @@ pub async fn rpc_handler(
         ));
     }
     handler
-        .handle(request, auth, build_metadata(tracing, &headers))
+        .handle(
+            request,
+            auth,
+            build_metadata(tracing, resolved_ip.0, &headers),
+        )
         .await
 }
 
@@ -178,6 +211,7 @@ pub async fn rpc_function_handler(
     State(handler): State<Arc<RpcHandler>>,
     Extension(auth): Extension<AuthContext>,
     Extension(tracing): Extension<TracingState>,
+    Extension(resolved_ip): Extension<ResolvedClientIp>,
     headers: HeaderMap,
     axum::extract::Path(function): axum::extract::Path<String>,
     Json(body): Json<RpcFunctionBody>,
@@ -189,33 +223,35 @@ pub async fn rpc_function_handler(
     }
     let request = RpcRequest::new(function, body.args);
     handler
-        .handle(request, auth, build_metadata(tracing, &headers))
+        .handle(
+            request,
+            auth,
+            build_metadata(tracing, resolved_ip.0, &headers),
+        )
         .await
 }
-
-/// Maximum number of requests allowed in a single batch.
-const MAX_BATCH_SIZE: usize = 100;
 
 /// Axum handler for POST /rpc/batch.
 pub async fn rpc_batch_handler(
     State(handler): State<Arc<RpcHandler>>,
     Extension(auth): Extension<AuthContext>,
     Extension(tracing): Extension<TracingState>,
+    Extension(resolved_ip): Extension<ResolvedClientIp>,
     headers: HeaderMap,
     Json(batch): Json<BatchRpcRequest>,
 ) -> BatchRpcResponse {
     // Prevent DoS via unbounded batch size
-    if batch.requests.len() > MAX_BATCH_SIZE {
+    if batch.requests.len() > handler.max_batch_size {
         return BatchRpcResponse {
             results: vec![RpcResponse::error(RpcError::validation(format!(
                 "Batch size {} exceeds maximum of {}",
                 batch.requests.len(),
-                MAX_BATCH_SIZE
+                handler.max_batch_size
             )))],
         };
     }
 
-    let client_ip = extract_client_ip(&headers);
+    let client_ip = resolved_ip.0;
     let user_agent = extract_user_agent(&headers);
     let correlation_id = extract_correlation_id(&headers);
     let mut results = Vec::with_capacity(batch.requests.len());
@@ -228,14 +264,13 @@ pub async fn rpc_batch_handler(
             )));
             continue;
         }
-        let metadata = RequestMetadata {
-            request_id: uuid::Uuid::new_v4(),
-            trace_id: tracing.trace_id.clone(),
-            client_ip: client_ip.clone(),
-            user_agent: user_agent.clone(),
-            correlation_id: correlation_id.clone(),
-            timestamp: chrono::Utc::now(),
-        };
+        let metadata = RequestMetadata::__build_internal(
+            uuid::Uuid::new_v4(),
+            tracing.trace_id.clone(),
+            client_ip.clone(),
+            user_agent.clone(),
+            correlation_id.clone(),
+        );
 
         let response = handler.handle(request, auth.clone(), metadata).await;
         results.push(response);

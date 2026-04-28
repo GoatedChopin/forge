@@ -41,6 +41,7 @@ impl std::fmt::Display for NodeId {
 
 /// Node status in the cluster.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum NodeStatus {
     /// Node is starting up.
     Joining,

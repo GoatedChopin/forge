@@ -1,7 +1,14 @@
 use serde::{Deserialize, Serialize};
 
+fn parse_duration_secs(s: &str, default_secs: u64) -> u64 {
+    crate::util::parse_duration(s)
+        .map(|d| d.as_secs())
+        .unwrap_or(default_secs)
+}
+
 /// Cluster configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ClusterConfig {
     /// Cluster name.
     #[serde(default = "default_cluster_name")]
@@ -11,13 +18,13 @@ pub struct ClusterConfig {
     #[serde(default)]
     pub discovery: DiscoveryMethod,
 
-    /// Heartbeat interval in seconds.
+    /// Heartbeat interval duration (e.g. "5s", "10s").
     #[serde(default = "default_heartbeat_interval")]
-    pub heartbeat_interval_secs: u64,
+    pub heartbeat_interval: String,
 
-    /// Threshold for marking nodes as dead (in seconds).
+    /// Threshold duration for marking nodes as dead (e.g. "15s", "30s").
     #[serde(default = "default_dead_threshold")]
-    pub dead_threshold_secs: u64,
+    pub dead_threshold: String,
 
     /// Static seed nodes (for static discovery).
     #[serde(default)]
@@ -32,11 +39,29 @@ impl Default for ClusterConfig {
         Self {
             name: default_cluster_name(),
             discovery: DiscoveryMethod::default(),
-            heartbeat_interval_secs: default_heartbeat_interval(),
-            dead_threshold_secs: default_dead_threshold(),
+            heartbeat_interval: default_heartbeat_interval(),
+            dead_threshold: default_dead_threshold(),
             seed_nodes: Vec::new(),
             dns_name: None,
         }
+    }
+}
+
+impl ClusterConfig {
+    /// Return a copy with `dns_name` set.
+    pub fn with_dns_name(mut self, dns_name: String) -> Self {
+        self.dns_name = Some(dns_name);
+        self
+    }
+
+    /// Heartbeat interval in seconds, parsed from the `heartbeat_interval` string.
+    pub fn heartbeat_interval_secs(&self) -> u64 {
+        parse_duration_secs(&self.heartbeat_interval, 5)
+    }
+
+    /// Dead threshold in seconds, parsed from the `dead_threshold` string.
+    pub fn dead_threshold_secs(&self) -> u64 {
+        parse_duration_secs(&self.dead_threshold, 15)
     }
 }
 
@@ -44,12 +69,12 @@ fn default_cluster_name() -> String {
     "default".to_string()
 }
 
-fn default_heartbeat_interval() -> u64 {
-    5
+fn default_heartbeat_interval() -> String {
+    "5s".to_string()
 }
 
-fn default_dead_threshold() -> u64 {
-    15
+fn default_dead_threshold() -> String {
+    "15s".to_string()
 }
 
 /// Cluster discovery method.
@@ -80,7 +105,7 @@ mod tests {
         let config = ClusterConfig::default();
         assert_eq!(config.name, "default");
         assert_eq!(config.discovery, DiscoveryMethod::Postgres);
-        assert_eq!(config.heartbeat_interval_secs, 5);
+        assert_eq!(config.heartbeat_interval_secs(), 5);
     }
 
     #[test]
@@ -88,7 +113,7 @@ mod tests {
         let toml = r#"
             name = "production"
             discovery = "kubernetes"
-            heartbeat_interval_secs = 10
+            heartbeat_interval = "10s"
         "#;
 
         let config: ClusterConfig = toml::from_str(toml).unwrap();

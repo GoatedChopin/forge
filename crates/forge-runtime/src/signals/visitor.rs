@@ -23,7 +23,7 @@ static CACHED_SALT: RwLock<Option<DailySalt>> = RwLock::new(None);
 /// Generate a visitor ID from client IP and User-Agent.
 ///
 /// The ID is stable within a single UTC day for the same IP+UA pair,
-/// but changes at midnight. Returns a 16-character hex string.
+/// but changes at midnight. Returns a 32-character hex string (128 bits).
 pub fn generate_visitor_id(
     client_ip: Option<&str>,
     user_agent: Option<&str>,
@@ -41,9 +41,9 @@ pub fn generate_visitor_id(
     hasher.update(salt.as_bytes());
 
     let hash = hasher.finalize();
-    // Truncate to 16 hex chars (64 bits) for compact storage
+    // 32 hex chars (128 bits) so birthday collisions require ~2^64 visitors.
     hash.iter()
-        .take(8)
+        .take(16)
         .map(|b| format!("{b:02x}"))
         .collect::<String>()
 }
@@ -122,15 +122,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn visitor_id_is_16_hex_chars() {
+    async fn visitor_id_is_32_hex_chars() {
         let id = generate_visitor_id(Some("1.2.3.4"), Some("Chrome"), "secret");
-        assert_eq!(id.len(), 16);
+        assert_eq!(id.len(), 32);
         assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
     #[tokio::test]
     async fn handles_missing_inputs() {
         let id = generate_visitor_id(None, None, "secret");
-        assert_eq!(id.len(), 16);
+        assert_eq!(id.len(), 32);
     }
 }

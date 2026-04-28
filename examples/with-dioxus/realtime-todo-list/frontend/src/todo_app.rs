@@ -2,14 +2,14 @@ use dioxus::prelude::*;
 use forge_dioxus::use_signals;
 use serde_json::json;
 
-use crate::forge::{CreateTodoInput, use_create_todo, use_list_todos_live};
+use crate::forge::{CreateTodoInput, use_create_todo, use_list_todos_subscription};
 use crate::todo_item::TodoItem;
 
 #[component]
 pub fn TodoApp() -> Element {
     let signals = use_signals();
     let create_todo = use_create_todo();
-    let todo_state = use_list_todos_live();
+    let todo_state = use_list_todos_subscription();
     let mut new_title = use_signal(String::new);
     let mut error = use_signal(|| None::<String>);
     let mut adding = use_signal(|| false);
@@ -52,11 +52,11 @@ pub fn TodoApp() -> Element {
                                         spawn(async move {
                                             match create_todo.call(CreateTodoInput::new(title.clone())).await {
                                                 Ok(_) => {
-                                                    signals.track("todo_created", json!({"title": &title}));
+                                                    signals.track_with_properties("todo_created", json!({"title": &title}));
                                                     new_title.set(String::new());
                                                 }
                                                 Err(err) => {
-                                                    signals.track("todo_create_error", json!({"error": &err.message}));
+                                                    signals.track_with_properties("todo_create_error", json!({"error": &err.message}));
                                                     error.set(Some(err.message));
                                                 }
                                             }
@@ -83,11 +83,11 @@ pub fn TodoApp() -> Element {
                                     spawn(async move {
                                         match create_todo.call(CreateTodoInput::new(title.clone())).await {
                                             Ok(_) => {
-                                                signals.track("todo_created", json!({"title": &title}));
+                                                signals.track_with_properties("todo_created", json!({"title": &title}));
                                                 new_title.set(String::new());
                                             }
                                             Err(err) => {
-                                                signals.track("todo_create_error", json!({"error": &err.message}));
+                                                signals.track_with_properties("todo_create_error", json!({"error": &err.message}));
                                                 error.set(Some(err.message));
                                             }
                                         }

@@ -13,6 +13,7 @@ pub struct SignatureConfig {
 
 /// Supported signature algorithms.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SignatureAlgorithm {
     /// HMAC-SHA256 (e.g., GitHub)
     HmacSha256,
@@ -60,6 +61,7 @@ impl SignatureAlgorithm {
 
 /// Source for extracting idempotency key.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum IdempotencySource {
     /// Extract from a header (e.g., "X-Request-Id").
     Header(&'static str),
@@ -87,11 +89,17 @@ impl IdempotencySource {
 
 /// Configuration for webhook idempotency.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct IdempotencyConfig {
     /// Source for the idempotency key.
     pub source: IdempotencySource,
     /// TTL for idempotency records (default: 24 hours).
     pub ttl: Duration,
+    /// Maximum time a webhook handler can run before the claim is
+    /// considered stale and eligible for reclaim. Protects against
+    /// process crashes leaving keys permanently locked.
+    /// Defaults to 5 minutes.
+    pub processing_timeout: Duration,
 }
 
 impl IdempotencyConfig {
@@ -99,13 +107,20 @@ impl IdempotencyConfig {
     pub fn new(source: IdempotencySource) -> Self {
         Self {
             source,
-            ttl: Duration::from_secs(24 * 60 * 60), // 24 hours
+            ttl: Duration::from_secs(24 * 60 * 60),
+            processing_timeout: Duration::from_secs(5 * 60),
         }
     }
 
     /// Set a custom TTL.
     pub fn with_ttl(mut self, ttl: Duration) -> Self {
         self.ttl = ttl;
+        self
+    }
+
+    /// Set a custom processing timeout for crash recovery.
+    pub fn with_processing_timeout(mut self, timeout: Duration) -> Self {
+        self.processing_timeout = timeout;
         self
     }
 }

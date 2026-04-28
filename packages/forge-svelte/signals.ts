@@ -322,7 +322,7 @@ export class ForgeSignals {
     });
     try {
       const sent = typeof navigator !== "undefined" && navigator.sendBeacon
-        ? navigator.sendBeacon(`${this.client.getUrl()}/_api/signal/event`, body)
+        ? navigator.sendBeacon(`${this.client.getUrl()}/_api/signal/event`, new Blob([body], { type: "application/json" }))
         : false;
       if (!sent) {
         // Fall back to keepalive fetch if beacon isn't available / over quota
@@ -374,7 +374,7 @@ export class ForgeSignals {
     });
     try {
       if (typeof navigator !== "undefined" && navigator.sendBeacon) {
-        navigator.sendBeacon(`${this.client.getUrl()}/_api/signal/vital`, body);
+        navigator.sendBeacon(`${this.client.getUrl()}/_api/signal/vital`, new Blob([body], { type: "application/json" }));
       }
     } catch {
       // drop

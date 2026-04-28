@@ -20,8 +20,13 @@ pub struct AdaptiveTrackingConfig {
 
 impl Default for AdaptiveTrackingConfig {
     fn default() -> Self {
+        // Wider hysteresis (200/50 vs 100/50) keeps tables anchored in their
+        // current mode under noisy subscribe/unsubscribe traffic, so we don't
+        // flap between row and table tracking and re-fan invalidations on
+        // every flip. Promotion to Table only fires when row tracking has
+        // become genuinely expensive.
         Self {
-            row_threshold: 100,
+            row_threshold: 200,
             table_threshold: 50,
             max_tracked_rows: 10_000,
             evaluation_interval: Duration::from_secs(60),
@@ -181,6 +186,9 @@ impl AdaptiveTracker {
                     .map(|rows| rows.contains(row_id))
                     .unwrap_or(false)
             }
+            // TrackingMode is #[non_exhaustive]; treat unknown future modes as
+            // "track everything" so invalidations are not silently dropped.
+            _ => true,
         }
     }
 

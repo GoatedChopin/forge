@@ -6,6 +6,7 @@ use crate::ForgeError;
 
 /// Tenant isolation mode.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TenantIsolationMode {
     /// No tenant isolation - global access.
     #[default]
@@ -53,6 +54,7 @@ impl FromStr for TenantIsolationMode {
 
 /// Tenant context for multi-tenancy support.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct TenantContext {
     /// Current tenant ID.
     pub tenant_id: Option<Uuid>,

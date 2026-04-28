@@ -17,6 +17,8 @@ use forge_core::schema::{
     SchemaRegistry, TableDef,
 };
 use forge_core::util::to_snake_case;
+use std::collections::BTreeMap;
+
 use quote::ToTokens;
 use syn::{Attribute, Expr, Fields, FnArg, Lit, Meta, Pat, ReturnType};
 
@@ -53,6 +55,99 @@ pub fn parse_project(src_dir: &Path) -> Result<SchemaRegistry, Error> {
     }
 
     Ok(registry)
+}
+
+/// Validate every function in the registry uses types the binding emitters
+/// support. Surfaces platform-dependent types like `usize`/`isize` and
+/// unsupported integer widths up front instead of letting them fall through to
+/// silently-lossy `number` mappings on the frontend.
+pub fn validate_registry(registry: &SchemaRegistry) -> Result<(), Vec<String>> {
+    let mut errors = Vec::new();
+    for func in registry.all_functions() {
+        for arg in &func.args {
+            collect_unsupported(&arg.rust_type, &func.name, Some(&arg.name), &mut errors);
+        }
+        collect_unsupported(&func.return_type, &func.name, None, &mut errors);
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
+}
+
+fn collect_unsupported(
+    ty: &RustType,
+    func_name: &str,
+    arg_name: Option<&str>,
+    errors: &mut Vec<String>,
+) {
+    match ty {
+        RustType::Option(inner) | RustType::Vec(inner) => {
+            collect_unsupported(inner, func_name, arg_name, errors);
+        }
+        RustType::Custom(name) => {
+            if let Some(reason) = unsupported_type_reason(name) {
+                let location = match arg_name {
+                    Some(arg) => format!("{}.{}", func_name, arg),
+                    None => format!("{}() return type", func_name),
+                };
+                errors.push(format!("{}: {}", location, reason));
+            }
+        }
+        _ => {}
+    }
+}
+
+fn unsupported_type_reason(name: &str) -> Option<String> {
+    match name {
+        "usize" | "isize" => Some(format!(
+            "`{}` is platform-dependent and not portable across the wire. \
+             Use `i32`, `i64`, or `u32` instead.",
+            name
+        )),
+        "u8" | "u16" | "u32" | "u64" | "u128" | "i8" | "i16" | "i128" => Some(format!(
+            "`{}` is not supported in handler signatures. \
+             Use `i32` or `i64` (signed integers) for portability.",
+            name
+        )),
+        _ => None,
+    }
+}
+
+/// Scan a source directory and return every `(kind, name)` pair that appears in more
+/// than one file. The returned map is keyed by `"kind:name"` with a list of file paths
+/// as the value.
+pub fn find_duplicate_handlers(src_dir: &Path) -> Result<BTreeMap<String, Vec<PathBuf>>, Error> {
+    let mut occurrences: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
+
+    let mut files = Vec::new();
+    collect_rs_files(src_dir, &mut files);
+    files.sort();
+
+    for path in &files {
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let file = match syn::parse_file(&content) {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
+        for item in &file.items {
+            if let syn::Item::Fn(item_fn) = item
+                && let Some(func) = parse_function(item_fn)
+            {
+                let key = format!("{}:{}", func.kind.as_str(), func.name);
+                occurrences.entry(key).or_default().push(path.clone());
+            }
+        }
+    }
+
+    Ok(occurrences
+        .into_iter()
+        .filter(|(_, paths)| paths.len() > 1)
+        .collect())
 }
 
 /// Parse a single Rust source file and extract schema definitions.

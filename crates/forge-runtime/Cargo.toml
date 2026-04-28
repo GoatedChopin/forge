@@ -38,6 +38,7 @@ sha2 = "0.10"
 # share the same axum/tower/jsonwebtoken stack and the per-component dep
 # savings are negligible compared to the gateway vs no-gateway split.
 axum = { workspace = true, optional = true }
+ipnet = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
 tower-http = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }
@@ -54,6 +55,7 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["ring"]
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
 rustls-pemfile = { version = "2", optional = true }
 tls-listener = { version = "0.11", default-features = false, features = ["rustls-ring", "axum", "tokio-net"], optional = true }
+jsonschema = { workspace = true, optional = true }
 
 # `geoip` feature: bundled IP-to-country DB (~10MB) + MaxMind reader.
 # Network access is required at compile time to fetch the DB; opt-in only.
@@ -82,6 +84,7 @@ gateway = [
     "dep:tower",
     "dep:tower-http",
     "dep:bytes",
+    "dep:ipnet",
     "dep:jsonwebtoken",
     "dep:bcrypt",
     "dep:ed25519-dalek",
@@ -92,6 +95,7 @@ gateway = [
     "dep:rustls",
     "dep:rustls-pemfile",
     "dep:tls-listener",
+    "dep:jsonschema",
 ]
 
 # Background job queue and worker (PG-backed, SKIP LOCKED).

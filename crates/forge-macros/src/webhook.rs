@@ -2,10 +2,25 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{ItemFn, parse_macro_input};
 
-use crate::utils::{has_attr_flag, parse_attr_value, parse_duration_tokens, to_pascal_case};
+use crate::utils::{
+    has_attr_flag, parse_attr_value, parse_duration_tokens, to_pascal_case, validate_attr_keys,
+};
+
+const ALLOWED_WEBHOOK_KEYS: &[&str] = &[
+    "name",
+    "description",
+    "path",
+    "signature",
+    "allow_unsigned",
+    "idempotency",
+    "timeout",
+];
 
 #[derive(Debug, Default)]
 struct WebhookAttrs {
+    /// Override the registry name (default: function name).
+    name: Option<String>,
+    description: Option<String>,
     path: Option<String>,
     signature_algorithm: Option<String>,
     signature_header: Option<String>,
@@ -18,6 +33,14 @@ struct WebhookAttrs {
 fn parse_webhook_attrs(attr: TokenStream) -> syn::Result<WebhookAttrs> {
     let mut result = WebhookAttrs::default();
     let attr_str = attr.to_string();
+
+    if let Some(name) = parse_attr_value(&attr_str, "name") {
+        result.name = Some(name);
+    }
+
+    if let Some(description) = parse_attr_value(&attr_str, "description") {
+        result.description = Some(description);
+    }
 
     if has_attr_flag(&attr_str, "allow_unsigned") {
         result.allow_unsigned = true;
@@ -141,6 +164,12 @@ fn parse_webhook_attrs(attr: TokenStream) -> syn::Result<WebhookAttrs> {
 
 pub fn webhook_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
+    let attr_str = attr.to_string();
+
+    if let Err(e) = validate_attr_keys(&attr_str, ALLOWED_WEBHOOK_KEYS, "webhook") {
+        return e.to_compile_error().into();
+    }
+
     let attrs = match parse_webhook_attrs(attr) {
         Ok(attrs) => attrs,
         Err(e) => return e.to_compile_error().into(),
@@ -148,13 +177,34 @@ pub fn webhook_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let fn_name = &input.sig.ident;
     let fn_name_str = fn_name.to_string();
+    let rpc_name = attrs.name.as_deref().unwrap_or(&fn_name_str).to_string();
+    let module_name = format_ident!("__forge_handler_{}", fn_name);
     let struct_name = format_ident!("{}Webhook", to_pascal_case(&fn_name.to_string()));
 
-    let vis = &input.vis;
+    let _vis = &input.vis;
     let block = &input.block;
+
+    let payload_type = input
+        .sig
+        .inputs
+        .iter()
+        .nth(1)
+        .and_then(|arg| {
+            if let syn::FnArg::Typed(pat_type) = arg {
+                Some(pat_type.ty.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| syn::parse_quote!(serde_json::Value));
 
     let path = attrs.path.unwrap_or_else(|| "/webhooks".to_string());
     let allow_unsigned = attrs.allow_unsigned;
+
+    let description_tokens = match &attrs.description {
+        Some(d) => quote! { Some(#d) },
+        None => quote! { None },
+    };
 
     let timeout = if let Some(ref t) = attrs.timeout {
         parse_duration_tokens(t, 30)
@@ -229,33 +279,44 @@ pub fn webhook_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let other_attrs = &input.attrs;
 
     let expanded = quote! {
-        #(#other_attrs)*
-        #vis struct #struct_name;
+        #[doc(hidden)]
+        #[allow(non_snake_case)]
+        mod #module_name {
+            use super::*;
 
-        impl forge::forge_core::webhook::ForgeWebhook for #struct_name {
-            fn info() -> forge::forge_core::webhook::WebhookInfo {
-                forge::forge_core::webhook::WebhookInfo {
-                    name: #fn_name_str,
-                    path: #path,
-                    signature: #signature,
-                    allow_unsigned: #allow_unsigned,
-                    idempotency: #idempotency,
-                    timeout: #timeout,
-                    http_timeout: #http_timeout,
+            #(#other_attrs)*
+            pub struct #struct_name;
+
+            impl forge::forge_core::__sealed::Sealed for #struct_name {}
+
+            impl forge::forge_core::webhook::ForgeWebhook for #struct_name {
+                type Payload = #payload_type;
+
+                fn info() -> forge::forge_core::webhook::WebhookInfo {
+                    forge::forge_core::webhook::WebhookInfo {
+                        name: #rpc_name,
+                        description: #description_tokens,
+                        path: #path,
+                        signature: #signature,
+                        allow_unsigned: #allow_unsigned,
+                        idempotency: #idempotency,
+                        timeout: #timeout,
+                        http_timeout: #http_timeout,
+                    }
+                }
+
+                fn execute(
+                    ctx: &forge::forge_core::webhook::WebhookContext,
+                    payload: #payload_type,
+                ) -> std::pin::Pin<Box<dyn std::future::Future<Output = forge::forge_core::Result<forge::forge_core::webhook::WebhookResult>> + Send + '_>> {
+                    Box::pin(async move #block)
                 }
             }
 
-            fn execute(
-                ctx: &forge::forge_core::webhook::WebhookContext,
-                payload: serde_json::Value,
-            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = forge::forge_core::Result<forge::forge_core::webhook::WebhookResult>> + Send + '_>> {
-                Box::pin(async move #block)
-            }
+            forge::inventory::submit!(forge::AutoWebhook(|registry| {
+                registry.register::<#struct_name>();
+            }));
         }
-
-        forge::inventory::submit!(forge::AutoWebhook(|registry| {
-            registry.register::<#struct_name>();
-        }));
     };
 
     TokenStream::from(expanded)

@@ -2,11 +2,42 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{ItemFn, parse_macro_input};
 
-use crate::utils::{has_attr_flag, parse_attr_value, parse_duration_tokens, to_pascal_case};
+use crate::utils::{
+    has_attr_flag, parse_attr_value, parse_duration_tokens, reject_reserved_keys, to_pascal_case,
+    validate_attr_keys,
+};
+
+const ALLOWED_JOB_KEYS: &[&str] = &[
+    "public",
+    "name",
+    "description",
+    "timeout",
+    "priority",
+    "max_attempts",
+    "backoff",
+    "max_backoff",
+    "worker_capability",
+    "idempotent",
+    "compensate",
+    "require_role",
+    "ttl",
+    "retry",
+    // Reserved for future Forge releases. Parsed here so apps fail loudly
+    // (via `reject_reserved_keys` below) until the underlying behavior lands.
+    "unique_key",
+    "concurrency_key",
+    "concurrency_limit",
+];
+
+/// Attribute keys whose names are reserved for upcoming job-deduplication and
+/// per-key concurrency support. Using one today is a hard compile error so
+/// apps don't think a feature works that doesn't.
+const RESERVED_JOB_KEYS: &[&str] = &["unique_key", "concurrency_key", "concurrency_limit"];
 
 #[derive(Debug, Default)]
 struct JobAttrs {
     name: Option<String>,
+    description: Option<String>,
     timeout: Option<String>,
     priority: Option<String>,
     max_attempts: Option<u32>,
@@ -30,6 +61,10 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
 
     if has_attr_flag(&attr_str, "public") {
         result.is_public = true;
+    }
+
+    if let Some(description) = parse_attr_value(&attr_str, "description") {
+        result.description = Some(description);
     }
 
     if let Some(idem_start) = attr_str.find("idempotent") {
@@ -272,6 +307,16 @@ fn parse_job_attrs(attr: TokenStream) -> syn::Result<JobAttrs> {
 
 pub fn job_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
+    let attr_str = attr.to_string();
+
+    if let Err(e) = reject_reserved_keys(&attr_str, RESERVED_JOB_KEYS, "job") {
+        return e.to_compile_error().into();
+    }
+
+    if let Err(e) = validate_attr_keys(&attr_str, ALLOWED_JOB_KEYS, "job") {
+        return e.to_compile_error().into();
+    }
+
     let attrs = match parse_job_attrs(attr) {
         Ok(attrs) => attrs,
         Err(e) => return e.to_compile_error().into(),
@@ -279,9 +324,10 @@ pub fn job_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let fn_name = &input.sig.ident;
     let fn_name_str = attrs.name.unwrap_or_else(|| fn_name.to_string());
+    let module_name = format_ident!("__forge_handler_{}", fn_name);
     let struct_name = format_ident!("{}Job", to_pascal_case(&fn_name.to_string()));
 
-    let vis = &input.vis;
+    let _vis = &input.vis;
     let block = &input.block;
 
     // Parse context and args types from function signature
@@ -324,6 +370,11 @@ pub fn job_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                 quote! { #ty }
             }
         }
+    };
+
+    let description_tokens = match &attrs.description {
+        Some(d) => quote! { Some(#d) },
+        None => quote! { None },
     };
 
     let timeout = if let Some(ref t) = attrs.timeout {
@@ -416,47 +467,56 @@ pub fn job_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let other_attrs = &input.attrs;
 
     let expanded = quote! {
-        #(#other_attrs)*
-        #vis struct #struct_name;
+        #[doc(hidden)]
+        #[allow(non_snake_case)]
+        mod #module_name {
+            use super::*;
 
-        impl forge::forge_core::job::ForgeJob for #struct_name {
-            type Args = #args_type;
-            type Output = #output_type;
+            #(#other_attrs)*
+            pub struct #struct_name;
 
-            fn info() -> forge::forge_core::job::JobInfo {
-                forge::forge_core::job::JobInfo {
-                    name: #fn_name_str,
-                    timeout: #timeout,
-                    http_timeout: #http_timeout,
-                    priority: #priority,
-                    retry: forge::forge_core::job::RetryConfig {
-                        max_attempts: #max_attempts,
-                        backoff: #backoff,
-                        max_backoff: #max_backoff,
-                        retry_on: vec![],
-                    },
-                    worker_capability: #worker_capability,
-                    idempotent: #idempotent,
-                    idempotency_key: #idempotency_key,
-                    is_public: #is_public,
-                    required_role: #required_role,
-                    ttl: #ttl,
+            impl forge::forge_core::__sealed::Sealed for #struct_name {}
+
+            impl forge::forge_core::job::ForgeJob for #struct_name {
+                type Args = #args_type;
+                type Output = #output_type;
+
+                fn info() -> forge::forge_core::job::JobInfo {
+                    forge::forge_core::job::JobInfo {
+                        name: #fn_name_str,
+                        description: #description_tokens,
+                        timeout: #timeout,
+                        http_timeout: #http_timeout,
+                        priority: #priority,
+                        retry: forge::forge_core::job::RetryConfig {
+                            max_attempts: #max_attempts,
+                            backoff: #backoff,
+                            max_backoff: #max_backoff,
+                            retry_on: vec![],
+                        },
+                        worker_capability: #worker_capability,
+                        idempotent: #idempotent,
+                        idempotency_key: #idempotency_key,
+                        is_public: #is_public,
+                        required_role: #required_role,
+                        ttl: #ttl,
+                    }
                 }
+
+                fn execute(
+                    ctx: &forge::forge_core::job::JobContext,
+                    #args_ident: Self::Args,
+                ) -> std::pin::Pin<Box<dyn std::future::Future<Output = forge::forge_core::Result<Self::Output>> + Send + '_>> {
+                    Box::pin(async move #block)
+                }
+
+                #compensate
             }
 
-            fn execute(
-                ctx: &forge::forge_core::job::JobContext,
-                #args_ident: Self::Args,
-            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = forge::forge_core::Result<Self::Output>> + Send + '_>> {
-                Box::pin(async move #block)
-            }
-
-            #compensate
+            forge::inventory::submit!(forge::AutoJob(|registry| {
+                registry.register::<#struct_name>();
+            }));
         }
-
-        forge::inventory::submit!(forge::AutoJob(|registry| {
-            registry.register::<#struct_name>();
-        }));
     };
 
     TokenStream::from(expanded)

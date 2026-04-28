@@ -61,12 +61,13 @@ struct SseManager {
 const MAX_RECONNECT_ATTEMPTS: u32 = 10;
 
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct ForgeClientConfig {
-    pub url: String,
-    pub get_token: Option<TokenProvider>,
-    pub refresh_token: Option<RefreshTokenProvider>,
-    pub on_auth_error: Option<AuthErrorHandler>,
-    pub on_mutation_error: Option<MutationErrorHandler>,
+    url: String,
+    get_token: Option<TokenProvider>,
+    refresh_token: Option<RefreshTokenProvider>,
+    on_auth_error: Option<AuthErrorHandler>,
+    on_mutation_error: Option<MutationErrorHandler>,
     pub(crate) connection_state: Option<Signal<ConnectionState>>,
 }
 
@@ -670,6 +671,7 @@ impl ForgeClient {
             let error = envelope.error.unwrap_or(ForgeError {
                 code: "UNKNOWN".to_string(),
                 message: "Unknown error".to_string(),
+                retry_after_secs: None,
                 details: None,
             });
             if error.code == "UNAUTHORIZED" || error.code == "FORBIDDEN" {
@@ -677,7 +679,7 @@ impl ForgeClient {
                     handler(error.clone());
                 }
             }
-            return Err(ForgeClientError::new(error.code, error.message, error.details));
+            return Err(ForgeClientError::from_forge_error(error));
         }
 
         let data = envelope.data.ok_or_else(|| {
@@ -810,6 +812,7 @@ mod platform {
     ) -> Result<RpcEnvelopeRaw, ForgeClientError> {
         let mut request = Request::post(url)
             .header("Content-Type", "application/json")
+            .header("Accept", "application/vnd.forge.v1+json")
             .header("x-forge-platform", platform_tag())
             .credentials(web_sys::RequestCredentials::Include);
         if let Some(token) = client.get_token() {
@@ -893,6 +896,7 @@ mod platform {
                     handler(crate::types::ForgeError {
                         code: "UNAUTHORIZED".into(),
                         message: "SSE authentication failed".into(),
+                        retry_after_secs: None,
                         details: None,
                     });
                 }
@@ -933,6 +937,14 @@ mod platform {
             Ok(stream) => stream,
             Err(_) => return false,
         };
+        let gap_stream = match event_source.subscribe("gap") {
+            Ok(stream) => stream,
+            Err(_) => return false,
+        };
+        let _channel_stream = match event_source.subscribe("channel") {
+            Ok(stream) => stream,
+            Err(_) => return false,
+        };
 
         // Wait for the connected event
         let connected_event = match connected_stream.next().await {
@@ -963,7 +975,7 @@ mod platform {
             client.reregister_all().await;
         }
 
-        let mut events = stream::select(update_stream, error_stream);
+        let mut events = stream::select(stream::select(update_stream, error_stream), gap_stream);
         while let Some(event) = events.next().await {
             match event {
                 Ok((kind, message)) => {
@@ -978,11 +990,11 @@ mod platform {
                         continue;
                     };
 
-                    if kind == "update" {
+                    if kind == "update" || kind == "gap" {
                         if let Some(payload) = envelope.payload {
                             client.dispatch_event(&target, SseDispatch::Data(payload));
                         }
-                    } else {
+                    } else if kind == "error" {
                         let code = envelope.code.unwrap_or_else(|| "SSE_ERROR".to_string());
                         let message = envelope.message.unwrap_or_else(|| "Subscription error".to_string());
                         client.dispatch_event(&target, SseDispatch::Error { code, message });
@@ -1024,6 +1036,7 @@ mod platform {
     ) -> Result<RpcEnvelopeRaw, ForgeClientError> {
         let mut request = Client::new()
             .post(url)
+            .header("Accept", "application/vnd.forge.v1+json")
             .header("x-forge-platform", platform_tag())
             .json(&body);
         if let Some(token) = client.get_token() {
@@ -1082,6 +1095,7 @@ mod platform {
                     handler(crate::types::ForgeError {
                         code: "UNAUTHORIZED".into(),
                         message: "SSE authentication failed".into(),
+                        retry_after_secs: None,
                         details: None,
                     });
                 }
@@ -1147,7 +1161,12 @@ mod platform {
         while let Some(event) = event_source.next().await {
             match event {
                 Ok(Event::Open) => {}
-                Ok(Event::Message(msg)) if msg.event == "update" || msg.event == "error" => {
+                Ok(Event::Message(msg))
+                    if msg.event == "update"
+                        || msg.event == "error"
+                        || msg.event == "gap"
+                        || msg.event == "channel" =>
+                {
                     let Ok(envelope) = serde_json::from_str::<SseEnvelopeRaw>(&msg.data) else {
                         continue;
                     };
@@ -1155,11 +1174,11 @@ mod platform {
                         continue;
                     };
 
-                    if msg.event == "update" {
+                    if msg.event == "update" || msg.event == "gap" {
                         if let Some(payload) = envelope.payload {
                             client.dispatch_event(&target, SseDispatch::Data(payload));
                         }
-                    } else {
+                    } else if msg.event == "error" {
                         let code = envelope.code.unwrap_or_else(|| "SSE_ERROR".to_string());
                         let message =
                             envelope.message.unwrap_or_else(|| "Subscription error".to_string());

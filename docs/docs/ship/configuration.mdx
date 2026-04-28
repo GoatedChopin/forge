@@ -18,7 +18,7 @@ port = 9081
 
 [worker]
 max_concurrent_jobs = 10
-poll_interval_ms = 100
+poll_interval = "100ms"
 
 [auth]
 jwt_algorithm = "RS256"
@@ -51,8 +51,8 @@ Environment variables use `${VAR_NAME}` syntax (uppercase letters, numbers, unde
 | ------------------------ | -------- | ------- | ------------------------- |
 | `url`                    | string   | -       | PostgreSQL connection URL |
 | `pool_size`              | u32      | `50`    | Connection pool size      |
-| `pool_timeout_secs`      | u64      | `30`    | Pool checkout timeout     |
-| `statement_timeout_secs` | u64      | `30`    | Query timeout             |
+| `pool_timeout`           | string   | `"30s"` | Pool checkout timeout     |
+| `statement_timeout`      | string   | `"30s"` | Query timeout             |
 | `replica_urls`           | string[] | `[]`    | Read replica URLs         |
 | `read_from_replica`      | bool     | `false` | Route reads to replicas                        |
 | `min_pool_size`          | u32      | `0`     | Minimum connections kept open in the pool       |
@@ -92,22 +92,22 @@ pool_size = 50
 
 [database.pools.default]
 size = 30
-timeout_secs = 30
+timeout = "30s"
 
 [database.pools.jobs]
 size = 15
-timeout_secs = 60
-statement_timeout_secs = 300
+timeout = "1m"
+statement_timeout = "5m"
 
 [database.pools.analytics]
 size = 5
-timeout_secs = 120
-statement_timeout_secs = 600
+timeout = "2m"
+statement_timeout = "10m"
 
 [database.pools.observability]
 size = 3
-timeout_secs = 5
-statement_timeout_secs = 10
+timeout = "5s"
+statement_timeout = "10s"
 ```
 
 Available pool names and what uses them:
@@ -127,14 +127,15 @@ Without pool isolation configured, everything shares the primary pool. With it c
 | ---------------------- | -------- | --------------------------------- | ---------------------------------------------- |
 | `port`                 | u16      | `9081`                            | HTTP port                                      |
 | `grpc_port`            | u16      | `9000`                            | Inter-node communication port                  |
-| `max_connections`      | usize    | `512`                             | Maximum concurrent connections                 |
-| `request_timeout_secs` | u64      | `30`                              | Request timeout                                |
+| `max_connections`      | usize    | `4096`                            | Maximum concurrent connections                 |
+| `request_timeout`      | string   | `"30s"`                           | Request timeout                                |
 | `cors_enabled`         | bool     | `false`                           | Enable CORS handling                           |
 | `cors_origins`         | string[] | `[]`                              | Allowed CORS origins (use `["*"]` for any)     |
-| `quiet_routes`         | string[] | `[]`                              | Routes excluded from traces, metrics, and logs |
-| `sse_max_sessions`     | usize    | `10000`                           | Maximum concurrent SSE sessions                |
+| `quiet_paths`          | string[] | `["/_api/health", "/_api/ready", ...]` | Routes excluded from traces, metrics, and logs |
 | `max_body_size`        | string   | `"20mb"`                          | Total multipart body cap. Supports `b`, `kb`, `mb`, `gb` suffixes. Per-mutation `max_size` overrides this. |
 | `max_file_size`        | string   | `"10mb"`                          | Per-file cap applied when a mutation does not declare its own `max_size`. Must be ≤ `max_body_size`. |
+
+When `cors_enabled = true`, `cors_origins` must be non-empty. You can use `["*"]` to allow any origin or list specific origins, but you cannot mix `"*"` with concrete origins — browsers ignore wildcards on credentialed requests and Forge will reject that combination at startup.
 
 #### Request Body Limits
 
@@ -177,13 +178,13 @@ Controls query and mutation execution limits.
 | Option           | Type  | Default     | Description                                |
 | ---------------- | ----- | ----------- | ------------------------------------------ |
 | `max_concurrent` | usize | `1000`      | Maximum concurrent function executions     |
-| `timeout_secs`   | u64   | `30`        | Function execution timeout                 |
-| `memory_limit`   | usize | `536870912` | Memory limit per function (bytes, 512 MiB) |
+| `timeout`        | string | `"30s"`    | Function execution timeout                 |
+| `memory_limit`   | usize  | `536870912` | Memory limit per function (bytes, 512 MiB) |
 
 ```toml
 [function]
 max_concurrent = 1000
-timeout_secs = 30
+timeout = "30s"
 memory_limit = 536870912  # 512 MiB
 ```
 
@@ -210,17 +211,23 @@ openssl rand -base64 32
 
 ### [auth]
 
-| Option                | Type   | Default   | Description                                                                     |
-| --------------------- | ------ | --------- | ------------------------------------------------------------------------------- |
-| `jwt_algorithm`       | string | `"HS256"` | Signing algorithm                                                               |
-| `jwt_secret`          | string | -         | Secret for HMAC algorithms                                                      |
-| `jwks_url`            | string | -         | JWKS endpoint for RSA algorithms                                                |
-| `jwks_cache_ttl_secs` | u64    | `3600`    | Public key cache duration                                                       |
-| `jwt_issuer`          | string | -         | Expected issuer (optional)                                                      |
-| `jwt_audience`        | string | -         | Expected audience (optional)                                                    |
-| `access_token_ttl`    | string | `"1h"`    | Access token lifetime                                                           |
-| `refresh_token_ttl`   | string | `"30d"`   | Refresh token lifetime                                                          |
-| `session_ttl_secs`    | u64    | `604800`  | Session TTL (7 days)                                                            |
+| Option                | Type     | Default          | Description                                                                     |
+| --------------------- | -------- | ---------------- | ------------------------------------------------------------------------------- |
+| `jwt_algorithm`       | string   | `"HS256"`        | Signing algorithm                                                               |
+| `jwt_secret`          | string   | -                | Secret for HMAC algorithms (must be 32+ bytes)                                  |
+| `jwks_url`            | string   | -                | JWKS endpoint for RSA algorithms                                                |
+| `jwks_cache_ttl`      | string   | `"1h"`           | Public key cache duration                                                       |
+| `jwt_issuer`          | string   | -                | Expected issuer claim (optional)                                                |
+| `jwt_audience`        | string   | -                | Expected audience claim; required when auth is enabled unless `audience_required = false` |
+| `audience_required`   | bool     | `true`           | When true, `jwt_audience` must be set whenever auth is configured               |
+| `required_claims`     | string[] | `["exp", "sub"]` | JWT claims that must be present in every token                                  |
+| `legacy_secrets`      | string[] | `[]`             | Old HMAC secrets still accepted for validation during secret rotation           |
+| `jwt_leeway`          | string   | `"60s"`          | Clock-skew tolerance for `exp`/`nbf` validation                                 |
+| `access_token_ttl`    | string   | `"1h"`           | Access token lifetime                                                           |
+| `refresh_token_ttl`   | string   | `"30d"`          | Refresh token lifetime                                                          |
+| `session_ttl`         | string   | `"7d"`           | Session TTL                                                                     |
+
+`jwt_secret` must be at least 32 bytes when HMAC algorithms are used. Generate a suitable value with `openssl rand -base64 32`.
 
 #### HMAC (Symmetric)
 
@@ -249,6 +256,58 @@ Common JWKS URLs:
 | Clerk    | `https://YOUR_DOMAIN.clerk.accounts.dev/.well-known/jwks.json`                              |
 | Supabase | `https://YOUR_PROJECT.supabase.co/auth/v1/jwks`                                             |
 
+#### Claim Enforcement
+
+```toml
+[auth]
+jwt_algorithm = "RS256"
+jwks_url = "https://your-provider.com/.well-known/jwks.json"
+jwt_audience = "your-app-id"
+audience_required = true  # default — remove or set false only during migration
+
+# Require additional claims beyond exp and sub
+required_claims = ["exp", "sub", "email"]
+```
+
+#### Secret Rotation
+
+Add the outgoing secret to `legacy_secrets` while deploying the new one. Remove it after one `access_token_ttl` elapses so in-flight tokens issued under the old secret can still be validated.
+
+```toml
+[auth]
+jwt_algorithm = "HS256"
+jwt_secret = "${JWT_SECRET_NEW}"
+legacy_secrets = ["${JWT_SECRET_OLD}"]
+```
+
+### [realtime]
+
+Controls the real-time subscription engine, SSE session limits, and invalidation debouncing. All defaults are production-safe; tune these only when profiling shows a bottleneck.
+
+| Option                        | Type   | Default  | Description                                                                                   |
+| ----------------------------- | ------ | -------- | --------------------------------------------------------------------------------------------- |
+| `sse_max_sessions`            | usize  | `10000`  | Maximum concurrent SSE sessions across all clients                                            |
+| `subscription_max_per_session`| usize  | `50`     | Maximum subscriptions per SSE session                                                         |
+| `debounce_quiet_window`       | string | `"50ms"` | Coalesce DB changes arriving within this window before triggering re-execution                |
+| `debounce_max_wait`           | string | `"200ms"`| Force a flush after this much time even if changes keep arriving                             |
+| `max_concurrent_reexecutions` | usize  | `64`     | Bounded parallelism for query re-executions during an invalidation flush                      |
+| `resync_interval`             | string | `"60s"`  | Periodic re-evaluation of all active query groups to recover from dropped NOTIFY payloads. Set `"0s"` to disable. |
+| `postgres_change_buffer_size` | usize  | `1024`   | Broadcast channel buffer for raw change notifications arriving from PostgreSQL                |
+| `change_tracking_row_threshold` | usize | `200`   | Switch from row-level to table-level change tracking per table above this subscription count  |
+
+```toml
+[realtime]
+sse_max_sessions = 10000
+debounce_quiet_window = "50ms"
+debounce_max_wait = "200ms"
+max_concurrent_reexecutions = 64
+resync_interval = "60s"
+```
+
+The debounce window matters for write-heavy workloads: `debounce_quiet_window` prevents re-execution storms when rows are updated in rapid succession, while `debounce_max_wait` puts a ceiling on how long a client can wait for an update. The `change_tracking_row_threshold` trades memory for precision: tables with fewer than that many subscriptions track individual row changes; above it, the engine tracks at table granularity (faster, slightly more false-positive invalidations).
+
+The old field names (`debounce_quiet`, `debounce_max`, `listener_channel_buffer`, `adaptive_row_threshold`) are still accepted as aliases for backward compatibility.
+
 ### [mcp]
 
 Controls Forge MCP server exposure on Streamable HTTP.
@@ -257,7 +316,7 @@ Controls Forge MCP server exposure on Streamable HTTP.
 | --------------------------------- | -------- | -------- | ------------------------------------------------------ |
 | `enabled`                         | bool     | `false`  | Enable MCP endpoint                                    |
 | `path`                            | string   | `"/mcp"` | MCP endpoint path under `/_api`                        |
-| `session_ttl_secs`                | u64      | `3600`   | MCP session lifetime                                   |
+| `session_ttl`                     | string   | `"1h"`   | MCP session lifetime                                   |
 | `allowed_origins`                 | string[] | `[]`     | Allowed `Origin` values                                |
 | `require_protocol_version_header` | bool     | `true`   | Require `MCP-Protocol-Version` header after initialize |
 | `oauth`                           | bool     | `false`  | Enable OAuth 2.1 Authorization Server for MCP clients  |
@@ -268,7 +327,7 @@ Controls Forge MCP server exposure on Streamable HTTP.
 [mcp]
 enabled = true
 path = "/mcp"
-session_ttl_secs = 3600
+session_ttl = "1h"
 allowed_origins = ["https://your-app.example"]
 require_protocol_version_header = true
 ```
@@ -280,10 +339,25 @@ With default API routing, `path = "/mcp"` resolves to `/_api/mcp`.
 | Option                | Type  | Default | Description                     |
 | --------------------- | ----- | ------- | ------------------------------- |
 | `max_concurrent_jobs` | usize | `50`    | Concurrent job limit per worker |
-| `job_timeout_secs`    | u64   | `3600`  | Default job timeout (1 hour)    |
-| `poll_interval_ms`    | u64   | `100`   | Queue polling interval          |
+| `job_timeout`         | string | `"1h"` | Default job timeout             |
+| `poll_interval`       | string | `"100ms"` | Queue polling interval       |
 
 Workers maintain a semaphore sized to `max_concurrent_jobs`. They only poll when permits are available. Backpressure propagates naturally.
+
+### [rate_limit]
+
+| Option | Type   | Default    | Description                                           |
+| ------ | ------ | ---------- | ----------------------------------------------------- |
+| `mode` | string | `"hybrid"` | Rate-limit backend: `"hybrid"` or `"strict"`          |
+
+`hybrid` (default) uses an in-memory DashMap for `key = "user"` and `key = "ip"` (per-node, fast, approximate) and a shared Postgres counter for `key = "global"`. Right for DDoS protection and traffic shaping.
+
+`strict` routes every check through the shared `forge_rate_limits` table. Counts are cluster-wide and exact, suitable for billing-grade quotas. Slightly higher per-request latency.
+
+```toml
+[rate_limit]
+mode = "strict"
+```
 
 ### [cluster]
 
@@ -291,8 +365,8 @@ Workers maintain a semaphore sized to `max_concurrent_jobs`. They only poll when
 | ------------------------- | -------- | ------------ | ---------------------------------------------------------------- |
 | `name`                    | string   | `"default"`  | Cluster identifier                                               |
 | `discovery`               | string   | `"postgres"` | Discovery method; the current runtime only implements `postgres` |
-| `heartbeat_interval_secs` | u64      | `5`          | Heartbeat frequency                                              |
-| `dead_threshold_secs`     | u64      | `15`         | Missing heartbeats before dead                                   |
+| `heartbeat_interval`      | string   | `"5s"`       | Heartbeat frequency                                              |
+| `dead_threshold`          | string   | `"15s"`      | Missing heartbeats before dead                                   |
 | `seed_nodes`              | string[] | `[]`         | Static seed node addresses (for `static` discovery)              |
 | `dns_name`                | string   | -            | DNS name for service discovery (for `dns` discovery)             |
 
@@ -382,8 +456,8 @@ OTLP-based telemetry for traces, metrics, and logs. Disabled by default. When en
 | `enable_traces`         | bool   | `true`                    | Export distributed traces            |
 | `enable_metrics`        | bool   | `true`                    | Export metrics                       |
 | `enable_logs`           | bool   | `true`                    | Export logs via OTLP                 |
-| `sampling_ratio`        | f64    | `1.0`                     | Trace sampling ratio (0.0 to 1.0)    |
-| `metrics_interval_secs` | u64    | `15`                      | Metrics export interval in seconds   |
+| `sampling_ratio`        | f64    | `0.1`                     | Trace sampling ratio (0.0 to 1.0). Default samples 10% to keep ingest costs bounded under load; bump to `1.0` in development. |
+| `metrics_interval`      | string | `"15s"`                   | Metrics export interval              |
 | `log_level`             | string | `"info"`                  | Log level for the tracing subscriber |
 
 Forge never reads observability env vars directly. If you want to vary settings per environment, use the generic TOML interpolation: `otlp_endpoint = "${FORGE_OTEL_ENDPOINT-http://localhost:4318}"`. Nothing is magic about the `FORGE_OTEL_` prefix; any variable name works.
@@ -408,7 +482,7 @@ With `enabled = true`, Forge automatically creates spans and records metrics for
 
 Slow queries (over 500ms) emit a warning automatically. Database pool metrics (size, active, idle, waiting) are recorded every 15 seconds.
 
-Routes listed in `[gateway].quiet_routes` are excluded from all telemetry. Health and readiness probes are excluded by default to avoid noise from Kubernetes liveness checks. Set `quiet_routes = []` to monitor everything.
+Routes listed in `[gateway].quiet_paths` are excluded from all telemetry. Health and readiness probes are excluded by default to avoid noise from Kubernetes liveness checks. Set `quiet_paths = []` to monitor everything.
 
 Console logs always work regardless of the `enabled` flag. The flag only controls OTLP export.
 
@@ -507,7 +581,7 @@ url = "${DATABASE_URL}"
 
 [database.pools.jobs]
 size = 30
-statement_timeout_secs = 600
+statement_timeout = "10m"
 
 [node]
 roles = ["worker"]
@@ -531,7 +605,7 @@ worker_capabilities = ["gpu"]
 
 [worker]
 max_concurrent_jobs = 4  # GPU memory limits concurrency
-job_timeout_secs = 7200  # 2 hours for training jobs
+job_timeout = "2h"  # 2 hours for training jobs
 ```
 
 ## Under the Hood

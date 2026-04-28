@@ -10,7 +10,9 @@
     "./stores": "./stores.ts",
     "./context": "./context.ts",
     "./signals": "./signals.ts",
-    "./signals-context": "./signals-context.ts"
+    "./signals-context": "./signals-context.ts",
+    "./types": "./types.ts",
+    "./datetime": "./datetime.ts"
   },
   "peerDependencies": {
     "svelte": "^5.0.0"

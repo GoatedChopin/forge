@@ -5,8 +5,13 @@ use chrono::{DateTime, Utc};
 
 use crate::ForgeError;
 
+mod backend;
+
+pub use backend::RateLimiterBackend;
+
 /// Rate limit key type for bucketing.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RateLimitKey {
     /// Per-user rate limiting.
     #[default]
@@ -19,38 +24,77 @@ pub enum RateLimitKey {
     UserAction,
     /// Global rate limiting (single bucket for all requests).
     Global,
+    /// Custom claim-based bucketing. The inner string is the JWT claim name
+    /// whose value is used as the bucket discriminator. Backends receive this
+    /// variant via `build_key` and may further customise the resolution logic.
+    ///
+    /// **Macro syntax**: `#[query(rate_limit(requests = 100, per = "1m", key = "custom:claim_name"))]`
+    Custom(String),
 }
 
 impl RateLimitKey {
-    /// Convert to string.
-    pub fn as_str(&self) -> &'static str {
+    /// Convert to a string representation.
+    ///
+    /// For [`Self::Custom`] this returns `"custom"` — use [`Self::custom_name`]
+    /// to retrieve the inner claim name.
+    pub fn as_str(&self) -> &str {
         match self {
             Self::User => "user",
             Self::Ip => "ip",
             Self::Tenant => "tenant",
             Self::UserAction => "user_action",
             Self::Global => "global",
+            Self::Custom(_) => "custom",
+        }
+    }
+
+    /// Return the inner claim name for [`Self::Custom`], or `None` for the
+    /// standard variants.
+    pub fn custom_name(&self) -> Option<&str> {
+        match self {
+            Self::Custom(name) => Some(name.as_str()),
+            _ => None,
         }
     }
 }
 
+/// Error returned when parsing an unknown rate limit key string.
+#[derive(Debug, Clone)]
+pub struct ParseRateLimitKeyError(pub String);
+
+impl std::fmt::Display for ParseRateLimitKeyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "unknown rate limit key \"{}\". Expected one of: user, ip, tenant, user_action, global, custom:<name>",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for ParseRateLimitKeyError {}
+
 impl FromStr for RateLimitKey {
-    type Err = std::convert::Infallible;
+    type Err = ParseRateLimitKeyError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(match s {
-            "user" => Self::User,
-            "ip" => Self::Ip,
-            "tenant" => Self::Tenant,
-            "user_action" => Self::UserAction,
-            "global" => Self::Global,
-            _ => Self::User,
-        })
+        match s {
+            "user" => Ok(Self::User),
+            "ip" => Ok(Self::Ip),
+            "tenant" => Ok(Self::Tenant),
+            "user_action" => Ok(Self::UserAction),
+            "global" => Ok(Self::Global),
+            _ if s.starts_with("custom:") => {
+                Ok(Self::Custom(s.trim_start_matches("custom:").to_string()))
+            }
+            _ => Err(ParseRateLimitKeyError(s.to_string())),
+        }
     }
 }
 
 /// Rate limit configuration.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct RateLimitConfig {
     /// Maximum requests allowed.
     pub requests: u32,
@@ -194,9 +238,21 @@ mod tests {
         assert_eq!(RateLimitKey::User.as_str(), "user");
         assert_eq!(RateLimitKey::Ip.as_str(), "ip");
         assert_eq!(RateLimitKey::Global.as_str(), "global");
+        assert_eq!(
+            RateLimitKey::Custom("tenant_id".to_string()).as_str(),
+            "custom"
+        );
+        assert_eq!(
+            RateLimitKey::Custom("tenant_id".to_string()).custom_name(),
+            Some("tenant_id")
+        );
 
         assert_eq!("user".parse::<RateLimitKey>().unwrap(), RateLimitKey::User);
         assert_eq!("ip".parse::<RateLimitKey>().unwrap(), RateLimitKey::Ip);
+        assert_eq!(
+            "custom:tenant_id".parse::<RateLimitKey>().unwrap(),
+            RateLimitKey::Custom("tenant_id".to_string())
+        );
     }
 
     #[test]

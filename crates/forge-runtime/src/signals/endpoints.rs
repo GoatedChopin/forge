@@ -30,6 +30,7 @@ use uuid::Uuid;
 use super::bot;
 use super::collector::SignalsCollector;
 use super::device;
+use super::rate_limit::SignalRateLimiter;
 use super::session;
 use super::visitor;
 
@@ -58,11 +59,35 @@ pub struct SignalsState {
     pub anonymize_ip: bool,
     /// Optional GeoIP resolver for country code lookups from client IP.
     pub geoip: Option<super::geoip::GeoIpResolver>,
+    /// Per-IP fixed-window limiter shared across all signal endpoints.
+    pub rate_limiter: Arc<SignalRateLimiter>,
+}
+
+/// Resolve the client IP from request extras for rate limiting. Falls back
+/// to header parsing for cases where the resolve_client_ip middleware did
+/// not run (tests, edge configurations).
+fn resolve_rate_limit_ip(
+    resolved_ip: &Option<axum::Extension<crate::gateway::ResolvedClientIp>>,
+    headers: &HeaderMap,
+) -> Option<String> {
+    resolved_ip
+        .as_ref()
+        .and_then(|r| r.0.0.clone())
+        .or_else(|| extract_client_ip(headers))
+}
+
+/// Build a 429 response when the per-IP signal quota is exhausted.
+fn rate_limited_response() -> Json<SignalResponse> {
+    Json(SignalResponse {
+        ok: false,
+        session_id: None,
+    })
 }
 
 /// POST /signal/event -- batch custom events.
 pub async fn event_handler(
     State(state): State<Arc<SignalsState>>,
+    resolved_ip: Option<axum::Extension<crate::gateway::ResolvedClientIp>>,
     auth: Option<axum::Extension<AuthContext>>,
     headers: HeaderMap,
     Json(batch): Json<SignalEventBatch>,
@@ -74,14 +99,16 @@ pub async fn event_handler(
         });
     }
     if batch.events.len() > MAX_BATCH_SIZE {
-        return Json(SignalResponse {
-            ok: false,
-            session_id: None,
-        });
+        return rate_limited_response();
+    }
+    let limiter_ip = resolve_rate_limit_ip(&resolved_ip, &headers);
+    if !state.rate_limiter.check(limiter_ip.as_deref()) {
+        return rate_limited_response();
     }
 
     let ctx = extract_request_ctx(
         &headers,
+        resolved_ip.and_then(|r| r.0.0.clone()),
         &auth,
         &state.server_secret,
         state.anonymize_ip,
@@ -151,6 +178,7 @@ pub async fn event_handler(
 /// POST /signal/view -- page view event.
 pub async fn view_handler(
     State(state): State<Arc<SignalsState>>,
+    resolved_ip: Option<axum::Extension<crate::gateway::ResolvedClientIp>>,
     auth: Option<axum::Extension<AuthContext>>,
     headers: HeaderMap,
     Json(payload): Json<PageViewPayload>,
@@ -161,8 +189,13 @@ pub async fn view_handler(
             session_id: None,
         });
     }
+    let limiter_ip = resolve_rate_limit_ip(&resolved_ip, &headers);
+    if !state.rate_limiter.check(limiter_ip.as_deref()) {
+        return rate_limited_response();
+    }
     let ctx = extract_request_ctx(
         &headers,
+        resolved_ip.and_then(|r| r.0.0.clone()),
         &auth,
         &state.server_secret,
         state.anonymize_ip,
@@ -244,6 +277,7 @@ pub async fn view_handler(
 /// POST /signal/user -- identify user.
 pub async fn user_handler(
     State(state): State<Arc<SignalsState>>,
+    resolved_ip: Option<axum::Extension<crate::gateway::ResolvedClientIp>>,
     auth: Option<axum::Extension<AuthContext>>,
     headers: HeaderMap,
     Json(payload): Json<IdentifyPayload>,
@@ -253,6 +287,10 @@ pub async fn user_handler(
             ok: true,
             session_id: None,
         });
+    }
+    let limiter_ip = resolve_rate_limit_ip(&resolved_ip, &headers);
+    if !state.rate_limiter.check(limiter_ip.as_deref()) {
+        return rate_limited_response();
     }
     let user_id = Uuid::parse_str(&payload.user_id).ok().or_else(|| {
         warn!(raw_id = %payload.user_id, "identify called with non-UUID user_id, ignoring");
@@ -287,6 +325,7 @@ pub async fn user_handler(
 
     let ctx = extract_request_ctx(
         &headers,
+        resolved_ip.and_then(|r| r.0.0.clone()),
         &auth,
         &state.server_secret,
         state.anonymize_ip,
@@ -338,19 +377,22 @@ pub async fn user_handler(
 /// persistent identifier by default.
 pub async fn report_handler(
     State(state): State<Arc<SignalsState>>,
+    resolved_ip: Option<axum::Extension<crate::gateway::ResolvedClientIp>>,
     auth: Option<axum::Extension<AuthContext>>,
     headers: HeaderMap,
     Json(report): Json<DiagnosticReport>,
 ) -> impl IntoResponse {
     if report.errors.len() > MAX_BATCH_SIZE {
-        return Json(SignalResponse {
-            ok: false,
-            session_id: None,
-        });
+        return rate_limited_response();
+    }
+    let limiter_ip = resolve_rate_limit_ip(&resolved_ip, &headers);
+    if !state.rate_limiter.check(limiter_ip.as_deref()) {
+        return rate_limited_response();
     }
 
     let ctx = extract_request_ctx(
         &headers,
+        resolved_ip.and_then(|r| r.0.0.clone()),
         &auth,
         &state.server_secret,
         state.anonymize_ip,
@@ -425,6 +467,7 @@ pub async fn report_handler(
 /// event so dashboards can slice by metric name and aggregate p75/p95.
 pub async fn vital_handler(
     State(state): State<Arc<SignalsState>>,
+    resolved_ip: Option<axum::Extension<crate::gateway::ResolvedClientIp>>,
     auth: Option<axum::Extension<AuthContext>>,
     headers: HeaderMap,
     Json(batch): Json<WebVitalBatch>,
@@ -436,14 +479,16 @@ pub async fn vital_handler(
         });
     }
     if batch.vitals.len() > MAX_BATCH_SIZE {
-        return Json(SignalResponse {
-            ok: false,
-            session_id: None,
-        });
+        return rate_limited_response();
+    }
+    let limiter_ip = resolve_rate_limit_ip(&resolved_ip, &headers);
+    if !state.rate_limiter.check(limiter_ip.as_deref()) {
+        return rate_limited_response();
     }
 
     let ctx = extract_request_ctx(
         &headers,
+        resolved_ip.and_then(|r| r.0.0.clone()),
         &auth,
         &state.server_secret,
         state.anonymize_ip,
@@ -549,6 +594,7 @@ struct RequestCtx {
 
 fn extract_request_ctx(
     headers: &HeaderMap,
+    resolved_ip: Option<String>,
     auth: &Option<axum::Extension<AuthContext>>,
     server_secret: &str,
     anonymize_ip: bool,
@@ -556,7 +602,7 @@ fn extract_request_ctx(
 ) -> RequestCtx {
     let user_agent = extract_header(headers, "user-agent");
     let platform_header = extract_header(headers, "x-forge-platform");
-    let raw_ip = extract_client_ip(headers);
+    let raw_ip = resolved_ip.or_else(|| extract_client_ip(headers));
     let ua_lower = user_agent
         .as_deref()
         .unwrap_or_default()

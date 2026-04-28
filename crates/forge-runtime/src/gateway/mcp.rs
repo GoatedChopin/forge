@@ -14,13 +14,12 @@ use axum::{Json, body::Body};
 use forge_core::config::McpConfig;
 use forge_core::function::{AuthContext, JobDispatch, RequestMetadata, WorkflowDispatch};
 use forge_core::mcp::McpToolContext;
-use forge_core::rate_limit::RateLimitKey;
 use futures_util::Stream;
 use serde_json::Value;
 use tokio::sync::RwLock;
 
 use crate::mcp::McpToolRegistry;
-use crate::rate_limit::RateLimiter;
+use crate::rate_limit::StrictRateLimiter;
 
 const SUPPORTED_VERSIONS: &[&str] = &["2025-11-25", "2025-03-26", "2024-11-05"];
 #[cfg(test)]
@@ -28,7 +27,6 @@ const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 const MCP_SESSION_HEADER: &str = "mcp-session-id";
 const MCP_PROTOCOL_HEADER: &str = "mcp-protocol-version";
 const DEFAULT_PAGE_SIZE: usize = 50;
-const MAX_MCP_SESSIONS: usize = 10_000;
 type ResponseError = Box<Response>;
 
 #[derive(Debug, Clone)]
@@ -36,6 +34,7 @@ struct McpSession {
     initialized: bool,
     protocol_version: String,
     expires_at: Instant,
+    principal_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -46,7 +45,7 @@ pub struct McpState {
     sessions: Arc<RwLock<HashMap<String, McpSession>>>,
     job_dispatcher: Option<Arc<dyn JobDispatch>>,
     workflow_dispatcher: Option<Arc<dyn WorkflowDispatch>>,
-    rate_limiter: Arc<RateLimiter>,
+    rate_limiter: Arc<StrictRateLimiter>,
 }
 
 impl McpState {
@@ -64,7 +63,7 @@ impl McpState {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             job_dispatcher,
             workflow_dispatcher,
-            rate_limiter: Arc::new(RateLimiter::new(pool)),
+            rate_limiter: Arc::new(StrictRateLimiter::new(pool)),
         }
     }
 
@@ -77,12 +76,13 @@ impl McpState {
     async fn touch_session(&self, session_id: &str) {
         let mut sessions = self.sessions.write().await;
         if let Some(session) = sessions.get_mut(session_id) {
-            session.expires_at = Instant::now() + Duration::from_secs(self.config.session_ttl_secs);
+            session.expires_at =
+                Instant::now() + Duration::from_secs(self.config.session_ttl_secs());
         }
     }
 
     fn session_ttl(&self) -> Duration {
-        Duration::from_secs(self.config.session_ttl_secs)
+        Duration::from_secs(self.config.session_ttl_secs())
     }
 }
 
@@ -167,6 +167,7 @@ pub async fn mcp_post_handler(
     State(state): State<Arc<McpState>>,
     Extension(auth): Extension<AuthContext>,
     Extension(tracing): Extension<super::tracing::TracingState>,
+    Extension(resolved_ip): Extension<ResolvedClientIp>,
     method: Method,
     headers: HeaderMap,
     Json(payload): Json<Value>,
@@ -223,7 +224,7 @@ pub async fn mcp_post_handler(
     }
 
     match method_name {
-        "initialize" => handle_initialize(&state, id, &params).await,
+        "initialize" => handle_initialize(&state, id, &params, &auth).await,
         "tools/list" => {
             let session_id = match required_session_id(&state, &headers, true).await {
                 Ok(v) => v,
@@ -239,7 +240,7 @@ pub async fn mcp_post_handler(
             };
             state.touch_session(&session_id).await;
 
-            let metadata = build_request_metadata(&tracing, &headers);
+            let metadata = build_request_metadata(&tracing, resolved_ip.0.clone(), &headers);
             handle_tools_call(&state, id, &params, &auth, metadata).await
         }
         _ => (
@@ -289,7 +290,12 @@ async fn handle_notification(
     }
 }
 
-async fn handle_initialize(state: &Arc<McpState>, id: Option<Value>, params: &Value) -> Response {
+async fn handle_initialize(
+    state: &Arc<McpState>,
+    id: Option<Value>,
+    params: &Value,
+    auth: &forge_core::function::AuthContext,
+) -> Response {
     let Some(requested_version) = params.get("protocolVersion").and_then(Value::as_str) else {
         return (
             StatusCode::OK,
@@ -319,10 +325,11 @@ async fn handle_initialize(state: &Arc<McpState>, id: Option<Value>, params: &Va
     }
 
     let session_id = uuid::Uuid::new_v4().to_string();
+    let principal = auth.principal_id();
     {
         let mut sessions = state.sessions.write().await;
-        // Enforce session limit to prevent memory exhaustion DoS
-        if sessions.len() >= MAX_MCP_SESSIONS {
+        // Enforce global session limit to prevent memory exhaustion DoS
+        if sessions.len() >= state.config.max_sessions {
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(json_rpc_error(
@@ -334,12 +341,32 @@ async fn handle_initialize(state: &Arc<McpState>, id: Option<Value>, params: &Va
             )
                 .into_response();
         }
+        // Enforce per-user session limit
+        if let Some(ref pid) = principal {
+            let user_count = sessions
+                .values()
+                .filter(|s| s.principal_id.as_ref() == Some(pid))
+                .count();
+            if user_count >= state.config.max_sessions_per_user {
+                return (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(json_rpc_error(
+                        id,
+                        -32000,
+                        "Per-user MCP session limit reached",
+                        None,
+                    )),
+                )
+                    .into_response();
+            }
+        }
         sessions.insert(
             session_id.clone(),
             McpSession {
                 initialized: false,
                 protocol_version: requested_version.to_string(),
                 expires_at: Instant::now() + state.session_ttl(),
+                principal_id: principal,
             },
         );
     }
@@ -571,14 +598,14 @@ async fn handle_tools_call(
         entry.info.rate_limit_requests,
         entry.info.rate_limit_per_secs,
     ) {
-        let key_type = entry
+        let key_type: forge_core::RateLimitKey = entry
             .info
             .rate_limit_key
-            .and_then(|k| k.parse::<RateLimitKey>().ok())
+            .and_then(|k| k.parse().ok())
             .unwrap_or_default();
 
         let config = forge_core::RateLimitConfig::new(requests, Duration::from_secs(per_secs))
-            .with_key(key_type);
+            .with_key(key_type.clone());
         let bucket_key = state
             .rate_limiter
             .build_key(key_type, tool_name, auth, &request_metadata);
@@ -597,6 +624,21 @@ async fn handle_tools_call(
         .cloned()
         .unwrap_or(Value::Object(Default::default()));
 
+    if let Err(validation_err) = jsonschema::validate(&entry.input_schema, &args) {
+        let msg = format!("Invalid tool arguments: {validation_err}");
+        return (
+            StatusCode::OK,
+            Json(json_rpc_success(
+                id,
+                serde_json::json!({
+                    "content": [{ "type": "text", "text": msg }],
+                    "isError": true
+                }),
+            )),
+        )
+            .into_response();
+    }
+
     let ctx = McpToolContext::with_dispatch(
         state.pool.clone(),
         auth.clone(),
@@ -605,13 +647,8 @@ async fn handle_tools_call(
         state.workflow_dispatcher.clone(),
     );
 
-    let result = if let Some(timeout_secs) = entry.info.timeout {
-        match tokio::time::timeout(
-            Duration::from_secs(timeout_secs),
-            (entry.handler)(&ctx, args),
-        )
-        .await
-        {
+    let result = if let Some(timeout_dur) = entry.info.timeout {
+        match tokio::time::timeout(timeout_dur, (entry.handler)(&ctx, args)).await {
             Ok(inner) => inner,
             Err(_) => {
                 return (
@@ -832,7 +869,7 @@ fn enforce_protocol_header(
     Ok(())
 }
 
-use super::extract_client_ip;
+use super::ResolvedClientIp;
 
 fn extract_user_agent(headers: &HeaderMap) -> Option<String> {
     headers
@@ -843,17 +880,16 @@ fn extract_user_agent(headers: &HeaderMap) -> Option<String> {
 
 fn build_request_metadata(
     tracing: &super::tracing::TracingState,
+    client_ip: Option<String>,
     headers: &HeaderMap,
 ) -> RequestMetadata {
-    RequestMetadata {
-        request_id: uuid::Uuid::parse_str(&tracing.request_id)
-            .unwrap_or_else(|_| uuid::Uuid::new_v4()),
-        trace_id: tracing.trace_id.clone(),
-        client_ip: extract_client_ip(headers),
-        user_agent: extract_user_agent(headers),
-        correlation_id: None,
-        timestamp: chrono::Utc::now(),
-    }
+    RequestMetadata::__build_internal(
+        uuid::Uuid::parse_str(&tracing.request_id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
+        tracing.trace_id.clone(),
+        client_ip,
+        extract_user_agent(headers),
+        None,
+    )
 }
 
 fn json_rpc_success(id: Option<Value>, result: Value) -> Value {
@@ -905,6 +941,14 @@ mod tests {
     use serde::{Deserialize, Serialize};
     use std::collections::HashMap;
     use std::future::Future;
+
+    /// `McpConfig` is `#[non_exhaustive]`, so cross-crate functional-record-update
+    /// is blocked. Build a default and mutate the field we care about.
+    fn mcp_enabled() -> McpConfig {
+        let mut c = McpConfig::default();
+        c.enabled = true;
+        c
+    }
     use std::pin::Pin;
 
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -937,6 +981,8 @@ mod tests {
     }
 
     struct EchoTool;
+
+    impl forge_core::__sealed::Sealed for EchoTool {}
 
     impl ForgeMcpTool for EchoTool {
         type Args = EchoArgs;
@@ -972,6 +1018,8 @@ mod tests {
 
     struct AdminTool;
 
+    impl forge_core::__sealed::Sealed for AdminTool {}
+
     impl ForgeMcpTool for AdminTool {
         type Args = EchoArgs;
         type Output = EchoOutput;
@@ -1005,6 +1053,8 @@ mod tests {
     }
 
     struct MetadataTool;
+
+    impl forge_core::__sealed::Sealed for MetadataTool {}
 
     impl ForgeMcpTool for MetadataTool {
         type Args = MetadataArgs;
@@ -1084,6 +1134,7 @@ mod tests {
             State(state),
             Extension(AuthContext::unauthenticated()),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             HeaderMap::new(),
             Json(payload),
@@ -1109,6 +1160,7 @@ mod tests {
             State(state),
             Extension(AuthContext::unauthenticated()),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             headers,
             Json(payload),
@@ -1134,20 +1186,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_initialize_sets_session_header() {
-        let state = test_state(McpConfig {
-            enabled: true,
-            ..Default::default()
-        });
+        let state = test_state(mcp_enabled());
         let session = initialize_session(state).await;
         assert!(!session.is_empty());
     }
 
     #[tokio::test]
     async fn test_initialize_rejects_unsupported_protocol_version() {
-        let state = test_state(McpConfig {
-            enabled: true,
-            ..Default::default()
-        });
+        let state = test_state(mcp_enabled());
         let payload = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -1163,6 +1209,7 @@ mod tests {
             State(state),
             Extension(AuthContext::unauthenticated()),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             HeaderMap::new(),
             Json(payload),
@@ -1184,10 +1231,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_tools_list_requires_initialized_session() {
-        let state = test_state(McpConfig {
-            enabled: true,
-            ..Default::default()
-        });
+        let state = test_state(mcp_enabled());
 
         let session_id = initialize_session(state.clone()).await;
 
@@ -1211,6 +1255,7 @@ mod tests {
             State(state),
             Extension(AuthContext::unauthenticated()),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             headers,
             Json(list_payload),
@@ -1225,13 +1270,7 @@ mod tests {
         let mut registry = McpToolRegistry::new();
         registry.register::<EchoTool>();
 
-        let state = test_state_with_registry(
-            McpConfig {
-                enabled: true,
-                ..Default::default()
-            },
-            registry,
-        );
+        let state = test_state_with_registry(mcp_enabled(), registry);
         let headers = initialized_headers(state.clone()).await;
         let payload = serde_json::json!({
             "jsonrpc": "2.0",
@@ -1244,6 +1283,7 @@ mod tests {
             State(state),
             Extension(AuthContext::unauthenticated()),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             headers,
             Json(payload),
@@ -1266,13 +1306,7 @@ mod tests {
         let mut registry = McpToolRegistry::new();
         registry.register::<MetadataTool>();
 
-        let state = test_state_with_registry(
-            McpConfig {
-                enabled: true,
-                ..Default::default()
-            },
-            registry,
-        );
+        let state = test_state_with_registry(mcp_enabled(), registry);
         let headers = initialized_headers(state.clone()).await;
         let payload = serde_json::json!({
             "jsonrpc": "2.0",
@@ -1285,6 +1319,7 @@ mod tests {
             State(state),
             Extension(AuthContext::unauthenticated()),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             headers,
             Json(payload),
@@ -1314,13 +1349,7 @@ mod tests {
         let mut registry = McpToolRegistry::new();
         registry.register::<EchoTool>();
 
-        let state = test_state_with_registry(
-            McpConfig {
-                enabled: true,
-                ..Default::default()
-            },
-            registry,
-        );
+        let state = test_state_with_registry(mcp_enabled(), registry);
         let headers = initialized_headers(state.clone()).await;
         let auth = AuthContext::authenticated(
             uuid::Uuid::new_v4(),
@@ -1341,6 +1370,7 @@ mod tests {
             State(state),
             Extension(auth),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             headers,
             Json(payload),
@@ -1358,13 +1388,7 @@ mod tests {
         let mut registry = McpToolRegistry::new();
         registry.register::<EchoTool>();
 
-        let state = test_state_with_registry(
-            McpConfig {
-                enabled: true,
-                ..Default::default()
-            },
-            registry,
-        );
+        let state = test_state_with_registry(mcp_enabled(), registry);
         let headers = initialized_headers(state.clone()).await;
         let auth = AuthContext::authenticated(
             uuid::Uuid::new_v4(),
@@ -1385,6 +1409,7 @@ mod tests {
             State(state),
             Extension(auth),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             headers,
             Json(payload),
@@ -1401,13 +1426,7 @@ mod tests {
         let mut registry = McpToolRegistry::new();
         registry.register::<EchoTool>();
 
-        let state = test_state_with_registry(
-            McpConfig {
-                enabled: true,
-                ..Default::default()
-            },
-            registry,
-        );
+        let state = test_state_with_registry(mcp_enabled(), registry);
         let headers = initialized_headers(state.clone()).await;
         let payload = serde_json::json!({
             "jsonrpc": "2.0",
@@ -1423,6 +1442,7 @@ mod tests {
             State(state),
             Extension(AuthContext::unauthenticated()),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             headers,
             Json(payload),
@@ -1439,13 +1459,7 @@ mod tests {
         let mut registry = McpToolRegistry::new();
         registry.register::<AdminTool>();
 
-        let state = test_state_with_registry(
-            McpConfig {
-                enabled: true,
-                ..Default::default()
-            },
-            registry,
-        );
+        let state = test_state_with_registry(mcp_enabled(), registry);
         let headers = initialized_headers(state.clone()).await;
         let auth = AuthContext::authenticated(
             uuid::Uuid::new_v4(),
@@ -1466,6 +1480,7 @@ mod tests {
             State(state),
             Extension(auth),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             headers,
             Json(payload),
@@ -1479,10 +1494,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_invalid_protocol_header_returns_400() {
-        let state = test_state(McpConfig {
-            enabled: true,
-            ..Default::default()
-        });
+        let state = test_state(mcp_enabled());
         let session_id = initialize_session(state.clone()).await;
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -1505,6 +1517,7 @@ mod tests {
             State(state),
             Extension(AuthContext::unauthenticated()),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             headers,
             Json(payload),
@@ -1515,10 +1528,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_expired_session_is_rejected_after_cleanup() {
-        let state = test_state(McpConfig {
-            enabled: true,
-            ..Default::default()
-        });
+        let state = test_state(mcp_enabled());
         let session_id = "expired-session".to_string();
         {
             let mut sessions = state.sessions.write().await;
@@ -1528,6 +1538,7 @@ mod tests {
                     initialized: true,
                     protocol_version: MCP_PROTOCOL_VERSION.to_string(),
                     expires_at: Instant::now() - Duration::from_secs(1),
+                    principal_id: None,
                 },
             );
         }
@@ -1553,6 +1564,7 @@ mod tests {
             State(state),
             Extension(AuthContext::unauthenticated()),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             headers,
             Json(payload),
@@ -1570,10 +1582,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_missing_protocol_header_returns_400() {
-        let state = test_state(McpConfig {
-            enabled: true,
-            ..Default::default()
-        });
+        let state = test_state(mcp_enabled());
         let session_id = initialize_session(state.clone()).await;
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -1592,6 +1601,7 @@ mod tests {
             State(state),
             Extension(AuthContext::unauthenticated()),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             headers,
             Json(payload),
@@ -1602,10 +1612,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_notifications_return_202() {
-        let state = test_state(McpConfig {
-            enabled: true,
-            ..Default::default()
-        });
+        let state = test_state(mcp_enabled());
         let mut headers = HeaderMap::new();
         headers.insert(
             MCP_PROTOCOL_HEADER,
@@ -1620,6 +1627,7 @@ mod tests {
             State(state),
             Extension(AuthContext::unauthenticated()),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             headers,
             Json(payload),
@@ -1630,10 +1638,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_invalid_origin_rejected() {
-        let state = test_state(McpConfig {
-            enabled: true,
-            allowed_origins: vec!["https://allowed.example".to_string()],
-            ..Default::default()
+        let state = test_state({
+            let mut c = McpConfig::default();
+            c.enabled = true;
+            c.allowed_origins = vec!["https://allowed.example".to_string()];
+            c
         });
         let payload = serde_json::json!({
             "jsonrpc": "2.0",
@@ -1653,6 +1662,7 @@ mod tests {
             State(state),
             Extension(AuthContext::unauthenticated()),
             Extension(TracingState::new()),
+            Extension(ResolvedClientIp(None)),
             Method::POST,
             headers,
             Json(payload),

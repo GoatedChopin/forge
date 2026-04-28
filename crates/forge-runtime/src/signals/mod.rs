@@ -11,6 +11,7 @@ pub mod emit;
 pub mod endpoints;
 pub mod geoip;
 pub mod partition;
+pub mod rate_limit;
 pub mod session;
 pub mod views;
 pub mod visitor;

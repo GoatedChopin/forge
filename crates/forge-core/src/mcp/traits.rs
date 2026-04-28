@@ -6,8 +6,13 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use super::context::McpToolContext;
 use crate::error::{ForgeError, Result};
+use crate::metadata::HandlerMetadata;
 
 /// Icon metadata exposed for an MCP tool.
+///
+/// Constructed by the `#[mcp_tool]` macro (or by the runtime when emitting
+/// `tools/list`). Adding a field is breaking for hand-written `ForgeMcpTool`
+/// impls; stage extensions through a major bump.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct McpToolIcon {
     pub src: &'static str,
@@ -20,6 +25,9 @@ pub struct McpToolIcon {
 }
 
 /// Tool behavior annotations exposed to clients.
+///
+/// Constructed by the `#[mcp_tool]` macro. Adding a field is breaking for
+/// hand-written `ForgeMcpTool` impls; stage extensions through a major bump.
 #[derive(Debug, Clone, Copy, Serialize, Default)]
 pub struct McpToolAnnotations {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -35,6 +43,10 @@ pub struct McpToolAnnotations {
 }
 
 /// Metadata describing an MCP tool.
+///
+/// Constructed by the `#[mcp_tool]` macro. Adding a field is a breaking change
+/// for hand-written `ForgeMcpTool` impls; stage extensions through a builder
+/// or major bump.
 #[derive(Debug, Clone, Copy)]
 pub struct McpToolInfo {
     pub name: &'static str,
@@ -42,7 +54,7 @@ pub struct McpToolInfo {
     pub description: Option<&'static str>,
     pub required_role: Option<&'static str>,
     pub is_public: bool,
-    pub timeout: Option<u64>,
+    pub timeout: Option<std::time::Duration>,
     pub rate_limit_requests: Option<u32>,
     pub rate_limit_per_secs: Option<u64>,
     pub rate_limit_key: Option<&'static str>,
@@ -64,6 +76,7 @@ impl McpToolInfo {
 /// Content block for MCP tool call results.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum McpContentBlock {
     Text { text: String },
     ResourceLink(McpContent),
@@ -128,11 +141,16 @@ impl McpToolResult {
 }
 
 /// Trait implemented by all FORGE MCP tools.
-pub trait ForgeMcpTool: Send + Sync + 'static {
+pub trait ForgeMcpTool: crate::__sealed::Sealed + Send + Sync + 'static {
     type Args: DeserializeOwned + JsonSchema + Send + Sync;
     type Output: Serialize + JsonSchema + Send;
 
     fn info() -> McpToolInfo;
+
+    /// Unified metadata for uniform consumers (observability, admin, codegen).
+    fn metadata() -> HandlerMetadata {
+        HandlerMetadata::from(&Self::info())
+    }
 
     fn execute(
         ctx: &McpToolContext,

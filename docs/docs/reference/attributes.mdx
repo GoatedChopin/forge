@@ -35,7 +35,7 @@ rate_limit(requests = 100, per = "1m", key = "user")
 ```rust
 #[forge::query(
     cache = "5m",
-    timeout = 30,
+    timeout = "30s",
     require_role("admin"),
     rate_limit(requests = 100, per = "1m", key = "user")
 )]
@@ -155,7 +155,7 @@ Transactional write operations.
 |-----------|------|---------|-------------|
 | `public` | flag | `false` | Bypass authentication requirement |
 | `require_role("name")` | `string` | none | Require specific role (returns 403 if missing) |
-| `transactional` | flag | `false` | Wrap in database transaction (required if dispatching jobs) |
+| `transactional` | flag | `true` | Wrap in database transaction. Opt out with `transactional = false` for high-throughput writes that don't need atomicity. |
 | `timeout` | `u64` | none | Handler timeout in seconds; if explicitly set it also becomes the default outbound HTTP timeout for `ctx.http()` |
 | `max_size` | `"size"` | none | Maximum upload size for this mutation (`"100mb"`, `"1gb"`). Overrides the global `max_body_size` setting. Supports `b`, `kb`, `mb`, `gb` suffixes (case-insensitive). |
 | `log` | `"level"` | none | Log level (`trace`, `debug`, `info`, `warn`, `error`, `off`). Requires a quoted value (e.g., `log = "debug"`); a bare `log` without a value is silently accepted but has no effect. |
@@ -164,18 +164,18 @@ Transactional write operations.
 
 ### Compile-Time Enforcement
 
-Mutations that call `dispatch_job()` or `start_workflow()` must use `transactional`. The macro scans the function body for these calls and emits a compile error if `transactional` is missing:
+Mutations that call `dispatch_job()` or `start_workflow()` cannot use `transactional = false`. The macro scans the function body for these calls and emits a compile error if you opt out of transactions:
 
 ```
 
-error: Mutations that call `dispatch_job()` must use #[forge::mutation(transactional)]
+error: Mutations that call `dispatch_job()` cannot use `transactional = false` — jobs dispatched outside a transaction may execute even when the database write is rolled back on error.
 
 ````
 
 ### Example
 
 ```rust
-#[forge::mutation(transactional, require_role("admin"))]
+#[forge::mutation(require_role("admin"))]
 pub async fn create_order(ctx: &MutationContext, input: OrderInput) -> Result<Order> {
     let order = insert_order(ctx.db(), &input).await?;
     ctx.dispatch_job("send_confirmation", json!({ "order_id": order.id })).await?;
@@ -223,7 +223,7 @@ pub struct ExportToolOutput {
     name = "export_project",
     title = "Export Project",
     description = "Queues a background export job for a project",
-    timeout = 15,
+    timeout = "15s",
     rate_limit(requests = 30, per = "1m", key = "user"),
     idempotent
 )]

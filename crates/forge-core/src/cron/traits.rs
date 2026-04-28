@@ -4,17 +4,30 @@ use std::pin::Pin;
 use super::context::CronContext;
 use super::schedule::CronSchedule;
 use crate::Result;
+use crate::metadata::HandlerMetadata;
 
 /// Trait for cron job handlers.
-pub trait ForgeCron: Send + Sync + 'static {
+pub trait ForgeCron: crate::__sealed::Sealed + Send + Sync + 'static {
+    /// Reserved for future parameterized cron input.
+    type Args: serde::de::DeserializeOwned + Send + Sync + 'static;
+
     /// Get cron metadata.
     fn info() -> CronInfo;
+
+    /// Unified metadata for uniform consumers (observability, admin, codegen).
+    fn metadata() -> HandlerMetadata {
+        HandlerMetadata::from(&Self::info())
+    }
 
     /// Execute the cron job.
     fn execute(ctx: &CronContext) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
 }
 
 /// Cron job metadata.
+///
+/// Constructed by the `#[cron]` macro. Adding a field is a breaking change for
+/// hand-written `ForgeCron` impls; stage extensions through a builder or major
+/// bump.
 #[derive(Debug, Clone)]
 pub struct CronInfo {
     /// Cron name (function name).

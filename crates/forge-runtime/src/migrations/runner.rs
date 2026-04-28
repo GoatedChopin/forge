@@ -153,6 +153,21 @@ impl MigrationRunner {
 
         // Run built-in FORGE system migrations first (in version order)
         let system_migrations = super::builtin::get_system_migrations();
+
+        // Guard against running an older binary on top of a newer schema.
+        // If the database has a system migration version we don't know about,
+        // refuse to start instead of silently downgrading.
+        let max_known_version = system_migrations.iter().map(|m| m.version).max();
+        if let (Some(applied_max), Some(known_max)) = (max_applied_version, max_known_version)
+            && applied_max > known_max
+        {
+            return Err(ForgeError::Database(format!(
+                "Database is at system migration v{applied_max} but this binary only knows up to v{known_max}. \
+                 Refusing to start — running an older binary on a newer schema risks data loss. \
+                 Upgrade the binary or restore the database to a compatible version."
+            )));
+        }
+
         for sys_migration in system_migrations {
             // Skip if this version is already applied
             if let Some(max_ver) = max_applied_version
@@ -222,13 +237,15 @@ impl MigrationRunner {
     }
 
     async fn ensure_migrations_table(&self) -> Result<()> {
-        // Create table if not exists
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS forge_migrations (
                 id SERIAL PRIMARY KEY,
+                version VARCHAR(255) NOT NULL DEFAULT '',
                 name VARCHAR(255) UNIQUE NOT NULL,
                 applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                checksum VARCHAR(64),
+                execution_time_ms INTEGER,
                 down_sql TEXT
             )
             "#,
@@ -253,8 +270,8 @@ impl MigrationRunner {
 
     async fn apply_migration(&self, migration: &Migration) -> Result<()> {
         info!("Applying migration: {}", migration.name);
+        let start = std::time::Instant::now();
 
-        // Split migration into individual statements, respecting dollar-quoted strings
         let statements = split_sql_statements(&migration.up_sql);
 
         for statement in statements {
@@ -281,12 +298,17 @@ impl MigrationRunner {
                 })?;
         }
 
-        // Record it as applied (with down_sql for potential rollback)
-        sqlx::query!(
-            "INSERT INTO forge_migrations (name, down_sql) VALUES ($1, $2)",
-            &migration.name,
-            migration.down_sql as _,
+        let elapsed = start.elapsed();
+        let checksum = crate::stable_hash::sha256_hex(migration.up_sql.as_bytes());
+
+        sqlx::query(
+            "INSERT INTO forge_migrations (version, name, checksum, execution_time_ms, down_sql) VALUES ($1, $2, $3, $4, $5)",
         )
+        .bind(&migration.name)
+        .bind(&migration.name)
+        .bind(&checksum)
+        .bind(elapsed.as_millis() as i32)
+        .bind(&migration.down_sql)
         .execute(&self.pool)
         .await
         .map_err(|e| {
@@ -397,19 +419,23 @@ impl MigrationRunner {
         let applied = self.get_applied_migrations().await?;
 
         let applied_list: Vec<AppliedMigration> = {
-            let rows = sqlx::query!(
-                "SELECT name, applied_at, down_sql FROM forge_migrations ORDER BY id ASC"
+            let rows = sqlx::query_as::<_, (String, chrono::DateTime<chrono::Utc>, Option<String>, Option<i32>, Option<String>)>(
+                "SELECT name, applied_at, checksum, execution_time_ms, down_sql FROM forge_migrations ORDER BY id ASC"
             )
             .fetch_all(&self.pool)
             .await
             .map_err(|e| ForgeError::Database(format!("Failed to get migrations: {}", e)))?;
 
             rows.into_iter()
-                .map(|row| AppliedMigration {
-                    name: row.name,
-                    applied_at: row.applied_at,
-                    has_down: row.down_sql.is_some(),
-                })
+                .map(
+                    |(name, applied_at, checksum, execution_time_ms, down_sql)| AppliedMigration {
+                        name,
+                        applied_at,
+                        checksum,
+                        execution_time_ms,
+                        has_down: down_sql.is_some(),
+                    },
+                )
                 .collect()
         };
 
@@ -431,6 +457,8 @@ impl MigrationRunner {
 pub struct AppliedMigration {
     pub name: String,
     pub applied_at: chrono::DateTime<chrono::Utc>,
+    pub checksum: Option<String>,
+    pub execution_time_ms: Option<i32>,
     pub has_down: bool,
 }
 
@@ -448,48 +476,108 @@ fn split_sql_statements(sql: &str) -> Vec<String> {
     let mut current = String::new();
     let mut in_dollar_quote = false;
     let mut dollar_tag = String::new();
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
+    let mut in_string_literal = false;
     let mut chars = sql.chars().peekable();
 
     while let Some(c) = chars.next() {
         current.push(c);
 
-        // Check for dollar-quoting start/end
-        if c == '$' {
-            // Look for a dollar-quote tag like $$ or $tag$
-            let mut potential_tag = String::from("$");
+        if in_line_comment {
+            if c == '\n' {
+                in_line_comment = false;
+            }
+            continue;
+        }
 
-            // Collect characters until we hit another $ or non-identifier char
+        if in_block_comment {
+            if c == '*' && chars.peek() == Some(&'/') {
+                current.push(chars.next().expect("peeked char"));
+                in_block_comment = false;
+            }
+            continue;
+        }
+
+        if in_string_literal {
+            if c == '\'' {
+                if chars.peek() == Some(&'\'') {
+                    current.push(chars.next().expect("peeked char"));
+                } else {
+                    in_string_literal = false;
+                }
+            }
+            continue;
+        }
+
+        if in_dollar_quote {
+            if c == '$' {
+                let mut potential_tag = String::from("$");
+                while let Some(&next_c) = chars.peek() {
+                    if next_c == '$' {
+                        potential_tag.push(chars.next().expect("peeked char"));
+                        current.push('$');
+                        break;
+                    } else if next_c.is_alphanumeric() || next_c == '_' {
+                        let ch = chars.next().expect("peeked char");
+                        potential_tag.push(ch);
+                        current.push(ch);
+                    } else {
+                        break;
+                    }
+                }
+                if potential_tag.len() >= 2
+                    && potential_tag.ends_with('$')
+                    && potential_tag == dollar_tag
+                {
+                    in_dollar_quote = false;
+                    dollar_tag.clear();
+                }
+            }
+            continue;
+        }
+
+        // Outside all quoted/comment contexts
+        if c == '-' && chars.peek() == Some(&'-') {
+            current.push(chars.next().expect("peeked char"));
+            in_line_comment = true;
+            continue;
+        }
+
+        if c == '/' && chars.peek() == Some(&'*') {
+            current.push(chars.next().expect("peeked char"));
+            in_block_comment = true;
+            continue;
+        }
+
+        if c == '\'' {
+            in_string_literal = true;
+            continue;
+        }
+
+        if c == '$' {
+            let mut potential_tag = String::from("$");
             while let Some(&next_c) = chars.peek() {
                 if next_c == '$' {
-                    // Safe: peek confirmed the char exists
                     potential_tag.push(chars.next().expect("peeked char"));
                     current.push('$');
                     break;
                 } else if next_c.is_alphanumeric() || next_c == '_' {
-                    let c = chars.next().expect("peeked char");
-                    potential_tag.push(c);
-                    current.push(c);
+                    let ch = chars.next().expect("peeked char");
+                    potential_tag.push(ch);
+                    current.push(ch);
                 } else {
                     break;
                 }
             }
-
-            // Check if this is a valid dollar-quote delimiter (ends with $)
             if potential_tag.len() >= 2 && potential_tag.ends_with('$') {
-                if in_dollar_quote && potential_tag == dollar_tag {
-                    // End of dollar-quoted string
-                    in_dollar_quote = false;
-                    dollar_tag.clear();
-                } else if !in_dollar_quote {
-                    // Start of dollar-quoted string
-                    in_dollar_quote = true;
-                    dollar_tag = potential_tag;
-                }
+                in_dollar_quote = true;
+                dollar_tag = potential_tag;
             }
+            continue;
         }
 
-        // Split on semicolon only if not inside a dollar-quoted string
-        if c == ';' && !in_dollar_quote {
+        if c == ';' {
             let stmt = current.trim().trim_end_matches(';').trim().to_string();
             if !stmt.is_empty() {
                 statements.push(stmt);
@@ -498,7 +586,6 @@ fn split_sql_statements(sql: &str) -> Vec<String> {
         }
     }
 
-    // Don't forget the last statement (might not end with ;)
     let stmt = current.trim().trim_end_matches(';').trim().to_string();
     if !stmt.is_empty() {
         statements.push(stmt);
@@ -509,11 +596,11 @@ fn split_sql_statements(sql: &str) -> Vec<String> {
 
 /// Load user migrations from a directory.
 ///
-/// Migrations should be named like:
-/// - `0001_create_users.sql`
-/// - `0002_add_posts.sql`
-///
-/// They are sorted alphabetically and executed in order.
+/// Migrations must be named with a zero-padded numeric prefix followed by
+/// an underscore and a slug, e.g. `0001_create_users.sql`. All migrations
+/// in the directory must use the same prefix width, otherwise alphabetic
+/// ordering silently desynchronizes from numeric ordering (e.g. `10_x`
+/// would sort before `2_x`).
 pub fn load_migrations_from_dir(dir: &Path) -> Result<Vec<Migration>> {
     if !dir.exists() {
         debug!("Migrations directory does not exist: {:?}", dir);
@@ -521,6 +608,8 @@ pub fn load_migrations_from_dir(dir: &Path) -> Result<Vec<Migration>> {
     }
 
     let mut migrations = Vec::new();
+    let mut prefix_width: Option<usize> = None;
+    let mut seen_versions: std::collections::HashSet<u64> = std::collections::HashSet::new();
 
     let entries = std::fs::read_dir(dir).map_err(ForgeError::Io)?;
 
@@ -535,17 +624,65 @@ pub fn load_migrations_from_dir(dir: &Path) -> Result<Vec<Migration>> {
                 .ok_or_else(|| ForgeError::Config("Invalid migration filename".into()))?
                 .to_string();
 
+            let (digits, version) = parse_migration_prefix(&name)?;
+
+            match prefix_width {
+                Some(w) if w != digits.len() => {
+                    return Err(ForgeError::Config(format!(
+                        "Inconsistent migration prefix width: {} uses {} digits but earlier migrations use {}. \
+                         Pad all migration filenames to the same width (e.g. 0001_*.sql).",
+                        name,
+                        digits.len(),
+                        w,
+                    )));
+                }
+                None => prefix_width = Some(digits.len()),
+                _ => {}
+            }
+
+            if !seen_versions.insert(version) {
+                return Err(ForgeError::Config(format!(
+                    "Duplicate migration version {} for {}",
+                    version, name
+                )));
+            }
+
             let content = std::fs::read_to_string(&path).map_err(ForgeError::Io)?;
 
-            migrations.push(Migration::parse(name, &content));
+            migrations.push((version, Migration::parse(name, &content)));
         }
     }
 
-    // Sort by name (which includes the numeric prefix)
-    migrations.sort_by(|a, b| a.name.cmp(&b.name));
+    // Sort by parsed numeric version. With enforced uniform width and an
+    // all-digit prefix, alphabetic sort would also work; sorting by the
+    // parsed integer is less subtle and survives later width relaxations.
+    migrations.sort_by_key(|(v, _)| *v);
 
     debug!("Loaded {} user migrations", migrations.len());
-    Ok(migrations)
+    Ok(migrations.into_iter().map(|(_, m)| m).collect())
+}
+
+/// Split a migration filename like `0001_create_users` into its digit prefix
+/// and parsed numeric version. Errors out for missing or non-numeric prefixes
+/// rather than letting them sort lexically and silently run out of order.
+fn parse_migration_prefix(name: &str) -> Result<(&str, u64)> {
+    let digits_end = name
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(name.len());
+    if digits_end == 0 {
+        return Err(ForgeError::Config(format!(
+            "Migration {} is missing a numeric prefix (expected NNNN_name.sql)",
+            name
+        )));
+    }
+    let digits = name.get(..digits_end).unwrap_or("");
+    let version: u64 = digits.parse().map_err(|_| {
+        ForgeError::Config(format!(
+            "Migration {} has an unparseable numeric prefix",
+            name
+        ))
+    })?;
+    Ok((digits, version))
 }
 
 #[cfg(test)]
@@ -583,6 +720,39 @@ mod tests {
         assert_eq!(migrations[0].name, "0001_first");
         assert_eq!(migrations[1].name, "0002_second");
         assert_eq!(migrations[2].name, "0003_third");
+    }
+
+    #[test]
+    fn test_load_migrations_rejects_mixed_prefix_widths() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("0001_first.sql"), "SELECT 1;").unwrap();
+        fs::write(dir.path().join("2_second.sql"), "SELECT 2;").unwrap();
+
+        let err = load_migrations_from_dir(dir.path()).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Inconsistent migration prefix width") || msg.contains("digits"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_load_migrations_rejects_missing_prefix() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("create_users.sql"), "SELECT 1;").unwrap();
+
+        let err = load_migrations_from_dir(dir.path()).unwrap_err();
+        assert!(err.to_string().contains("missing a numeric prefix"));
+    }
+
+    #[test]
+    fn test_load_migrations_rejects_duplicate_versions() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("0001_a.sql"), "SELECT 1;").unwrap();
+        fs::write(dir.path().join("0001_b.sql"), "SELECT 2;").unwrap();
+
+        let err = load_migrations_from_dir(dir.path()).unwrap_err();
+        assert!(err.to_string().contains("Duplicate migration version"));
     }
 
     #[test]

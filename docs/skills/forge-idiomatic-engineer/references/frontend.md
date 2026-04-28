@@ -42,9 +42,10 @@ All subscription stores and hooks return a consistent state object to help you m
 
 ## Error Handling Logic
 
-- **Structured Errors**: Forge returns errors in a `{ code, message, details? }` format.
+- **Structured Errors**: Forge returns wire errors in a `{ code, message, retry_after_secs?, details? }` format. Svelte exposes this as `ForgeClientError.retryAfterSecs`; Dioxus exposes the Rust field as `retry_after_secs`.
 - **Control Flow**: Use the error `code` (e.g., `NOT_FOUND`, `RATE_LIMITED`) for programmatic logic and the `message` for user-facing display.
-- **Automatic Cooldowns**: Use `details.retry_after_secs` to implement UI-level cooldown timers for rate-limited operations.
+- **Boolean helpers**: Svelte errors expose `.isRateLimited()`, `.isUnauthorized()`, and `.isValidation()`. Dioxus errors expose `.is_rate_limited()`, `.is_unauthorized()`, and `.is_validation()`.
+- **Automatic Cooldowns**: Use `retryAfterSecs` in Svelte or `retry_after_secs` in Dioxus to implement UI-level cooldown timers for rate-limited operations.
 - **Managed Retries**: The client library automatically handles SSE reconnection with exponential backoff. Do not implement custom retry loops for subscriptions.
 
 ## File Uploads
@@ -100,7 +101,7 @@ use forge_dioxus::use_signals;
 let signals = use_signals();
 
 // Track custom events
-signals.track("button_click", json!({"target": "upgrade-plan"}));
+signals.track_with_properties("button_click", json!({"target": "upgrade-plan"}));
 
 // Identify authenticated users
 signals.identify("user-id", json!({"name": "Alice", "plan": "pro"})).await;
@@ -109,7 +110,7 @@ signals.identify("user-id", json!({"name": "Alice", "plan": "pro"})).await;
 signals.breadcrumb("Opened settings", Some(json!({"tab": "billing"})));
 
 // Report errors
-signals.capture_error("Payment failed", json!({"order_id": "123"})).await;
+signals.capture_error("Payment failed", Some(json!({"order_id": "123"})));
 
 // Manual page view
 signals.page("/settings").await;

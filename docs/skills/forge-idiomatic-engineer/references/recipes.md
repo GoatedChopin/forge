@@ -29,7 +29,7 @@ pub async fn my_profile(ctx: &QueryContext) -> Result<User> {
     current_user(ctx.db_conn(), ctx.user_id()?).await
 }
 
-#[forge::mutation(transactional)]
+#[forge::mutation]
 pub async fn update_profile(ctx: &MutationContext, name: String) -> Result<User> {
     let user = current_user(ctx.db_conn(), ctx.user_id()?).await?;
     // ... the DbConn call above participated in the same transaction as ctx.conn()
@@ -71,7 +71,7 @@ pub async fn require_plan(
 Call site:
 
 ```rust
-#[forge::mutation(transactional)]
+#[forge::mutation]
 pub async fn start_export(ctx: &MutationContext) -> Result<Uuid> {
     let mut conn = ctx.conn().await?;
     require_plan(&mut conn, ctx.user_id()?, Plan::Pro).await?;
@@ -156,7 +156,7 @@ pub async fn send_welcome(ctx: &JobContext, args: SendWelcomeArgs) -> Result<()>
 pub struct SendWelcomeArgs { pub user_id: Uuid }
 ```
 
-- **Dispatch from a mutation**: `ctx.dispatch_job("send_welcome", SendWelcomeArgs { user_id }).await?` inside a `transactional` mutation so the email is only queued if the transaction commits. See [Patterns](./patterns.md#background-jobs).
+- **Dispatch from a mutation**: `ctx.dispatch_job("send_welcome", SendWelcomeArgs { user_id }).await?` inside a mutation so the email is only queued if the transaction commits (transactions are on by default). See [Patterns](./patterns.md#background-jobs).
 - **Idempotency**: the `key = "args.user_id"` attribute names a path into the args struct. Combined with the job's retry policy, it prevents a duplicate send when a worker crashes after sending but before marking the job complete.
 
 ## 5. File Upload to S3-Compatible Storage
@@ -172,7 +172,7 @@ pub async fn s3_client(ctx: &MutationContext) -> Result<aws_sdk_s3::Client> {
     // Build and return client...
 }
 
-#[forge::mutation(transactional)]
+#[forge::mutation]
 pub async fn upload_avatar(ctx: &MutationContext, file: Upload) -> Result<String> {
     let key = format!("avatars/{}/{}", ctx.user_id()?, Uuid::new_v4());
     let bucket = ctx.env_require("S3_BUCKET")?;
@@ -231,7 +231,7 @@ Forge ships no LLM abstraction — existing primitives cover it. `#[job]` for lo
 ```rust
 use futures_util::StreamExt;
 
-#[forge::mutation(transactional)]
+#[forge::mutation]
 pub async fn ask_question(ctx: &MutationContext, args: AskArgs) -> Result<Uuid> {
     let mut conn = ctx.conn().await?;
     let id = sqlx::query_scalar!(

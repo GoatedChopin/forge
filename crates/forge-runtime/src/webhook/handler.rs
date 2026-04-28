@@ -8,7 +8,7 @@ use axum::{
     body::Bytes,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
-    response::IntoResponse,
+    response::{IntoResponse, Response},
 };
 use base64::{
     Engine as _,
@@ -27,6 +27,7 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use super::registry::WebhookRegistry;
+use crate::gateway::RpcError;
 
 /// State for webhook handler.
 #[derive(Clone)]
@@ -68,7 +69,7 @@ pub async fn webhook_handler(
     Path(path): Path<String>,
     headers: HeaderMap,
     body: Bytes,
-) -> impl IntoResponse {
+) -> Response {
     let full_path = format!("/webhooks/{}", path);
     let request_id = Uuid::new_v4().to_string();
 
@@ -79,8 +80,9 @@ pub async fn webhook_handler(
             warn!(path = %full_path, "Webhook not found");
             return (
                 StatusCode::NOT_FOUND,
-                Json(json!({"error": "Webhook not found"})),
-            );
+                Json(RpcError::not_found("Webhook not found")),
+            )
+                .into_response();
         }
     };
 
@@ -99,8 +101,9 @@ pub async fn webhook_handler(
         );
         return (
             StatusCode::UNAUTHORIZED,
-            Json(json!({"error": "Webhook signature is required"})),
-        );
+            Json(RpcError::unauthorized("Webhook signature is required")),
+        )
+            .into_response();
     }
 
     // Validate signature if configured
@@ -115,13 +118,15 @@ pub async fn webhook_handler(
                 warn!(webhook = info.name, "Missing signature header");
                 return (
                     StatusCode::UNAUTHORIZED,
-                    Json(json!({"error": "Missing signature"})),
-                );
+                    Json(RpcError::unauthorized("Missing signature")),
+                )
+                    .into_response();
             }
         };
 
-        // Get secret from environment
-        let secret = match std::env::var(sig_config.secret_env) {
+        // Get secret(s) from environment. Comma-separated values support
+        // rotation: set to "new-secret,old-secret" during rollover.
+        let secrets_raw = match std::env::var(sig_config.secret_env) {
             Ok(s) => s,
             Err(_) => {
                 error!(
@@ -131,18 +136,28 @@ pub async fn webhook_handler(
                 );
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": "Webhook configuration error"})),
-                );
+                    Json(RpcError::internal("Webhook configuration error")),
+                )
+                    .into_response();
             }
         };
 
-        // Validate signature
-        if !validate_signature(sig_config.algorithm, &body, &secret, signature, &headers) {
+        // Try each secret, first match wins
+        let secrets: Vec<&str> = secrets_raw
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect();
+        let signature_valid = secrets.iter().any(|secret| {
+            validate_signature(sig_config.algorithm, &body, secret, signature, &headers)
+        });
+        if !signature_valid {
             warn!(webhook = info.name, "Invalid signature");
             return (
                 StatusCode::UNAUTHORIZED,
-                Json(json!({"error": "Invalid signature"})),
-            );
+                Json(RpcError::unauthorized("Invalid signature")),
+            )
+                .into_response();
         }
     }
 
@@ -161,6 +176,8 @@ pub async fn webhook_handler(
                     None
                 }
             }
+            // Future IdempotencySource variants: skip key extraction.
+            _ => None,
         }
     } else {
         None
@@ -171,7 +188,15 @@ pub async fn webhook_handler(
     if let Some(ref key) = idempotency_key
         && let Some(ref idem_config) = info.idempotency
     {
-        match claim_idempotency(&state.pool, info.name, key, idem_config.ttl).await {
+        match claim_idempotency(
+            &state.pool,
+            info.name,
+            key,
+            idem_config.ttl,
+            idem_config.processing_timeout,
+        )
+        .await
+        {
             Ok(true) => {
                 idempotency_claimed = true;
             }
@@ -181,7 +206,8 @@ pub async fn webhook_handler(
                     idempotency_key = %key,
                     "Request already processed (idempotent)"
                 );
-                return (StatusCode::OK, Json(json!({"status": "already_processed"})));
+                return (StatusCode::OK, Json(json!({"status": "already_processed"})))
+                    .into_response();
             }
             Err(e) => {
                 // Fail closed: if idempotency is configured but the DB is unavailable,
@@ -189,8 +215,12 @@ pub async fn webhook_handler(
                 error!(webhook = info.name, error = %e, "Failed to claim idempotency key -- rejecting request");
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
-                    Json(json!({"error": "Service temporarily unavailable"})),
-                );
+                    Json(RpcError::new(
+                        "SERVICE_UNAVAILABLE",
+                        "Service temporarily unavailable",
+                    )),
+                )
+                    .into_response();
             }
         }
     }
@@ -212,8 +242,9 @@ pub async fn webhook_handler(
             warn!(webhook = info.name, error = %e, "Invalid JSON payload");
             return (
                 StatusCode::BAD_REQUEST,
-                Json(json!({"error": "Invalid JSON"})),
-            );
+                Json(RpcError::validation("Invalid JSON")),
+            )
+                .into_response();
         }
     };
 
@@ -249,6 +280,16 @@ pub async fn webhook_handler(
 
     match result {
         Ok(Ok(webhook_result)) => {
+            if idempotency_claimed
+                && let Some(ref key) = idempotency_key
+                && let Err(complete_err) = complete_idempotency(&state.pool, info.name, key).await
+            {
+                warn!(
+                    webhook = info.name,
+                    error = %complete_err,
+                    "Failed to mark idempotency key as completed"
+                );
+            }
             let status =
                 StatusCode::from_u16(webhook_result.status_code()).unwrap_or(StatusCode::OK);
             crate::signals::emit_server_execution(
@@ -258,7 +299,7 @@ pub async fn webhook_handler(
                 status.is_success(),
                 None,
             );
-            (status, Json(webhook_result.body()))
+            (status, Json(webhook_result.body())).into_response()
         }
         Ok(Err(e)) => {
             if idempotency_claimed
@@ -282,8 +323,13 @@ pub async fn webhook_handler(
             );
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Internal server error", "request_id": request_id})),
+                Json(RpcError::with_details(
+                    "INTERNAL_ERROR",
+                    "Internal server error",
+                    json!({ "request_id": request_id }),
+                )),
             )
+                .into_response()
         }
         Err(_) => {
             if idempotency_claimed
@@ -310,8 +356,9 @@ pub async fn webhook_handler(
             );
             (
                 StatusCode::GATEWAY_TIMEOUT,
-                Json(json!({"error": "Request timeout"})),
+                Json(RpcError::new("TIMEOUT", "Request timeout")),
             )
+                .into_response()
         }
     }
 }
@@ -466,23 +513,35 @@ fn validate_stripe_webhooks(body: &[u8], secret: &str, signature_header: &str) -
     signed.push(b'.');
     signed.extend_from_slice(body);
 
-    let mut mac =
-        Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
-    mac.update(&signed);
-    let computed = encode_hex_inline(&mac.finalize().into_bytes());
-
-    signatures.iter().any(|sig| *sig == computed)
+    // Constant-time comparison: decode each candidate hex signature to raw
+    // bytes and use HMAC's `verify_slice`. Comparing hex strings directly
+    // short-circuits on the first mismatch and leaks per-byte timing.
+    for sig in signatures {
+        let Some(decoded) = decode_hex(sig) else {
+            continue;
+        };
+        let mut verifier = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
+            .expect("HMAC can take key of any size");
+        verifier.update(&signed);
+        if verifier.verify_slice(&decoded).is_ok() {
+            return true;
+        }
+    }
+    false
 }
 
 /// Validate a Shopify (HMAC-SHA256, base64-encoded) webhook signature.
 fn validate_hmac_sha256_base64(body: &[u8], secret: &str, signature: &str) -> bool {
+    // Decode the client-supplied base64 signature back to raw HMAC bytes and
+    // verify with a constant-time comparator. Comparing the base64 strings
+    // directly leaks per-byte timing on string equality.
+    let Ok(provided) = general_purpose::STANDARD.decode(signature) else {
+        return false;
+    };
     let mut mac =
         Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
     mac.update(body);
-    let computed = general_purpose::STANDARD.encode(mac.finalize().into_bytes());
-    // Constant-time comparison isn't critical here — the signature is already base64,
-    // so timing differences don't meaningfully leak key bits.
-    computed == signature
+    mac.verify_slice(&provided).is_ok()
 }
 
 /// Validate an Ed25519 asymmetric webhook signature.
@@ -516,16 +575,6 @@ fn validate_ed25519(body: &[u8], public_key_b64: &str, signature_b64: &str) -> b
     verifying_key.verify(body, &signature).is_ok()
 }
 
-fn encode_hex_inline(bytes: &[u8]) -> String {
-    bytes
-        .iter()
-        .fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
-            use std::fmt::Write;
-            let _ = write!(s, "{b:02x}");
-            s
-        })
-}
-
 fn decode_hex(s: &str) -> Option<Vec<u8>> {
     if !s.len().is_multiple_of(2) {
         return None;
@@ -557,33 +606,63 @@ fn extract_json_path(value: &Value, path: &str) -> Option<String> {
 ///
 /// Returns:
 /// - `Ok(true)` if this request acquired the claim
-/// - `Ok(false)` if key is already active
+/// - `Ok(false)` if key is already active (completed or being processed)
+///
+/// A key with `status = 'claimed'` is eligible for reclaim once
+/// `processing_timeout` has elapsed (crash recovery).
 async fn claim_idempotency(
     pool: &PgPool,
     webhook_name: &str,
     key: &str,
     ttl: std::time::Duration,
+    processing_timeout: std::time::Duration,
 ) -> Result<bool, sqlx::Error> {
     let expires_at =
         chrono::Utc::now() + chrono::Duration::from_std(ttl).unwrap_or(chrono::Duration::hours(24));
+    let processing_timeout_secs = processing_timeout.as_secs().try_into().unwrap_or(i32::MAX);
 
-    let result = sqlx::query!(
+    let result = sqlx::query(
         r#"
-        INSERT INTO forge_webhook_events (idempotency_key, webhook_name, processed_at, expires_at)
-        VALUES ($1, $2, NOW(), $3)
+        INSERT INTO forge_webhook_events (idempotency_key, webhook_name, status, processed_at, expires_at)
+        VALUES ($1, $2, 'claimed', NOW(), $3)
         ON CONFLICT (webhook_name, idempotency_key) DO UPDATE
-            SET processed_at = EXCLUDED.processed_at,
+            SET status = 'claimed',
+                processed_at = NOW(),
                 expires_at = EXCLUDED.expires_at
         WHERE forge_webhook_events.expires_at < NOW()
+           OR (forge_webhook_events.status = 'claimed'
+               AND forge_webhook_events.processed_at + make_interval(secs => $4::double precision) < NOW())
         "#,
-        key,
-        webhook_name,
-        expires_at,
     )
+    .bind(key)
+    .bind(webhook_name)
+    .bind(expires_at)
+    .bind(processing_timeout_secs)
     .execute(pool)
     .await?;
 
     Ok(result.rows_affected() > 0)
+}
+
+/// Mark idempotency key as completed after successful processing.
+async fn complete_idempotency(
+    pool: &PgPool,
+    webhook_name: &str,
+    key: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        UPDATE forge_webhook_events
+        SET status = 'completed'
+        WHERE webhook_name = $1 AND idempotency_key = $2
+        "#,
+    )
+    .bind(webhook_name)
+    .bind(key)
+    .execute(pool)
+    .await?;
+
+    Ok(())
 }
 
 /// Release idempotency key after failure so retries can proceed.
@@ -592,14 +671,14 @@ async fn release_idempotency(
     webhook_name: &str,
     key: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query!(
+    sqlx::query(
         r#"
         DELETE FROM forge_webhook_events
         WHERE webhook_name = $1 AND idempotency_key = $2
         "#,
-        webhook_name,
-        key,
     )
+    .bind(webhook_name)
+    .bind(key)
     .execute(pool)
     .await?;
 

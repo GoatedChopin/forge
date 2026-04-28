@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 /// Tracking mode for read sets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum TrackingMode {
     /// No tracking (disabled).
     None,
@@ -252,6 +253,7 @@ impl ReadSet {
 
 /// Change operation type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ChangeOperation {
     /// Row inserted.
     Insert,

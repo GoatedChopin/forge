@@ -52,6 +52,7 @@ sqlx = { workspace = true }
 reqwest = { workspace = true }
 include_dir = "0.7"
 inventory = { workspace = true }
+ipnet = { workspace = true }
 
 # `gateway` feature deps (forwarded to forge-runtime)
 axum = { workspace = true, optional = true }

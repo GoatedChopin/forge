@@ -8,8 +8,8 @@ Configure multi-node deployments with leader election, work distribution, and fa
 # forge.toml
 [cluster]
 discovery = "postgres"
-heartbeat_interval_secs = 5
-dead_threshold_secs = 15
+heartbeat_interval = "5s"
+dead_threshold = "15s"
 
 [node]
 roles = ["gateway", "worker", "scheduler", "function"]
@@ -75,8 +75,8 @@ Role specialization is optional. Most deployments run all roles on every node.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `heartbeat_interval_secs` | `u64` | `5` | Heartbeat frequency |
-| `dead_threshold_secs` | `u64` | `15` | Time until node marked dead |
+| `heartbeat_interval` | string | `"5s"` | Heartbeat frequency |
+| `dead_threshold` | string | `"15s"` | Time until node marked dead |
 
 ## Discovery
 
@@ -125,6 +125,16 @@ Node B: waiting → acquires lock → running
 
 Failover happens within the leader check interval (default 5 seconds for a stable cluster). The heartbeat interval adapts when the cluster is stable, scaling up to 60 seconds between heartbeats, so the effective dead threshold adjusts accordingly.
 
+### Split-Brain Fencing
+
+Advisory locks prevent most split-brain scenarios, but network partitions can create brief windows where two nodes both believe they are leader. Forge uses fencing tokens to guard against this.
+
+Every leader election increments a `current_term` counter in the database. Before executing any leader-exclusive write (cron scheduling, stale job reclaim, workflow recovery), the leader checks that its local term still matches the database term. If another node won a newer election, the stale leader's writes are rejected.
+
+This means leader-exclusive operations are safe even during a partition: the fencing check is an atomic compare-and-set against PostgreSQL, which is the single source of truth. You don't need to add your own distributed locking on top.
+
+If you implement custom daemons that run in leader mode, follow the same pattern: read `current_term` when you acquire leadership, and verify it before any state-mutating database write.
+
 ## Work Distribution
 
 Workers claim jobs using the competing consumers pattern with `FOR UPDATE SKIP LOCKED`:
@@ -161,14 +171,14 @@ SET last_heartbeat = NOW()
 WHERE id = $1
 ```
 
-Nodes missing heartbeats past the dead threshold are marked dead. The effective threshold is the greater of the configured `dead_threshold_secs` (default 15s) and 3x the current adaptive heartbeat interval:
+Nodes missing heartbeats past the dead threshold are marked dead. The effective threshold is the greater of the configured `dead_threshold` (default "15s") and 3x the current adaptive heartbeat interval:
 
 ```sql
 UPDATE forge_nodes
 SET status = 'dead'
 WHERE status = 'active'
   AND last_heartbeat < NOW() - make_interval(secs => $1)
--- $1 = max(dead_threshold_secs, 3 * current_adaptive_interval)
+-- $1 = max(dead_threshold seconds, 3 * current_adaptive_interval)
 ```
 
 Dead node detection triggers:
@@ -302,7 +312,28 @@ This avoids race conditions and duplicate processing without distributed coordin
 
 ### Rate Limiting
 
-Rate limiting with `key = "user"` or `key = "ip"` is enforced per-node using an in-memory token bucket. In a multi-node deployment, a user can make up to `requests × node_count` per window. Only `key = "global"` uses a shared PostgreSQL counter and is truly cluster-wide.
+Two backends ship out of the box, selected via `[rate_limit] mode` in `forge.toml`:
+
+- `mode = "hybrid"` (default): `key = "user"` and `key = "ip"` use a per-node DashMap token bucket for low-latency DDoS protection. A user can make up to `requests × node_count` per window. `key = "global"` still uses a shared PostgreSQL counter. Right choice for traffic shaping and abuse mitigation.
+- `mode = "strict"`: every check hits the shared `forge_rate_limits` table. Counts are cluster-wide and exact. Use this when limits are billing-grade or quotas you contractually have to enforce. Slightly higher per-request latency; the table is `UNLOGGED` so the write cost is small but it does add a round trip.
+
+Both back the same `RateLimiterBackend` trait, so SDK consumers can plug in their own implementation if needed.
+
+### Workflow Drain on Boot
+
+When you remove a deprecated workflow version's code and redeploy, the new binary won't have a handler for any in-flight runs of that version. The runtime detects this at boot, logs a warning per stranded `(name, version)` group, and flips `/_api/ready` to `503` with `workflows: false` until the stranded runs clear. The exact drain count is intentionally absent from the public probe payload — load balancers don't need it, and an unauthenticated probe shouldn't leak deployment state. Read the warning logs or query `forge_workflow_runs` directly when investigating.
+
+Operators clear stuck runs directly in Postgres (no admin HTTP surface):
+
+```sql
+UPDATE forge_workflow_runs
+SET status = 'retired_unresumable', resolution_reason = '...'
+WHERE workflow_name = '...' AND workflow_version = '...'
+  AND status NOT IN ('completed','compensated','failed',
+                     'retired_unresumable','cancelled_by_operator');
+```
+
+Within five seconds the next readiness probe re-runs the check and flips back to `200`. See the [workflow migration guide](../build/long-processes.mdx#migrating-a-workflow-safely) for the full deprecate→drain→remove flow.
 
 ### OAuth State
 

@@ -26,9 +26,13 @@ CREATE INDEX IF NOT EXISTS idx_forge_nodes_status_heartbeat
     WHERE status = 'active';
 
 -- Cluster: Leader election (UNLOGGED: transient state rebuilt on startup)
+-- `term` is a fencing token: every successful acquire increments it. Writes
+-- that originated from an older leader can be detected and silently rejected
+-- by including `WHERE term = $current_term` in their predicates.
 CREATE UNLOGGED TABLE IF NOT EXISTS forge_leaders (
     role VARCHAR(64) PRIMARY KEY,
     node_id UUID NOT NULL,
+    term BIGINT NOT NULL DEFAULT 0,
     acquired_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     lease_until TIMESTAMPTZ NOT NULL
 );
@@ -61,7 +65,9 @@ CREATE TABLE IF NOT EXISTS forge_jobs (
     cancelled_at TIMESTAMPTZ,
     cancel_reason TEXT,
     last_heartbeat TIMESTAMPTZ,
-    expires_at TIMESTAMPTZ
+    expires_at TIMESTAMPTZ,
+    -- Forward-compat slot. Future-versioned fields land here without ALTER TABLE.
+    metadata JSONB NOT NULL DEFAULT '{}'
 );
 
 CREATE INDEX IF NOT EXISTS idx_forge_jobs_status_scheduled
@@ -90,6 +96,7 @@ CREATE TABLE IF NOT EXISTS forge_cron_runs (
     started_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ,
     error TEXT,
+    owner_subject TEXT,
     UNIQUE(cron_name, scheduled_time)
 );
 
@@ -129,7 +136,13 @@ CREATE TABLE IF NOT EXISTS forge_workflow_runs (
     wake_at TIMESTAMPTZ,
     waiting_for_event TEXT,
     event_timeout_at TIMESTAMPTZ,
-    tenant_id UUID
+    tenant_id UUID,
+    -- Compensation metadata for crash-safe saga compensation
+    compensation_state JSONB,
+    -- User-defined key-value state that persists across suspension points
+    saved_state JSONB DEFAULT '{}',
+    -- Forward-compat slot. Future-versioned fields land here without ALTER TABLE.
+    metadata JSONB NOT NULL DEFAULT '{}'
 );
 
 CREATE INDEX IF NOT EXISTS idx_forge_workflow_runs_status
@@ -225,7 +238,10 @@ CREATE INDEX IF NOT EXISTS idx_forge_subscriptions_query_hash
 
 -- Realtime: Change notification function
 -- Sends NOTIFY on forge_changes channel when data changes.
--- Format: table:OP:row_id or table:OP:row_id:col1,col2,... (UPDATE only)
+-- Format: v1:table:OP:row_id or v1:table:OP:row_id:col1,col2,... (UPDATE only).
+-- The leading "v1:" prefix lets future schema bumps land without coordinated
+-- cluster restart: a v2 listener can branch on the prefix while v1 emitters
+-- and listeners stay in service during rolling upgrades.
 CREATE OR REPLACE FUNCTION forge_notify_change() RETURNS TRIGGER AS $$
 DECLARE
     row_id TEXT;
@@ -240,7 +256,7 @@ BEGIN
         row_id := COALESCE(NEW.id::TEXT, '');
     END IF;
 
-    payload := TG_TABLE_NAME || ':' || TG_OP || ':' || row_id;
+    payload := 'v1:' || TG_TABLE_NAME || ':' || TG_OP || ':' || row_id;
 
     IF TG_OP = 'UPDATE' THEN
         old_json := to_jsonb(OLD);
@@ -357,6 +373,7 @@ CREATE INDEX IF NOT EXISTS idx_forge_daemons_node
 CREATE TABLE IF NOT EXISTS forge_webhook_events (
     webhook_name VARCHAR(255) NOT NULL,
     idempotency_key VARCHAR(255) NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'claimed',
     processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     expires_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (webhook_name, idempotency_key)
@@ -416,6 +433,11 @@ CREATE TABLE IF NOT EXISTS forge_refresh_tokens (
     user_id     UUID NOT NULL,
     token_hash  TEXT NOT NULL UNIQUE,
     client_id   TEXT,
+    token_family UUID NOT NULL DEFAULT gen_random_uuid(),
+    -- Roles snapshot at sign-in. Carried forward on rotation so refreshes
+    -- never silently downgrade or escalate; new roles take effect at next
+    -- sign-in, which matches the session-bounded security model.
+    roles       TEXT[] NOT NULL DEFAULT '{}',
     expires_at  TIMESTAMPTZ NOT NULL,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -425,6 +447,9 @@ CREATE INDEX IF NOT EXISTS idx_forge_refresh_tokens_user_id
 
 CREATE INDEX IF NOT EXISTS idx_forge_refresh_tokens_expires_at
     ON forge_refresh_tokens (expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_family
+    ON forge_refresh_tokens (token_family);
 
 -- Periodically purge expired tokens to prevent table bloat.
 -- Runs every hour, deleting tokens that expired more than 24 hours ago
@@ -475,7 +500,7 @@ CREATE TABLE IF NOT EXISTS forge_invalidations (
     id              BIGSERIAL PRIMARY KEY,
     table_name      TEXT NOT NULL,
     row_id          TEXT,
-    operation       TEXT NOT NULL,          -- INSERT, UPDATE, DELETE
+    operation       TEXT NOT NULL CHECK (operation IN ('INSERT', 'UPDATE', 'DELETE')),
     changed_columns TEXT[],
     node_id         UUID,                   -- originating node
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -539,6 +564,9 @@ CREATE TABLE IF NOT EXISTS forge_signals_events (
 
     -- Classification
     is_bot          BOOLEAN NOT NULL DEFAULT FALSE,
+
+    -- Forward-compat slot. Future-versioned fields land here without ALTER TABLE.
+    metadata        JSONB NOT NULL DEFAULT '{}',
 
     timestamp       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
@@ -783,7 +811,7 @@ BEGIN
             substring(rec.partition_name FROM 'forge_signals_events_(\d{4}_\d{2})'),
             'YYYY_MM'
         ) + interval '1 month' < cutoff THEN
-            EXECUTE format('DROP TABLE IF EXISTS %s', rec.partition_name);
+            EXECUTE format('DROP TABLE IF EXISTS %I', rec.partition_name);
             dropped := dropped + 1;
         END IF;
     END LOOP;

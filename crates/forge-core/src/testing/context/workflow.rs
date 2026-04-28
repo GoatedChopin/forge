@@ -69,6 +69,8 @@ pub struct TestWorkflowContext {
     sleep_called: Arc<RwLock<bool>>,
     /// Mock environment provider.
     env_provider: Arc<MockEnvProvider>,
+    /// User-defined saved state for persistence testing.
+    saved_state: Arc<RwLock<HashMap<String, serde_json::Value>>>,
 }
 
 impl TestWorkflowContext {
@@ -186,6 +188,35 @@ impl TestWorkflowContext {
     /// Get the mock env provider for verification.
     pub fn env_mock(&self) -> &MockEnvProvider {
         &self.env_provider
+    }
+
+    /// Save arbitrary state that persists across suspension points.
+    pub fn save_state(&self, key: &str, value: impl serde::Serialize) -> Result<()> {
+        let json = serde_json::to_value(value)
+            .map_err(|e| crate::ForgeError::Serialization(e.to_string()))?;
+        self.saved_state
+            .write()
+            .unwrap()
+            .insert(key.to_string(), json);
+        Ok(())
+    }
+
+    /// Load previously saved state. Returns `None` if the key doesn't exist.
+    pub fn load_state<T: serde::de::DeserializeOwned>(&self, key: &str) -> Result<Option<T>> {
+        let guard = self.saved_state.read().unwrap();
+        match guard.get(key) {
+            Some(value) => {
+                let result = serde_json::from_value(value.clone())
+                    .map_err(|e| crate::ForgeError::Deserialization(e.to_string()))?;
+                Ok(Some(result))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Get a snapshot of all saved state.
+    pub fn take_saved_state(&self) -> HashMap<String, serde_json::Value> {
+        self.saved_state.read().unwrap().clone()
     }
 }
 
@@ -351,6 +382,7 @@ impl TestWorkflowContextBuilder {
             completed_steps: Arc::new(RwLock::new(completed_steps)),
             sleep_called: Arc::new(RwLock::new(false)),
             env_provider: Arc::new(MockEnvProvider::with_vars(self.env_vars)),
+            saved_state: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }

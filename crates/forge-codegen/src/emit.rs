@@ -29,6 +29,13 @@ pub fn ts_type(rust_type: &RustType, pos: Position) -> String {
         | RustType::LocalDate
         | RustType::LocalTime => "string".into(),
 
+        // NOTE: `i64` exceeds JavaScript's safe-integer range (2^53). Emit as
+        // `number` to match the JSON wire format produced by serde, and warn
+        // users to pick `String` (or apply `serde_with::DisplayFromStr`) for
+        // values that genuinely need full 64-bit precision (large IDs, big
+        // counters). Switching to `string` everywhere would silently corrupt
+        // every existing handler signature, so we leave the choice with the
+        // application author and document the trap in `frontend.md`.
         RustType::I32 | RustType::I64 | RustType::F32 | RustType::F64 => "number".into(),
 
         RustType::Bool => "boolean".into(),
@@ -41,7 +48,13 @@ pub fn ts_type(rust_type: &RustType, pos: Position) -> String {
         },
 
         RustType::Option(inner) => format!("{} | null", ts_type(inner, pos)),
-        RustType::Vec(inner) => format!("{}[]", ts_type(inner, pos)),
+        // `Option<T>` renders with " | null", which without parens would parse
+        // as `T | (null[])` inside an array. Use `Array<...>` to keep the union
+        // unambiguous on the element type.
+        RustType::Vec(inner) => match inner.as_ref() {
+            RustType::Option(_) => format!("Array<{}>", ts_type(inner, pos)),
+            _ => format!("{}[]", ts_type(inner, pos)),
+        },
 
         RustType::Custom(name) => ts_custom(name, pos),
     }
@@ -56,6 +69,15 @@ fn ts_custom(name: &str, pos: Position) -> String {
             Position::Arg => "Uint8Array".into(),
         },
 
+        "Uuid" | "uuid::Uuid" | "DateTime<Utc>" | "NaiveDate" | "NaiveDateTime" | "Instant"
+        | "LocalDate" | "LocalTime" | "Timestamp" => "string".into(),
+
+        "i32" | "i64" | "u32" | "u64" | "f32" | "f64" | "usize" | "isize" => "number".into(),
+
+        "bool" => "boolean".into(),
+
+        "Value" | "serde_json::Value" => "unknown".into(),
+
         // Unparsed generic types that leaked through as Custom.
         _ if name.starts_with("Vec<") => {
             let inner = name
@@ -67,6 +89,19 @@ fn ts_custom(name: &str, pos: Position) -> String {
 
         _ if name.starts_with("HashMap<") || name.starts_with("std::collections::HashMap<") => {
             ts_hashmap(name)
+        }
+
+        "Cursor" => "string".into(),
+        "PageInfo" => "PageInfo".into(),
+        _ if name.starts_with("Page<") => {
+            let inner = name
+                .strip_prefix("Page<")
+                .and_then(|s| s.strip_suffix('>'))
+                .unwrap_or("unknown");
+            format!(
+                "Page<{}>",
+                ts_type(&RustType::Custom(inner.to_string()), pos)
+            )
         }
 
         _ => name.to_string(),
@@ -126,9 +161,26 @@ fn dioxus_custom(name: &str) -> String {
         "Uuid" | "uuid::Uuid" => "String".into(),
         "DateTime<Utc>" | "NaiveDate" | "NaiveDateTime" | "Instant" | "LocalDate" | "LocalTime"
         | "Timestamp" => "String".into(),
+        "i32" | "u32" | "usize" | "isize" => "i64".into(),
+        "i64" | "u64" => "i64".into(),
+        "f32" => "f32".into(),
+        "f64" => "f64".into(),
+        "bool" => "bool".into(),
         "Value" | "serde_json::Value" => "JsonValue".into(),
         "Bytes" => "Vec<u8>".into(),
         "Upload" => "ForgeUpload".into(),
+        "Cursor" => "String".into(),
+        "PageInfo" => "forge_core::PageInfo".into(),
+        _ if name.starts_with("Page<") => {
+            let inner = name
+                .strip_prefix("Page<")
+                .and_then(|s| s.strip_suffix('>'))
+                .unwrap_or("JsonValue");
+            format!(
+                "forge_core::Page<{}>",
+                dioxus_type(&RustType::Custom(inner.to_string()))
+            )
+        }
         other => other.to_string(),
     }
 }
@@ -179,10 +231,11 @@ pub fn collect_type_imports(rust_type: &RustType, imports: &mut Vec<String>) {
 fn is_importable_type(name: &str) -> bool {
     !matches!(
         name,
-        "()" | "Upload" | "Bytes" | "Instant" | "LocalDate" | "LocalTime"
+        "()" | "Upload" | "Bytes" | "Instant" | "LocalDate" | "LocalTime" | "Cursor" | "PageInfo"
     ) && !name.starts_with("Vec<")
         && !name.starts_with("HashMap<")
         && !name.starts_with("std::collections::")
+        && !name.starts_with("Page<")
 }
 
 #[cfg(test)]
@@ -316,6 +369,40 @@ mod tests {
         assert_eq!(imports, vec!["User", "Project"]);
     }
 
+    #[test]
+    fn pagination_types_not_importable() {
+        let mut imports = Vec::new();
+        collect_type_imports(&RustType::Custom("Cursor".into()), &mut imports);
+        collect_type_imports(&RustType::Custom("PageInfo".into()), &mut imports);
+        collect_type_imports(&RustType::Custom("Page<User>".into()), &mut imports);
+        assert!(imports.is_empty());
+    }
+
+    #[test]
+    fn pagination_type_mapping() {
+        assert_eq!(
+            ts_type(&RustType::Custom("Cursor".into()), Position::Arg),
+            "string"
+        );
+        assert_eq!(
+            ts_type(&RustType::Custom("PageInfo".into()), Position::Arg),
+            "PageInfo"
+        );
+        assert_eq!(
+            ts_type(&RustType::Custom("Page<User>".into()), Position::Arg),
+            "Page<User>"
+        );
+        assert_eq!(dioxus_type(&RustType::Custom("Cursor".into())), "String");
+        assert_eq!(
+            dioxus_type(&RustType::Custom("PageInfo".into())),
+            "forge_core::PageInfo"
+        );
+        assert_eq!(
+            dioxus_type(&RustType::Custom("Page<User>".into())),
+            "forge_core::Page<User>"
+        );
+    }
+
     // --- Cross-target consistency ---
 
     /// Ensure every RustType variant maps to a non-empty string in both targets.
@@ -365,11 +452,10 @@ mod tests {
         assert_eq!(ts_type(&ty, Position::Arg), "string[] | null");
         assert_eq!(dioxus_type(&ty), "Option<Vec<String>>");
 
-        // Vec<Option<i32>> => TS: "number | null[]"
-        // Note: the current emitter doesn't parenthesize union types inside arrays.
-        // This is a known limitation but matches existing behavior.
+        // Vec<Option<i32>> emits Array<...> form so the union binds to the
+        // element type (avoids the `number | (null[])` precedence trap).
         let ty2 = RustType::Vec(Box::new(RustType::Option(Box::new(RustType::I32))));
-        assert_eq!(ts_type(&ty2, Position::Arg), "number | null[]");
+        assert_eq!(ts_type(&ty2, Position::Arg), "Array<number | null>");
         assert_eq!(dioxus_type(&ty2), "Vec<Option<i32>>");
     }
 

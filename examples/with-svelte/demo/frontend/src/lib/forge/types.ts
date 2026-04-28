@@ -126,15 +126,24 @@ export interface WebhookEvent {
   processed_at: string;
 }
 
+export type Cursor = string;
+
+export interface PageInfo {
+  has_next_page: boolean;
+  end_cursor?: Cursor;
+  total_count?: number;
+}
+
+export interface Page<T> {
+  items: T[];
+  page_info: PageInfo;
+}
+
 export interface TokenPair {
   access_token: string;
   refresh_token: string;
 }
 
-export type UserRole = "admin" | "member" | "guest";
+export type UserRole = 'admin' | 'member' | 'guest';
 
-export type {
-  ForgeError,
-  QueryResult,
-  SubscriptionResult,
-} from "@forge-rs/svelte";
+export type { ForgeError, QueryResult, SubscriptionResult } from "@forge-rs/svelte";

@@ -12,4 +12,4 @@ pub use parallel::{ParallelBuilder, ParallelResults};
 pub use step::{Step, StepBuilder, StepConfig, StepResult, StepStatus};
 pub use step_runner::StepRunner;
 pub use suspend::{SuspendReason, WorkflowEvent};
-pub use traits::{ForgeWorkflow, WorkflowInfo, WorkflowStatus};
+pub use traits::{ForgeWorkflow, WorkflowDefStatus, WorkflowInfo, WorkflowStatus};

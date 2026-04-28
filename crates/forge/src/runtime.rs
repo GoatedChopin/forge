@@ -58,6 +58,9 @@ use forge_runtime::gateway::{
 use forge_runtime::jobs::{JobDispatcher, JobQueue, JobRegistry, Worker, WorkerConfig};
 #[cfg(feature = "gateway")]
 use forge_runtime::mcp::McpToolRegistry;
+use forge_runtime::realtime::{
+    InvalidationConfig, ListenerConfig, ReactorConfig, RealtimeConfig as RuntimeRealtimeConfig,
+};
 #[cfg(feature = "gateway")]
 use forge_runtime::webhook::{WebhookRegistry, WebhookState, webhook_handler};
 #[cfg(feature = "workflows")]
@@ -71,45 +74,76 @@ use tokio_util::sync::CancellationToken;
 #[cfg(feature = "gateway")]
 pub type FrontendHandler = fn(Request<Body>) -> Pin<Box<dyn Future<Output = Response> + Send>>;
 
-/// Prelude module for common imports.
+/// Common imports for Forge applications.
+///
+/// Glob-importing this module covers everyday handler code:
+///
+/// ```ignore
+/// use forge::prelude::*;
+///
+/// #[forge::query(public)]
+/// async fn ping(_ctx: &QueryContext) -> Result<String> {
+///     Ok("pong".to_string())
+/// }
+/// ```
+///
+/// **Stability contract:** the `pub use` items here become part of the
+/// framework's stable surface. Removing or renaming an item is a breaking
+/// change. Items intentionally absent (e.g. `SchemaRegistry`, `FieldDef`)
+/// are reachable via fully-qualified paths in `forge_core` for the rare
+/// case that needs them; macro-generated code uses those paths directly.
+///
+/// **Upstream crates:** re-exporting `axum` (the `custom_routes` factory
+/// signature returns `axum::Router`) and `schemars` (via `JsonSchema` for
+/// the `#[model]` and `#[mcp_tool]` macros) commits Forge to upgrading
+/// these in lockstep with our minor releases. A breaking upstream change
+/// would mean a Forge minor or major bump.
 pub mod prelude {
-    // Common types
+    // Common types — stable upstream re-exports.
     pub use chrono::{DateTime, Utc};
     pub use uuid::Uuid;
 
-    // Serde re-exports for user code
+    // Serde re-exports for user code (load-bearing for serde_json! macro etc.).
     pub use serde::{Deserialize, Serialize};
     pub use serde_json;
+    pub use serde_json::Value;
 
     /// Timestamp type alias for convenience.
     pub type Timestamp = DateTime<Utc>;
 
     // Core types
     pub use forge_core::auth::TokenPair;
-    pub use forge_core::cluster::NodeRole;
     pub use forge_core::config::ForgeConfig;
     pub use forge_core::cron::{CronContext, ForgeCron};
     pub use forge_core::daemon::{DaemonContext, ForgeDaemon};
+    pub use forge_core::db::ForgePool;
+    // EnvAccess is a trait that adds `ctx.env(...)` / `ctx.env_require(...)`
+    // methods — keeping it in the glob avoids forcing every handler to import
+    // it explicitly.
     pub use forge_core::env::EnvAccess;
     pub use forge_core::error::{ForgeError, Result};
     pub use forge_core::function::{
         AuthContext, DbConn, ForgeMutation, ForgeQuery, MutationContext, QueryContext,
     };
     pub use forge_core::job::{ForgeJob, JobContext, JobPriority};
-    pub use forge_core::mcp::{ForgeMcpTool, McpToolContext, McpToolResult};
+    pub use forge_core::mcp::{ForgeMcpTool, McpToolContext};
     pub use forge_core::realtime::Delta;
-    pub use forge_core::schema::{FieldDef, ModelMeta, SchemaRegistry, TableDef};
     pub use forge_core::schemars::JsonSchema;
     pub use forge_core::types::Upload;
     pub use forge_core::webhook::{ForgeWebhook, WebhookContext, WebhookResult, WebhookSignature};
     pub use forge_core::workflow::{ForgeWorkflow, WorkflowContext};
 
-    // Same axum version the runtime uses, avoids type mismatches in custom handlers.
+    // Same axum version the runtime uses, avoids type mismatches in custom_routes.
     // Only available when the `gateway` feature is enabled.
     #[cfg(feature = "gateway")]
     pub use axum;
 
     pub use crate::{Forge, ForgeBuilder};
+
+    pub use forge_core::testing::{
+        TestCronContext, TestDaemonContext, TestJobContext, TestMcpToolContext,
+        TestMutationContext, TestQueryContext, TestWebhookContext, TestWorkflowContext,
+    };
 }
 
 /// The main FORGE runtime.
@@ -143,7 +177,10 @@ pub struct Forge {
     /// the full middleware stack (auth, CORS, tracing, concurrency, timeouts)
     /// applies automatically.
     #[cfg(feature = "gateway")]
-    custom_routes_factory: Option<Box<dyn FnOnce(sqlx::PgPool) -> Router + Send + Sync>>,
+    custom_routes_factory: Option<Box<dyn FnOnce(forge_core::ForgePool) -> Router + Send + Sync>>,
+    /// Optional pluggable role resolver for RBAC.
+    #[cfg(feature = "gateway")]
+    role_resolver: Option<forge_core::SharedRoleResolver>,
 }
 
 impl Forge {
@@ -233,13 +270,7 @@ impl Forge {
     #[cfg(feature = "workflows")]
     async fn persist_workflow_definitions(&self, pool: &sqlx::PgPool) -> Result<()> {
         for info in self.workflow_registry.definitions() {
-            let status = if info.is_active {
-                "active"
-            } else if info.is_deprecated {
-                "deprecated"
-            } else {
-                "active"
-            };
+            let status = info.status.as_str();
 
             // Try to insert. If row exists, check signature matches.
             let existing = sqlx::query!(
@@ -377,6 +408,39 @@ impl Forge {
             self.persist_workflow_definitions(&pool).await?;
         }
 
+        // Drain check: any non-terminal workflow run referencing a
+        // (name, version) we don't have a handler for is stranded. Boot still
+        // succeeds — we just refuse to report ready until the operator
+        // resolves them in PG (UPDATE forge_workflow_runs SET status = ...).
+        #[cfg(feature = "workflows")]
+        let workflow_readiness = forge_runtime::WorkflowReadiness::new();
+        #[cfg(feature = "workflows")]
+        let workflow_registry_arc = std::sync::Arc::new(self.workflow_registry.clone());
+        #[cfg(feature = "workflows")]
+        {
+            let stranded = workflow_readiness
+                .refresh(&workflow_registry_arc, &pool)
+                .await?;
+            for entry in &stranded {
+                tracing::warn!(
+                    workflow = %entry.workflow_name,
+                    version = %entry.workflow_version,
+                    in_flight_count = entry.in_flight_count,
+                    oldest_started_at = %entry.oldest_started_at,
+                    sample_run_ids = ?entry.sample_run_ids,
+                    "Stranded workflow runs detected; readiness probe will return 503 until resolved. \
+                     Run: UPDATE forge_workflow_runs SET status = 'cancelled_by_operator' \
+                     (or 'retired_unresumable') WHERE id IN (...);"
+                );
+            }
+            if !stranded.is_empty() {
+                tracing::warn!(
+                    drain_pending = workflow_readiness.drain_pending(),
+                    "Boot continuing with drain_pending > 0; /_api/ready will return 503"
+                );
+            }
+        }
+
         // Get local node info
         let hostname = get_hostname();
 
@@ -487,7 +551,7 @@ impl Forge {
                 id: Some(node_id.as_uuid()),
                 capabilities: self.config.node.worker_capabilities.clone(),
                 max_concurrent: self.config.worker.max_concurrent_jobs,
-                poll_interval: Duration::from_millis(self.config.worker.poll_interval_ms),
+                poll_interval: Duration::from_millis(self.config.worker.poll_interval_ms()),
                 ..Default::default()
             };
 
@@ -619,26 +683,81 @@ impl Forge {
             let tls: Option<TlsListenConfig> =
                 TlsListenConfig::from_core(&self.config.gateway.tls)?;
 
+            // Fail early if handlers require auth but no usable credentials are configured.
+            // The registry is populated at this point so we can inspect every handler.
+            let any_requires_auth = self
+                .function_registry
+                .queries()
+                .any(|(_, info)| !info.is_public || info.required_role.is_some())
+                || self
+                    .function_registry
+                    .mutations()
+                    .any(|(_, info)| !info.is_public || info.required_role.is_some());
+
+            if any_requires_auth && !self.config.auth.is_configured() {
+                return Err(ForgeError::Config(
+                    "One or more handlers require authentication (private scope or require_role) \
+                     but auth is not configured. Set auth.jwt_secret (≥32 bytes) for HMAC or \
+                     auth.jwks_url for external identity providers."
+                        .into(),
+                ));
+            }
+
             let gateway_config = RuntimeGatewayConfig {
                 port: self.config.gateway.port,
                 max_connections: self.config.gateway.max_connections,
-                sse_max_sessions: self.config.gateway.sse_max_sessions,
-                request_timeout_secs: self.config.gateway.request_timeout_secs,
-                cors_enabled: self.config.gateway.cors_enabled
-                    || !self.config.gateway.cors_origins.is_empty(),
+                sse_max_sessions: self.config.realtime.sse_max_sessions,
+                request_timeout_secs: self.config.gateway.request_timeout_secs(),
+                cors_enabled: self.config.gateway.cors_enabled,
                 cors_origins: self.config.gateway.cors_origins.clone(),
                 auth: AuthConfig::from_forge_config(&self.config.auth)
                     .map_err(|e| ForgeError::Config(e.to_string()))?,
                 mcp: self.config.mcp.clone(),
-                quiet_routes: self.config.gateway.quiet_routes.clone(),
+                quiet_paths: self.config.gateway.quiet_paths.clone(),
                 max_body_size_bytes: self.config.gateway.max_body_size_bytes()?,
                 max_file_size_bytes: self.config.gateway.max_file_size_bytes()?,
-                token_ttl: forge_core::AuthTokenTtl {
-                    access_token_secs: self.config.auth.access_token_ttl_secs(),
-                    refresh_token_days: self.config.auth.refresh_token_ttl_days(),
-                },
+                token_ttl: forge_core::AuthTokenTtl::new(
+                    self.config.auth.access_token_ttl_secs(),
+                    self.config.auth.refresh_token_ttl_days(),
+                ),
                 project_name: self.config.project.name.clone(),
                 tls,
+                reactor_config: {
+                    let rt = &self.config.realtime;
+                    ReactorConfig {
+                        listener: ListenerConfig {
+                            buffer_size: rt.postgres_change_buffer_size,
+                            ..ListenerConfig::default()
+                        },
+                        invalidation: InvalidationConfig {
+                            debounce_ms: rt.debounce_quiet_ms(),
+                            max_debounce_ms: rt.debounce_max_ms(),
+                            ..InvalidationConfig::default()
+                        },
+                        realtime: RuntimeRealtimeConfig {
+                            max_subscriptions_per_session: rt.subscription_max_per_session,
+                        },
+                        max_concurrent_reexecutions: rt.max_concurrent_reexecutions,
+                        resync_interval_secs: rt.resync_interval_secs(),
+                        shard_count: rt.shard_count,
+                        ..ReactorConfig::default()
+                    }
+                },
+                max_rpc_batch_size: self.config.gateway.max_rpc_batch_size,
+                max_multipart_fields: self.config.gateway.max_multipart_fields,
+                security_headers: self.config.gateway.security_headers,
+                hsts: self.config.gateway.hsts,
+                trusted_proxies: self
+                    .config
+                    .gateway
+                    .trusted_proxies
+                    .iter()
+                    .filter_map(|s| {
+                        s.parse::<ipnet::IpNet>()
+                            .or_else(|_| s.parse::<std::net::IpAddr>().map(ipnet::IpNet::from))
+                            .ok()
+                    })
+                    .collect(),
             };
 
             // Build gateway server (pass Database wrapper for read replica routing)
@@ -658,13 +777,35 @@ impl Forge {
             let gateway = gateway.with_workflow_dispatcher(workflow_executor.clone());
             let mut gateway = gateway.with_mcp_registry(self.mcp_registry.clone());
 
+            let rate_limiter: std::sync::Arc<dyn forge_core::rate_limit::RateLimiterBackend> =
+                match self.config.rate_limit.mode {
+                    forge_core::config::RateLimitMode::Strict => std::sync::Arc::new(
+                        forge_runtime::StrictRateLimiter::new(db_ref.primary().clone()),
+                    ),
+                    forge_core::config::RateLimitMode::Hybrid => std::sync::Arc::new(
+                        forge_runtime::HybridRateLimiter::new(db_ref.primary().clone()),
+                    ),
+                };
+            gateway = gateway.with_rate_limiter(rate_limiter);
+            if let Some(resolver) = self.role_resolver.take() {
+                gateway = gateway.with_role_resolver(resolver);
+            }
+            #[cfg(feature = "workflows")]
+            {
+                gateway = gateway.with_workflow_readiness(
+                    workflow_registry_arc.clone(),
+                    workflow_readiness.clone(),
+                );
+            }
+
             // Wire signals (product analytics + diagnostics)
             if self.config.signals.enabled {
                 let signals_pool = std::sync::Arc::new(db_ref.analytics_pool().clone());
                 let collector = forge_runtime::signals::SignalsCollector::spawn(
                     signals_pool.clone(),
                     self.config.signals.batch_size,
-                    std::time::Duration::from_millis(self.config.signals.flush_interval_ms),
+                    self.config.signals.flush_interval_duration(),
+                    self.config.signals.channel_capacity,
                 );
                 // Explicit MMDB path means the operator wants city-level data.
                 // Fail fast rather than silently downgrading to the embedded DB.
@@ -686,14 +827,15 @@ impl Forge {
                 // Spawn session reaper
                 forge_runtime::signals::session::spawn_session_reaper(
                     signals_pool,
-                    self.config.signals.session_timeout_mins,
+                    self.config.signals.session_timeout_mins(),
                 );
 
                 tracing::info!("Signals enabled (analytics + diagnostics)");
             }
 
             if let Some(factory) = self.custom_routes_factory.take() {
-                gateway = gateway.with_custom_routes(factory(pool.clone()));
+                let forge_pool = forge_core::ForgePool::from_sqlx(pool.clone());
+                gateway = gateway.with_custom_routes(factory(forge_pool));
                 tracing::debug!("Custom routes merged into gateway middleware stack");
             }
 
@@ -787,7 +929,7 @@ impl Forge {
                                 self.config.gateway.max_connections,
                             ))
                             .layer(tower::timeout::TimeoutLayer::new(Duration::from_secs(
-                                self.config.gateway.request_timeout_secs,
+                                self.config.gateway.request_timeout_secs(),
                             ))),
                     )
                     .layer(webhook_cors);
@@ -854,6 +996,12 @@ impl Forge {
 
             let addr = gateway.addr();
             let tls = gateway.tls().cloned();
+            // Hand the gateway a shutdown signal so Axum stops accepting new
+            // connections and waits for in-flight requests to finish before
+            // we release leadership. This is what drains the outbox: each
+            // mutation's `dispatch_job`/`start_workflow` flush is part of the
+            // request's transaction, so finishing the request finishes the flush.
+            let mut gateway_shutdown_rx = shutdown.subscribe();
 
             handles.push(tokio::spawn(async move {
                 tracing::debug!(addr = %addr, "Gateway server binding");
@@ -864,7 +1012,11 @@ impl Forge {
                         return;
                     }
                 };
-                if let Err(e) = axum::serve(listener, router).await {
+                let serve = axum::serve(listener, router).with_graceful_shutdown(async move {
+                    let _ = gateway_shutdown_rx.recv().await;
+                    tracing::debug!("Gateway draining in-flight requests");
+                });
+                if let Err(e) = serve.await {
                     tracing::error!("Gateway server error: {}", e);
                 }
             }));
@@ -990,6 +1142,8 @@ pub struct ForgeBuilder {
     config: Option<ForgeConfig>,
     function_registry: FunctionRegistry,
     #[cfg(feature = "gateway")]
+    role_resolver: Option<forge_core::SharedRoleResolver>,
+    #[cfg(feature = "gateway")]
     mcp_registry: McpToolRegistry,
     #[cfg(feature = "jobs")]
     job_registry: JobRegistry,
@@ -1006,7 +1160,7 @@ pub struct ForgeBuilder {
     #[cfg(feature = "gateway")]
     frontend_handler: Option<FrontendHandler>,
     #[cfg(feature = "gateway")]
-    custom_routes_factory: Option<Box<dyn FnOnce(sqlx::PgPool) -> Router + Send + Sync>>,
+    custom_routes_factory: Option<Box<dyn FnOnce(forge_core::ForgePool) -> Router + Send + Sync>>,
 }
 
 impl ForgeBuilder {
@@ -1015,6 +1169,8 @@ impl ForgeBuilder {
         Self {
             config: None,
             function_registry: FunctionRegistry::new(),
+            #[cfg(feature = "gateway")]
+            role_resolver: None,
             #[cfg(feature = "gateway")]
             mcp_registry: McpToolRegistry::new(),
             #[cfg(feature = "jobs")]
@@ -1065,7 +1221,21 @@ impl ForgeBuilder {
         self
     }
 
-    /// Register custom axum routes built from Forge's managed `PgPool`.
+    /// Plug in a custom role resolver for RBAC extension.
+    ///
+    /// The default resolver returns the flat `roles` JWT claim as-is. Use
+    /// this to expand roles hierarchically, perform group-membership lookups,
+    /// or consult an external permission service.
+    ///
+    /// The resolver is called for every request that carries a `require_role`
+    /// constraint. Keep it cheap — cache remote lookups internally.
+    #[cfg(feature = "gateway")]
+    pub fn with_role_resolver(mut self, resolver: forge_core::SharedRoleResolver) -> Self {
+        self.role_resolver = Some(resolver);
+        self
+    }
+
+    /// Register custom axum routes built from Forge's managed pool.
     ///
     /// The factory runs once during `run()`, after the database pool is
     /// connected. The returned router is merged into the gateway's `/_api`
@@ -1077,6 +1247,12 @@ impl ForgeBuilder {
     /// built-ins under `/_api`: `/health`, `/ready`, `/rpc`, `/rpc/*`,
     /// `/events`, `/subscribe`, `/unsubscribe`, `/subscribe-job`,
     /// `/subscribe-workflow`, `/signal/*`, `/mcp`, and `/oauth/*`.
+    ///
+    /// The factory receives a [`forge_core::ForgePool`] — Forge's stable
+    /// wrapper around the underlying database pool. Drop down to sqlx with
+    /// `pool.as_sqlx_pool()` when you need to issue queries directly.
+    /// Pinning the wrapper lets Forge change its sqlx version (or swap
+    /// the driver entirely) without breaking your custom routes.
     ///
     /// If your handlers don't need the pool, ignore the argument:
     ///
@@ -1091,6 +1267,7 @@ impl ForgeBuilder {
     /// use std::sync::Arc;
     ///
     /// builder.custom_routes(|pool| {
+    ///     // Use `pool.as_sqlx_pool()` inside handlers when you need sqlx.
     ///     Router::new()
     ///         .route("/export/csv", get(export_handler))
     ///         .with_state(Arc::new(pool))
@@ -1099,7 +1276,7 @@ impl ForgeBuilder {
     #[cfg(feature = "gateway")]
     pub fn custom_routes<F>(mut self, f: F) -> Self
     where
-        F: FnOnce(sqlx::PgPool) -> Router + Send + Sync + 'static,
+        F: FnOnce(forge_core::ForgePool) -> Router + Send + Sync + 'static,
     {
         self.custom_routes_factory = Some(Box::new(f));
         self
@@ -1279,6 +1456,8 @@ impl ForgeBuilder {
             frontend_handler: self.frontend_handler,
             #[cfg(feature = "gateway")]
             custom_routes_factory: self.custom_routes_factory,
+            #[cfg(feature = "gateway")]
+            role_resolver: self.role_resolver,
         })
     }
 }
@@ -1310,6 +1489,9 @@ fn config_role_to_node_role(role: &ConfigNodeRole) -> NodeRole {
         ConfigNodeRole::Function => NodeRole::Function,
         ConfigNodeRole::Worker => NodeRole::Worker,
         ConfigNodeRole::Scheduler => NodeRole::Scheduler,
+        // ConfigNodeRole is #[non_exhaustive]; default unknown future roles to
+        // Function so the node can still serve RPCs while the runtime catches up.
+        _ => NodeRole::Function,
     }
 }
 
@@ -1323,6 +1505,8 @@ mod tests {
     use forge_core::mcp::{McpToolAnnotations, McpToolInfo};
 
     struct TestMcpTool;
+
+    impl forge_core::__sealed::Sealed for TestMcpTool {}
 
     impl ForgeMcpTool for TestMcpTool {
         type Args = serde_json::Value;

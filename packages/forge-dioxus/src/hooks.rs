@@ -457,7 +457,7 @@ where
 /// ```ignore
 /// let reorder = use_optimistic(
 ///     use_reorder_task(),
-///     use_list_tasks_live_signal(),
+///     use_list_tasks_subscription_signal(),
 ///     |tasks, args: &ReorderTaskInput| {
 ///         tasks.iter().map(|t| {
 ///             if t.id == args.id { Task { status: args.status, position: args.position, ..t.clone() } }

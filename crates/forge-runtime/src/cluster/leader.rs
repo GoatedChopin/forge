@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::time::Duration;
 
 use chrono::Utc;
@@ -50,6 +50,9 @@ pub struct LeaderElection {
     config: LeaderConfig,
     /// Uses SeqCst for cross-thread visibility of leadership state changes.
     is_leader: Arc<AtomicBool>,
+    /// Fencing token. Set on `try_become_leader`, read by leader-only writers
+    /// to scope updates to the current leadership term. `0` = no term yet.
+    current_term: Arc<AtomicI64>,
     lock_connection: Arc<Mutex<Option<sqlx::pool::PoolConnection<sqlx::Postgres>>>>,
     shutdown_tx: watch::Sender<bool>,
     shutdown_rx: watch::Receiver<bool>,
@@ -70,6 +73,7 @@ impl LeaderElection {
             role,
             config,
             is_leader: Arc::new(AtomicBool::new(false)),
+            current_term: Arc::new(AtomicI64::new(0)),
             lock_connection: Arc::new(Mutex::new(None)),
             shutdown_tx,
             shutdown_rx,
@@ -79,6 +83,18 @@ impl LeaderElection {
     /// Check if this node is the leader.
     pub fn is_leader(&self) -> bool {
         self.is_leader.load(Ordering::SeqCst)
+    }
+
+    /// Current fencing term. Returns `Some(term)` while leader, `None` otherwise.
+    /// Leader-only writers should pin updates to this term so a deposed leader's
+    /// in-flight write is silently rejected once a new leader has taken over.
+    pub fn current_term(&self) -> Option<i64> {
+        if self.is_leader() {
+            let term = self.current_term.load(Ordering::SeqCst);
+            if term > 0 { Some(term) } else { None }
+        } else {
+            None
+        }
     }
 
     /// Get a shutdown receiver.
@@ -115,31 +131,42 @@ impl LeaderElection {
         super::metrics::record_leader_election_attempt(self.role.as_str(), acquired);
 
         if acquired {
-            // Record leadership in database for visibility
+            // Record leadership in database for visibility. Bump the fencing
+            // term: every successful acquire (initial or after a failover)
+            // increments it, so writes from a previously-deposed leader carry
+            // a stale term and can be rejected.
             let lease_until =
                 Utc::now() + chrono::Duration::seconds(self.config.lease_duration.as_secs() as i64);
 
-            sqlx::query!(
+            let new_term = sqlx::query!(
                 r#"
-                INSERT INTO forge_leaders (role, node_id, acquired_at, lease_until)
-                VALUES ($1, $2, NOW(), $3)
+                INSERT INTO forge_leaders (role, node_id, term, acquired_at, lease_until)
+                VALUES ($1, $2, 1, NOW(), $3)
                 ON CONFLICT (role) DO UPDATE SET
                     node_id = EXCLUDED.node_id,
+                    term = forge_leaders.term + 1,
                     acquired_at = NOW(),
                     lease_until = EXCLUDED.lease_until
+                RETURNING term as "term!: i64"
                 "#,
                 self.role.as_str(),
                 self.node_id.as_uuid(),
                 lease_until,
             )
-            .execute(&self.pool)
+            .fetch_one(&self.pool)
             .await
-            .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
+            .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?
+            .term;
 
+            self.current_term.store(new_term, Ordering::SeqCst);
             self.is_leader.store(true, Ordering::SeqCst);
             super::metrics::set_is_leader(self.role.as_str(), true);
             *self.lock_connection.lock().await = Some(conn);
-            tracing::info!(role = self.role.as_str(), "Acquired leadership");
+            tracing::info!(
+                role = self.role.as_str(),
+                term = new_term,
+                "Acquired leadership"
+            );
         }
 
         Ok(acquired)
@@ -206,6 +233,7 @@ impl LeaderElection {
         .map_err(|e| forge_core::ForgeError::Database(e.to_string()))?;
 
         self.is_leader.store(false, Ordering::SeqCst);
+        self.current_term.store(0, Ordering::SeqCst);
         super::metrics::set_is_leader(self.role.as_str(), false);
         tracing::info!(role = self.role.as_str(), "Released leadership");
 

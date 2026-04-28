@@ -36,6 +36,7 @@ pub struct Item { ... }
 - Don't include the type in the fn name (`heartbeat`, not `heartbeat_daemon` → avoids `HeartbeatDaemonDaemon`).
 - Omit the args parameter entirely when a handler takes no input — no `Option<()>` or dummy structs.
 - Handlers require auth by default; opt out with `public`.
+- `public` and `unscoped` are orthogonal. `public` skips auth. `unscoped` skips the compile-time row-filter check (`WHERE user_id = ...`). A query can be authenticated but unscoped (admin dashboard), or public without unscoped (public queries already skip scope checks).
 - Register every handler in `src/main.rs` via `.register_*::<NameType>()` or `.auto_register()`. Macros alone don't wire them in.
 - Adding a new handler file under `src/functions/` requires `pub mod <name>;` in `src/functions/mod.rs`. The simplest path is `forge new <kind> <name>`, which writes the file and updates `mod.rs` (and `src/main.rs` if needed) for you. If you write the file by hand, remember the `pub mod` line — the macro generates the inventory entry, but the module must be reachable from the crate root.
 - Attribute values like `log = "info"` must be quoted strings.
@@ -53,7 +54,7 @@ pub struct Item { ... }
   - `forge migrate prepare` hard-fails when `cargo-sqlx` is missing. Install with `cargo install sqlx-cli --no-default-features --features postgres`.
   - A passing `cargo sqlx prepare` already implies a passing `SQLX_OFFLINE=true cargo check` for the same code — don't chain a redundant check call right after.
 - Cast enums explicitly in SELECT: `status as "status: ScanStatus"`. Use `"column?"` only to override nullability inference.
-- Dispatch jobs / workflows only inside `transactional` mutations. See [Patterns](./patterns.md#background-jobs).
+- Dispatch jobs / workflows only from mutations. Transactions are on by default. Never set `transactional = false` on a mutation that dispatches — the macro errors at compile time. See [Patterns](./patterns.md#background-jobs).
 - **Pick the right handle** — details in [API Reference](./api.md#database-access--three-shapes):
 
 ```rust
@@ -76,6 +77,7 @@ sqlx::query_as!(User, "...", id).fetch_one(&mut conn).await?
 - `ctx.sleep()`, not `tokio::sleep` — only `ctx.sleep()` persists across restarts.
 - Step names are cache keys. Renaming breaks resume. Bump the workflow version instead.
 - Signature mismatch at startup blocks runs and flips `/_api/ready` to 503. Check for in-flight runs before removing an old version.
+- Removing a deprecated version's code while runs are still in-flight strands them: `/_api/ready` reports `workflows: false` (with the per-group warning logged on the server) until an operator clears the rows directly in PG (`UPDATE forge_workflow_runs SET status = 'retired_unresumable' ...`). There's no admin HTTP route — the database is the operator interface, and the public probe deliberately omits the drain count so it can't be polled anonymously.
 - Always set a timeout on `wait_for_event` so stalls become observable.
 
 ## 6. Frontend
@@ -89,31 +91,41 @@ sqlx::query_as!(User, "...", id).fetch_one(&mut conn).await?
 ## 7. Authentication
 
 - `jwt_secret` in `forge.toml` is required for `issue_token_pair()`. TTLs default to 1h / 30d if omitted.
+- **JWT secret must be at least 32 bytes** — startup hard-fails with a config error pointing at `openssl rand -base64 32`. Shorter secrets are rejected before the server binds.
 - Drop `ctx.conn()` before calling `issue_token_pair()` — it needs its own connection and will deadlock on pool exhaustion.
 - Refresh calls must be unauthenticated — the built-in `refresh_token` provider does this, don't hand-roll.
 - Reserve `Forbidden` for real permission violations. Using it for billing/plan state triggers the global `onAuthError` handler and logs the user out. Use `InvalidArgument` for business-rule rejections.
+- **`audience_required` defaults to `true` when auth is enabled** — adding `jwt_audience` to an existing project breaks existing tokens that don't carry an `aud` claim. Set `audience_required = false` in `forge.toml` while migrating, then re-enable once all clients are issuing tokens with `aud`.
+- **Reserved claim names**: `ClaimsBuilder::claim("sub", ...)` (and `exp`, `iat`, `nbf`, `jti`, `iss`, `aud`, `roles`) returns `ForgeError::InvalidArgument` at call time. Use the typed setters: `.user_id()`, `.role()`, `.audience()`. The `Custom` rate-limit key reads claims by name — but if the claim doesn't actually exist in the JWT, the bucket falls back to `"unknown"`, silently grouping all callers without that claim into one shared bucket.
 
-## 8. Custom Routes and Uploads
+## 8. Error Shape
+
+- **Rate-limit retry delays are top-level**, not under `details`. In Svelte, `error.details?.retry_after_secs` is always `undefined` — check `error.retryAfterSecs` directly. In Dioxus, check `error.retry_after_secs`. The wire shape is `{ code, message, retry_after_secs?, details? }`.
+- Match errors by `code` string (`"RATE_LIMITED"`, `"NOT_FOUND"`, `"UNAUTHORIZED"`) on the frontend, not by message text.
+
+## 9. Custom Routes and Uploads
 
 - **Custom routes live under `/_api`**: `ForgeBuilder::custom_routes(|pool| ...)` merges into the gateway router. A declared `/export/csv` resolves to `/_api/export/csv`. Document the full path to clients — writing the raw declaration is a common off-by-prefix bug.
 - **Never `.unwrap()` `AuthContext`**: The auth middleware still forwards unauthenticated requests to your handler. `auth.user_id().unwrap()` panics and hits the workspace `clippy::unwrap_used` deny. Use `match auth.user_id()` with an early 401 return.
 - **Don't re-implement auth in custom handlers**: Middleware already parses the JWT and injects `Extension<AuthContext>`. Do not reach for headers or parse tokens yourself.
 - **Per-file upload cap is independent of total body**: `gateway.max_body_size` caps the full multipart body, but individual files are capped by `gateway.max_file_size` (defaults to `"10mb"`). A mutation that legitimately accepts a big file must declare `max_size = "…"`; that value becomes both the total and per-file limit for that endpoint.
+- **CORS startup validation**: `cors_enabled = true` with an empty `cors_origins` list fails at startup with a config error. Mixing `"*"` with concrete origins in the same list also fails — pick one or the other.
 
-## 9. Resilience & Hygiene
+## 10. Resilience & Hygiene
 
 - Always check entity existence with `fetch_optional().await?.ok_or_else(|| ForgeError::NotFound(format!(...)))`. See [Resilience](./resilience.md#2-database-and-data-integrity).
 - Include IDs and context in error messages.
 - Delete commented-out code immediately — Git is the history.
 - Run `forge check` after every change to catch orphans.
+- Default rate-limit mode is `hybrid`: `key = "user"` and `key = "ip"` are per-node, so a `10/min` limit becomes effectively `10 × node_count` across the cluster. Fine for DDoS protection, wrong for billing-grade quotas. Set `[rate_limit] mode = "strict"` in `forge.toml` for cluster-exact counts (every check hits PG).
 
-## 10. Code Reuse
+## 11. Code Reuse
 
 - Don't hand-roll `SELECT * FROM users WHERE id = $1` in every handler. Extract `current_user(db, user_id)`. See [Recipes](./recipes.md#1-current-user-helper).
 - Don't hand-roll auth storage in Svelte — the generated `auth.svelte.ts` (`setAuth`, `clearAuth`, `startRefreshLoop`) handles SSE reconnection. See [Svelte](./frontend/svelte.md#authentication-and-session-management).
 - Don't `INSERT INTO forge_jobs` / `forge_workflow_runs` / `forge_signals_events` manually. Direct writes skip the outbox, break idempotency, and break SKIP LOCKED ordering. Use `ctx.dispatch_job()`, `ctx.start_workflow()`, `ctx.record_signal()`. `forge check` fails the build on raw writes.
 
-## 11. Integration Anti-patterns
+## 12. Integration Anti-patterns
 
 - **Email HTML inlined in handlers**: escaping, i18n, and preview-time testing become painful. Use [`askama`](https://docs.rs/askama) templates under `templates/`. See [Recipes](./recipes.md#4-transactional-email-askama--smtp).
 - **`serde_json::Value` webhooks**: untyped payloads defer validation to runtime. Declare a typed struct — the macro deserialises for you.
@@ -121,7 +133,13 @@ sqlx::query_as!(User, "...", id).fetch_one(&mut conn).await?
 - **Hand-rolled HMAC verification**: use the `WebhookSignature` constructors. See [API Reference](./api.md#signature-constructors).
 - **Provider SDKs for payments / AI / S3**: stay neutral — standard protocols (HMAC, S3 API, HTTP JSON) work everywhere. See [Recipes](./recipes.md).
 
-## 12. Svelte Reactive
+## 13. Number Precision Across the Wire
+
+- TypeScript / JavaScript represent every number as IEEE-754 double, so values above `Number.MAX_SAFE_INTEGER` (2^53 − 1, roughly 9e15) silently lose precision after `JSON.parse`. Forge codegen still maps Rust `i64` / `u64` to TS `number` to match the default serde JSON encoding.
+- For values that genuinely need 64-bit precision — Snowflake / Twitter-style IDs, large monotonic counters, microsecond timestamps — declare the field as `String` in Rust and convert at the boundary, or use `serde_with::DisplayFromStr`. Anything that fits in `i32` (under ±2.1e9) is safe to keep as `i32`.
+- `Instant` / `DateTime<Utc>` already serialise as RFC 3339 strings, so timestamps never hit this trap unless you explicitly model them as `i64`.
+
+## 14. Svelte Reactive
 
 - Don't wrap `listTodos$()` runes helpers in a `toReactive` adapter. They already manage lifecycle via `$effect` roots — wrapping reintroduces the leaks the rune form eliminates. See [Svelte](./frontend/svelte.md#using-svelte-5-runes).
 - Never create a store inside a `$derived`. Opens a new SSE subscription every recomputation.

@@ -10,6 +10,7 @@ use crate::function::AuthContext;
 use crate::http::CircuitBreakerClient;
 
 /// Context available to cron handlers.
+#[non_exhaustive]
 pub struct CronContext {
     /// Cron run ID.
     pub run_id: Uuid,

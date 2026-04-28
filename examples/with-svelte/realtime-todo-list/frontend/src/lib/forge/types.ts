@@ -17,4 +17,17 @@ export interface UpdateTodoInput {
   completed?: boolean;
 }
 
+export type Cursor = string;
+
+export interface PageInfo {
+  has_next_page: boolean;
+  end_cursor?: Cursor;
+  total_count?: number;
+}
+
+export interface Page<T> {
+  items: T[];
+  page_info: PageInfo;
+}
+
 export type { ForgeError, QueryResult, SubscriptionResult } from "@forge-rs/svelte";

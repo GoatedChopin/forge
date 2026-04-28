@@ -8,7 +8,7 @@ use forge_core::cluster::NodeId;
 use forge_core::function::AuthContext;
 use forge_core::realtime::{
     AuthScope, Change, QueryGroup, QueryGroupId, ReadSet, SessionId, SessionInfo, SessionStatus,
-    Subscriber, SubscriberId, SubscriptionId,
+    Subscriber, SubscriberId, SubscriptionId, SubscriptionKey,
 };
 
 /// Session manager for tracking WebSocket connections.
@@ -75,6 +75,9 @@ impl SessionManager {
                 SessionStatus::Connected => counts.connected += 1,
                 SessionStatus::Reconnecting => counts.reconnecting += 1,
                 SessionStatus::Disconnected => counts.disconnected += 1,
+                // SessionStatus is #[non_exhaustive]; future variants are
+                // counted in `total` only.
+                _ => {}
             }
             counts.total += 1;
         }
@@ -113,7 +116,7 @@ pub struct SubscriptionManager {
     /// Query groups indexed by ID. Sharded for concurrent access.
     groups: DashMap<QueryGroupId, QueryGroup>,
     /// Lookup: hash(query_name+args+auth_scope) -> QueryGroupId for dedup.
-    group_lookup: DashMap<u64, QueryGroupId>,
+    group_lookup: DashMap<SubscriptionKey, QueryGroupId>,
     /// Subscribers indexed by auto-incrementing key.
     subscribers: Arc<Mutex<SubscriberStore>>,
     /// Session -> subscriber IDs for fast cleanup on disconnect.
@@ -161,11 +164,16 @@ impl SubscriberStore {
 impl SubscriptionManager {
     /// Create a new subscription manager.
     pub fn new(max_per_session: usize) -> Self {
+        Self::with_shard_count(max_per_session, 64)
+    }
+
+    /// Create a new subscription manager with a custom shard count.
+    pub fn with_shard_count(max_per_session: usize, shard_count: usize) -> Self {
         Self {
-            groups: DashMap::with_shard_amount(64),
-            group_lookup: DashMap::with_shard_amount(64),
+            groups: DashMap::with_shard_amount(shard_count),
+            group_lookup: DashMap::with_shard_amount(shard_count),
             subscribers: Arc::new(Mutex::new(SubscriberStore::new())),
-            session_subscribers: DashMap::with_shard_amount(64),
+            session_subscribers: DashMap::with_shard_amount(shard_count),
             next_group_id: AtomicU32::new(0),
             max_per_session,
         }
@@ -414,6 +422,13 @@ impl SubscriptionManager {
     /// Get group count.
     pub fn group_count(&self) -> usize {
         self.groups.len()
+    }
+
+    /// Snapshot every active query group ID. Used by the reactor's periodic
+    /// resync sweep: PG drops `LISTEN/NOTIFY` payloads when listeners are
+    /// slow, so we re-evaluate every group on a timer to recover from drops.
+    pub fn all_group_ids(&self) -> Vec<QueryGroupId> {
+        self.groups.iter().map(|entry| entry.id).collect()
     }
 }
 

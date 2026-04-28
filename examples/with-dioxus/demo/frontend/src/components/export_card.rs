@@ -17,7 +17,7 @@ pub fn ExportCard() -> Element {
                 button { onclick: {
                     let signals = signals.clone();
                     move |_| {
-                        signals.track("export_started", json!({"format": "csv"}));
+                        signals.track_with_properties("export_started", json!({"format": "csv"}));
                         run_nonce += 1;
                     }
                 }, "Start Export" }

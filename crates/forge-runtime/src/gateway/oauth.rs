@@ -73,9 +73,14 @@ pub struct OAuthState {
     auth_is_hmac: bool,
     project_name: String,
     jwt_secret: String,
+    session_cookie_ttl_secs: i64,
     rate_limiter: OAuthRateLimiter,
     /// CSRF tokens: token -> expiry
     csrf_tokens: Arc<RwLock<HashMap<String, Instant>>>,
+    /// Whether `POST /_api/oauth/register` accepts unauthenticated callers.
+    /// Mirrors `mcp.allow_unauthenticated_dcr` from forge.toml. Defaults
+    /// to `false` so a fresh deployment is not an open client registry.
+    allow_unauthenticated_dcr: bool,
 }
 
 impl OAuthState {
@@ -89,6 +94,8 @@ impl OAuthState {
         auth_is_hmac: bool,
         project_name: String,
         jwt_secret: String,
+        session_cookie_ttl_secs: i64,
+        allow_unauthenticated_dcr: bool,
     ) -> Self {
         Self {
             pool,
@@ -99,8 +106,10 @@ impl OAuthState {
             auth_is_hmac,
             project_name,
             jwt_secret,
+            session_cookie_ttl_secs,
             rate_limiter: OAuthRateLimiter::default(),
             csrf_tokens: Arc::new(RwLock::new(HashMap::new())),
+            allow_unauthenticated_dcr,
         }
     }
 
@@ -199,6 +208,38 @@ pub async fn oauth_register(
     State(state): State<Arc<OAuthState>>,
     Json(req): Json<RegisterRequest>,
 ) -> Response {
+    // RFC 7591 Dynamic Client Registration. By default we require the caller
+    // to present a valid JWT, so a fresh deployment is not an open client
+    // registry. Operators that want public registration (e.g. for IDE
+    // integrations) flip `mcp.allow_unauthenticated_dcr = true` in forge.toml.
+    if !state.allow_unauthenticated_dcr {
+        let bearer = headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.strip_prefix("Bearer "))
+            .map(str::trim);
+        let authenticated = match bearer {
+            Some(token) if !token.is_empty() => state
+                .auth_middleware
+                .validate_token_async(token)
+                .await
+                .is_ok(),
+            _ => false,
+        };
+        if !authenticated {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({
+                    "error": "registration_not_supported",
+                    "error_description": "Dynamic client registration requires authentication. \
+                        Set `[mcp] allow_unauthenticated_dcr = true` in forge.toml to enable \
+                        anonymous registration."
+                })),
+            )
+                .into_response();
+        }
+    }
+
     let ip = client_ip(&headers);
     let rate_key = format!("oauth_register:{ip}");
     if !state
@@ -448,7 +489,7 @@ pub async fn oauth_authorize_get(
         HeaderValue::from_static("frame-ancestors 'none'"),
     );
     // Set CSRF cookie (T1, T5)
-    let csrf_secure_flag = if is_https(&headers) { "; Secure" } else { "" };
+    let csrf_secure_flag = "; Secure";
     let cookie = format!(
         "forge_oauth_csrf={csrf_token}; Path=/_api/oauth/; HttpOnly; SameSite=Lax; Max-Age=600{csrf_secure_flag}"
     );
@@ -701,10 +742,12 @@ pub async fn oauth_authorize_post(
     // Set session cookie so the next authorize visit shows consent directly
     // instead of the login form. This is same-origin (backend serves both
     // the authorize page and this POST), so the cookie sticks.
-    let cookie_value = super::auth::sign_session_cookie(&user_id.to_string(), &state.jwt_secret);
-    let secure_flag = if is_https(&headers) { "; Secure" } else { "" };
+    let cookie_ttl = state.session_cookie_ttl_secs;
+    let cookie_value =
+        super::auth::sign_session_cookie(&user_id.to_string(), &state.jwt_secret, cookie_ttl);
+    let secure_flag = "; Secure";
     let session_cookie = format!(
-        "forge_session={cookie_value}; Path=/_api/oauth/; HttpOnly; SameSite=Lax; Max-Age=86400{secure_flag}"
+        "forge_session={cookie_value}; Path=/_api/oauth/; HttpOnly; SameSite=Lax; Max-Age={cookie_ttl}{secure_flag}"
     );
     if let Ok(val) = HeaderValue::from_str(&session_cookie) {
         response.headers_mut().append(header::SET_COOKIE, val);
@@ -894,7 +937,6 @@ async fn handle_refresh(state: &OAuthState, req: &TokenRequest) -> Response {
     let pair = forge_core::auth::tokens::rotate_refresh_token_with_client(
         &state.pool,
         refresh_token,
-        &["user"],
         access_ttl,
         refresh_ttl,
         client_id,
@@ -927,20 +969,12 @@ fn mcp_token_issuer(
         let claims = Claims::builder()
             .subject(uid)
             .roles(roles.iter().map(|s| s.to_string()).collect())
-            .claim("aud".to_string(), serde_json::json!(MCP_AUDIENCE))
+            .audience(MCP_AUDIENCE)
             .duration_secs(ttl)
             .build()
             .map_err(forge_core::ForgeError::Internal)?;
         issuer.sign(&claims)
     }
-}
-
-fn is_https(headers: &HeaderMap) -> bool {
-    headers
-        .get("x-forwarded-proto")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s == "https")
-        .unwrap_or(false)
 }
 
 fn token_error(error: &str, description: &str) -> Response {

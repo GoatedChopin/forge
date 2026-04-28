@@ -24,6 +24,7 @@ pub mod function;
 pub mod migrations;
 pub mod observability;
 pub mod rate_limit;
+pub(crate) mod stable_hash;
 pub mod testing;
 
 // Optional subsystems
@@ -62,11 +63,11 @@ pub use cluster::{
 };
 pub use db::Database;
 pub use function::{FunctionExecutor, FunctionRegistry, FunctionRouter, RouteResult};
-pub use migrations::{MigrationExecutor, MigrationGenerator, SchemaDiff};
+pub use migrations::{MigrationGenerator, SchemaDiff};
 pub use observability::{
     TelemetryConfig, TelemetryError, build_env_filter, init_telemetry, shutdown_telemetry,
 };
-pub use rate_limit::RateLimiter;
+pub use rate_limit::{HybridRateLimiter, StrictRateLimiter};
 
 #[cfg(feature = "cron")]
 pub use cron::{CronEntry, CronRecord, CronRegistry, CronRunner, CronStatus};
@@ -93,6 +94,6 @@ pub use realtime::{
 pub use webhook::{WebhookEntry, WebhookRegistry, WebhookState, webhook_handler};
 #[cfg(feature = "workflows")]
 pub use workflow::{
-    EventStore, WorkflowEntry, WorkflowExecutor, WorkflowRecord, WorkflowRegistry,
-    WorkflowScheduler, WorkflowSchedulerConfig, WorkflowStepRecord,
+    DrainEntry, EventStore, WorkflowEntry, WorkflowExecutor, WorkflowReadiness, WorkflowRecord,
+    WorkflowRegistry, WorkflowScheduler, WorkflowSchedulerConfig, WorkflowStepRecord,
 };

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use forge_core::rate_limit::RateLimiterBackend;
 use forge_core::{AuthContext, ForgeError, JobDispatch, RequestMetadata, Result, WorkflowDispatch};
 use serde_json::Value;
 use tokio::time::timeout;
@@ -105,6 +106,22 @@ impl FunctionExecutor {
         self.router.set_token_ttl(ttl);
     }
 
+    /// Replace the rate-limiter backend on the underlying router.
+    pub fn with_rate_limiter(mut self, rate_limiter: Arc<dyn RateLimiterBackend>) -> Self {
+        self.router = self.router.with_rate_limiter(rate_limiter);
+        self
+    }
+
+    /// Replace the rate-limiter backend (mutable variant for late binding).
+    pub fn set_rate_limiter(&mut self, rate_limiter: Arc<dyn RateLimiterBackend>) {
+        self.router.set_rate_limiter(rate_limiter);
+    }
+
+    /// Replace the role resolver (mutable variant for late binding).
+    pub fn set_role_resolver(&mut self, resolver: forge_core::SharedRoleResolver) {
+        self.router.set_role_resolver(resolver);
+    }
+
     /// Execute a function call.
     pub async fn execute(
         &self,
@@ -128,9 +145,9 @@ impl FunctionExecutor {
         let signal_ctx = self.signals_collector.as_ref().map(|_| SignalContext {
             user_id: auth.user_id(),
             tenant_id: auth.tenant_id(),
-            correlation_id: request.correlation_id.clone(),
-            client_ip: request.client_ip.clone(),
-            user_agent: request.user_agent.clone(),
+            correlation_id: request.correlation_id().map(str::to_string),
+            client_ip: request.client_ip().map(str::to_string),
+            user_agent: request.user_agent().map(str::to_string),
         });
 
         let span = tracing::info_span!(
@@ -280,7 +297,7 @@ impl FunctionExecutor {
     #[allow(clippy::too_many_arguments)]
     fn log_execution(
         &self,
-        log_level: &str,
+        log_level: forge_core::LogLevel,
         function_name: &str,
         kind: &str,
         input: &Value,
@@ -323,27 +340,29 @@ impl FunctionExecutor {
         }
 
         match log_level {
-            "off" => {}
-            "error" => log_fn!(error),
-            "warn" => log_fn!(warn),
-            "info" => log_fn!(info),
-            "debug" => log_fn!(debug),
+            forge_core::LogLevel::Off => {}
+            forge_core::LogLevel::Error => log_fn!(error),
+            forge_core::LogLevel::Warn => log_fn!(warn),
+            forge_core::LogLevel::Info => log_fn!(info),
+            forge_core::LogLevel::Debug => log_fn!(debug),
+            forge_core::LogLevel::Trace => log_fn!(trace),
             _ => log_fn!(trace),
         }
     }
 
     /// Mutations default to "info" because writes are worth tracking.
     /// Queries default to "debug" since they're high-volume.
-    fn get_function_log_level(&self, function_name: &str) -> &'static str {
+    fn get_function_log_level(&self, function_name: &str) -> forge_core::LogLevel {
         self.registry
             .get(function_name)
             .map(|entry| {
                 entry.info().log_level.unwrap_or(match entry.kind() {
-                    forge_core::FunctionKind::Mutation => "info",
-                    forge_core::FunctionKind::Query => "debug",
+                    forge_core::FunctionKind::Mutation => forge_core::LogLevel::Info,
+                    forge_core::FunctionKind::Query => forge_core::LogLevel::Debug,
+                    _ => forge_core::LogLevel::Info,
                 })
             })
-            .unwrap_or("info")
+            .unwrap_or(forge_core::LogLevel::Info)
     }
 
     /// Get the timeout for a specific function.
@@ -351,7 +370,6 @@ impl FunctionExecutor {
         self.registry
             .get(function_name)
             .and_then(|entry| entry.info().timeout)
-            .map(Duration::from_secs)
             .unwrap_or(self.default_timeout)
     }
 

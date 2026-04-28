@@ -6,11 +6,12 @@ use std::time::Duration;
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::error::Result;
+use crate::metadata::HandlerMetadata;
 
 use super::context::JobContext;
 
 /// Trait for FORGE job handlers.
-pub trait ForgeJob: Send + Sync + 'static {
+pub trait ForgeJob: crate::__sealed::Sealed + Send + Sync + 'static {
     /// Input arguments type.
     type Args: DeserializeOwned + Serialize + Send + Sync;
     /// Output result type.
@@ -18,6 +19,11 @@ pub trait ForgeJob: Send + Sync + 'static {
 
     /// Get job metadata.
     fn info() -> JobInfo;
+
+    /// Unified metadata for uniform consumers (observability, admin, codegen).
+    fn metadata() -> HandlerMetadata {
+        HandlerMetadata::from(&Self::info())
+    }
 
     /// Execute the job.
     fn execute(
@@ -36,10 +42,16 @@ pub trait ForgeJob: Send + Sync + 'static {
 }
 
 /// Job metadata.
+///
+/// Constructed by the `#[job]` macro. Adding a field is a breaking change for
+/// hand-written `ForgeJob` impls; stage extensions through a builder or major
+/// bump.
 #[derive(Debug, Clone)]
 pub struct JobInfo {
     /// Job name (used for routing).
     pub name: &'static str,
+    /// Human-readable description of the job's purpose.
+    pub description: Option<&'static str>,
     /// Job timeout.
     pub timeout: Duration,
     /// Default timeout for outbound HTTP requests made by this job.
@@ -67,6 +79,7 @@ impl Default for JobInfo {
     fn default() -> Self {
         Self {
             name: "",
+            description: None,
             timeout: Duration::from_secs(3600), // 1 hour default
             http_timeout: None,
             priority: JobPriority::Normal,
@@ -83,6 +96,7 @@ impl Default for JobInfo {
 
 /// Job priority levels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[non_exhaustive]
 pub enum JobPriority {
     Background = 0,
     Low = 25,
@@ -138,6 +152,7 @@ impl FromStr for JobPriority {
 
 /// Job status in the queue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum JobStatus {
     /// Waiting to be claimed.
     Pending,
@@ -207,6 +222,10 @@ impl FromStr for JobStatus {
 }
 
 /// Retry configuration for jobs.
+///
+/// Constructed by the `#[job]` macro. Adding a field is a breaking change
+/// for hand-written `ForgeJob` impls; stage extensions through a builder
+/// or major bump.
 #[derive(Debug, Clone)]
 pub struct RetryConfig {
     /// Maximum number of retry attempts.
@@ -245,6 +264,7 @@ impl RetryConfig {
 
 /// Backoff strategy for retries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum BackoffStrategy {
     /// Same delay each time.
     Fixed,

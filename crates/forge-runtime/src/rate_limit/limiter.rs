@@ -1,20 +1,26 @@
+use std::future::Future;
+use std::pin::Pin;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use sqlx::PgPool;
 
-use forge_core::rate_limit::{RateLimitConfig, RateLimitKey, RateLimitResult};
+use forge_core::rate_limit::{RateLimitConfig, RateLimitKey, RateLimitResult, RateLimiterBackend};
 use forge_core::{AuthContext, ForgeError, RequestMetadata, Result};
 
-/// Rate limiter using PostgreSQL for state storage.
+/// Strict rate limiter backed entirely by PostgreSQL.
+///
+/// Every check round-trips to PG, so limits are cluster-wide correct at the
+/// cost of one query per rate-limited request. Right for billing-grade
+/// quotas; for DDoS protection prefer [`HybridRateLimiter`].
 ///
 /// Implements token bucket algorithm with atomic updates.
-pub struct RateLimiter {
+pub struct StrictRateLimiter {
     pool: PgPool,
 }
 
-impl RateLimiter {
+impl StrictRateLimiter {
     /// Create a new rate limiter.
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
@@ -77,14 +83,14 @@ impl RateLimiter {
     ) -> String {
         match key_type {
             RateLimitKey::User => {
-                let user_id = auth
-                    .user_id()
-                    .map(|u| u.to_string())
-                    .unwrap_or_else(|| "anonymous".to_string());
+                let user_id = auth.user_id().map(|u| u.to_string()).unwrap_or_else(|| {
+                    let ip = request.client_ip().unwrap_or("unknown");
+                    format!("anon-{ip}")
+                });
                 format!("user:{}:{}", user_id, action_name)
             }
             RateLimitKey::Ip => {
-                let ip = request.client_ip.as_deref().unwrap_or("unknown");
+                let ip = request.client_ip().unwrap_or("unknown");
                 format!("ip:{}:{}", ip, action_name)
             }
             RateLimitKey::Tenant => {
@@ -104,6 +110,16 @@ impl RateLimiter {
             RateLimitKey::Global => {
                 format!("global:{}", action_name)
             }
+            RateLimitKey::Custom(claim_name) => {
+                let value = auth
+                    .claim(&claim_name)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                format!("custom:{}:{}:{}", claim_name, value, action_name)
+            }
+            // RateLimitKey is #[non_exhaustive]; future keys collapse to a
+            // global bucket until the runtime adds an explicit handler.
+            _ => format!("global:{}", action_name),
         }
     }
 
@@ -215,24 +231,31 @@ impl LocalBucket {
     }
 }
 
-/// Maximum number of local rate limit buckets to prevent unbounded memory growth.
-/// When exceeded, a cleanup is triggered to evict idle entries.
-const MAX_LOCAL_BUCKETS: usize = 100_000;
-
 /// Hybrid rate limiter with in-memory fast path and periodic DB sync.
 ///
-/// Per-user/per-IP checks use a local DashMap for sub-microsecond decisions.
-/// Global keys always hit the database for strict cross-node consistency.
+/// Per-user/per-IP checks use a local DashMap for sub-microsecond decisions,
+/// so a `100 req/min` limit becomes `100 × N` across an N-node cluster. Right
+/// for DDoS protection where the threshold is approximate. For cluster-wide
+/// correctness (e.g. billing quotas) use [`StrictRateLimiter`].
+///
+/// `Global` keys always hit the database for cross-node consistency.
 pub struct HybridRateLimiter {
     local: DashMap<String, LocalBucket>,
-    db_limiter: RateLimiter,
+    db_limiter: StrictRateLimiter,
+    max_local_buckets: usize,
 }
 
 impl HybridRateLimiter {
     pub fn new(pool: PgPool) -> Self {
+        Self::with_max_buckets(pool, 100_000)
+    }
+
+    /// Create a hybrid rate limiter with a custom local bucket limit.
+    pub fn with_max_buckets(pool: PgPool, max_local_buckets: usize) -> Self {
         Self {
             local: DashMap::new(),
-            db_limiter: RateLimiter::new(pool),
+            db_limiter: StrictRateLimiter::new(pool),
+            max_local_buckets,
         }
     }
 
@@ -251,7 +274,7 @@ impl HybridRateLimiter {
         let refill_rate = config.refill_rate();
 
         // Evict idle buckets when the map gets too large to prevent memory exhaustion
-        if self.local.len() > MAX_LOCAL_BUCKETS {
+        if self.local.len() > self.max_local_buckets {
             self.cleanup_local(Duration::from_secs(300)); // evict entries idle > 5 min
         }
 
@@ -307,6 +330,62 @@ impl HybridRateLimiter {
     }
 }
 
+impl RateLimiterBackend for StrictRateLimiter {
+    fn check<'a>(
+        &'a self,
+        bucket_key: &'a str,
+        config: &'a RateLimitConfig,
+    ) -> Pin<Box<dyn Future<Output = Result<RateLimitResult>> + Send + 'a>> {
+        Box::pin(StrictRateLimiter::check(self, bucket_key, config))
+    }
+
+    fn build_key(
+        &self,
+        key_type: RateLimitKey,
+        action_name: &str,
+        auth: &AuthContext,
+        request: &RequestMetadata,
+    ) -> String {
+        StrictRateLimiter::build_key(self, key_type, action_name, auth, request)
+    }
+
+    fn enforce<'a>(
+        &'a self,
+        bucket_key: &'a str,
+        config: &'a RateLimitConfig,
+    ) -> Pin<Box<dyn Future<Output = Result<RateLimitResult>> + Send + 'a>> {
+        Box::pin(StrictRateLimiter::enforce(self, bucket_key, config))
+    }
+}
+
+impl RateLimiterBackend for HybridRateLimiter {
+    fn check<'a>(
+        &'a self,
+        bucket_key: &'a str,
+        config: &'a RateLimitConfig,
+    ) -> Pin<Box<dyn Future<Output = Result<RateLimitResult>> + Send + 'a>> {
+        Box::pin(HybridRateLimiter::check(self, bucket_key, config))
+    }
+
+    fn build_key(
+        &self,
+        key_type: RateLimitKey,
+        action_name: &str,
+        auth: &AuthContext,
+        request: &RequestMetadata,
+    ) -> String {
+        HybridRateLimiter::build_key(self, key_type, action_name, auth, request)
+    }
+
+    fn enforce<'a>(
+        &'a self,
+        bucket_key: &'a str,
+        config: &'a RateLimitConfig,
+    ) -> Pin<Box<dyn Future<Output = Result<RateLimitResult>> + Send + 'a>> {
+        Box::pin(HybridRateLimiter::enforce(self, bucket_key, config))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -318,7 +397,7 @@ mod tests {
             .connect_lazy("postgres://localhost/test")
             .expect("Failed to create mock pool");
 
-        let _limiter = RateLimiter::new(pool);
+        let _limiter = StrictRateLimiter::new(pool);
     }
 
     #[tokio::test]
@@ -328,7 +407,7 @@ mod tests {
             .connect_lazy("postgres://localhost/test")
             .expect("Failed to create mock pool");
 
-        let limiter = RateLimiter::new(pool);
+        let limiter = StrictRateLimiter::new(pool);
         let auth = AuthContext::unauthenticated();
         let request = RequestMetadata::default();
 

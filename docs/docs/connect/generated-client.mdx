@@ -140,6 +140,8 @@ Inside the provider tree, use these hooks:
 | `Vec<T>`                   | `T[]`               |
 | `HashMap<K, V>`            | `Record<string, V>` |
 | `Value` (JSON)             | `unknown`           |
+| `Page<T>`                  | `Page<T>`           |
+| `Cursor`                   | `string`            |
 | `Upload`                   | `File \| Blob`      |
 | `Bytes` (return)           | `Blob`              |
 | `Bytes` (arg)              | `Uint8Array`        |
@@ -155,6 +157,7 @@ Inside the provider tree, use these hooks:
 | `bool`                     | `bool`                  |
 | `Option<T>`                | `Option<T>`             |
 | `Vec<T>`                   | `Vec<T>`                |
+| `Page<T>`                  | `forge_core::Page<T>`   |
 | `Upload`                   | `ForgeUpload`           |
 | `serde_json::Value`        | `JsonValue`             |
 | `Bytes`                    | `Vec<u8>`               |

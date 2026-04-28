@@ -6,6 +6,7 @@ use crate::function::{AuthContext, JobDispatch, RequestMetadata, WorkflowDispatc
 use uuid::Uuid;
 
 /// Context for MCP tool execution.
+#[non_exhaustive]
 pub struct McpToolContext {
     /// Authentication context.
     pub auth: AuthContext,
