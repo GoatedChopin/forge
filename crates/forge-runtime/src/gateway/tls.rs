@@ -175,6 +175,13 @@ impl axum::serve::Listener for GatewayListener {
 #[derive(Debug, Clone, Copy)]
 pub struct PeerAddr(pub SocketAddr);
 
+impl PeerAddr {
+    /// Extract the IP address from the peer socket address.
+    pub fn ip(&self) -> std::net::IpAddr {
+        self.0.ip()
+    }
+}
+
 impl axum::extract::connect_info::Connected<axum::serve::IncomingStream<'_, GatewayListener>>
     for PeerAddr
 {

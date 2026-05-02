@@ -791,7 +791,7 @@ async fn resolve_client_ip_middleware(
     let peer_ip = req
         .extensions()
         .get::<axum::extract::connect_info::ConnectInfo<super::PeerAddr>>()
-        .map(|ci| ci.0.0.ip());
+        .map(|ci| ci.0.ip());
     let ip = super::resolve_client_ip(req.headers(), peer_ip, &trusted.0);
     req.extensions_mut().insert(super::ResolvedClientIp(ip));
     next.run(req).await
