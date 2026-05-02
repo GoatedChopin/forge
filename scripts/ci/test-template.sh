@@ -57,7 +57,7 @@ if [ -d "$DIR/frontend" ] && [ -f "$DIR/frontend/package.json" ]; then
 fi
 
 echo "=== Forge check ==="
-"$FORGE" check
+"$FORGE" check --no-prepare
 
 echo "=== Install Playwright (with system deps for CI) ==="
 if [ -d "$DIR/frontend" ]; then
